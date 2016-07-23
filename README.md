@@ -10,19 +10,17 @@ First make sure you have installed iptables-persistent. During installation sele
 $ apt-get install iptables-persistent
 
 $ sysctl -w net.ipv4.conf.eth0.route_localnet=1
-$ iptables -t nat -A PREROUTING -p tcp -j REDIRECT --to-port 5000
-$ iptables -t nat -A PREROUTING -p udp -j REDIRECT --to-port 5000
+$ iptables -t nat -A PREROUTING -p tcp -j REDIRECT --to-port 5000  
+$ iptables -t nat -A PREROUTING -p udp -j REDIRECT --to-port 5000  
 
-$ sudo service iptables-persistent save
-$ sudo service iptables-persistent reload
+$ sudo service iptables-persistent save  
+$ sudo service iptables-persistent reload  
 
-In case of error try:
-$ sudo service netfilter-persistent save
-$ sudo service netfilter-persistent reload
+In case of error try:  
+$ sudo service netfilter-persistent save  
+$ sudo service netfilter-persistent reload  
+  
+Now Glutton server listening on all tcp udp ports of the system.  
 
-Now Glutton server listening on all tcp udp ports of the system.
-
-To deal with your openssh-server first change to your SSH default port.
-$ sed -i 's/Port 5001/Port <number>/' /etc/ssh/sshd_config
-
-
+To deal with your openssh-server first change to your SSH default port.  
+$ sed -i 's/Port 5001/Port <number>/' /etc/ssh/sshd_config  
