@@ -9,7 +9,7 @@ First make sure you have installed iptables-persistent. During installation sele
 
 $ apt-get install iptables-persistent
 
-$ sysctl -w net.ipv4.conf.eth0.route_localnet=1
+$ sysctl -w net.ipv4.conf.eth0.route_localnet=1  
 $ iptables -t nat -A PREROUTING -p tcp -j REDIRECT --to-port 5000  
 $ iptables -t nat -A PREROUTING -p udp -j REDIRECT --to-port 5000  
 
