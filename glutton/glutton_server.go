@@ -28,7 +28,7 @@ func handleTCPClient(conn net.Conn, filePointer *os.File) {
 }
 
 func tcpListener(filePointer *os.File) {
-	service := "localhost:5000"
+	service := ":5000"
 
 	tcpAddr, err := net.ResolveTCPAddr("tcp", service)
 	glutton.CheckError(err)
@@ -62,7 +62,7 @@ func handleUDPClient(conn *net.UDPConn, filePointer *os.File) {
 }
 
 func udpListener(filePointer *os.File) {
-	service := "localhost:5000"
+	service := ":5000"
 	udpAddr, err := net.ResolveUDPAddr("udp", service)
 	glutton.CheckError(err)
 
