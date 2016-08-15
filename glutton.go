@@ -31,7 +31,8 @@ func GetDesport(packetInfo []string, channel *nbc.NonBlockingChan) int {
 		connInfo = stream.([]string)
 
 		if connInfo[2] == packetInfo[0] && connInfo[4] == packetInfo[1] {
-			dport, _ := strconv.Atoi(connInfo[5])
+			dport, err := strconv.Atoi(connInfo[5])
+			CheckError(err)
 			return dport
 		} else {
 			stream, ok = <-channel.Recv
