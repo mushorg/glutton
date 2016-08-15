@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"github.com/MohammadBilalArif/glutton"
 	"github.com/hectane/go-nonblockingchan"
-	"github.com/mushorg/glutton"
 	"log"
 	"os/exec"
 	"regexp"
@@ -16,7 +16,7 @@ const regexpression = `\[(\d+\.\d+)(?:\s+)?\]\s+\[\w+]\s+\w+\s+\w+\s\w+\s+.+?src
 
 const connBufferSize int = 30000000
 
-func monitor_Connections(proto string, channel *nbc.NonBlockingChan) {
+func Monitor_Connections(proto string, channel *nbc.NonBlockingChan) {
 	args := []string{
 		"--buffer-size", strconv.Itoa(connBufferSize),
 		"-E",

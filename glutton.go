@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"github.com/hectane/go-nonblockingchan"
 	"honnef.co/go/netdb"
-	"strconv"
 	"os"
+	"strconv"
 )
 
 // getProtocol(80, "tcp")
@@ -23,7 +23,7 @@ func CheckError(err error) {
 }
 
 //return Destination port
-func getDesport(packetInfo []string, channel *nbc.NonBlockingChan) int {
+func GetDesport(packetInfo []string, channel *nbc.NonBlockingChan) int {
 	//Receiving conntrack logs from channel
 	stream, ok := <-channel.Recv
 	var connInfo []string

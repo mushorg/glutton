@@ -2,8 +2,9 @@ package main
 
 import (
 	"fmt"
+	// "github.com/MohammadBilalArif/glutton/glutton/conntrack"
+	"github.com/MohammadBilalArif/glutton"
 	"github.com/hectane/go-nonblockingchan"
-	"github.com/mushorg/glutton"
 	"log"
 	"net"
 	"os"
@@ -16,7 +17,7 @@ func handleTCPClient(conn net.Conn, filePointer *os.File, channel *nbc.NonBlocki
 
 	//Spliting addresss to compare with conntrack logs
 	packetInfo := strings.Split(conn.RemoteAddr().String(), ":")
-	dport := glutton.getDesport(packetInfo, channel)
+	dport := glutton.GetDesport(packetInfo, channel)
 
 	if dport == -1 {
 		log.Printf("Packet Droped! [TCP] [ %v ]", conn.RemoteAddr())
@@ -99,10 +100,10 @@ func main() {
 	udpChannel := nbc.New()
 
 	fmt.Println("Initializaing TCP connections tracking...")
-	go monitor_Connections("tcp", tcpChannel)
+	go  ("tcp", tcpChannel)
 
 	fmt.Println("Initializaing UDP connections tracking...")
-	go monitor_Connections("udp", tcpChannel)
+	go ("udp", tcpChannel)
 
 	fmt.Println("Starting TCP Server...")
 	go tcpListener(filePointer, tcpChannel)
