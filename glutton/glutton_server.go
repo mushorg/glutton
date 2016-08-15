@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	// "github.com/MohammadBilalArif/glutton/glutton/conntrack"
 	"github.com/MohammadBilalArif/glutton"
 	"github.com/hectane/go-nonblockingchan"
 	"log"
@@ -72,7 +71,7 @@ func handleUDPClient(conn *net.UDPConn, filePointer *os.File) {
 	conn.WriteToUDP([]byte("Hollo UDP Client:-)\n"), addr)
 }
 
-func udpListener(filePointer *os.File) {
+func udpListener(filePointer *os.File, channel *nbc.NonBlockingChan) {
 	service := ":5000"
 	udpAddr, err := net.ResolveUDPAddr("udp", service)
 	glutton.CheckError(err)
@@ -100,10 +99,10 @@ func main() {
 	udpChannel := nbc.New()
 
 	fmt.Println("Initializaing TCP connections tracking...")
-	go  ("tcp", tcpChannel)
+	go Monitor_Connections("tcp", tcpChannel)
 
 	fmt.Println("Initializaing UDP connections tracking...")
-	go ("udp", tcpChannel)
+	go Monitor_Connections("udp", tcpChannel)
 
 	fmt.Println("Starting TCP Server...")
 	go tcpListener(filePointer, tcpChannel)
