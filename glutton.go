@@ -2,9 +2,9 @@ package glutton
 
 import (
 	"fmt"
-	"os"
-
+	"github.com/hectane/go-nonblockingchan"
 	"honnef.co/go/netdb"
+	"os"
 )
 
 // getProtocol(80, "tcp")
@@ -19,4 +19,25 @@ func CheckError(err error) {
 		fmt.Fprintln(os.Stderr, "Fatal error ", err.Error())
 		os.Exit(1)
 	}
+}
+
+//return Destination port
+func getDesport(packetInfo []string, channel *nbc.NonBlockingChan) int {
+	//Receiving conntrack logs from channel
+	stream, ok := <-channel.Recv
+	var connInfo []string
+	for ok {
+		connInfo = stream.([]string)
+
+		if connInfo[2] == packetInfo[0] && connInfo[4] == packetInfo[1] {
+			dport, _ := strconv.Atoi(connInfo[5])
+			return dport
+		} else {
+			stream, ok = <-channel.Recv
+		}
+	}
+	if !ok {
+		return -1
+	}
+	return -1
 }

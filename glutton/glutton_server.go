@@ -2,32 +2,42 @@ package main
 
 import (
 	"fmt"
+	"github.com/hectane/go-nonblockingchan"
+	"github.com/mushorg/glutton"
 	"log"
 	"net"
 	"os"
 	"syscall"
-
-	"github.com/mushorg/glutton"
 )
 
-func handleTCPClient(conn net.Conn, filePointer *os.File) {
+func handleTCPClient(conn net.Conn, filePointer *os.File, channel *nbc.NonBlockingChan) {
 	log.SetOutput(filePointer)
+
+	//Spliting addresss to compare with conntrack logs
+	packetInfo := strings.Split(conn.RemoteAddr().String(), ":")
+	dport := glutton.getDesport(packetInfo, channel)
+
+	if dport == -1 {
+		log.Printf("Packet Droped! [TCP] [ %v ]", conn.RemoteAddr())
+		return
+	}
+
 	buf := make([]byte, 64000)
 	for {
 		n, err := conn.Read(buf[0:])
 		if err != nil {
 			return
 		}
-
-		log.Printf(" [TCP] [ %v ] Message: %s", conn.RemoteAddr(), string(buf[0:n]))
+		log.Printf("[TCP] [ %v ] dport [%v] Message: %s", conn.RemoteAddr(), connInfo[5], string(buf[0:n]))
 		_, err2 := conn.Write([]byte("Hollo TCP Client:-)\n"))
 		if err2 != nil {
 			return
 		}
 	}
+
 }
 
-func tcpListener(filePointer *os.File) {
+func tcpListener(filePointer *os.File, channel *nbc.NonBlockingChan) {
 	service := ":5000"
 
 	tcpAddr, err := net.ResolveTCPAddr("tcp", service)
@@ -42,9 +52,8 @@ func tcpListener(filePointer *os.File) {
 		if err != nil {
 			continue
 		}
-
-		//goroutines to handle multiple connections
-		go handleTCPClient(tcpConn, filePointer)
+		// //goroutines to handle multiple connections
+		go handleTCPClient(tcpConn, filePointer, channel)
 	}
 }
 
@@ -83,6 +92,20 @@ func main() {
 	}
 	defer filePointer.Close()
 
-	go tcpListener(filePointer)
-	udpListener(filePointer)
+	//channel for tcp logging
+	tcpChannel := nbc.New()
+	//channel for udp logging
+	udpChannel := nbc.New()
+
+	fmt.Println("Initializaing TCP connections tracking...")
+	go monitor_Connections("tcp", tcpChannel)
+
+	fmt.Println("Initializaing UDP connections tracking...")
+	go monitor_Connections("udp", tcpChannel)
+
+	fmt.Println("Starting TCP Server...")
+	go tcpListener(filePointer, tcpChannel)
+
+	fmt.Println("Starting UDP Server...")
+	udpListener(filePointer, udpChannel)
 }
