@@ -28,7 +28,7 @@ func handleTCPClient(conn net.Conn, filePointer *os.File, channel *nbc.NonBlocki
 		if err != nil {
 			return
 		}
-		log.Printf("[TCP] [ %v ] dport [%v] Message: %s", conn.RemoteAddr(), connInfo[5], string(buf[0:n]))
+		log.Printf("[TCP] [ %v ] dport [%v] Message: %s", conn.RemoteAddr(), dport, string(buf[0:n]))
 		_, err2 := conn.Write([]byte("Hollo TCP Client:-)\n"))
 		if err2 != nil {
 			return
