@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	. "fmt"
 	"github.com/hectane/go-nonblockingchan"
 	"github.com/mushorg/glutton"
@@ -110,7 +111,11 @@ func udpListener(f *os.File, ch *nbc.NonBlockingChan) {
 
 func main() {
 	Println("Starting server.....")
-	f, err := os.OpenFile("logs.txt", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+
+	logPath := flag.String("log", "/dev/null", "Log path.")
+	flag.Parse()
+
+	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		panic(err)
 	}
@@ -121,7 +126,7 @@ func main() {
 	// Channel for udp logging
 	udpCh := nbc.New()
 
-	Println("Initializing TCP connections tracking...")
+	//Println("Initializing TCP connections tracking...")
 	go glutton.MonitorTCPConnections(tcpCh)
 
 	// TODO: Implement UPD the next time.
