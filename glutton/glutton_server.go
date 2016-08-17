@@ -126,7 +126,7 @@ func main() {
 	// Channel for udp logging
 	udpCh := nbc.New()
 
-	//Println("Initializing TCP connections tracking...")
+	Println("Initializing TCP connections tracking...")
 	go glutton.MonitorTCPConnections(tcpCh)
 
 	// TODO: Implement UPD the next time.
