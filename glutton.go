@@ -70,6 +70,8 @@ func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 //return Destination port for UDP
 func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 
+	time.Sleep(10000000 * time.Nanosecond)
+
 	if ch.Len() == 0 {
 		time.Sleep(10000000 * time.Nanosecond)
 		if ch.Len() == 0 {
@@ -88,12 +90,14 @@ func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 			stream, ok = <-ch.Recv
 			continue
 		}
+
 		if c[2] == p[0] && c[4] == p[1] {
 			dp, err := strconv.Atoi(c[5])
 			if err != nil {
 				Println("[UDP] Invalid destination port! glutton.go strconv.Atoi() ")
 				return -1
 			}
+
 			return dp
 		} else {
 
