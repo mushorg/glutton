@@ -3,9 +3,15 @@
 The Glutton server listens on both TCP and UDP port 5000 for new connections. Implement following iptables rules in order to redirect all traffic to port 5000 (tested on Ubuntu 16.04).
 
 First make sure you have installed iptables-persistent. During installation select YES for saving your current firewall rules for both ipv4 and ipv6.
-
 ```
-apt-get install iptables-persistent
+apt-get install iptables-persistent conntrack golang
+```
+Download and set up glutton, add GOPATH to /etc/environment. Example
+```
+mkdir /opt/go
+echo export GOPATH=/opt/go >> /etc/environment
+source /etc/environment
+go get github.com/mushorg/glutton
 ```
 To change your SSH server default port (i.e. 5001)
 ```
@@ -27,4 +33,14 @@ In case of error try:
 service netfilter-persistent save  
 service netfilter-persistent reload
 ```
-Now Glutton server listening on all tcp udp ports of the system except one for SSH 5001.
+To test glutton
+```
+sudo go run $GOPATH/src/github.com/mushorg/glutton/glutton/glutton-server.go -log /tmp/glutton.log
+```
+To make glutton start on boot
+```
+cd /opt/go/src/github.com/mushorg/glutton
+go install
+cp /opt/go/src/github.com/mushorg/glutton/scripts/glutton.conf /etc/init
+```
+Now Glutton server listening on all tcp udp ports of the system except one for SSH 5001 :]
