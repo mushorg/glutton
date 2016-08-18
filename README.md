@@ -2,14 +2,15 @@
 
 The Glutton server listens on both TCP and UDP port 5000 for new connections. Implement following iptables rules in order to redirect all traffic to port 5000 (tested on Ubuntu 16.04).
 
-First make sure you have installed iptables-persistent. During installation select YES for saving your current firewall rules for both ipv4 and ipv6.
+First make sure you have installed iptables-persistent and conntrack-tools. During installation select YES for saving your current firewall rules for both ipv4 and ipv6.
 
 ```
 apt-get install iptables-persistent
+apt-get install conntrack
 ```
 To change your SSH server default port (i.e. 5001)
 ```
-sed -i 's/Port 22/Port 5001/' /etc/ssh/sshd_config
+sed -i 's/#Port 22/Port 5001/' /etc/ssh/sshd_config
 ```
 Now enable the redirect while leaving out the port you picked for sshd: 
 ```
