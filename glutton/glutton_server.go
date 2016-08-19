@@ -70,27 +70,26 @@ func handleUDPClient(conn *net.UDPConn, f *os.File, ch *nbc.NonBlockingChan) {
 	log.SetOutput(f)
 	b, oob := make([]byte, 64000), make([]byte, 4096)
 
+	Println("Waiting")
 	n, _, flags, addr, _ := conn.ReadMsgUDP(b, oob)
 
-	go func() {
-		tmp := addr.String()
-		if tmp == "<nil>" {
-			Println("Address:port == nil glutton_server.go addr.String()")
-		}
-		str := strings.Split(tmp, ":")
-		dp := glutton.GetUDPDesPort(str, ch)
-		if dp == -1 {
-			log.Println("Packet dropped! [UDP] glutton_server.go desPort == -1")
-			// return
-		}
+	tmp := addr.String()
+	if tmp == "<nil>" {
+		Println("Address:port == nil glutton_server.go addr.String()")
+	}
+	str := strings.Split(tmp, ":")
+	dp := glutton.GetUDPDesPort(str, ch)
+	if dp == -1 {
+		log.Println("Packet dropped! [UDP] glutton_server.go desPort == -1")
+		// return
+	}
 
-		if flags&syscall.MSG_TRUNC != 0 {
-			log.Printf(" [UDP] [ %v ] [ %v ] [Truncated Read] Message: %s", addr, dp, string(b[0:n]))
-		} else {
-			log.Printf(" [UDP] [ %v ] [ %v ] Message: %s\n", addr, dp, string(b[0:n]))
-		}
-		conn.WriteToUDP([]byte("Hello UDP Client:-)\n"), addr)
-	}()
+	if flags&syscall.MSG_TRUNC != 0 {
+		log.Printf(" [UDP] [ %v ] [ %v ] [Truncated Read] Message: %s", addr, dp, string(b[0:n]))
+	} else {
+		log.Printf(" [UDP] [ %v ] [ %v ] Message: %s\n", addr, dp, string(b[0:n]))
+	}
+	conn.WriteToUDP([]byte("Hello UDP Client:-)\n"), addr)
 
 }
 
@@ -105,6 +104,7 @@ func udpListener(f *os.File, ch *nbc.NonBlockingChan) {
 	glutton.CheckError(err)
 
 	for {
+		Println("New Connection")
 		handleUDPClient(conn, f, ch)
 	}
 }
