@@ -70,6 +70,8 @@ func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 //return Destination port for UDP
 func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 
+	time.Sleep(10000000 * time.Nanosecond)
+
 	if ch.Len() == 0 {
 		time.Sleep(10000000 * time.Nanosecond)
 		if ch.Len() == 0 {

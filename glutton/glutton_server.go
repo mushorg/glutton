@@ -81,7 +81,7 @@ func handleUDPClient(conn *net.UDPConn, f *os.File, ch *nbc.NonBlockingChan) {
 		dp := glutton.GetUDPDesPort(str, ch)
 		if dp == -1 {
 			log.Println("Packet dropped! [UDP] glutton_server.go desPort == -1")
-			// return
+			return
 		}
 
 		if flags&syscall.MSG_TRUNC != 0 {
