@@ -35,7 +35,7 @@ service netfilter-persistent reload
 ```
 To test glutton
 ```
-sudo go run $GOPATH/src/github.com/mushorg/glutton/glutton/glutton-server.go -log /tmp/glutton.log
+go run $GOPATH/src/github.com/mushorg/glutton/glutton/glutton-server.go -log /tmp/glutton.log
 ```
 To make glutton start on boot using upstart
 ```
