@@ -39,8 +39,8 @@ go run $GOPATH/src/github.com/mushorg/glutton/glutton/glutton-server.go -log /tm
 ```
 To make glutton start on boot using upstart
 ```
-cd $GOPATH//src/github.com/mushorg/glutton
+cd $GOPATH/src/github.com/mushorg/glutton
 go install
-cp $GOPATH//src/github.com/mushorg/glutton/scripts/glutton.conf /etc/init
+cp $GOPATH/src/github.com/mushorg/glutton/scripts/glutton.conf /etc/init
 ```
 Now Glutton server listening on all tcp udp ports of the system except one for SSH 5001 :]
