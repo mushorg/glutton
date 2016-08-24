@@ -47,7 +47,7 @@ func MonitorTCPConnections(channel *nbc.NonBlockingChan) {
 				re := regexp.MustCompile(tcpRegExp)
 				str := re.FindStringSubmatch(line)
 				channel.Send <- str
-
+				Println("U+++ ", str[0])
 			}()
 			buffer.Reset()
 		}

@@ -1,8 +1,7 @@
 package main
 
 import (
-	"flag"
-	. "fmt"
+	// "flag"
 	"github.com/hectane/go-nonblockingchan"
 	"github.com/mushorg/glutton"
 	"log"
@@ -13,12 +12,12 @@ import (
 )
 
 func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
-	log.SetOutput(f)
 
 	// Splitting address to compare with conntrack logs
 	tmp := conn.RemoteAddr().String()
 	if tmp == "<nil>" {
-		Println("Address:port == nil glutton_server.go conn.RemoteAddr().String()")
+		println("Error: Address:port == nil glutton_server.go conn.RemoteAddr().String()")
+		return
 	}
 
 	addr := strings.Split(tmp, ":")
@@ -26,22 +25,20 @@ func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
 	dp := glutton.GetTCPDesPort(addr, ch)
 
 	if dp == -1 {
-		Println("Packet dropped! [TCP] glutton_server.go desPort == -1")
+		println("Error: Packet dropped! [TCP] glutton_server.go desPort == -1")
 		return
 	}
 
-	buf := make([]byte, 64000)
-	for {
-		n, err := conn.Read(buf[0:])
-		if err != nil {
-			return
-		}
-		log.Printf("[TCP] [ %v ] dport [%v] Message: %s", conn.RemoteAddr(), dp, string(buf[0:n]))
-		_, err2 := conn.Write([]byte("Hello TCP Client:-)\n"))
-		if err2 != nil {
-			return
-		}
+	// TCP client for destination server
+	proxyConn := TCPClient(glutton.GetClient(dp))
+	if proxyConn == nil {
+		return
 	}
+
+	log.Printf("Redirection: Connection Established [%v]", glutton.GetClient(dp))
+
+	// Data Transfer between Connections
+	ProxyServer(conn.(*net.TCPConn), proxyConn, f)
 
 }
 
@@ -67,30 +64,32 @@ func tcpListener(f *os.File, ch *nbc.NonBlockingChan) {
 }
 
 func handleUDPClient(conn *net.UDPConn, f *os.File, ch *nbc.NonBlockingChan) {
-	log.SetOutput(f)
+
 	b, oob := make([]byte, 64000), make([]byte, 4096)
 
 	n, _, flags, addr, _ := conn.ReadMsgUDP(b, oob)
 
-	go func() {
-		tmp := addr.String()
-		if tmp == "<nil>" {
-			Println("Address:port == nil glutton_server.go addr.String()")
-		}
-		str := strings.Split(tmp, ":")
-		dp := glutton.GetUDPDesPort(str, ch)
-		if dp == -1 {
-			log.Println("Packet dropped! [UDP] glutton_server.go desPort == -1")
-			// return
-		}
+	tmp := addr.String()
+	if tmp == "<nil>" {
+		println("Error: Address:port == nil glutton_server.go addr.String()")
+		return
+	}
+	str := strings.Split(tmp, ":")
+	dp := glutton.GetUDPDesPort(str, ch)
+	if dp == -1 {
+		println("Error: Packet dropped! [UDP] glutton_server.go desPort == -1")
+		return
+	}
 
-		if flags&syscall.MSG_TRUNC != 0 {
-			log.Printf(" [UDP] [ %v ] [ %v ] [Truncated Read] Message: %s", addr, dp, string(b[0:n]))
-		} else {
-			log.Printf(" [UDP] [ %v ] [ %v ] Message: %s\n", addr, dp, string(b[0:n]))
-		}
-		conn.WriteToUDP([]byte("Hello UDP Client:-)\n"), addr)
-	}()
+	// TODO Proxy handling for UDP Clients
+	proxyConn := UDPClient(glutton.GetClient(dp))
+
+	if flags&syscall.MSG_TRUNC != 0 {
+		log.Printf(" [UDP] [ %v ] [ %v ] [Truncated Read] Message: %s", addr, dp, string(b[0:n]))
+	} else {
+		log.Printf(" [UDP] [ %v ] [ %v ] Message: %s\n", addr, dp, string(b[0:n]))
+	}
+	conn.WriteToUDP([]byte("Hello UDP Client:-)\n"), addr)
 
 }
 
@@ -110,32 +109,37 @@ func udpListener(f *os.File, ch *nbc.NonBlockingChan) {
 }
 
 func main() {
-	Println("Starting server.....")
+	println("Starting server.....")
 
-	logPath := flag.String("log", "/dev/null", "Log path.")
-	flag.Parse()
+	// logPath := flag.String("log", "/dev/null", "Log path.")
+	// flag.Parse()
 
-	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	// f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+
+	f, err := os.OpenFile("logs", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		panic(err)
 	}
 	defer f.Close()
+	log.SetOutput(f)
 
 	// Channel for tcp logging
 	tcpCh := nbc.New()
 	// Channel for udp logging
-	udpCh := nbc.New()
+	// udpCh := nbc.New()
 
-	Println("Initializing TCP connections tracking...")
+	// Load config file for remote services
+	glutton.LoadServices()
+
+	println("Initializing TCP connections tracking...")
 	go glutton.MonitorTCPConnections(tcpCh)
 
-	// TODO: Implement UPD the next time.
-	Println("Initializing UDP connections tracking...")
-	go glutton.MonitorUDPConnections(udpCh)
+	// println("Initializing UDP connections tracking...")
+	// go glutton.MonitorUDPConnections(udpCh)
 
-	Println("Starting TCP Server...")
-	go tcpListener(f, tcpCh)
+	println("Starting TCP Server...")
+	tcpListener(f, tcpCh)
 
-	Println("Starting UDP Server...")
-	udpListener(f, udpCh)
+	// println("Starting UDP Server...")
+	// udpListener(f, udpCh)
 }
