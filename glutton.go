@@ -3,33 +3,61 @@ package glutton
 import (
 	. "fmt"
 	"github.com/hectane/go-nonblockingchan"
+	"gopkg.in/yaml.v2"
 	"honnef.co/go/netdb"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 )
 
-// getProtocol(80, "tcp")
-func GetProtocol(port int, transport string) *netdb.Servent {
-	prot := netdb.GetProtoByName(transport)
-	return netdb.GetServByPort(port, prot)
+// For the fields of services.conf
+type Config struct {
+	Description string
+	Ports       map[int]string
 }
 
-// CheckError handles errors
-func CheckError(err error) {
+var ser Config
+
+// Load services.conf file into ser
+func LoadServices() {
+	f, err := filepath.Abs("/etc/glutton/services.yml")
 	if err != nil {
-		Fprintln(os.Stderr, "Fatal error ", err.Error())
+		println("[*] Error in absolute representation of file LoadServices().")
 		os.Exit(1)
 	}
+	ymlF, err := ioutil.ReadFile(f)
+
+	if err != nil {
+		panic(err)
+	}
+
+	err = yaml.Unmarshal(ymlF, &ser)
+	if err != nil {
+		panic(err)
+	}
+
+	if len(ser.Ports) == 0 {
+		println("[*] **Host list is empty, Please update services.yml")
+		os.Exit(1)
+	}
+	println("[*] Services loaded successfully....")
+
+}
+
+// Return destination address of the service to redirect traffic
+func GetHost(p int) string {
+	return ser.Ports[p]
 }
 
 //return Destination port for TCP
 func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 
 	if ch.Len() == 0 {
-		time.Sleep(10000000 * time.Nanosecond)
+		time.Sleep(10 * time.Millisecond)
 		if ch.Len() == 0 {
-			Println("[TCP]  Channel is empty!")
+			println("[*] TCP Channel is empty!")
 			return -1
 		}
 	}
@@ -40,7 +68,7 @@ func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 	for ok {
 		c, flag := stream.([]string)
 		if !flag {
-			Println("[TCP] Invalid log! glutton.go: stream.([]string) failed.")
+			println("[*] Error. TCP Invalid log! glutton.go: stream.([]string) failed.")
 			stream, ok = <-ch.Recv
 			continue
 		}
@@ -49,14 +77,13 @@ func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 
 			dp, err := strconv.Atoi(c[4])
 			if err != nil {
-				Println("[TCP] Invalid destination port! glutton.go strconv.Atoi()")
+				println("[*] Error. TCP Invalid destination port! glutton.go strconv.Atoi()")
 				return -1
 			}
-
 			return dp
 		} else {
 			if ch.Len() == 0 {
-				Println("[TCP] No logs found!")
+				println("[*] TCP No logs found!")
 				return -1
 			}
 			stream, ok = <-ch.Recv
@@ -70,12 +97,13 @@ func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 //return Destination port for UDP
 func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 
-	time.Sleep(10000000 * time.Nanosecond)
+	// Time used by conntrack for UDP logging
+	time.Sleep(10 * time.Millisecond)
 
 	if ch.Len() == 0 {
-		time.Sleep(10000000 * time.Nanosecond)
+		time.Sleep(10 * time.Millisecond)
 		if ch.Len() == 0 {
-			Println("[UDP] Channel is empty!")
+			println("[*] UDP Channel is empty!")
 			return -1
 		}
 	}
@@ -86,21 +114,20 @@ func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 	for ok {
 		c, flag := stream.([]string)
 		if !flag {
-			Println("[UDP] Invalid log! glutton.go: stream.([]string) failed.")
+			println("[*] Error. UDP Invalid log! glutton.go: stream.([]string) failed.")
 			stream, ok = <-ch.Recv
 			continue
 		}
 		if c[2] == p[0] && c[4] == p[1] {
 			dp, err := strconv.Atoi(c[5])
 			if err != nil {
-				Println("[UDP] Invalid destination port! glutton.go strconv.Atoi() ")
+				println("[*] Error. UDP Invalid destination port! glutton.go strconv.Atoi() ")
 				return -1
 			}
 			return dp
 		} else {
-
 			if ch.Len() == 0 {
-				Println("[UDP] No logs found!")
+				println("[*] UDP No logs found!")
 				return -1
 			}
 			stream, ok = <-ch.Recv
@@ -109,4 +136,18 @@ func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 	}
 
 	return -1
+}
+
+// getProtocol(80, "tcp")
+func GetProtocol(port int, transport string) *netdb.Servent {
+	prot := netdb.GetProtoByName(transport)
+	return netdb.GetServByPort(port, prot)
+}
+
+// CheckError handles Fatal errors
+func CheckError(err error) {
+	if err != nil {
+		Fprintln(os.Stderr, "[*] Fatal Error.", err.Error())
+		os.Exit(1)
+	}
 }
