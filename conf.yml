@@ -1,0 +1,7 @@
+description: To redirect traffic of a services add port where the service listens and destination address 
+where to redirect traffic (Port->IP:Port). 
+ports:
+  5000:
+    localhost:5001
+  22:
+    localhost:5002
