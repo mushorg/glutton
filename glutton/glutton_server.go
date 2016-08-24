@@ -81,6 +81,7 @@ func handleUDPClient(conn *net.UDPConn, f *os.File, ch *nbc.NonBlockingChan) {
 		return
 	}
 
+	// TODO Proxy handling for UDP Clients
 	proxyConn := UDPClient(glutton.GetClient(dp))
 
 	if flags&syscall.MSG_TRUNC != 0 {

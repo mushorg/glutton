@@ -110,7 +110,3 @@ func transfer(dst writer, src reader, addr interface{}) (written int64, err erro
 	}
 	return written, err
 }
-
-func UDPBrocker() {
-
-}
