@@ -36,7 +36,7 @@ service netfilter-persistent reload
 To test glutton
 ```
 mkdir /etc/glutton
-cp $GOPATH/src/github.com/mushorg/glutton/config/services.yml
+cp $GOPATH/src/github.com/mushorg/glutton/config/services.yml /etc/glutton
 go run $GOPATH/src/github.com/mushorg/glutton/glutton/glutton-server.go -log /tmp/glutton.log
 ```
 To make glutton start on boot using upstart
