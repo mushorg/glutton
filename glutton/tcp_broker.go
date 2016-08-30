@@ -28,9 +28,26 @@ type writerTo interface {
 	WriteTo(w writer) (n int64, err error)
 }
 
-var EOF = errors.New("EOF")
+var EOF = errors.New("[*] Error. EOF")
 
-var ErrShortWrite = errors.New("short write")
+var ErrShortWrite = errors.New("[*] Error. short write")
+
+func TCPClient(addr string) *net.TCPConn {
+
+	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		println("[*] Error. ResolveTCPAddr failed:", err.Error())
+		return nil
+	}
+
+	conn, err := net.DialTCP("tcp", nil, tcpAddr)
+	if err != nil {
+		println("[*] Error. Dial failed: Host either not active or not responding ", err.Error())
+		return nil
+	}
+
+	return conn
+}
 
 func ProxyServer(srvConn, cliConn *net.TCPConn, file *os.File) {
 
@@ -61,10 +78,10 @@ func broker(dst, src net.Conn, srcClosed chan struct{}) {
 	_, err := transfer(dst, src, address{src.RemoteAddr(), dst.RemoteAddr()})
 
 	if err != nil {
-		log.Printf("Warning: Copy error: %s", err)
+		log.Printf("[*] Warning Copy error: %s", err)
 	}
 	if err := src.Close(); err != nil {
-		log.Printf("Warning: Close error: %s", err)
+		log.Printf("[*] Warning Close error: %s", err)
 	}
 	srcClosed <- struct{}{}
 }
@@ -72,12 +89,10 @@ func broker(dst, src net.Conn, srcClosed chan struct{}) {
 func transfer(dst writer, src reader, addr interface{}) (written int64, err error) {
 	v := addr.(address)
 	if wt, ok := src.(writerTo); ok {
-		println("(!)(!)(!) Returning from 1 (!)(!)(!)")
 		return wt.WriteTo(dst)
 	}
 
 	if rt, ok := dst.(readerFrom); ok {
-		println("(!)(!)(!) Returning from 2 (!)(!)(!)")
 		return rt.ReadFrom(src)
 	}
 
@@ -85,7 +100,7 @@ func transfer(dst writer, src reader, addr interface{}) (written int64, err erro
 
 	for {
 		nr, er := src.Read(buf)
-		log.Printf(" [%v -> %v] Payload: %v", v.srcAddr, v.dstAddr, string(buf[0:nr]))
+		log.Printf("[TCP] [%v -> %v] Payload: %v", v.srcAddr, v.dstAddr, string(buf[0:nr]))
 		if nr > 0 {
 			nw, ew := dst.Write(buf[0:nr])
 			if nw > 0 {

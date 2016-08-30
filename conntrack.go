@@ -3,9 +3,7 @@ package glutton
 import (
 	"bufio"
 	"bytes"
-	. "fmt"
 	"github.com/hectane/go-nonblockingchan"
-	"log"
 	"os/exec"
 	"regexp"
 )
@@ -27,14 +25,13 @@ func MonitorTCPConnections(channel *nbc.NonBlockingChan) {
 		stderr := bufio.NewReader(stderrPipe)
 		for {
 			line, _, err := stderr.ReadLine()
+			println("[*]", string(line))
 			CheckError(err)
-			log.Println(string(line))
 		}
 	}()
 	stdoutPipe, err := cmd.StdoutPipe()
 	CheckError(err)
 	stdout := bufio.NewReader(stdoutPipe)
-	Println("[TCP] Starting conntrack...")
 	cmd.Start()
 	var buffer bytes.Buffer
 	for {
@@ -47,7 +44,7 @@ func MonitorTCPConnections(channel *nbc.NonBlockingChan) {
 				re := regexp.MustCompile(tcpRegExp)
 				str := re.FindStringSubmatch(line)
 				channel.Send <- str
-				Println("U+++ ", str[0])
+
 			}()
 			buffer.Reset()
 		}
@@ -68,14 +65,13 @@ func MonitorUDPConnections(channel *nbc.NonBlockingChan) {
 		stderr := bufio.NewReader(stderrPipe)
 		for {
 			line, _, err := stderr.ReadLine()
+			println("[*]", string(line))
 			CheckError(err)
-			log.Println(string(line))
 		}
 	}()
 	stdoutPipe, err := cmd.StdoutPipe()
 	CheckError(err)
 	stdout := bufio.NewReader(stdoutPipe)
-	Println("[UDP] Starting conntrack...")
 	cmd.Start()
 	var buffer bytes.Buffer
 	for {

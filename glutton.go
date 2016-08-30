@@ -22,7 +22,11 @@ var ser Config
 
 // Load services.conf file into ser
 func LoadServices() {
-	f, _ := filepath.Abs("./services.yml")
+	f, err := filepath.Abs("/etc/glutton/services.yml")
+	if err != nil {
+		println("[*] Error in absolute representation of file LoadServices().")
+		os.Exit(1)
+	}
 	ymlF, err := ioutil.ReadFile(f)
 
 	if err != nil {
@@ -34,12 +38,16 @@ func LoadServices() {
 		panic(err)
 	}
 
-	println("Services loaded successfully....")
+	if len(ser.Ports) == 0 {
+		println("[*] **Host list is empty, Please update services.yml")
+		os.Exit(1)
+	}
+	println("[*] Services loaded successfully....")
+
 }
 
 // Return destination address of the service to redirect traffic
-func GetClient(p int) string {
-	println("Services listening At: ", ser.Ports[p], " for port ", p)
+func GetHost(p int) string {
 	return ser.Ports[p]
 }
 
@@ -49,7 +57,7 @@ func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 	if ch.Len() == 0 {
 		time.Sleep(10000000 * time.Nanosecond)
 		if ch.Len() == 0 {
-			println("[TCP]  Channel is empty!")
+			println("[*] TCP Channel is empty!")
 			return -1
 		}
 	}
@@ -60,7 +68,7 @@ func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 	for ok {
 		c, flag := stream.([]string)
 		if !flag {
-			println("[TCP] Invalid log! glutton.go: stream.([]string) failed.")
+			println("[*] Error. TCP Invalid log! glutton.go: stream.([]string) failed.")
 			stream, ok = <-ch.Recv
 			continue
 		}
@@ -69,14 +77,13 @@ func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 
 			dp, err := strconv.Atoi(c[4])
 			if err != nil {
-				println("[TCP] Invalid destination port! glutton.go strconv.Atoi()")
+				println("[*] Error. TCP Invalid destination port! glutton.go strconv.Atoi()")
 				return -1
 			}
-			println("M=== ", c[0])
 			return dp
 		} else {
 			if ch.Len() == 0 {
-				println("[TCP] No logs found!")
+				println("[*] TCP No logs found!")
 				return -1
 			}
 			stream, ok = <-ch.Recv
@@ -96,7 +103,7 @@ func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 	if ch.Len() == 0 {
 		time.Sleep(10000000 * time.Nanosecond)
 		if ch.Len() == 0 {
-			println("[UDP] Channel is empty!")
+			println("[*] UDP Channel is empty!")
 			return -1
 		}
 	}
@@ -107,21 +114,20 @@ func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 	for ok {
 		c, flag := stream.([]string)
 		if !flag {
-			println("[UDP] Invalid log! glutton.go: stream.([]string) failed.")
+			println("[*] Error. UDP Invalid log! glutton.go: stream.([]string) failed.")
 			stream, ok = <-ch.Recv
 			continue
 		}
 		if c[2] == p[0] && c[4] == p[1] {
 			dp, err := strconv.Atoi(c[5])
 			if err != nil {
-				println("[UDP] Invalid destination port! glutton.go strconv.Atoi() ")
+				println("[*] Error. UDP Invalid destination port! glutton.go strconv.Atoi() ")
 				return -1
 			}
 			return dp
 		} else {
-
 			if ch.Len() == 0 {
-				println("[UDP] No logs found!")
+				println("[*] UDP No logs found!")
 				return -1
 			}
 			stream, ok = <-ch.Recv
@@ -141,7 +147,7 @@ func GetProtocol(port int, transport string) *netdb.Servent {
 // CheckError handles Fatal errors
 func CheckError(err error) {
 	if err != nil {
-		Fprintln(os.Stderr, "Fatal error ", err.Error())
+		Fprintln(os.Stderr, "[*] Fatal Error.", err.Error())
 		os.Exit(1)
 	}
 }
