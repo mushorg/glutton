@@ -1,0 +1,15 @@
+# Example:
+# 
+# description: Glutton will redirect clients to following hosts list. Please update accordingly (Port->IP:Port). 
+# ports:
+#    22:
+#      localhost:5001
+#    23:
+#      localhost:6000
+
+
+description: Glutton will redirect clients to following hosts list. Please update accordingly (Port->IP:Port). 
+ports:
+  22:
+    localhost:5001
+  
