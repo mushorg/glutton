@@ -4,7 +4,7 @@ The Glutton server listens on both TCP and UDP port 5000 for new connections.
 
 First make sure you have installed iptables-persistent. During installation select YES for saving your current firewall rules for both ipv4 and ipv6.
 ```
-apt-get install iptables-persistent conntrack golang
+apt-get install iptables-persistent conntrack golang libpcap-dev
 ```
 Download and set up glutton, add GOPATH to /etc/environment. Example
 ```
@@ -35,9 +35,11 @@ service netfilter-persistent reload
 ```
 To test glutton
 ```
-mkdir -p /etc/glutton
+mkdir -p /etc/glutton  
+mkdir -p /var/log/glutton
+go get github.com/google/gopacket
 cp $GOPATH/src/github.com/mushorg/glutton/glutton/config/services.yml /etc/glutton
-go run $GOPATH/src/github.com/mushorg/glutton/glutton/glutton-server.go -log /tmp/glutton.log
+go run $GOPATH/src/github.com/mushorg/glutton/glutton/glutton-server.go -log /var/log/glutton/events.log
 ```
 To make glutton start on boot using upstart
 ```

@@ -4,6 +4,7 @@ import (
 	"flag"
 	"github.com/hectane/go-nonblockingchan"
 	"github.com/mushorg/glutton"
+	"github.com/mushorg/glutton/logger"
 	"log"
 	"os"
 	"time"
@@ -26,7 +27,6 @@ func main() {
 
 	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 
-	// f, err := os.OpenFile("logs", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		panic(err)
 	}
@@ -40,6 +40,12 @@ func main() {
 
 	// Load config file for remote services
 	glutton.LoadServices()
+
+	println("[*] Starting Packet Capturing...")
+
+	go glutton.StartCapturing()
+
+	go logger.FindDevice()
 
 	go glutton.MonitorTCPConnections(tcpCh)
 	println("[*] Initializing TCP connections tracking..")
