@@ -43,8 +43,6 @@ func main() {
 
 	println("[*] Starting Packet Capturing...")
 
-	go glutton.StartCapturing()
-
 	go logger.FindDevice()
 
 	go glutton.MonitorTCPConnections(tcpCh)
