@@ -8,3 +8,7 @@ func TestPort2Protocol(t *testing.T) {
 		t.Fatalf("Got %s instead of http", prot.Name)
 	}
 }
+
+func TestPortParsing(t *testing.T) {
+	LoadPorts("config/ports.yml")
+}

@@ -2,31 +2,60 @@ package main
 
 import (
 	"flag"
-	"github.com/hectane/go-nonblockingchan"
-	"github.com/mushorg/glutton"
+	"fmt"
 	"log"
+	"net"
 	"os"
 	"time"
+
+	"github.com/hectane/go-nonblockingchan"
+	"github.com/mushorg/glutton"
 )
 
+func localAddresses() {
+	println("[*] Listening on the following interfaces:")
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return
+	}
+	for _, i := range ifaces {
+		addrs, err := i.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			switch v := a.(type) {
+			case *net.IPNet:
+				fmt.Printf("\t%v : %s (%s)\n", i.Name, v, v.IP.DefaultMask())
+			}
+		}
+	}
+}
+
 func main() {
-	println("\n%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%")
-	print("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%\n")
-	print("%%													%%\n")
-	print("%%		  %%%%%%   %%       %%      %%  %%%%%%%%%%  %%%%%%%%%%    %%%%%     %%%%     %%		%%\n")
-	print("%%		%%         %%       %%      %%      %%          %%      %%     %%   %% %%    %%		%%\n")
-	print("%%		%%    %%%  %%       %%      %%      %%          %%      %%     %%   %%   %%  %%		%%\n")
-	print("%%		 %%%%%%%   %%%%%%%   %%%%%%%        %%          %%        %%%%%     %%     %%%%		%%\n")
-	print("%%													%%\n")
-	print("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%\n")
-	print("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%\n\n")
+	fmt.Println(`
+	    _____ _       _   _
+	   / ____| |     | | | |
+	  | |  __| |_   _| |_| |_ ___  _ __
+	  | | |_ | | | | | __| __/ _ \| '_ \
+	  | |__| | | |_| | |_| || (_) | | | |
+	   \_____|_|\__,_|\__|\__\___/|_| |_|
+
+	`)
 
 	logPath := flag.String("log", "/dev/null", "Log path.")
+	confPath := flag.String("conf", "/etc/glutton/proxy.yml", "Config path.")
+	setTables := flag.Bool("set-tables", false, "True to set iptables rules")
 	flag.Parse()
 
-	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	localAddresses()
 
-	// f, err := os.OpenFile("logs", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if *setTables {
+		glutton.SetIPTables()
+	}
+
+	// Setup file logging
+	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		panic(err)
 	}
@@ -39,7 +68,7 @@ func main() {
 	udpCh := nbc.New()
 
 	// Load config file for remote services
-	glutton.LoadServices()
+	glutton.LoadPorts(*confPath)
 
 	go glutton.MonitorTCPConnections(tcpCh)
 	println("[*] Initializing TCP connections tracking..")

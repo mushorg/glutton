@@ -28,7 +28,7 @@ type writerTo interface {
 	WriteTo(w writer) (n int64, err error)
 }
 
-var EOF = errors.New("[*] Error. EOF")
+var ErrEOF = errors.New("[*] Error. EOF")
 
 var ErrShortWrite = errors.New("[*] Error. short write")
 
@@ -56,8 +56,8 @@ func ProxyServer(srvConn, cliConn *net.TCPConn, file *os.File) {
 	serverClosed := make(chan struct{}, 1)
 	clientClosed := make(chan struct{}, 1)
 
-	go broker(srvConn, cliConn, clientClosed)
-	go broker(cliConn, srvConn, serverClosed)
+	go TCPBroker(srvConn, cliConn, clientClosed)
+	go TCPBroker(cliConn, srvConn, serverClosed)
 
 	var waitFor chan struct{}
 	select {
@@ -73,7 +73,7 @@ func ProxyServer(srvConn, cliConn *net.TCPConn, file *os.File) {
 	<-waitFor
 }
 
-func broker(dst, src net.Conn, srcClosed chan struct{}) {
+func TCPBroker(dst, src net.Conn, srcClosed chan struct{}) {
 
 	_, err := transfer(dst, src, address{src.RemoteAddr(), dst.RemoteAddr()})
 
@@ -115,7 +115,7 @@ func transfer(dst writer, src reader, addr interface{}) (written int64, err erro
 				break
 			}
 		}
-		if er == EOF {
+		if er == ErrEOF {
 			break
 		}
 		if er != nil {
