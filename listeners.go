@@ -45,11 +45,11 @@ func TcpListener(f *os.File, ch *nbc.NonBlockingChan) {
 	service := ":5000"
 
 	addr, err := net.ResolveTCPAddr("tcp", service)
-	CheckError(err)
+	CheckError("[*] ResolveTCPAddr Error.", err)
 
 	// Listener for incoming TCP connections
 	listener, err := net.ListenTCP("tcp", addr)
-	CheckError(err)
+	CheckError("[*] Error in net.ListenTCP", err)
 
 	for {
 		conn, err := listener.Accept()
@@ -80,11 +80,11 @@ func UdpListener(f *os.File, ch *nbc.NonBlockingChan) {
 	service := ":5000"
 
 	addr, err := net.ResolveUDPAddr("udp", service)
-	CheckError(err)
+	CheckError("[*] Error in UDP address resolving", err)
 
 	// Listener for incoming UDP connections
 	conn, err := net.ListenUDP("udp", addr)
-	CheckError(err)
+	CheckError("[*] Error in UDP listener", err)
 
 	handleUDPClient(conn, f, ch)
 

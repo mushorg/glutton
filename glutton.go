@@ -23,10 +23,8 @@ var ser Config
 // Load services.conf file into ser
 func LoadServices() {
 	f, err := filepath.Abs("/etc/glutton/services.yml")
-	if err != nil {
-		println("[*] Error in absolute representation of file LoadServices().")
-		os.Exit(1)
-	}
+	CheckError("[*] Error in absolute representation of file LoadServices().", err)
+
 	ymlF, err := ioutil.ReadFile(f)
 
 	if err != nil {
@@ -35,7 +33,7 @@ func LoadServices() {
 
 	err = yaml.Unmarshal(ymlF, &ser)
 	if err != nil {
-		panic(err)
+		CheckError("[*] service.yml unmarshal Error.", err)
 	}
 
 	if len(ser.Ports) == 0 {
@@ -145,8 +143,9 @@ func GetProtocol(port int, transport string) *netdb.Servent {
 }
 
 // CheckError handles Fatal errors
-func CheckError(err error) {
+func CheckError(message string, err error) {
 	if err != nil {
+		println(message)
 		Fprintln(os.Stderr, "[*] Fatal Error.", err.Error())
 		os.Exit(1)
 	}
