@@ -6,7 +6,7 @@ import (
 )
 
 // CheckError handles Fatal errors
-func CheckError(err error) {
+func CheckError(msg string, err error) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[*] Fatal Error.", err.Error())
 		os.Exit(1)

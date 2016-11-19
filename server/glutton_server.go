@@ -10,6 +10,7 @@ import (
 
 	"github.com/hectane/go-nonblockingchan"
 	"github.com/mushorg/glutton"
+	"github.com/mushorg/glutton/logger"
 )
 
 func localAddresses() {
@@ -69,6 +70,10 @@ func main() {
 
 	// Load config file for remote services
 	glutton.LoadPorts(*confPath)
+
+	println("[*] Starting Packet Capturing...")
+
+	go logger.FindDevice()
 
 	go glutton.MonitorTCPConnections(tcpCh)
 	println("[*] Initializing TCP connections tracking..")

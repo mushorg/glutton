@@ -47,7 +47,7 @@ func LoadPorts(confPath string) {
 
 	err = yaml.Unmarshal(ymlF, &portConf)
 	if err != nil {
-		panic(err)
+		CheckError("[*] service.yml unmarshal Error.", err)
 	}
 
 	if len(portConf.Ports) == 0 {

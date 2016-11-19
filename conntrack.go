@@ -22,23 +22,23 @@ func MonitorTCPConnections(channel *nbc.NonBlockingChan) {
 	}
 	cmd := exec.Command("conntrack", args...)
 	stderrPipe, err := cmd.StderrPipe()
-	CheckError(err)
+	CheckError("", err)
 	go func() {
 		stderr := bufio.NewReader(stderrPipe)
 		for {
 			line, _, readErr := stderr.ReadLine()
 			println("[*]", string(line))
-			CheckError(readErr)
+			CheckError("", readErr)
 		}
 	}()
 	stdoutPipe, err := cmd.StdoutPipe()
-	CheckError(err)
+	CheckError("", err)
 	stdout := bufio.NewReader(stdoutPipe)
 	cmd.Start()
 	var buffer bytes.Buffer
 	for {
 		frag, isPrefix, err := stdout.ReadLine()
-		CheckError(err)
+		CheckError("", err)
 		buffer.Write(frag)
 		if !isPrefix {
 			line := buffer.String()
@@ -63,23 +63,23 @@ func MonitorUDPConnections(channel *nbc.NonBlockingChan) {
 	}
 	cmd := exec.Command("conntrack", args...)
 	stderrPipe, err := cmd.StderrPipe()
-	CheckError(err)
+	CheckError("", err)
 	go func() {
 		stderr := bufio.NewReader(stderrPipe)
 		for {
 			line, _, readErr := stderr.ReadLine()
 			println("[*]", string(line))
-			CheckError(readErr)
+			CheckError("", readErr)
 		}
 	}()
 	stdoutPipe, err := cmd.StdoutPipe()
-	CheckError(err)
+	CheckError("", err)
 	stdout := bufio.NewReader(stdoutPipe)
 	cmd.Start()
 	var buffer bytes.Buffer
 	for {
 		frag, isPrefix, err := stdout.ReadLine()
-		CheckError(err)
+		CheckError("", err)
 		buffer.Write(frag)
 		if !isPrefix {
 			line := buffer.String()
