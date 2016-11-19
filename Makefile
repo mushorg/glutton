@@ -1,5 +1,5 @@
 build:
-	CGO_ENABLED=0 GOOS=linux go build -o sensor glutton/glutton_server.go
+	CGO_ENABLED=0 GOOS=linux go build -o sensor server/glutton_server.go
 
 run: build
 	sudo ./sensor -conf config/ports.yml

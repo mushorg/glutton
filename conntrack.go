@@ -3,14 +3,16 @@ package glutton
 import (
 	"bufio"
 	"bytes"
-	"github.com/hectane/go-nonblockingchan"
 	"os/exec"
 	"regexp"
+
+	"github.com/hectane/go-nonblockingchan"
 )
 
 const tcpRegExp = `\[\w+]\s+\w+\s+.+?src=(\d+\.\d+\.\d+\.\d+)\s+dst=(\d+\.\d+\.\d+\.\d+)\s+sport=(\d+)\s+dport=(\d+)\s+`
 const udpRegExp = `\[(\w+)]\s+\w+\s+.+?src=(\d+\.\d+\.\d+\.\d+)\s+dst=(\d+\.\d+\.\d+\.\d+)\s+sport=(\d+)\s+dport=(\d+)\s+`
 
+// MonitorTCPConnections monitors conntrack for TCP connections
 func MonitorTCPConnections(channel *nbc.NonBlockingChan) {
 	args := []string{
 		"--buffer-size", "30000000",
@@ -24,9 +26,9 @@ func MonitorTCPConnections(channel *nbc.NonBlockingChan) {
 	go func() {
 		stderr := bufio.NewReader(stderrPipe)
 		for {
-			line, _, err := stderr.ReadLine()
+			line, _, readErr := stderr.ReadLine()
 			println("[*]", string(line))
-			CheckError(err)
+			CheckError(readErr)
 		}
 	}()
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -51,6 +53,7 @@ func MonitorTCPConnections(channel *nbc.NonBlockingChan) {
 	}
 }
 
+// MonitorUDPConnections monitors conntrack for UDP connections
 func MonitorUDPConnections(channel *nbc.NonBlockingChan) {
 	args := []string{
 		"--buffer-size", "30000000",
@@ -64,9 +67,9 @@ func MonitorUDPConnections(channel *nbc.NonBlockingChan) {
 	go func() {
 		stderr := bufio.NewReader(stderrPipe)
 		for {
-			line, _, err := stderr.ReadLine()
+			line, _, readErr := stderr.ReadLine()
 			println("[*]", string(line))
-			CheckError(err)
+			CheckError(readErr)
 		}
 	}()
 	stdoutPipe, err := cmd.StdoutPipe()

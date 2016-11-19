@@ -20,6 +20,7 @@ type Connection struct {
 	n      int
 }
 
+// UDPBroker is handling and UDP connection
 func UDPBroker(c *Connection) {
 	log.SetOutput(c.f)
 	tmp := c.addr.String()

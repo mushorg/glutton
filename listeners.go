@@ -45,7 +45,8 @@ func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
 
 }
 
-func TcpListener(f *os.File, ch *nbc.NonBlockingChan) {
+// TCPListener listens for new TCP connections
+func TCPListener(f *os.File, ch *nbc.NonBlockingChan) {
 	service := ":5000"
 
 	addr, err := net.ResolveTCPAddr("tcp", service)
@@ -80,7 +81,8 @@ func handleUDPClient(conn *net.UDPConn, f *os.File, ch *nbc.NonBlockingChan) {
 	}
 }
 
-func UdpListener(f *os.File, ch *nbc.NonBlockingChan) {
+// UDPListener listens for new UDP connections
+func UDPListener(f *os.File, ch *nbc.NonBlockingChan) {
 	service := ":5000"
 
 	addr, err := net.ResolveUDPAddr("udp", service)

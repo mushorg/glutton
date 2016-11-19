@@ -1,7 +1,6 @@
 package glutton
 
 import (
-	"errors"
 	"log"
 	"net"
 	"os"
@@ -28,10 +27,7 @@ type writerTo interface {
 	WriteTo(w writer) (n int64, err error)
 }
 
-var ErrEOF = errors.New("[*] Error. EOF")
-
-var ErrShortWrite = errors.New("[*] Error. short write")
-
+// TCPClient for proxy connections
 func TCPClient(addr string) *net.TCPConn {
 
 	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
@@ -49,6 +45,7 @@ func TCPClient(addr string) *net.TCPConn {
 	return conn
 }
 
+// ProxyServer handles the proxy connections
 func ProxyServer(srvConn, cliConn *net.TCPConn, file *os.File) {
 
 	// f = file
@@ -73,6 +70,7 @@ func ProxyServer(srvConn, cliConn *net.TCPConn, file *os.File) {
 	<-waitFor
 }
 
+// TCPBroker is handling a TCP connection
 func TCPBroker(dst, src net.Conn, srcClosed chan struct{}) {
 
 	_, err := transfer(dst, src, address{src.RemoteAddr(), dst.RemoteAddr()})
@@ -86,7 +84,7 @@ func TCPBroker(dst, src net.Conn, srcClosed chan struct{}) {
 	srcClosed <- struct{}{}
 }
 
-func transfer(dst writer, src reader, addr interface{}) (written int64, err error) {
+func transfer(dst writer, src reader, addr interface{}) (int64, error) {
 	v := addr.(address)
 	if wt, ok := src.(writerTo); ok {
 		return wt.WriteTo(dst)
@@ -97,30 +95,25 @@ func transfer(dst writer, src reader, addr interface{}) (written int64, err erro
 	}
 
 	buf := make([]byte, 32*1024)
+	var written int64
+	var err error
 
 	for {
-		nr, er := src.Read(buf)
+		nr, readErr := src.Read(buf)
+		if err != nil {
+			err = readErr
+			break
+		}
 		log.Printf("[TCP] [%v -> %v] Payload: %v", v.srcAddr, v.dstAddr, string(buf[0:nr]))
 		if nr > 0 {
-			nw, ew := dst.Write(buf[0:nr])
+			nw, writeErr := dst.Write(buf[0:nr])
+			if err != nil {
+				err = writeErr
+				break
+			}
 			if nw > 0 {
 				written += int64(nw)
 			}
-			if ew != nil {
-				err = ew
-				break
-			}
-			if nr != nw {
-				err = ErrShortWrite
-				break
-			}
-		}
-		if er == ErrEOF {
-			break
-		}
-		if er != nil {
-			err = er
-			break
 		}
 	}
 	return written, err

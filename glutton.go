@@ -1,7 +1,6 @@
 package glutton
 
 import (
-	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -59,12 +58,12 @@ func LoadPorts(confPath string) {
 
 }
 
-// Return destination address of the service to redirect traffic
+// GetHost returns destination address of the service to redirect traffic
 func GetHost(p int) string {
 	return portConf.Ports[p]
 }
 
-//return Destination port for TCP
+// GetTCPDesPort return Destination port for TCP
 func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 
 	if ch.Len() == 0 {
@@ -94,18 +93,17 @@ func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 				return -1
 			}
 			return dp
-		} else {
-			if ch.Len() == 0 {
-				println("[*] TCP No logs found!")
-				return -1
-			}
-			stream, ok = <-ch.Recv
 		}
+		if ch.Len() == 0 {
+			println("[*] TCP No logs found!")
+			return -1
+		}
+		stream, ok = <-ch.Recv
 	}
 	return -1
 }
 
-//return Destination port for UDP
+// GetUDPDesPort return Destination port for UDP
 func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 
 	// Time used by conntrack for UDP logging
@@ -136,13 +134,12 @@ func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 				return -1
 			}
 			return dp
-		} else {
-			if ch.Len() == 0 {
-				println("[*] UDP No logs found!")
-				return -1
-			}
-			stream, ok = <-ch.Recv
 		}
+		if ch.Len() == 0 {
+			println("[*] UDP No logs found!")
+			return -1
+		}
+		stream, ok = <-ch.Recv
 	}
 	return -1
 }
@@ -151,12 +148,4 @@ func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 func GetProtocol(port int, transport string) *netdb.Servent {
 	prot := netdb.GetProtoByName(transport)
 	return netdb.GetServByPort(port, prot)
-}
-
-// CheckError handles Fatal errors
-func CheckError(err error) {
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "[*] Fatal Error.", err.Error())
-		os.Exit(1)
-	}
 }
