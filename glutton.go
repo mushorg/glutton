@@ -1,55 +1,69 @@
 package glutton
 
 import (
-	. "fmt"
-	"github.com/hectane/go-nonblockingchan"
-	"gopkg.in/yaml.v2"
-	"honnef.co/go/netdb"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/coreos/go-iptables/iptables"
+	"github.com/hectane/go-nonblockingchan"
+	"gopkg.in/yaml.v2"
+	"honnef.co/go/netdb"
 )
 
-// For the fields of services.conf
+// Config For the fields of ports.conf
 type Config struct {
 	Description string
 	Ports       map[int]string
 }
 
-var ser Config
+var portConf Config
 
-// Load services.conf file into ser
-func LoadServices() {
-	f, err := filepath.Abs("/etc/glutton/services.yml")
-	CheckError("[*] Error in absolute representation of file LoadServices().", err)
+// SetIPTables modifies to iptables
+func SetIPTables() {
+	ipt, err := iptables.New()
+	if err != nil {
+		panic(err)
+	}
+	ipt.Append("nat", "PREROUTING", "-p", "tcp", "--dport", "1:5000", "-j", "REDIRECT", "--to-port", "5000")
+	ipt.Append("nat", "PREROUTING", "-p", "tcp", "--dport", "5002:65389", "-j", "REDIRECT", "--to-port", "5000")
+	ipt.Append("nat", "PREROUTING", "-p", "udp", "-j", "REDIRECT", "--to-port", "5000")
+}
 
+// LoadPorts ports.yml file into portConf
+func LoadPorts(confPath string) {
+	f, err := filepath.Abs(confPath)
+	if err != nil {
+		println("[*] Error in absolute representation of file LoadPorts().")
+		os.Exit(1)
+	}
 	ymlF, err := ioutil.ReadFile(f)
 
 	if err != nil {
 		panic(err)
 	}
 
-	err = yaml.Unmarshal(ymlF, &ser)
+	err = yaml.Unmarshal(ymlF, &portConf)
 	if err != nil {
 		CheckError("[*] service.yml unmarshal Error.", err)
 	}
 
-	if len(ser.Ports) == 0 {
-		println("[*] **Host list is empty, Please update services.yml")
+	if len(portConf.Ports) == 0 {
+		println("[*] **Host list is empty, Please update ports.yml")
 		os.Exit(1)
 	}
-	println("[*] Services loaded successfully....")
+	println("[*] Port configuration loaded successfully....")
 
 }
 
-// Return destination address of the service to redirect traffic
+// GetHost returns destination address of the service to redirect traffic
 func GetHost(p int) string {
-	return ser.Ports[p]
+	return portConf.Ports[p]
 }
 
-//return Destination port for TCP
+// GetTCPDesPort return Destination port for TCP
 func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 
 	if ch.Len() == 0 {
@@ -79,20 +93,17 @@ func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 				return -1
 			}
 			return dp
-		} else {
-			if ch.Len() == 0 {
-				println("[*] TCP No logs found!")
-				return -1
-			}
-			stream, ok = <-ch.Recv
 		}
-
+		if ch.Len() == 0 {
+			println("[*] TCP No logs found!")
+			return -1
+		}
+		stream, ok = <-ch.Recv
 	}
-
 	return -1
 }
 
-//return Destination port for UDP
+// GetUDPDesPort return Destination port for UDP
 func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 
 	// Time used by conntrack for UDP logging
@@ -123,30 +134,18 @@ func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 				return -1
 			}
 			return dp
-		} else {
-			if ch.Len() == 0 {
-				println("[*] UDP No logs found!")
-				return -1
-			}
-			stream, ok = <-ch.Recv
 		}
-
+		if ch.Len() == 0 {
+			println("[*] UDP No logs found!")
+			return -1
+		}
+		stream, ok = <-ch.Recv
 	}
-
 	return -1
 }
 
-// getProtocol(80, "tcp")
+// GetProtocol (80, "tcp")
 func GetProtocol(port int, transport string) *netdb.Servent {
 	prot := netdb.GetProtoByName(transport)
 	return netdb.GetServByPort(port, prot)
-}
-
-// CheckError handles Fatal errors
-func CheckError(message string, err error) {
-	if err != nil {
-		println(message)
-		Fprintln(os.Stderr, "[*] Fatal Error.", err.Error())
-		os.Exit(1)
-	}
 }

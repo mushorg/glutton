@@ -1,10 +1,12 @@
 package glutton
 
 import (
-	"github.com/hectane/go-nonblockingchan"
+	"fmt"
 	"net"
 	"os"
 	"strings"
+
+	"github.com/hectane/go-nonblockingchan"
 )
 
 func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
@@ -19,6 +21,8 @@ func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
 	addr := strings.Split(tmp, ":")
 
 	dp := GetTCPDesPort(addr, ch)
+
+	fmt.Printf("[*] New connection from %s to port %d\n", addr[0], dp)
 
 	if dp == -1 {
 		println("[*] Warning. Packet dropped! [TCP] glutton_server.go desPort == -1")
@@ -41,7 +45,8 @@ func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
 
 }
 
-func TcpListener(f *os.File, ch *nbc.NonBlockingChan) {
+// TCPListener listens for new TCP connections
+func TCPListener(f *os.File, ch *nbc.NonBlockingChan) {
 	service := ":5000"
 
 	addr, err := net.ResolveTCPAddr("tcp", service)
@@ -72,11 +77,12 @@ func handleUDPClient(conn *net.UDPConn, f *os.File, ch *nbc.NonBlockingChan) {
 		}
 
 		c := Connection{conn, addr, ch, f, b, n}
-		go brocker(&c)
+		go UDPBroker(&c)
 	}
 }
 
-func UdpListener(f *os.File, ch *nbc.NonBlockingChan) {
+// UDPListener listens for new UDP connections
+func UDPListener(f *os.File, ch *nbc.NonBlockingChan) {
 	service := ":5000"
 
 	addr, err := net.ResolveUDPAddr("udp", service)

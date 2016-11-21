@@ -1,14 +1,16 @@
 package glutton
 
 import (
-	. "fmt"
-	"github.com/hectane/go-nonblockingchan"
+	"fmt"
 	"log"
 	"net"
 	"os"
 	"strings"
+
+	"github.com/hectane/go-nonblockingchan"
 )
 
+// Connection struct for UDP connection
 type Connection struct {
 	conn   *net.UDPConn
 	addr   *net.UDPAddr
@@ -18,17 +20,18 @@ type Connection struct {
 	n      int
 }
 
-func brocker(c *Connection) {
+// UDPBroker is handling and UDP connection
+func UDPBroker(c *Connection) {
 	log.SetOutput(c.f)
 	tmp := c.addr.String()
 	if tmp == "<nil>" {
-		println("[*] Error. Address:port == nil udp_brocker.go addr.String()")
+		println("[*] Error. Address:port == nil udp_broker.go addr.String()")
 		return
 	}
 	str := strings.Split(tmp, ":")
 	dp := GetUDPDesPort(str, c.ch)
 	if dp == -1 {
-		println("[*] Warning. Packet dropped! [UDP] udp_brocker.go desPort == -1")
+		println("[*] Warning. Packet dropped! [UDP] udp_broker.go desPort == -1")
 		return
 	}
 	host := GetHost(dp)
@@ -38,19 +41,19 @@ func brocker(c *Connection) {
 	}
 	udpAddr, err := net.ResolveUDPAddr("udp", host)
 	if err != nil {
-		println("[*] Error. udp_brocker() net.ResolveUDPAddr Could not resolve host address!")
+		println("[*] Error. udp_broker() net.ResolveUDPAddr Could not resolve host address!")
 		return
 	}
 
 	conn, err := net.DialUDP("udp", nil, udpAddr)
 	if err != nil {
-		println("[*] Error. udp_brocker() net.DialUDP Failed to connect to host!")
+		println("[*] Error. udp_broker() net.DialUDP Failed to connect to host!")
 		return
 	}
 
 	_, err = conn.Write(c.buffer[0:c.n])
 	if err != nil {
-		println("[*] Error. udp_brocker() conn.Write() Failed to write on connection!")
+		println("[*] Error. udp_broker() conn.Write() Failed to write on connection!")
 		return
 	}
 
@@ -59,7 +62,7 @@ func brocker(c *Connection) {
 	var buf [1500]byte
 	n, err := conn.Read(buf[0:])
 	if err != nil {
-		println("[*] Warning. udp_brocker() conn.Read() Failed to read from connection!")
+		println("[*] Warning. udp_broker() conn.Read() Failed to read from connection!")
 		return
 	}
 
@@ -67,7 +70,7 @@ func brocker(c *Connection) {
 
 	num, err := c.conn.WriteToUDP(buf[0:n], c.addr)
 	if err != nil {
-		Printf("[*] Error. [%v] %v", num, err)
+		fmt.Printf("[*] Error. [%v] %v", num, err)
 	}
 
 }
