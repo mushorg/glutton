@@ -1,4 +1,4 @@
-# Glutton [![Build Status](https://travis-ci.org/mushorg/tanner.svg?branch=master)](https://travis-ci.org/mushorg/tanner)
+# Glutton [![Build Status](https://travis-ci.org/mushorg/glutton.svg?branch=master)](https://travis-ci.org/mushorg/glutton)
 
 The Glutton server listens on both TCP and UDP port 5000 for new connections.
 
