@@ -5,9 +5,10 @@ package logger
 
 import (
 	"fmt"
-	"github.com/mushorg/glutton"
 	"io/ioutil"
 	"os"
+
+	"github.com/mushorg/glutton"
 	"pkg.re/essentialkaos/z7.v2"
 )
 

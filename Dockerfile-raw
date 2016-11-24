@@ -1,0 +1,5 @@
+FROM alpine:3.4
+RUN mkdir -p /opt/glutton
+WORKDIR /opt/glutton
+ADD build/raw-sensor .
+CMD ["./raw-sensor"]

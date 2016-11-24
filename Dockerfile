@@ -3,6 +3,6 @@ RUN apk update
 RUN apk add conntrack-tools iptables
 RUN mkdir -p /opt/glutton
 WORKDIR /opt/glutton
-ADD sensor .
+ADD build/sensor .
 ADD config/ports.yml .
 CMD ["./sensor", "-conf", "ports.yml", "-set-tables"]
