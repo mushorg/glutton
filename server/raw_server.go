@@ -33,11 +33,11 @@ func main() {
 
 			if tcp.SYN {
 				tcpLayer := &layers.TCP{
-					SrcPort: tcp.SrcPort,
-					DstPort: tcp.DstPort,
+					SrcPort: tcp.DstPort,
+					DstPort: tcp.SrcPort,
 					ACK:     true,
 					SYN:     true,
-					Seq:     tcp.Seq + 1,
+					Seq:     tcp.Seq,
 					Ack:     tcp.Ack + 1,
 				}
 				log.Printf("%+v", tcp)
