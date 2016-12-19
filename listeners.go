@@ -35,6 +35,9 @@ func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
 		println("[*] Error. No host found. Packet dropped!")
 		return
 	}
+
+	handleTelnet(conn)
+
 	proxyConn := TCPClient(host)
 	if proxyConn == nil {
 		return

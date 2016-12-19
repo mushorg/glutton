@@ -3,20 +3,20 @@
 // Packet Capturing from multiple interfaces at a same time
 // SessionTime is hard coded
 
-// *Notes
 // writer variable is used for writing on File. The file used by the writer will be swapped after every
 // 4 hours so that the previous one could be processed for compression
 package logger
 
 import (
 	"fmt"
+	"os"
+	"time"
+
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"github.com/google/gopacket/pcapgo"
 	"github.com/mushorg/glutton"
-	"os"
-	"time"
 )
 
 var (

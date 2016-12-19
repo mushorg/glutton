@@ -47,6 +47,7 @@ func main() {
 	logPath := flag.String("log", "/dev/null", "Log path.")
 	confPath := flag.String("conf", "/etc/glutton/proxy.yml", "Config path.")
 	setTables := flag.Bool("set-tables", false, "True to set iptables rules")
+	capturePackets := flag.Bool("capture-packets", false, "True store pcap data")
 	flag.Parse()
 
 	localAddresses()
@@ -71,9 +72,10 @@ func main() {
 	// Load config file for remote services
 	glutton.LoadPorts(*confPath)
 
-	println("[*] Starting Packet Capturing...")
-
-	go logger.FindDevice()
+	if *capturePackets {
+		println("[*] Starting Packet Capturing...")
+		go logger.FindDevice()
+	}
 
 	go glutton.MonitorTCPConnections(tcpCh)
 	println("[*] Initializing TCP connections tracking..")
