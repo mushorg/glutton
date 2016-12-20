@@ -33,7 +33,7 @@ func UDPBroker(c *Connection) {
 		log.Println("Warning. Packet dropped! [UDP] udp_broker.go desPort == -1")
 		return
 	}
-	host := GetHost(dp)
+	host := GetHandler(dp)
 	if len(host) < 2 {
 		log.Println("Error. [UDP] No host found. Packet dropped!")
 		return

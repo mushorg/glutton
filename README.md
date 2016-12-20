@@ -48,3 +48,8 @@ go install
 cp $GOPATH/src/github.com/mushorg/glutton/scripts/glutton.conf /etc/init
 ```
 Now Glutton server listening on all tcp udp ports of the system except one for SSH 5001 :]
+
+For testing Telnet locally:
+```
+sudo iptables -t nat -A OUTPUT -p tcp --dport 23 -j REDIRECT --to-port 5000
+```

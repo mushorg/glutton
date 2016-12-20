@@ -16,8 +16,8 @@ import (
 
 // Config For the fields of ports.conf
 type Config struct {
-	Description string
-	Ports       map[int]string
+	Default string
+	Ports   map[int]string
 }
 
 var portConf Config
@@ -59,9 +59,14 @@ func LoadPorts(confPath string) {
 
 }
 
-// GetHost returns destination address of the service to redirect traffic
-func GetHost(p int) string {
+// GetHandler returns destination address of the service to redirect traffic
+func GetHandler(p int) string {
 	return portConf.Ports[p]
+}
+
+// GetDefaultHandler returns the default handler or empty string
+func GetDefaultHandler() string {
+	return portConf.Default
 }
 
 // GetTCPDesPort return Destination port for TCP
