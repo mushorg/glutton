@@ -3,6 +3,7 @@ package glutton
 import (
 	"bufio"
 	"bytes"
+	"log"
 	"os/exec"
 	"regexp"
 
@@ -27,7 +28,7 @@ func MonitorTCPConnections(channel *nbc.NonBlockingChan) {
 		stderr := bufio.NewReader(stderrPipe)
 		for {
 			line, _, readErr := stderr.ReadLine()
-			println("[*]", string(line))
+			log.Println(string(line))
 			CheckError("", readErr)
 		}
 	}()
@@ -68,7 +69,7 @@ func MonitorUDPConnections(channel *nbc.NonBlockingChan) {
 		stderr := bufio.NewReader(stderrPipe)
 		for {
 			line, _, readErr := stderr.ReadLine()
-			println("[*]", string(line))
+			log.Println(string(line))
 			CheckError("", readErr)
 		}
 	}()

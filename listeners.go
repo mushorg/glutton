@@ -1,7 +1,7 @@
 package glutton
 
 import (
-	"fmt"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -14,7 +14,7 @@ func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
 	// Splitting address to compare with conntrack logs
 	tmp := conn.RemoteAddr().String()
 	if tmp == "<nil>" {
-		println("[*] Error. Address:port == nil glutton_server.go conn.RemoteAddr().String()")
+		log.Println("Error. Address:port == nil glutton_server.go conn.RemoteAddr().String()")
 		return
 	}
 
@@ -22,17 +22,17 @@ func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
 
 	dp := GetTCPDesPort(addr, ch)
 
-	fmt.Printf("[*] New connection from %s to port %d\n", addr[0], dp)
+	log.Printf("New connection from %s to port %d\n", addr[0], dp)
 
 	if dp == -1 {
-		println("[*] Warning. Packet dropped! [TCP] glutton_server.go desPort == -1")
+		log.Println("Warning. Packet dropped! [TCP] glutton_server.go desPort == -1")
 		return
 	}
 
 	// TCP client for destination server
 	host := GetHost(dp)
 	if len(host) < 2 {
-		println("[*] Error. No host found. Packet dropped!")
+		log.Println("Error. No host found. Packet dropped!")
 		return
 	}
 	proxyConn := TCPClient(host)

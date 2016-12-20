@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -14,7 +15,7 @@ import (
 )
 
 func localAddresses() {
-	println("[*] Listening on the following interfaces:")
+	log.Println("Listening on the following interfaces:")
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return
@@ -27,7 +28,7 @@ func localAddresses() {
 		for _, a := range addrs {
 			switch v := a.(type) {
 			case *net.IPNet:
-				fmt.Printf("\t%v : %s (%s)\n", i.Name, v, v.IP.DefaultMask())
+				log.Printf("\t%v : %s (%s)\n", i.Name, v, v.IP.DefaultMask())
 			}
 		}
 	}
@@ -47,6 +48,7 @@ func main() {
 	logPath := flag.String("log", "/dev/null", "Log path.")
 	confPath := flag.String("conf", "/etc/glutton/proxy.yml", "Config path.")
 	setTables := flag.Bool("set-tables", false, "True to set iptables rules")
+	capturePackets := flag.Bool("capture-packets", false, "True store pcap data")
 	flag.Parse()
 
 	localAddresses()
@@ -61,7 +63,7 @@ func main() {
 		panic(err)
 	}
 	defer f.Close()
-	log.SetOutput(f)
+	log.SetOutput(io.MultiWriter(f, os.Stdout))
 
 	// Channel for tcp logging
 	tcpCh := nbc.New()
@@ -71,23 +73,24 @@ func main() {
 	// Load config file for remote services
 	glutton.LoadPorts(*confPath)
 
-	println("[*] Starting Packet Capturing...")
-
-	go logger.FindDevice()
+	if *capturePackets {
+		log.Println("Starting Packet Capturing...")
+		go logger.FindDevice()
+	}
 
 	go glutton.MonitorTCPConnections(tcpCh)
-	println("[*] Initializing TCP connections tracking..")
+	log.Println("Initializing TCP connections tracking..")
 	// Delay required for initialization of conntrack modules
 	time.Sleep(3 * time.Second)
 
 	go glutton.MonitorUDPConnections(udpCh)
-	println("[*] Initializing UDP connections tracking...")
+	log.Println("Initializing UDP connections tracking...")
 	// Delay required for initialization of conntrack modules
 	time.Sleep(3 * time.Second)
 
-	println("[*] Starting TCP Server...")
+	log.Println("Starting TCP Server...")
 	go glutton.TCPListener(f, tcpCh)
 
-	println("[*] Starting UDP Server...")
+	log.Println("Starting UDP Server...")
 	glutton.UDPListener(f, udpCh)
 }

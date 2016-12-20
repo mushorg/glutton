@@ -32,13 +32,13 @@ func TCPClient(addr string) *net.TCPConn {
 
 	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
-		println("[*] Error. ResolveTCPAddr failed:", err.Error())
+		log.Println("Error. ResolveTCPAddr failed:", err.Error())
 		return nil
 	}
 
 	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
-		println("[*] Error. Dial failed: Host either not active or not responding ", err.Error())
+		log.Println("Error. Dial failed: Host either not active or not responding ", err.Error())
 		return nil
 	}
 
@@ -76,10 +76,10 @@ func TCPBroker(dst, src net.Conn, srcClosed chan struct{}) {
 	_, err := transfer(dst, src, address{src.RemoteAddr(), dst.RemoteAddr()})
 
 	if err != nil {
-		log.Printf("[*] Warning Copy error: %s", err)
+		log.Printf("Warning Copy error: %s", err)
 	}
 	if err := src.Close(); err != nil {
-		log.Printf("[*] Warning Close error: %s", err)
+		log.Printf("Warning Close error: %s", err)
 	}
 	srcClosed <- struct{}{}
 }
