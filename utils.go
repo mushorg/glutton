@@ -1,14 +1,14 @@
 package glutton
 
 import (
-	"fmt"
+	"log"
 	"os"
 )
 
 // CheckError handles Fatal errors
 func CheckError(msg string, err error) {
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "[*] Fatal Error.", err.Error())
+		log.Printf("Fatal Error: %s", err.Error())
 		os.Exit(1)
 	}
 }

@@ -4,48 +4,48 @@
 package logger
 
 import (
-	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 
 	"github.com/mushorg/glutton"
 	"pkg.re/essentialkaos/z7.v2"
 )
 
-type Filter interface {
+type filter interface {
 	countFiles() int
 	checkStatus(int) bool
 	appendFile(int)
 }
 
-type Directory struct {
+type directory struct {
 	totalFiles      []os.FileInfo
 	unCompressed    []string
 	path            string
 	compressionType string
 }
 
-func (d *Directory) countFiles() int {
+func (d *directory) countFiles() int {
 	return len(d.totalFiles)
 }
 
 //Error checking: glutton package
-func (d *Directory) checkStatus(i int) bool {
+func (d *directory) checkStatus(i int) bool {
 	if d.totalFiles[i].IsDir() {
 		return false
 	}
 	compressed, err := z7.Check((d.path + d.totalFiles[i].Name()))
 	if err != nil {
-		fmt.Println("[*] Not compressed")
+		log.Println("Not compressed")
 	}
 	return compressed
 }
 
-func (d *Directory) appendFile(i int) {
+func (d *directory) appendFile(i int) {
 	d.unCompressed = append(d.unCompressed, d.totalFiles[i].Name())
 }
 
-func applyFileter(f Filter) {
+func applyFileter(f filter) {
 	for i := 0; i < f.countFiles(); i++ {
 		if !f.checkStatus(i) {
 
@@ -57,28 +57,28 @@ func applyFileter(f Filter) {
 func compressFiles(name string) {
 	newName := name + ".7z"
 	_, err := z7.Add(newName, name)
-	glutton.CheckError("[*] CompressFiles() Error: ", err)
+	glutton.CheckError("CompressFiles() Error: ", err)
 	removeFile(name)
 }
 
 //Error checking: glutton package
 func removeFile(file string) {
 	err := os.Remove(file)
-	glutton.CheckError("[*] Error in removeFile() files: ", err)
+	glutton.CheckError("Error in removeFile() files: ", err)
 }
 
 func checkForUncompressed() {
-	dir := &Directory{unCompressed: make([]string, 0), path: "/var/log/glutton/", compressionType: ".7z"}
+	dir := &directory{unCompressed: make([]string, 0), path: "/var/log/glutton/", compressionType: ".7z"}
 	f, err := ioutil.ReadDir("/var/log/glutton")
-	glutton.CheckError("[*] Error in file_compressor.go checking for uncompressed files", err)
+	glutton.CheckError("Error in file_compressor.go checking for uncompressed files", err)
 	dir.totalFiles = f
 	applyFileter(dir)
 	for _, name := range dir.unCompressed {
 		if name != filename {
-			fmt.Println("[*] Compressing > ", name)
+			log.Println("Compressing > ", name)
 			compressFiles(dir.path + name)
-			fmt.Println("[*] Compressed", name)
+			log.Println("Compressed", name)
 		}
 	}
-	fmt.Println("Routine finished")
+	log.Println("Routine finished")
 }

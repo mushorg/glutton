@@ -8,7 +8,7 @@
 package logger
 
 import (
-	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -21,8 +21,7 @@ import (
 
 var (
 	deviceName     string
-	snapshotLen    int32  = 1024
-	snapshot_len   uint32 = 1024
+	snapshotLen    uint32 = 1024
 	promiscuous    bool
 	err            error
 	timeout        time.Duration = -1 * time.Second
@@ -42,7 +41,7 @@ func swapFiles() {
 		glutton.CheckError("[*] Error in creating pcap file", err)
 		defer f.Close()
 		writer = pcapgo.NewWriter(f)
-		writer.WriteFileHeader(snapshot_len, layers.LinkTypeEthernet)
+		writer.WriteFileHeader(snapshotLen, layers.LinkTypeEthernet)
 		if fileToCompress != "" {
 			go compressFiles(fileToCompress) //Start compressing of previously used file
 		}
@@ -57,7 +56,7 @@ func startCapturing() {
 	go swapFiles()
 
 	// Open Device
-	handle, err = pcap.OpenLive(deviceName, snapshotLen, promiscuous, timeout)
+	handle, err = pcap.OpenLive(deviceName, int32(snapshotLen), promiscuous, timeout)
 	glutton.CheckError("Error opening device", err)
 	defer handle.Close()
 
@@ -67,7 +66,7 @@ func startCapturing() {
 
 	// Use the handle as a packet source to process all packets
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
-	fmt.Println("[*] Packet capturing started for ", deviceName)
+	log.Println("Packet capturing started for ", deviceName)
 
 	for packet := range packetSource.Packets() {
 		// Writing packets to PCAP
@@ -75,14 +74,14 @@ func startCapturing() {
 	}
 }
 
-// This function will search for network interface cards available and select one for logging
+// FindDevice will search for network interface cards available and select one for logging
 func FindDevice() {
-	fmt.Println("[*] Checking for previously uncompressed files")
+	log.Println("Checking for previously uncompressed files")
 	go checkForUncompressed() // Check the logging directory for uncompressed files
 FindAgain:
 	// Find all devices
 	devices, err := pcap.FindAllDevs()
-	glutton.CheckError("[*] Error in search for network interface card.", err)
+	glutton.CheckError("Error in search for network interface card.", err)
 
 	interfaceCount := 0
 	for _, device := range devices {
@@ -97,7 +96,7 @@ FindAgain:
 
 	//No interface could be detected
 	if interfaceCount == 0 {
-		fmt.Println("[*] No INTERNET connection, trying again... ")
+		log.Println("No INTERNET connection, trying again... ")
 		time.Sleep(30 * time.Second)
 		goto FindAgain
 	}
@@ -106,6 +105,6 @@ FindAgain:
 	if interfaceCount == 1 {
 		startCapturing()
 	} else {
-		fmt.Println("Configuration file to deal with multiple is under implementation!")
+		log.Println("Configuration file to deal with multiple is under implementation!")
 	}
 }

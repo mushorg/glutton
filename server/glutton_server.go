@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -14,7 +15,7 @@ import (
 )
 
 func localAddresses() {
-	println("[*] Listening on the following interfaces:")
+	log.Println("Listening on the following interfaces:")
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return
@@ -27,7 +28,7 @@ func localAddresses() {
 		for _, a := range addrs {
 			switch v := a.(type) {
 			case *net.IPNet:
-				fmt.Printf("\t%v : %s (%s)\n", i.Name, v, v.IP.DefaultMask())
+				log.Printf("\t%v : %s (%s)\n", i.Name, v, v.IP.DefaultMask())
 			}
 		}
 	}
@@ -62,7 +63,7 @@ func main() {
 		panic(err)
 	}
 	defer f.Close()
-	log.SetOutput(f)
+	log.SetOutput(io.MultiWriter(f, os.Stdout))
 
 	// Channel for tcp logging
 	tcpCh := nbc.New()
@@ -73,23 +74,23 @@ func main() {
 	glutton.LoadPorts(*confPath)
 
 	if *capturePackets {
-		println("[*] Starting Packet Capturing...")
+		log.Println("Starting Packet Capturing...")
 		go logger.FindDevice()
 	}
 
 	go glutton.MonitorTCPConnections(tcpCh)
-	println("[*] Initializing TCP connections tracking..")
+	log.Println("Initializing TCP connections tracking..")
 	// Delay required for initialization of conntrack modules
 	time.Sleep(3 * time.Second)
 
 	go glutton.MonitorUDPConnections(udpCh)
-	println("[*] Initializing UDP connections tracking...")
+	log.Println("Initializing UDP connections tracking...")
 	// Delay required for initialization of conntrack modules
 	time.Sleep(3 * time.Second)
 
-	println("[*] Starting TCP Server...")
+	log.Println("Starting TCP Server...")
 	go glutton.TCPListener(f, tcpCh)
 
-	println("[*] Starting UDP Server...")
+	log.Println("Starting UDP Server...")
 	glutton.UDPListener(f, udpCh)
 }
