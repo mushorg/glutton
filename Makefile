@@ -1,10 +1,6 @@
 .PHONY: all test clean build
 
 build:
-<<<<<<< HEAD
-	# CGO_ENABLED=0 GOOS=linux go build -o sensor server/glutton_server.go
-=======
->>>>>>> master
 	GOOS=linux go build -o sensor server/glutton_server.go
 
 run: build

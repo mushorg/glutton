@@ -32,13 +32,21 @@ func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
 	// TCP client for destination server
 	handler := GetHandler(dp)
 	if len(handler) < 2 {
-		log.Println("Error. No host found. Packet dropped!")
-		return
+		log.Println("No explizit handler found")
+		handler = GetDefaultHandler()
+		if handler == "" {
+			log.Println("No default handler found. Packet dropped!")
+			return
+		}
+
 	}
 
 	if strings.HasPrefix(handler, "handle") {
 		if strings.HasSuffix(handler, "telnet") {
 			go handleTelnet(conn)
+		}
+		if strings.HasSuffix(handler, "default") {
+			go handleDefault(conn)
 		}
 	}
 

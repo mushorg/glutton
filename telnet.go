@@ -34,6 +34,7 @@ func readMsg(conn net.Conn) (string, error) {
 }
 
 func handleTelnet(conn net.Conn) error {
+	defer conn.Close()
 	writeMsg(conn, "Username: ")
 	username, err := readMsg(conn)
 	if err != nil {
