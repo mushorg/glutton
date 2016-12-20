@@ -58,8 +58,8 @@ func LoadPorts(confPath string) {
 
 }
 
-// GetHost returns destination address of the service to redirect traffic
-func GetHost(p int) string {
+// GetHandler returns destination address of the service to redirect traffic
+func GetHandler(p int) string {
 	return portConf.Ports[p]
 }
 

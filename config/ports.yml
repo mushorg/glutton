@@ -9,6 +9,6 @@ default: handle:default
 
 ports:
   22:
-    localhost:5001
+    proxy:localhost:5001
   23:
     handle:telnet

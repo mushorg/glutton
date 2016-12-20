@@ -30,21 +30,28 @@ func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
 	}
 
 	// TCP client for destination server
-	host := GetHost(dp)
-	if len(host) < 2 {
-		println("[*] Error. No host found. Packet dropped!")
+
+	handler := GetHandler(dp)
+	if len(handler) < 2 {
+		println("[*] Error. No handler found. Packet dropped!")
 		return
 	}
 
-	handleTelnet(conn)
-
-	proxyConn := TCPClient(host)
-	if proxyConn == nil {
-		return
+	if strings.HasPrefix(handler, "handle") {
+		if strings.HasSuffix(handler, "telnet") {
+			go handleTelnet(conn)
+		}
 	}
 
-	// Data Transfer between Connections
-	ProxyServer(conn.(*net.TCPConn), proxyConn, f)
+	if strings.HasPrefix(handler, "proxy") {
+		proxyConn := TCPClient(handler[6:])
+		if proxyConn == nil {
+			return
+		}
+
+		// Data Transfer between Connections
+		ProxyServer(conn.(*net.TCPConn), proxyConn, f)
+	}
 
 }
 
