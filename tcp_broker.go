@@ -1,6 +1,7 @@
 package glutton
 
 import (
+	"errors"
 	"log"
 	"net"
 	"os"
@@ -114,6 +115,9 @@ func transfer(dst writer, src reader, addr interface{}) (int64, error) {
 			if nw > 0 {
 				written += int64(nw)
 			}
+		}
+		if readErr == errors.New("EOF") {
+			break
 		}
 	}
 	return written, err
