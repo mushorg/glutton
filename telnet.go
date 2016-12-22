@@ -2,8 +2,9 @@ package glutton
 
 import (
 	"bufio"
-	"fmt"
+	"log"
 	"net"
+	"regexp"
 	"strings"
 )
 
@@ -21,6 +22,7 @@ var miraiCom = map[string]string{
 }
 
 func writeMsg(conn net.Conn, msg string) error {
+	log.Printf(`Sending response: %q`, msg)
 	_, err := conn.Write([]byte(msg))
 	return err
 }
@@ -47,16 +49,24 @@ func handleTelnet(conn net.Conn) error {
 		return err
 	}
 	password = strings.TrimSpace(password)
-	fmt.Printf("[*] Successful login with username: %s and password: %s\n", username, password)
+	log.Printf("[*] Successful login with username: %s and password: %s\n", username, password)
 	writeMsg(conn, "welcome\n> ")
 	for {
 		msg, err := readMsg(conn)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("[*] Telnet message: %s", msg)
-		if resp := miraiCom[strings.TrimSpace(msg)]; resp != "" {
-			writeMsg(conn, resp+"\n")
+		log.Printf("[*] Telnet message: %s", msg)
+		for _, cmd := range strings.Split(msg, ";") {
+			if resp := miraiCom[strings.TrimSpace(cmd)]; resp != "" {
+				writeMsg(conn, resp+"\n")
+			} else {
+				re := regexp.MustCompile(`\/bin\/busybox (?P<applet>[A-Z]+)`)
+				match := re.FindStringSubmatch(cmd)
+				if len(match) > 1 {
+					writeMsg(conn, match[1]+": applet not found\n")
+				}
+			}
 		}
 		writeMsg(conn, "> ")
 	}
