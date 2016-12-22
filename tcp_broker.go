@@ -115,6 +115,9 @@ func transfer(dst writer, src reader, addr interface{}) (int64, error) {
 				written += int64(nw)
 			}
 		}
+		if readErr == errors.New("EOF") {
+			break
+		}
 	}
 	return written, err
 }
