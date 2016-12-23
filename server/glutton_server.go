@@ -89,8 +89,8 @@ func main() {
 	time.Sleep(3 * time.Second)
 
 	log.Println("Starting TCP Server...")
-	go glutton.TCPListener(f, tcpCh)
+	go glutton.TCPListener(tcpCh)
 
 	log.Println("Starting UDP Server...")
-	glutton.UDPListener(f, udpCh)
+	glutton.UDPListener(udpCh)
 }

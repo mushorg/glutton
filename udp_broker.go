@@ -3,25 +3,22 @@ package glutton
 import (
 	"log"
 	"net"
-	"os"
 	"strings"
 
 	"github.com/hectane/go-nonblockingchan"
 )
 
-// Connection struct for UDP connection
-type Connection struct {
+// UDPConn struct for UDP connection
+type UDPConn struct {
 	conn   *net.UDPConn
 	addr   *net.UDPAddr
 	ch     *nbc.NonBlockingChan
-	f      *os.File
 	buffer [1500]byte
 	n      int
 }
 
 // UDPBroker is handling and UDP connection
-func UDPBroker(c *Connection) {
-	log.SetOutput(c.f)
+func UDPBroker(c *UDPConn) {
 	tmp := c.addr.String()
 	if tmp == "<nil>" {
 		log.Println("Error. Address:port == nil udp_broker.go addr.String()")

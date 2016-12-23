@@ -3,26 +3,24 @@ package glutton
 import (
 	"log"
 	"net"
-	"os"
 	"strings"
 
 	"github.com/hectane/go-nonblockingchan"
 )
 
-func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
+func handleTCPClient(conn net.Conn, ch *nbc.NonBlockingChan, counter ConnCounter) {
+	counter.connectionsState()
 
 	// Splitting address to compare with conntrack logs
-	tmp := conn.RemoteAddr().String()
-	if tmp == "<nil>" {
+	srcAddr := conn.RemoteAddr().String()
+	if srcAddr == "<nil>" {
 		log.Println("Error. Address:port == nil glutton_server.go conn.RemoteAddr().String()")
 		return
 	}
 
-	addr := strings.Split(tmp, ":")
+	addr := strings.Split(srcAddr, ":")
 
 	dp := GetTCPDesPort(addr, ch)
-
-	log.Printf("New connection from %s to port %d\n", addr[0], dp)
 
 	if dp == -1 {
 		log.Println("Warning. Packet dropped! [TCP] glutton_server.go desPort == -1")
@@ -43,10 +41,16 @@ func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
 
 	if strings.HasPrefix(handler, "handle") {
 		if strings.HasSuffix(handler, "telnet") {
-			go handleTelnet(conn)
+			log.Printf("New connection from %s to port %d -> glutton:telnet\n", addr[0], dp)
+			counter.addConnection()
+			handleTelnet(conn)
+			counter.subConnection()
 		}
 		if strings.HasSuffix(handler, "default") {
-			go handleDefault(conn)
+			log.Printf("New connection from %s to port %d -> glutton:default\n", addr[0], dp)
+			counter.addConnection()
+			handleDefault(conn)
+			counter.subConnection()
 		}
 	}
 
@@ -56,14 +60,19 @@ func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
 			return
 		}
 
-		// Data Transfer between Connections
-		ProxyServer(conn.(*net.TCPConn), proxyConn, f)
-	}
+		log.Printf("New connection from %s to port %d -> glutton:Proxy\n", addr[0], dp)
+		counter.addConnection()
 
+		// Data Transfer between Connections
+		clossedBy, err := ProxyServer(conn.(*net.TCPConn), proxyConn)
+		counter.connectionClosed(srcAddr, handler[6:], clossedBy, err)
+	}
 }
 
 // TCPListener listens for new TCP connections
-func TCPListener(f *os.File, ch *nbc.NonBlockingChan) {
+func TCPListener(ch *nbc.NonBlockingChan) {
+	C := Connections{}
+
 	service := ":5000"
 
 	addr, err := net.ResolveTCPAddr("tcp", service)
@@ -80,11 +89,11 @@ func TCPListener(f *os.File, ch *nbc.NonBlockingChan) {
 		}
 
 		// Goroutines to handle multiple connections
-		go handleTCPClient(conn, f, ch)
+		go handleTCPClient(conn, ch, &C)
 	}
 }
 
-func handleUDPClient(conn *net.UDPConn, f *os.File, ch *nbc.NonBlockingChan) {
+func handleUDPClient(conn *net.UDPConn, ch *nbc.NonBlockingChan) {
 
 	for {
 		var b [1500]byte
@@ -93,13 +102,13 @@ func handleUDPClient(conn *net.UDPConn, f *os.File, ch *nbc.NonBlockingChan) {
 			return
 		}
 
-		c := Connection{conn, addr, ch, f, b, n}
+		c := UDPConn{conn, addr, ch, b, n}
 		go UDPBroker(&c)
 	}
 }
 
 // UDPListener listens for new UDP connections
-func UDPListener(f *os.File, ch *nbc.NonBlockingChan) {
+func UDPListener(ch *nbc.NonBlockingChan) {
 	service := ":5000"
 
 	addr, err := net.ResolveUDPAddr("udp", service)
@@ -109,6 +118,6 @@ func UDPListener(f *os.File, ch *nbc.NonBlockingChan) {
 	conn, err := net.ListenUDP("udp", addr)
 	CheckError("[*] Error in UDP listener", err)
 
-	handleUDPClient(conn, f, ch)
+	handleUDPClient(conn, ch)
 
 }

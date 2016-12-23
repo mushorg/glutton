@@ -71,7 +71,6 @@ func GetDefaultHandler() string {
 
 // GetTCPDesPort return Destination port for TCP
 func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
-
 	if ch.Len() == 0 {
 		time.Sleep(10 * time.Millisecond)
 		if ch.Len() == 0 {
