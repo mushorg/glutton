@@ -103,7 +103,7 @@ func transfer(dst writer, src reader, addr interface{}) (int64, error) {
 		nr, readErr := src.Read(buf)
 		if nr > 0 {
 			nw, writeErr := dst.Write(buf[0:nr])
-			log.Printf("[TCP] [%v -> %v] Payload: %v", v.srcAddr, v.dstAddr, string(buf[0:nr]))
+			log.Printf("[TCP] [%v -> %v]\n", v.srcAddr, v.dstAddr)
 			if nw > 0 {
 				written += int64(nw)
 			}
