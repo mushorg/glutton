@@ -101,24 +101,29 @@ func transfer(dst writer, src reader, addr interface{}) (int64, error) {
 
 	for {
 		nr, readErr := src.Read(buf)
-		if err != nil {
-			err = readErr
-			break
-		}
-		log.Printf("[TCP] [%v -> %v] Payload: %v", v.srcAddr, v.dstAddr, string(buf[0:nr]))
 		if nr > 0 {
 			nw, writeErr := dst.Write(buf[0:nr])
-			if err != nil {
+			log.Printf("[TCP] [%v -> %v] Payload: %v", v.srcAddr, v.dstAddr, string(buf[0:nr]))
+			if nw > 0 {
+				written += int64(nw)
+			}
+			if writeErr != nil {
 				err = writeErr
 				break
 			}
-			if nw > 0 {
-				written += int64(nw)
+			if nr != nw {
+				err = errors.New("Short write")
+				break
 			}
 		}
 		if readErr == errors.New("EOF") {
 			break
 		}
+		if readErr != nil {
+			err = readErr
+			break
+		}
+
 	}
 	return written, err
 }

@@ -46,7 +46,7 @@ func main() {
 	`)
 
 	logPath := flag.String("log", "/dev/null", "Log path.")
-	confPath := flag.String("conf", "/etc/glutton/proxy.yml", "Config path.")
+	confPath := flag.String("conf", "/etc/glutton/ports.yml", "Config path.")
 	setTables := flag.Bool("set-tables", false, "True to set iptables rules")
 	capturePackets := flag.Bool("capture-packets", false, "True store pcap data")
 	flag.Parse()

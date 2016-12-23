@@ -32,7 +32,7 @@ func handleTCPClient(conn net.Conn, f *os.File, ch *nbc.NonBlockingChan) {
 	// TCP client for destination server
 	handler := GetHandler(dp)
 	if len(handler) < 2 {
-		log.Println("No explizit handler found")
+		log.Println("No explicit handler found")
 		handler = GetDefaultHandler()
 		if handler == "" {
 			log.Println("No default handler found. Packet dropped!")
