@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/hectane/go-nonblockingchan"
@@ -73,24 +74,33 @@ func main() {
 	// Load config file for remote services
 	glutton.LoadPorts(*confPath)
 
+	var wg sync.WaitGroup
+
 	if *capturePackets {
 		log.Println("Starting Packet Capturing...")
-		go logger.FindDevice()
+		wg.Add(1)
+		go logger.FindDevice(&wg)
 	}
 
-	go glutton.MonitorTCPConnections(tcpCh)
+	wg.Add(1)
+	go glutton.MonitorTCPConnections(tcpCh, &wg)
 	log.Println("Initializing TCP connections tracking..")
 	// Delay required for initialization of conntrack modules
 	time.Sleep(3 * time.Second)
 
-	go glutton.MonitorUDPConnections(udpCh)
+	wg.Add(1)
+	go glutton.MonitorUDPConnections(udpCh, &wg)
 	log.Println("Initializing UDP connections tracking...")
 	// Delay required for initialization of conntrack modules
 	time.Sleep(3 * time.Second)
 
 	log.Println("Starting TCP Server...")
-	go glutton.TCPListener(f, tcpCh)
+	wg.Add(1)
+	go glutton.TCPListener(tcpCh, &wg)
 
 	log.Println("Starting UDP Server...")
-	glutton.UDPListener(f, udpCh)
+	wg.Add(1)
+	go glutton.UDPListener(udpCh, &wg)
+
+	wg.Wait()
 }

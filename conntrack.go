@@ -6,6 +6,7 @@ import (
 	"log"
 	"os/exec"
 	"regexp"
+	"sync"
 
 	"github.com/hectane/go-nonblockingchan"
 )
@@ -14,7 +15,9 @@ const tcpRegExp = `\[\w+]\s+\w+\s+.+?src=(\d+\.\d+\.\d+\.\d+)\s+dst=(\d+\.\d+\.\
 const udpRegExp = `\[(\w+)]\s+\w+\s+.+?src=(\d+\.\d+\.\d+\.\d+)\s+dst=(\d+\.\d+\.\d+\.\d+)\s+sport=(\d+)\s+dport=(\d+)\s+`
 
 // MonitorTCPConnections monitors conntrack for TCP connections
-func MonitorTCPConnections(channel *nbc.NonBlockingChan) {
+func MonitorTCPConnections(channel *nbc.NonBlockingChan, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	args := []string{
 		"--buffer-size", "30000000",
 		"-E",
@@ -55,12 +58,14 @@ func MonitorTCPConnections(channel *nbc.NonBlockingChan) {
 }
 
 // MonitorUDPConnections monitors conntrack for UDP connections
-func MonitorUDPConnections(channel *nbc.NonBlockingChan) {
+func MonitorUDPConnections(channel *nbc.NonBlockingChan, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	args := []string{
 		"--buffer-size", "30000000",
 		"-E",
 		"-p", "udp",
-		"-e", "ALL",
+		"-e", "NEW",
 	}
 	cmd := exec.Command("conntrack", args...)
 	stderrPipe, err := cmd.StderrPipe()

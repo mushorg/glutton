@@ -8,6 +8,9 @@ import (
 	"strings"
 )
 
+// ConnID is used to relate logs in a connection
+var connID int64
+
 // Based on https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
 var miraiCom = map[string]string{
 	"ECCHI":                                           "ECCHI: applet not found",
@@ -22,8 +25,8 @@ var miraiCom = map[string]string{
 }
 
 func writeMsg(conn net.Conn, msg string) error {
-	log.Printf(`Sending response: %q`, msg)
 	_, err := conn.Write([]byte(msg))
+	log.Printf("[%v] [TCP] [TELNET -> %v] Payload: %v", connID, conn.RemoteAddr(), msg)
 	return err
 }
 
@@ -32,11 +35,14 @@ func readMsg(conn net.Conn) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	log.Printf("[%v] [TCP] [%v -> TELNET] Payload: %v", connID, conn.RemoteAddr(), message)
 	return message, err
 }
 
-func handleTelnet(conn net.Conn) error {
+func handleTelnet(id int64, conn net.Conn) error {
 	defer conn.Close()
+	connID = id
+
 	writeMsg(conn, "Username: ")
 	username, err := readMsg(conn)
 	if err != nil {
@@ -49,14 +55,13 @@ func handleTelnet(conn net.Conn) error {
 		return err
 	}
 	password = strings.TrimSpace(password)
-	log.Printf("[*] Successful login with username: %s and password: %s\n", username, password)
+
 	writeMsg(conn, "welcome\n> ")
 	for {
 		msg, err := readMsg(conn)
 		if err != nil {
 			return err
 		}
-		log.Printf("[*] Telnet message: %s", msg)
 		for _, cmd := range strings.Split(msg, ";") {
 			if resp := miraiCom[strings.TrimSpace(cmd)]; resp != "" {
 				writeMsg(conn, resp+"\n")
