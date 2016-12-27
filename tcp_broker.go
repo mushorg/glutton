@@ -64,22 +64,22 @@ func ProxyServer(srvConn, cliConn *net.TCPConn) (string, error) {
 	go TCPBroker(cliConn, srvConn, serverClosed)
 
 	var waitFor chan struct{}
-	var clossedBy string
+	var closedBy string
 
 	select {
 	case <-clientClosed:
-		clossedBy = "Glutton"
+		closedBy = "Glutton"
 		srvConn.SetLinger(0)
 		srvConn.CloseRead()
 		waitFor = serverClosed
 	case <-serverClosed:
-		clossedBy = "Client"
+		closedBy = "Client"
 		cliConn.CloseRead()
 		waitFor = clientClosed
 	}
 
 	<-waitFor
-	return clossedBy, Error
+	return closedBy, Error
 }
 
 // TCPBroker is handling a TCP connection

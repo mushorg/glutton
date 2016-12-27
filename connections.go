@@ -6,10 +6,12 @@ import (
 )
 
 type ConnCounter interface {
-	addConnection()
-	subConnection()
+	incrCon()
+	decrCon()
 	connectionsState()
 	connectionClosed(string, string, string, error)
+	reqAccepted()
+	reqDropped()
 }
 
 // Connections will track the number of open connections and how many dropped by glutton,
@@ -19,24 +21,36 @@ type Connections struct {
 
 	// TCP connections
 	openedConnections int
-	clossedByGlutton  int
-	clossedByClient   int
+	closedByGlutton   int
+	closedByClient    int
 
 	// UDP connections
-	udpRequests   int // Number of Requests served by glutton
-	udpReqDropped int // Number of Requests dropped by glutton
+	udpReqAccepted int // Number of Requests served by glutton
+	udpReqDropped  int // Number of Requests dropped by glutton
 }
 
-func (c *Connections) addConnection() {
+func (c *Connections) incrCon() {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.openedConnections++
 }
 
-func (c *Connections) subConnection() {
+func (c *Connections) decrCon() {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.openedConnections--
+}
+
+func (c *Connections) reqAccepted() {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.udpReqAccepted++
+}
+
+func (c *Connections) reqDropped() {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.udpReqDropped++
 }
 
 func (c *Connections) connectionsState() {
@@ -48,7 +62,7 @@ func (c *Connections) connectionsState() {
 		TCP: Closed by Clients: %d
 		UDP: Accepted Requests: %d
 		UDP: Dropped  Requests: %d
-		`, c.openedConnections, c.clossedByGlutton, c.clossedByClient, c.udpRequests, c.udpReqDropped)
+		`, c.openedConnections, c.closedByGlutton, c.closedByClient, c.udpReqAccepted, c.udpReqDropped)
 }
 
 // For now connectionClosed supports only proxy handler
@@ -56,9 +70,9 @@ func (c *Connections) connectionClosed(srcAddr, dstAddr, str string, err error) 
 	c.mutex.Lock()
 	c.openedConnections--
 	if str == "Glutton" {
-		c.clossedByGlutton++
+		c.closedByGlutton++
 	} else {
-		c.clossedByClient++
+		c.closedByClient++
 	}
 	c.mutex.Unlock()
 

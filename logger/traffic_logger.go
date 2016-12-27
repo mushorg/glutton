@@ -10,6 +10,7 @@ package logger
 import (
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/google/gopacket"
@@ -75,7 +76,9 @@ func startCapturing() {
 }
 
 // FindDevice will search for network interface cards available and select one for logging
-func FindDevice() {
+func FindDevice(wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	log.Println("Checking for previously uncompressed files")
 	go checkForUncompressed() // Check the logging directory for uncompressed files
 FindAgain:

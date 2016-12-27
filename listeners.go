@@ -4,9 +4,12 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 
 	"github.com/hectane/go-nonblockingchan"
 )
+
+var Counters Connections
 
 func handleTCPClient(conn net.Conn, ch *nbc.NonBlockingChan, counter ConnCounter) {
 	counter.connectionsState()
@@ -42,15 +45,15 @@ func handleTCPClient(conn net.Conn, ch *nbc.NonBlockingChan, counter ConnCounter
 	if strings.HasPrefix(handler, "handle") {
 		if strings.HasSuffix(handler, "telnet") {
 			log.Printf("New connection from %s to port %d -> glutton:telnet\n", addr[0], dp)
-			counter.addConnection()
+			counter.incrCon()
 			handleTelnet(conn)
-			counter.subConnection()
+			counter.decrCon()
 		}
 		if strings.HasSuffix(handler, "default") {
 			log.Printf("New connection from %s to port %d -> glutton:default\n", addr[0], dp)
-			counter.addConnection()
+			counter.incrCon()
 			handleDefault(conn)
-			counter.subConnection()
+			counter.decrCon()
 		}
 	}
 
@@ -61,17 +64,19 @@ func handleTCPClient(conn net.Conn, ch *nbc.NonBlockingChan, counter ConnCounter
 		}
 
 		log.Printf("New connection from %s to port %d -> glutton:Proxy\n", addr[0], dp)
-		counter.addConnection()
+		counter.incrCon()
 
 		// Data Transfer between Connections
-		clossedBy, err := ProxyServer(conn.(*net.TCPConn), proxyConn)
-		counter.connectionClosed(srcAddr, handler[6:], clossedBy, err)
+		closedBy, err := ProxyServer(conn.(*net.TCPConn), proxyConn)
+		counter.connectionClosed(srcAddr, handler[6:], closedBy, err)
 	}
 }
 
 // TCPListener listens for new TCP connections
-func TCPListener(ch *nbc.NonBlockingChan) {
-	C := Connections{}
+func TCPListener(ch *nbc.NonBlockingChan, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	Counters = Connections{}
 
 	service := ":5000"
 
@@ -89,7 +94,7 @@ func TCPListener(ch *nbc.NonBlockingChan) {
 		}
 
 		// Goroutines to handle multiple connections
-		go handleTCPClient(conn, ch, &C)
+		go handleTCPClient(conn, ch, &Counters)
 	}
 }
 
@@ -103,12 +108,14 @@ func handleUDPClient(conn *net.UDPConn, ch *nbc.NonBlockingChan) {
 		}
 
 		c := UDPConn{conn, addr, ch, b, n}
-		go UDPBroker(&c)
+		go UDPBroker(&c, &Counters)
 	}
 }
 
 // UDPListener listens for new UDP connections
-func UDPListener(ch *nbc.NonBlockingChan) {
+func UDPListener(ch *nbc.NonBlockingChan, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	service := ":5000"
 
 	addr, err := net.ResolveUDPAddr("udp", service)
