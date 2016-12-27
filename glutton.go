@@ -20,7 +20,13 @@ type Config struct {
 	Ports   map[int]string
 }
 
-var portConf Config
+var (
+	portConf Config
+
+	src     []string // slice contains attributes of previous packet conntrack logs
+	desP    int      // Destination port of previous packet returned to the UDP server
+	unknown []string // Address not logged by conntrack
+)
 
 // SetIPTables modifies to iptables
 func SetIPTables() {
@@ -111,6 +117,18 @@ func GetTCPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 // GetUDPDesPort return Destination port for UDP
 func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 
+	if len(unknown) != 0 {
+		if p[0] == unknown[0] && p[1] == unknown[1] {
+			return -1
+		}
+	}
+
+	if len(src) != 0 {
+		if src[2] == p[0] && src[4] == p[1] {
+			return desP
+		}
+	}
+
 	// Time used by conntrack for UDP logging
 	time.Sleep(10 * time.Millisecond)
 
@@ -124,27 +142,25 @@ func GetUDPDesPort(p []string, ch *nbc.NonBlockingChan) int {
 
 	// Receiving conntrack logs from channel
 	stream, ok := <-ch.Recv
-
-	for ok {
+	if ok {
 		c, flag := stream.([]string)
 		if !flag {
 			log.Println("Error. UDP Invalid log! glutton.go: stream.([]string) failed.")
-			stream, ok = <-ch.Recv
-			continue
+			return -1
 		}
+
 		if c[2] == p[0] && c[4] == p[1] {
-			dp, err := strconv.Atoi(c[5])
+			d, err := strconv.Atoi(c[5])
 			if err != nil {
 				log.Println("Error. UDP Invalid destination port! glutton.go strconv.Atoi() ")
 				return -1
 			}
-			return dp
+			unknown = make([]string, 0)
+			src = c
+			desP = d
+			return d
 		}
-		if ch.Len() == 0 {
-			log.Println("UDP No logs found!")
-			return -1
-		}
-		stream, ok = <-ch.Recv
+		unknown = p
 	}
 	return -1
 }

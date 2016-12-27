@@ -65,7 +65,7 @@ func MonitorUDPConnections(channel *nbc.NonBlockingChan, wg *sync.WaitGroup) {
 		"--buffer-size", "30000000",
 		"-E",
 		"-p", "udp",
-		"-e", "ALL",
+		"-e", "NEW",
 	}
 	cmd := exec.Command("conntrack", args...)
 	stderrPipe, err := cmd.StderrPipe()

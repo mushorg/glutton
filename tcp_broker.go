@@ -31,6 +31,7 @@ type writerTo interface {
 const timeout = 3
 
 var (
+	id         int64 // id is used to relate logs in a connection
 	Error      error
 	EOF        = errors.New("EOF")
 	ShortWrite = errors.New("ShortWriteError")
@@ -55,7 +56,8 @@ func TCPClient(addr string) *net.TCPConn {
 }
 
 // ProxyServer handles the proxy connections
-func ProxyServer(srvConn, cliConn *net.TCPConn) (string, error) {
+func ProxyServer(id int64, srvConn, cliConn *net.TCPConn) (string, error) {
+	id = id
 
 	serverClosed := make(chan struct{}, 1)
 	clientClosed := make(chan struct{}, 1)
@@ -120,7 +122,8 @@ func transfer(dst writer, src reader, addr interface{}) (int64, error) {
 
 		if nr > 0 {
 			nw, writeErr := dst.Write(buf[0:nr])
-			log.Printf("[TCP] [%v -> %v]\n", v.srcAddr, v.dstAddr)
+			log.Printf("[%v] [TCP][%v -> %v]\n", id, v.srcAddr, v.dstAddr)
+			//log.Printf("[%v] [TCP][%v -> %v] Payload: %v", id, v.srcAddr, v.dstAddr, string(buf[0:nr]))
 			if nw > 0 {
 				written += int64(nw)
 			}

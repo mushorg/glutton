@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hectane/go-nonblockingchan"
 )
@@ -46,7 +47,7 @@ func handleTCPClient(conn net.Conn, ch *nbc.NonBlockingChan, counter ConnCounter
 		if strings.HasSuffix(handler, "telnet") {
 			log.Printf("New connection from %s to port %d -> glutton:telnet\n", addr[0], dp)
 			counter.incrCon()
-			handleTelnet(conn)
+			handleTelnet(time.Now().Unix(), conn)
 			counter.decrCon()
 		}
 		if strings.HasSuffix(handler, "default") {
@@ -67,8 +68,8 @@ func handleTCPClient(conn net.Conn, ch *nbc.NonBlockingChan, counter ConnCounter
 		counter.incrCon()
 
 		// Data Transfer between Connections
-		closedBy, err := ProxyServer(conn.(*net.TCPConn), proxyConn)
-		counter.connectionClosed(srcAddr, handler[6:], closedBy, err)
+		clossedBy, err := ProxyServer(time.Now().Unix(), conn.(*net.TCPConn), proxyConn)
+		counter.connectionClosed(srcAddr, handler[6:], clossedBy, err)
 	}
 }
 
@@ -108,7 +109,7 @@ func handleUDPClient(conn *net.UDPConn, ch *nbc.NonBlockingChan) {
 		}
 
 		c := UDPConn{conn, addr, ch, b, n}
-		go UDPBroker(&c, &Counters)
+		go c.UDPBroker(&Counters)
 	}
 }
 

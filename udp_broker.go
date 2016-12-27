@@ -18,24 +18,25 @@ type UDPConn struct {
 }
 
 // UDPBroker is handling and UDP connection
-func UDPBroker(c *UDPConn, counter ConnCounter) {
+func (c *UDPConn) UDPBroker(counter ConnCounter) {
 	defer c.conn.Close()
-	tmp := c.addr.String()
-	if tmp == "<nil>" {
+
+	srcAddr := c.addr.String()
+	if srcAddr == "<nil>" {
 		log.Println("Error. Address:port == nil udp_broker.go addr.String()")
 		counter.reqDropped()
 		return
 	}
-	str := strings.Split(tmp, ":")
+	str := strings.Split(srcAddr, ":")
 	dp := GetUDPDesPort(str, c.ch)
 	if dp == -1 {
-		log.Println("Warning. Packet dropped! [UDP] udp_broker.go desPort == -1")
+		//		log.Println("Warning. Packet dropped! [UDP] udp_broker.go desPort == -1")
 		counter.reqDropped()
-		return
 	}
 	host := GetHandler(dp)
 	if len(host) < 2 {
-		log.Println("Error. [UDP] No host found. Packet dropped!")
+		//log.Println("[UDP] No host found. Packet dropped!")
+		log.Printf("[UDP] [%v -> UDP:%v] Payload: %v", c.addr, dp, string(c.buffer[0:c.n]))
 		counter.reqDropped()
 		return
 	}
@@ -60,7 +61,7 @@ func UDPBroker(c *UDPConn, counter ConnCounter) {
 		return
 	}
 
-	log.Printf("[%v -> %v] Payload: %v", c.addr, udpAddr, string(c.buffer[0:c.n]))
+	log.Printf("[UDP] [%v -> %v] Payload: %v", c.addr, udpAddr, string(c.buffer[0:c.n]))
 
 	var buf [1500]byte
 	n, err := conn.Read(buf[0:])
@@ -70,7 +71,7 @@ func UDPBroker(c *UDPConn, counter ConnCounter) {
 		return
 	}
 
-	log.Printf("[%v <- %v] Payload: %v", c.addr, udpAddr, string(buf[0:n]))
+	log.Printf("[UDP] [%v <- %v] Payload: %v", c.addr, udpAddr, string(buf[0:n]))
 
 	num, err := c.conn.WriteToUDP(buf[0:n], c.addr)
 	if err != nil {
