@@ -15,7 +15,7 @@ var connID int64
 var miraiCom = map[string]string{
 	"ECCHI":                                           "ECCHI: applet not found",
 	"ps":                                              "1 pts/21   00:00:00 init",
-	"cat /proc/mounts":                                "tmpfs /run tmpfs rw,nosuid,noexec,relatime,size=1635616k,mode=755 0 0",
+	"cat /proc/mounts":                                "tmpfs /run tmpfs rw,nosuid,noexec,relatime,size=3231524k,mode=755 0 0",
 	"echo -e \\x6b\\x61\\x6d\\x69/dev > /dev/.nippon": "",
 	"cat /dev/.nippon":                                "kami/dev",
 	"rm /dev/.nippon":                                 "",
