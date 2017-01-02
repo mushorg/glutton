@@ -38,8 +38,9 @@ To test glutton
 mkdir -p /etc/glutton  
 mkdir -p /var/log/glutton
 go get github.com/google/gopacket
-cp $GOPATH/src/github.com/mushorg/glutton/glutton/config/proxy.yml /etc/glutton
-go run $GOPATH/src/github.com/mushorg/glutton/glutton/glutton-server.go -log /tmp/glutton.log
+go get pkg.re/essentialkaos/z7.v2
+cp $GOPATH/src/github.com/mushorg/glutton/config/ports.yml /etc/glutton
+go run $GOPATH/src/github.com/mushorg/glutton/server/glutton_server.go -log /tmp/glutton.log
 ```
 To make glutton start on boot using upstart
 ```
