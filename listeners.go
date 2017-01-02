@@ -13,8 +13,6 @@ import (
 var Counters Connections
 
 func handleTCPClient(conn net.Conn, ch *nbc.NonBlockingChan, counter ConnCounter) {
-	counter.connectionsState()
-
 	// Splitting address to compare with conntrack logs
 	srcAddr := conn.RemoteAddr().String()
 	if srcAddr == "<nil>" {

@@ -44,18 +44,15 @@ func handleTelnet(id int64, conn net.Conn) error {
 	connID = id
 
 	writeMsg(conn, "Username: ")
-	username, err := readMsg(conn)
+	_, err := readMsg(conn)
 	if err != nil {
 		return err
 	}
-	username = strings.TrimSpace(username)
 	writeMsg(conn, "Password: ")
-	password, err := readMsg(conn)
+	_, err = readMsg(conn)
 	if err != nil {
 		return err
 	}
-	password = strings.TrimSpace(password)
-	log.Printf("Telnet login with username: '%s' and password: '%s'", username, password)
 
 	writeMsg(conn, "welcome\n> ")
 	for {
