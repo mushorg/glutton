@@ -57,8 +57,6 @@ func TCPClient(addr string) *net.TCPConn {
 
 // ProxyServer handles the proxy connections
 func ProxyServer(id int64, srvConn, cliConn *net.TCPConn) (string, error) {
-	id = id
-
 	serverClosed := make(chan struct{}, 1)
 	clientClosed := make(chan struct{}, 1)
 
@@ -101,7 +99,7 @@ func TCPBroker(dst, src net.Conn, srcClosed chan struct{}) {
 }
 
 func transfer(dst writer, src reader, addr interface{}) (int64, error) {
-	v := addr.(address)
+	// v := addr.(address)
 	if wt, ok := src.(writerTo); ok {
 		return wt.WriteTo(dst)
 	}
@@ -121,8 +119,7 @@ func transfer(dst writer, src reader, addr interface{}) (int64, error) {
 		nr, readErr := src.Read(buf)
 
 		if nr > 0 {
-      nw, writeErr := dst.Write(buf[0:nr])
-			log.Printf("[%v] [TCP][%v -> %v]\n", id, v.srcAddr, v.dstAddr)
+			nw, writeErr := dst.Write(buf[0:nr])
 			if nw > 0 {
 				written += int64(nw)
 			}

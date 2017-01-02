@@ -55,6 +55,7 @@ func handleTelnet(id int64, conn net.Conn) error {
 		return err
 	}
 	password = strings.TrimSpace(password)
+	log.Printf("Telnet login with username: '%s' and password: '%s'", username, password)
 
 	writeMsg(conn, "welcome\n> ")
 	for {

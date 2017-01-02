@@ -1,6 +1,3 @@
-// TODO:
-// Directory path is hard codded
-
 package logger
 
 import (

@@ -5,6 +5,7 @@ import (
 	"sync"
 )
 
+// ConnCounter keeps track of connections in Glutton
 type ConnCounter interface {
 	incrCon()
 	decrCon()
