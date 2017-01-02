@@ -3,6 +3,7 @@ package glutton
 import (
 	"bufio"
 	"log"
+	"math/rand"
 	"net"
 	"regexp"
 	"strings"
@@ -12,16 +13,15 @@ import (
 var connID int64
 
 // Based on https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
-var miraiCom = map[string]string{
-	"ECCHI":                                           "ECCHI: applet not found",
-	"ps":                                              "1 pts/21   00:00:00 init",
-	"cat /proc/mounts":                                "tmpfs /run tmpfs rw,nosuid,noexec,relatime,size=3231524k,mode=755 0 0",
-	"echo -e \\x6b\\x61\\x6d\\x69/dev > /dev/.nippon": "",
-	"cat /dev/.nippon":                                "kami/dev",
-	"rm /dev/.nippon":                                 "",
-	"echo -e \\x6b\\x61\\x6d\\x69/run > /run/.nippon": "",
-	"cat /run/.nippon":                                "kami/run",
-	"rm /run/.nippon":                                 "",
+var miraiCom = map[string][]string{
+	"ps":                                              []string{"1 pts/21   00:00:00 init"},
+	"cat /proc/mounts":                                []string{"tmpfs /run tmpfs rw,nosuid,noexec,relatime,size=3231524k,mode=755 0 0"},
+	"echo -e \\x6b\\x61\\x6d\\x69/dev > /dev/.nippon": []string{""},
+	"cat /dev/.nippon":                                []string{"kami/dev"},
+	"rm /dev/.nippon":                                 []string{""},
+	"echo -e \\x6b\\x61\\x6d\\x69/run > /run/.nippon": []string{""},
+	"cat /run/.nippon":                                []string{"kami/run"},
+	"rm /run/.nippon":                                 []string{""},
 }
 
 func writeMsg(conn net.Conn, msg string) error {
@@ -61,8 +61,8 @@ func handleTelnet(id int64, conn net.Conn) error {
 			return err
 		}
 		for _, cmd := range strings.Split(msg, ";") {
-			if resp := miraiCom[strings.TrimSpace(cmd)]; resp != "" {
-				writeMsg(conn, resp+"\n")
+			if resp := miraiCom[strings.TrimSpace(cmd)]; len(resp) > 0 {
+				writeMsg(conn, resp[rand.Intn(len(resp))]+"\n")
 			} else {
 				re := regexp.MustCompile(`\/bin\/busybox (?P<applet>[A-Z]+)`)
 				match := re.FindStringSubmatch(cmd)

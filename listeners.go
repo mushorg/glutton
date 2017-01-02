@@ -1,6 +1,7 @@
 package glutton
 
 import (
+	"bufio"
 	"log"
 	"net"
 	"strings"
@@ -10,7 +11,28 @@ import (
 	"github.com/hectane/go-nonblockingchan"
 )
 
-var Counters Connections
+var counters Connections
+
+type bufferedConn struct {
+	r        *bufio.Reader
+	net.Conn // So that most methods are embedded
+}
+
+func newBufferedConn(c net.Conn) bufferedConn {
+	return bufferedConn{bufio.NewReader(c), c}
+}
+
+func newBufferedConnSize(c net.Conn, n int) bufferedConn {
+	return bufferedConn{bufio.NewReaderSize(c, n), c}
+}
+
+func (b bufferedConn) Peek(n int) ([]byte, error) {
+	return b.r.Peek(n)
+}
+
+func (b bufferedConn) Read(p []byte) (int, error) {
+	return b.r.Read(p)
+}
 
 func handleTCPClient(conn net.Conn, ch *nbc.NonBlockingChan, counter ConnCounter) {
 	// Splitting address to compare with conntrack logs
@@ -51,7 +73,18 @@ func handleTCPClient(conn net.Conn, ch *nbc.NonBlockingChan, counter ConnCounter
 		if strings.HasSuffix(handler, "default") {
 			log.Printf("New connection from %s to port %d -> glutton:default\n", addr[0], dp)
 			counter.incrCon()
-			handleDefault(conn)
+			bufConn := newBufferedConn(conn)
+			snip, err := bufConn.Peek(4)
+			if err != nil {
+				log.Println(err)
+			}
+			httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true}
+			if _, ok := httpMap[string(snip)]; ok == true {
+				log.Println("Handling HTTP")
+				handleHTTP(bufConn)
+			} else {
+				handleDefault(conn)
+			}
 			counter.decrCon()
 		}
 	}
@@ -75,7 +108,7 @@ func handleTCPClient(conn net.Conn, ch *nbc.NonBlockingChan, counter ConnCounter
 func TCPListener(ch *nbc.NonBlockingChan, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	Counters = Connections{}
+	counters = Connections{}
 
 	service := ":5000"
 
@@ -93,7 +126,7 @@ func TCPListener(ch *nbc.NonBlockingChan, wg *sync.WaitGroup) {
 		}
 
 		// Goroutines to handle multiple connections
-		go handleTCPClient(conn, ch, &Counters)
+		go handleTCPClient(conn, ch, &counters)
 	}
 }
 
@@ -107,7 +140,7 @@ func handleUDPClient(conn *net.UDPConn, ch *nbc.NonBlockingChan) {
 		}
 
 		c := UDPConn{conn, addr, ch, b, n}
-		go c.UDPBroker(&Counters)
+		go c.UDPBroker(&counters)
 	}
 }
 
