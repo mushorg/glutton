@@ -60,17 +60,19 @@ func handleTelnet(id int64, conn net.Conn) error {
 		if err != nil {
 			return err
 		}
+		respMsg := ""
 		for _, cmd := range strings.Split(msg, ";") {
 			if resp := miraiCom[strings.TrimSpace(cmd)]; len(resp) > 0 {
-				writeMsg(conn, resp[rand.Intn(len(resp))]+"\n")
+				respMsg += resp[rand.Intn(len(resp))] + "\n"
 			} else {
 				re := regexp.MustCompile(`\/bin\/busybox (?P<applet>[A-Z]+)`)
 				match := re.FindStringSubmatch(cmd)
 				if len(match) > 1 {
-					writeMsg(conn, match[1]+": applet not found\n")
+					respMsg += match[1] + ": applet not found\n"
 				}
 			}
 		}
+		writeMsg(conn, respMsg)
 		writeMsg(conn, "> ")
 	}
 }
