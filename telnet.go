@@ -26,7 +26,7 @@ var miraiCom = map[string][]string{
 
 func writeMsg(conn net.Conn, msg string) error {
 	_, err := conn.Write([]byte(msg))
-	log.Printf("[%v] [TCP] [TELNET -> %v] Payload: %v", connID, conn.RemoteAddr(), msg)
+	log.Printf("[%v] [TCP] [TELNET -> %v] Payload: %q", connID, conn.RemoteAddr(), msg)
 	return err
 }
 
