@@ -15,6 +15,11 @@ func handleHTTP(conn net.Conn) error {
 		return err
 	}
 	log.Printf("%+v", req)
+	if req.ContentLength > 0 {
+		buf := new([]byte)
+		req.Body.Read(*buf)
+		log.Println(string(*buf))
+	}
 	conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 	return nil
 }
