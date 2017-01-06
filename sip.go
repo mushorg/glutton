@@ -16,6 +16,7 @@ func handleSIP(netConn net.Conn) {
 	req, err := sipnet.ReadRequest(rd)
 	if err != nil {
 		log.Println(err)
+		return
 	}
 	log.Printf("SIP method: %s", req.Method)
 	switch req.Method {
