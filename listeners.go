@@ -70,6 +70,12 @@ func handleTCPClient(conn net.Conn, ch *nbc.NonBlockingChan, counter ConnCounter
 			handleTelnet(time.Now().Unix(), conn)
 			counter.decrCon()
 		}
+		if strings.HasSuffix(handler, "sip") {
+			log.Printf("New connection from %s to port %d -> glutton:sip\n", addr[0], dp)
+			counter.incrCon()
+			handleSIP(conn)
+			counter.decrCon()
+		}
 		if strings.HasSuffix(handler, "default") {
 			log.Printf("New connection from %s to port %d -> glutton:default\n", addr[0], dp)
 			counter.incrCon()
