@@ -42,7 +42,8 @@ func readMsg(conn net.Conn) (string, error) {
 func handleTelnet(id int64, conn net.Conn) error {
 	defer conn.Close()
 	connID = id
-
+	// TODO (glaslos): Add device banner
+	// User name prompt
 	writeMsg(conn, "Username: ")
 	_, err := readMsg(conn)
 	if err != nil {
@@ -60,19 +61,18 @@ func handleTelnet(id int64, conn net.Conn) error {
 		if err != nil {
 			return err
 		}
-		respMsg := ""
 		for _, cmd := range strings.Split(msg, ";") {
 			if resp := miraiCom[strings.TrimSpace(cmd)]; len(resp) > 0 {
-				respMsg += resp[rand.Intn(len(resp))] + "\r\n"
+				writeMsg(conn, resp[rand.Intn(len(resp))]+"\r\n")
 			} else {
+				// /bin/busybox YDKBI
 				re := regexp.MustCompile(`\/bin\/busybox (?P<applet>[A-Z]+)`)
 				match := re.FindStringSubmatch(cmd)
 				if len(match) > 1 {
-					respMsg += match[1] + ": applet not found\r\n"
+					writeMsg(conn, match[1]+": applet not found\r\n")
 				}
 			}
 		}
-		writeMsg(conn, respMsg)
 		writeMsg(conn, "> ")
 	}
 }
