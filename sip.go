@@ -5,8 +5,8 @@ import (
 	"log"
 	"net"
 
-	"github.com/glaslos/go-sip/server"
-	"github.com/glaslos/go-sip/sipnet"
+	"github.com/1lann/go-sip/server"
+	"github.com/1lann/go-sip/sipnet"
 )
 
 func handleSIP(netConn net.Conn) {
