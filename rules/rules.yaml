@@ -1,0 +1,17 @@
+hijackTCPServerPort: 5000
+
+ports:
+    22:
+      type: tcp_proxy
+      target: localhost:22
+    23:
+      type: handler
+      target: telnet
+    80:
+      type: handler
+      target: http
+    8080:
+      type: handler
+      target: http
+    5001:
+      type: passthrough

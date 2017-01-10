@@ -9,9 +9,6 @@ import (
 	"strings"
 )
 
-// ConnID is used to relate logs in a connection
-var connID int64
-
 // Based on https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
 var miraiCom = map[string][]string{
 	"ps":                                              []string{"1 pts/21   00:00:00 init"},
@@ -26,7 +23,7 @@ var miraiCom = map[string][]string{
 
 func writeMsg(conn net.Conn, msg string) error {
 	_, err := conn.Write([]byte(msg))
-	log.Printf("[%v] [TCP] [TELNET -> %v] Payload: %q", connID, conn.RemoteAddr(), msg)
+	log.Printf("[TCP] [TELNET -> %v] Payload: %q", conn.RemoteAddr(), msg)
 	return err
 }
 
@@ -35,13 +32,13 @@ func readMsg(conn net.Conn) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	log.Printf("[%v] [TCP] [%v -> TELNET] Payload: %v", connID, conn.RemoteAddr(), message)
+	log.Printf("[TCP] [%v -> TELNET] Payload: %v", conn.RemoteAddr(), message)
 	return message, err
 }
 
-func handleTelnet(id int64, conn net.Conn) error {
+func handleTelnet(conn net.Conn) error {
 	defer conn.Close()
-	connID = id
+
 	// TODO (glaslos): Add device banner
 	// User name prompt
 	writeMsg(conn, "Username: ")

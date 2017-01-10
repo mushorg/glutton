@@ -1,0 +1,10 @@
+package: github.com/mushorg/glutton
+import:
+- package: github.com/1lann/go-sip
+  subpackages:
+  - server
+  - sipnet
+- package: github.com/kung-foo/freki
+- package: github.com/sirupsen/logrus
+  version: ^0.11.0
+- package: gopkg.in/yaml.v2

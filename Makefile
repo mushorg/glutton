@@ -1,10 +1,17 @@
 .PHONY: all test clean build
 
+default: build
+
 build:
-	GOOS=linux go build -o sensor server/glutton_server.go
+	@mkdir -p bin/
+	go build -o bin/sensor app/server.go
+	upx -1 bin/sensor
+
+clean:
+	rm -rf bin/
 
 run: build
-	sudo ./sensor -conf config/ports.yml
+	sudo ./bin/sensor -rules rules/rules.yaml
 
 docker: build
 	docker build -t glutton .
