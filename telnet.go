@@ -36,7 +36,7 @@ func readMsg(conn net.Conn) (string, error) {
 	return message, err
 }
 
-func handleTelnet(conn net.Conn) error {
+func HandleTelnet(conn net.Conn) error {
 	defer conn.Close()
 
 	// TODO (glaslos): Add device banner

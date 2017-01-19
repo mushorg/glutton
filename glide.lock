@@ -1,5 +1,5 @@
-hash: a4df95818ff5a07fc18a32853ced889e52dd2b54e1dde1bf34106d731c58207c
-updated: 2017-01-10T16:36:42.008989734+01:00
+hash: 974bad31c377ef6fa4467ac0d0e284f890beaf102b575a7369aae7e82828fcf0
+updated: 2017-01-19T10:33:25.373831892+01:00
 imports:
 - name: github.com/1lann/go-sip
   version: 68e86c65407ef8cf672ae38526e7f3d29944b94f
@@ -10,22 +10,67 @@ imports:
   version: 5463fbac3bcc6b990663941c2e12660d19f6b36d
   subpackages:
   - iptables
+- name: github.com/docker/distribution
+  version: 96b02e885afaebf6aff5c7fff5d4f9563a35c432
+  subpackages:
+  - digestset
+  - reference
+- name: github.com/docker/engine-api
+  version: 4290f40c056686fcaa5c9caf02eac1dde9315adf
+  subpackages:
+  - client
+  - client/transport
+  - client/transport/cancellable
+  - types
+  - types/blkiodev
+  - types/container
+  - types/filters
+  - types/mount
+  - types/network
+  - types/reference
+  - types/registry
+  - types/strslice
+  - types/swarm
+  - types/time
+  - types/versions
+- name: github.com/docker/go-connections
+  version: eb315e36415380e7c2fdee175262560ff42359da
+  subpackages:
+  - nat
+  - sockets
+  - tlsconfig
+- name: github.com/docker/go-units
+  version: e30f1e79f3cd72542f2026ceec18d3bd67ab859c
 - name: github.com/google/gopacket
   version: b83f94714c36e30ce851be1d5a0a5226f9f1bca4
   subpackages:
   - layers
+  - pcap
 - name: github.com/kung-foo/freki
-  version: 6c6d16645953485c9ae78e7a532abebc5e0cb3e5
-- name: github.com/kung-foo/nfqueue-go
-  version: 447429c2168095c751b919527ef1d95a19a269cd
+  version: b28db56aca516742ebe3639dd851b1d0af94c008
   subpackages:
-  - nfqueue
+  - netfilter
+- name: github.com/Microsoft/go-winio
+  version: 307e919c663683a9000576fdc855acaf9534c165
+- name: github.com/opencontainers/go-digest
+  version: 21dfd564fd89c944783d00d069f33e3e7123c448
+- name: github.com/pkg/errors
+  version: 645ef00459ed84a119197bfb8d8205042c6df63d
+- name: github.com/Sirupsen/logrus
+  version: d26492970760ca5d33129d2d799e34be5c4782eb
 - name: github.com/sirupsen/logrus
   version: d26492970760ca5d33129d2d799e34be5c4782eb
+- name: golang.org/x/net
+  version: f2499483f923065a842d38eb4c7f1927e6fc6e6d
+  subpackages:
+  - bpf
+  - context
+  - proxy
 - name: golang.org/x/sys
   version: d75a52659825e75fff6158388dddc6a5b04f9ba5
   subpackages:
   - unix
+  - windows
 - name: gopkg.in/yaml.v2
   version: a5b47d31c556af34a302ce5d659e6fea44d90de0
 testImports: []

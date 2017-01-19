@@ -9,7 +9,7 @@ import (
 	"github.com/1lann/go-sip/sipnet"
 )
 
-func handleSIP(netConn net.Conn) {
+func HandleSIP(netConn net.Conn) {
 	sipConn := &sipnet.Conn{
 		Conn: netConn,
 	}

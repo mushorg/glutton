@@ -4,17 +4,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/signal"
-	"time"
+	"sync"
 
-	"gopkg.in/yaml.v2"
-
+	log "github.com/Sirupsen/logrus"
 	"github.com/kung-foo/freki"
-	"github.com/sirupsen/logrus"
-	log "github.com/sirupsen/logrus"
+	"github.com/mushorg/glutton"
 )
 
 func onErrorExit(err error) {
@@ -33,15 +30,6 @@ func onInterruptSignal(fn func()) {
 	}()
 }
 
-func readRules(rulesPath string) (freki.PortRules, error) {
-	rules := freki.PortRules{}
-	b, err := ioutil.ReadFile(rulesPath)
-	onErrorExit(err)
-	err = yaml.Unmarshal(b, &rules)
-	onErrorExit(err)
-	return rules, nil
-}
-
 func main() {
 	fmt.Println(`
 	    _____ _       _   _
@@ -53,31 +41,35 @@ func main() {
 
 	`)
 	logPath := flag.String("log", "/dev/null", "Log path.")
+	iface := flag.String("interface", "eth0", "Interface to work with.")
 	rulesPath := flag.String("rules", "/etc/glutton/rules.yaml", "Rules path")
 	flag.Parse()
 
 	log.Infof("Loading rules from: %s", *rulesPath)
-	portRules, err := readRules(*rulesPath)
+	rulesFile, err := os.Open(*rulesPath)
+	rules, err := freki.ReadRulesFromFile(rulesFile)
 	onErrorExit(err)
-	log.Infof("Rules: %+v", portRules)
+	log.Infof("Rules: %+v", rules)
 
 	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		panic(err)
 	}
-	logrus.SetOutput(io.MultiWriter(f, os.Stdout))
+	log.SetOutput(io.MultiWriter(f, os.Stdout))
 
-	processor := freki.New()
-	//processor.SetPortRules(portRules)
+	logger := log.New()
+	//logger.Level = log.DebugLevel
+	processor, err := freki.New(*iface, rules, logger)
+	onErrorExit(err)
+
 	err = processor.Init()
 	onErrorExit(err)
 
+	exitMtx := sync.RWMutex{}
 	exit := func() {
-		err := processor.Stop()
-		if err != nil {
-			log.Error(err)
-		}
-		onErrorExit(processor.Cleanup())
+		exitMtx.Lock()
+		println() // make it look nice after the ^C
+		onErrorExit(processor.Shutdown())
 		os.Exit(0)
 	}
 
@@ -93,19 +85,20 @@ func main() {
 			onErrorExit(err)
 
 			go func(conn net.Conn) {
-				conn.SetReadDeadline(time.Now().Add(time.Second * 5))
+				// TODO: Figure out how this works.
+				//conn.SetReadDeadline(time.Now().Add(time.Second * 5))
 				host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 				ck := freki.NewConnKeyByString(host, port)
 				md := processor.Connections.GetByFlow(ck)
-				log.Infof("%s -> %s", host, md.TargetPort)
-				if rule, ok := portRules.Ports[int(md.TargetPort)] ok {
-					if rule.Target == "telnet" {
-						handleTelnet(conn)
+				if md != nil {
+					if md.TargetPort == 23 {
+						go glutton.HandleTelnet(conn)
 					}
-				}
-				err := conn.Close()
-				if err != nil {
-					log.Error(err)
+				} else {
+					err := conn.Close()
+					if err != nil {
+						log.Error(err)
+					}
 				}
 			}(conn)
 		}

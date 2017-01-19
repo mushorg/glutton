@@ -8,7 +8,7 @@ import (
 	"net/http"
 )
 
-func handleHTTP(conn net.Conn) error {
+func HandleHTTP(conn net.Conn) error {
 	defer conn.Close()
 	req, err := http.ReadRequest(bufio.NewReader(conn))
 	if err != nil {

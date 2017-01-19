@@ -5,6 +5,7 @@ import:
   - server
   - sipnet
 - package: github.com/kung-foo/freki
+  version: ^1.0.1
 - package: github.com/sirupsen/logrus
   version: ^0.11.0
 - package: gopkg.in/yaml.v2
