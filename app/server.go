@@ -106,7 +106,7 @@ func main() {
 
 				logger.Debugf("new connection: %s:%s -> %d", host, port, md.TargetPort)
 
-				if md.TargetPort == 23 {
+				if md.Rule.Name == "telnet" {
 					go glutton.HandleTelnet(conn)
 				} else if md.TargetPort == 25 {
 					go glutton.HandleSMTP(conn)
