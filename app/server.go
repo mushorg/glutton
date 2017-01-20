@@ -40,9 +40,10 @@ func main() {
 	   \_____|_|\__,_|\__|\__\___/|_| |_|
 
 	`)
-	logPath := flag.String("log", "/dev/null", "Log path.")
-	iface := flag.String("interface", "eth0", "Interface to work with.")
+	logPath := flag.String("log", "/dev/null", "Log path")
+	iface := flag.String("interface", "eth0", "Interface to work with")
 	rulesPath := flag.String("rules", "/etc/glutton/rules.yaml", "Rules path")
+	enableDebug := flag.Bool("debug", false, "Set to enable debug log")
 	flag.Parse()
 
 	log.Infof("Loading rules from: %s", *rulesPath)
@@ -52,16 +53,16 @@ func main() {
 	log.Infof("Rules: %+v", rules)
 
 	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		panic(err)
-	}
+	onErrorExit(err)
 	log.SetOutput(io.MultiWriter(f, os.Stdout))
 
 	logger := log.New()
-	//logger.Level = log.DebugLevel
+	if *enableDebug == true {
+		logger.Level = log.DebugLevel
+	}
+
 	processor, err := freki.New(*iface, rules, logger)
 	onErrorExit(err)
-
 	err = processor.Init()
 	onErrorExit(err)
 
