@@ -1,4 +1,7 @@
 rules:
+  - match: tcp dst port 22
+    type: proxy
+    target: tcp://localhost:22
   - match: tcp dst port 5001
     type: passthrough
   - match: tcp

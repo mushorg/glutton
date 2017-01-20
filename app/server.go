@@ -115,12 +115,7 @@ func main() {
 					if _, ok := httpMap[string(snip)]; ok == true {
 						go glutton.HandleHTTP(bufConn)
 					} else {
-						logger.Debugf("closing connection: %s:%s -> %d", host, port, md.TargetPort)
-						err := conn.Close()
-						if err != nil {
-							logger.Error(err)
-						}
-
+						go glutton.HandleTCP(conn)
 					}
 				}
 			}(conn)
