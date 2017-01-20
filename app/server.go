@@ -108,22 +108,21 @@ func main() {
 
 				if md.TargetPort == 23 {
 					go glutton.HandleTelnet(conn)
-				}
-
-				snip, bufConn, err := glutton.Peek(conn, 4)
-				onErrorClose(err, conn)
-				httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true}
-				if _, ok := httpMap[string(snip)]; ok == true {
-					go glutton.HandleHTTP(bufConn)
 				} else {
-					logger.Debugf("closing connection: %s:%s -> %d", host, port, md.TargetPort)
-					err := conn.Close()
-					if err != nil {
-						logger.Error(err)
+					snip, bufConn, err := glutton.Peek(conn, 4)
+					onErrorClose(err, conn)
+					httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true}
+					if _, ok := httpMap[string(snip)]; ok == true {
+						go glutton.HandleHTTP(bufConn)
+					} else {
+						logger.Debugf("closing connection: %s:%s -> %d", host, port, md.TargetPort)
+						err := conn.Close()
+						if err != nil {
+							logger.Error(err)
+						}
+
 					}
-
 				}
-
 			}(conn)
 		}
 	}()
