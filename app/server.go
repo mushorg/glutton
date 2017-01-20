@@ -110,6 +110,8 @@ func main() {
 					go glutton.HandleTelnet(conn)
 				} else if md.TargetPort == 25 {
 					go glutton.HandleSMTP(conn)
+				} else if md.TargetPort == 5900 {
+					go glutton.HandleRFB(conn)
 				} else {
 					snip, bufConn, err := glutton.Peek(conn, 4)
 					onErrorClose(err, conn)
