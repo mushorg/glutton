@@ -34,5 +34,13 @@ func HandleSMTP(conn net.Conn) {
 		bufout: bufio.NewWriter(conn),
 	}
 	client.w("220 Welcome")
-	log.Infof("[smpt] Payload %q", client.r())
+	log.Infof("[smpt] Payload 1: %q", client.r())
+	client.w("250 Is it me?")
+	log.Infof("[smpt] Payload 2: %q", client.r())
+	client.w("250 Sender")
+	log.Infof("[smpt] Payload 3: %q", client.r())
+	client.w("250 Recipient")
+	log.Infof("[smpt] Payload 4: %q", client.r())
+	client.w("354 Ok Send data ending with <CRLF>.<CRLF>")
+	log.Infof("[smpt] Payload 5: %q", client.r())
 }
