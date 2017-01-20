@@ -2,7 +2,7 @@ rules:
   - match: tcp dst port 5001
     type: passthrough
     name: ssh
-  - match: tcp dst port 23 and 2323 and 23231
+  - match: tcp dst port 23 and port 2323 and port 23231
     type: rewrite
     target: 5000
     name: telnet
