@@ -108,6 +108,8 @@ func main() {
 
 				if md.TargetPort == 23 {
 					go glutton.HandleTelnet(conn)
+				} else if md.TargetPort == 25 {
+					go glutton.HandleSMTP(conn)
 				} else {
 					snip, bufConn, err := glutton.Peek(conn, 4)
 					onErrorClose(err, conn)
