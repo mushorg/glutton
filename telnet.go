@@ -33,10 +33,11 @@ func readMsg(conn net.Conn) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	log.Infof("[%v -> TELNET] Payload: %v", conn.RemoteAddr(), message)
+	log.Infof("[%v -> TELNET] Payload: %q", conn.RemoteAddr(), message)
 	return message, err
 }
 
+// HandleTelnet handles telnet communication on a connection
 func HandleTelnet(conn net.Conn) error {
 	defer conn.Close()
 
