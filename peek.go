@@ -2,26 +2,38 @@ package glutton
 
 import (
 	"bufio"
+	"log"
 	"net"
 )
 
-type bufferedConn struct {
+// BufferedConn provides an interface to peek at a connection
+type BufferedConn struct {
 	r        *bufio.Reader
 	net.Conn // So that most methods are embedded
 }
 
-func newBufferedConn(c net.Conn) bufferedConn {
-	return bufferedConn{bufio.NewReader(c), c}
+func newBufferedConn(c net.Conn) BufferedConn {
+	return BufferedConn{bufio.NewReader(c), c}
 }
 
-func newBufferedConnSize(c net.Conn, n int) bufferedConn {
-	return bufferedConn{bufio.NewReaderSize(c, n), c}
+func newBufferedConnSize(c net.Conn, n int) BufferedConn {
+	return BufferedConn{bufio.NewReaderSize(c, n), c}
 }
 
-func (b bufferedConn) Peek(n int) ([]byte, error) {
+func (b BufferedConn) peek(n int) ([]byte, error) {
 	return b.r.Peek(n)
 }
 
-func (b bufferedConn) Read(p []byte) (int, error) {
+func (b BufferedConn) Read(p []byte) (int, error) {
 	return b.r.Read(p)
+}
+
+// Peek reads `length` amount of data from the connection
+func Peek(conn net.Conn, length int) ([]byte, BufferedConn) {
+	bufConn := newBufferedConn(conn)
+	snip, err := bufConn.peek(length)
+	if err != nil {
+		log.Println(err)
+	}
+	return snip, bufConn
 }

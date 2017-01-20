@@ -1,6 +1,6 @@
 rules:
-  - match: tcp dst port 23 or 2323
-    type: rewrite
-    target: 5000
   - match: tcp dst port 5001
     type: passthrough
+  - match: tcp
+    type: rewrite
+    target: 5000

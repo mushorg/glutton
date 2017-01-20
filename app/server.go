@@ -52,6 +52,7 @@ func main() {
 	onErrorExit(err)
 	log.Infof("Rules: %+v", rules)
 
+	// Write log to file and stdout
 	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	onErrorExit(err)
 	log.SetOutput(io.MultiWriter(f, os.Stdout))
@@ -61,6 +62,7 @@ func main() {
 		logger.Level = log.DebugLevel
 	}
 
+	// Initiate the freki processor
 	processor, err := freki.New(*iface, rules, logger)
 	onErrorExit(err)
 	err = processor.Init()
@@ -95,12 +97,20 @@ func main() {
 					if md.TargetPort == 23 {
 						go glutton.HandleTelnet(conn)
 					}
+				}
+				snip, bufConn := glutton.Peek(conn, 4)
+				httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true}
+				if _, ok := httpMap[string(snip)]; ok == true {
+					log.Infof("Handling HTTP: %s", string(snip))
+					go glutton.HandleHTTP(bufConn)
 				} else {
 					err := conn.Close()
 					if err != nil {
 						log.Error(err)
 					}
+
 				}
+
 			}(conn)
 		}
 	}()
