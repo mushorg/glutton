@@ -20,6 +20,14 @@ func onErrorExit(err error) {
 	}
 }
 
+func onErrorClose(err error, conn net.Conn) {
+	if err != nil {
+		log.Error(err)
+		err = conn.Close()
+		log.Error(err)
+	}
+}
+
 func onInterruptSignal(fn func()) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt)
@@ -98,12 +106,14 @@ func main() {
 						go glutton.HandleTelnet(conn)
 					}
 				}
-				snip, bufConn := glutton.Peek(conn, 4)
+				snip, bufConn, err := glutton.Peek(conn, 4)
+				onErrorClose(err, conn)
 				httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true}
 				if _, ok := httpMap[string(snip)]; ok == true {
 					log.Infof("Handling HTTP: %s", string(snip))
 					go glutton.HandleHTTP(bufConn)
 				} else {
+					log.Debugf("Closing connection: %s:%s -> %d", host, port, md.TargetPort)
 					err := conn.Close()
 					if err != nil {
 						log.Error(err)
