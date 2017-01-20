@@ -1,5 +1,5 @@
-hash: 974bad31c377ef6fa4467ac0d0e284f890beaf102b575a7369aae7e82828fcf0
-updated: 2017-01-19T10:33:25.373831892+01:00
+hash: ccae63853dfbd9bda16226c98f950ca84f3af2565f1a9ad8270eeb3a3bcdb727
+updated: 2017-01-20T11:00:37.021167024+01:00
 imports:
 - name: github.com/1lann/go-sip
   version: 68e86c65407ef8cf672ae38526e7f3d29944b94f
@@ -11,7 +11,7 @@ imports:
   subpackages:
   - iptables
 - name: github.com/docker/distribution
-  version: 96b02e885afaebf6aff5c7fff5d4f9563a35c432
+  version: 56b712f454ca9895425cd42d3a0a31e5ba08ba1f
   subpackages:
   - digestset
   - reference
@@ -47,7 +47,7 @@ imports:
   - layers
   - pcap
 - name: github.com/kung-foo/freki
-  version: b28db56aca516742ebe3639dd851b1d0af94c008
+  version: ffc3be9239fa229431b282508a4d6db37440c29c
   subpackages:
   - netfilter
 - name: github.com/Microsoft/go-winio
@@ -56,9 +56,9 @@ imports:
   version: 21dfd564fd89c944783d00d069f33e3e7123c448
 - name: github.com/pkg/errors
   version: 645ef00459ed84a119197bfb8d8205042c6df63d
-- name: github.com/Sirupsen/logrus
-  version: d26492970760ca5d33129d2d799e34be5c4782eb
 - name: github.com/sirupsen/logrus
+  version: d26492970760ca5d33129d2d799e34be5c4782eb
+- name: github.com/Sirupsen/logrus
   version: d26492970760ca5d33129d2d799e34be5c4782eb
 - name: golang.org/x/net
   version: f2499483f923065a842d38eb4c7f1927e6fc6e6d

@@ -2,11 +2,12 @@ package glutton
 
 import (
 	"bufio"
-	"log"
 	"math/rand"
 	"net"
 	"regexp"
 	"strings"
+
+	log "github.com/Sirupsen/logrus"
 )
 
 // Based on https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
@@ -23,7 +24,7 @@ var miraiCom = map[string][]string{
 
 func writeMsg(conn net.Conn, msg string) error {
 	_, err := conn.Write([]byte(msg))
-	log.Printf("[TCP] [TELNET -> %v] Payload: %q", conn.RemoteAddr(), msg)
+	log.Infof("[TELNET -> %v] Payload: %q", conn.RemoteAddr(), msg)
 	return err
 }
 
@@ -32,7 +33,7 @@ func readMsg(conn net.Conn) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	log.Printf("[TCP] [%v -> TELNET] Payload: %v", conn.RemoteAddr(), message)
+	log.Infof("[%v -> TELNET] Payload: %v", conn.RemoteAddr(), message)
 	return message, err
 }
 
