@@ -24,7 +24,9 @@ func onErrorClose(err error, conn net.Conn) {
 	if err != nil {
 		log.Error(err)
 		err = conn.Close()
-		log.Error(err)
+		if err != nil {
+			log.Error(err)
+		}
 	}
 }
 
@@ -40,12 +42,12 @@ func onInterruptSignal(fn func()) {
 
 func main() {
 	fmt.Println(`
-	    _____ _       _   _
-	   / ____| |     | | | |
-	  | |  __| |_   _| |_| |_ ___  _ __
-	  | | |_ | | | | | __| __/ _ \| '_ \
-	  | |__| | | |_| | |_| || (_) | | | |
-	   \_____|_|\__,_|\__|\__\___/|_| |_|
+  _____ _       _   _
+ / ____| |     | | | |
+| |  __| |_   _| |_| |_ ___  _ __
+| | |_ | | | | | __| __/ _ \| '_ \
+| |__| | | |_| | |_| || (_) | | | |
+ \_____|_|\__,_|\__|\__\___/|_| |_|
 
 	`)
 	logPath := flag.String("log", "/dev/null", "Log path")
@@ -101,22 +103,23 @@ func main() {
 				host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 				ck := freki.NewConnKeyByString(host, port)
 				md := processor.Connections.GetByFlow(ck)
-				if md != nil {
-					if md.TargetPort == 23 {
-						go glutton.HandleTelnet(conn)
-					}
+
+				logger.Debugf("new connection: %s:%s -> %d", host, port, md.TargetPort)
+
+				if md.TargetPort == 23 {
+					go glutton.HandleTelnet(conn)
 				}
+
 				snip, bufConn, err := glutton.Peek(conn, 4)
 				onErrorClose(err, conn)
 				httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true}
 				if _, ok := httpMap[string(snip)]; ok == true {
-					log.Infof("Handling HTTP: %s", string(snip))
 					go glutton.HandleHTTP(bufConn)
 				} else {
-					log.Debugf("Closing connection: %s:%s -> %d", host, port, md.TargetPort)
+					logger.Debugf("closing connection: %s:%s -> %d", host, port, md.TargetPort)
 					err := conn.Close()
 					if err != nil {
-						log.Error(err)
+						logger.Error(err)
 					}
 
 				}
