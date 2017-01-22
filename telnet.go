@@ -38,7 +38,7 @@ func readMsg(conn net.Conn) (string, error) {
 }
 
 // HandleTelnet handles telnet communication on a connection
-func HandleTelnet(conn net.Conn) error {
+func HandleTelnet(conn net.Conn) {
 	defer conn.Close()
 
 	// TODO (glaslos): Add device banner
@@ -46,19 +46,22 @@ func HandleTelnet(conn net.Conn) error {
 	writeMsg(conn, "Username: ")
 	_, err := readMsg(conn)
 	if err != nil {
-		return err
+		log.Error(err)
+		return
 	}
 	writeMsg(conn, "Password: ")
 	_, err = readMsg(conn)
 	if err != nil {
-		return err
+		log.Error(err)
+		return
 	}
 
 	writeMsg(conn, "welcome\r\n> ")
 	for {
 		msg, err := readMsg(conn)
 		if err != nil {
-			return err
+			log.Error(err)
+			return
 		}
 		for _, cmd := range strings.Split(msg, ";") {
 			if resp := miraiCom[strings.TrimSpace(cmd)]; len(resp) > 0 {

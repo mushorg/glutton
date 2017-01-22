@@ -10,6 +10,7 @@ import (
 )
 
 func HandleSIP(netConn net.Conn) {
+	defer netConn.Close()
 	sipConn := &sipnet.Conn{
 		Conn: netConn,
 	}
