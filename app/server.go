@@ -75,6 +75,9 @@ func main() {
 	// Initiate the freki processor
 	processor, err := freki.New(*iface, rules, logger)
 	onErrorExit(err)
+	// Adding a proxy server
+	processor.AddServer(freki.NewTCPProxy(6000))
+
 	err = processor.Init()
 	onErrorExit(err)
 
