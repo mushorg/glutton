@@ -19,7 +19,10 @@ func HandleTCP(conn net.Conn) {
 	conn.SetReadDeadline(time.Now().Add(10))
 	host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 	buffer := make([]byte, 1024)
-	n, _ := conn.Read(buffer)
+	n, err := conn.Read(buffer)
+	if err != nil {
+		log.Errorf("[log.tcp ] %v", err)
+	}
 	if n > 0 {
 		log.Infof("[log.tcp ] %s\n%s", host, hex.Dump(buffer[0:n]))
 	} else {

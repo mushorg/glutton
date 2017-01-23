@@ -2,8 +2,9 @@ package glutton
 
 import (
 	"bytes"
-	"log"
 	"net"
+
+	log "github.com/Sirupsen/logrus"
 
 	"github.com/1lann/go-sip/server"
 	"github.com/1lann/go-sip/sipnet"
@@ -18,18 +19,18 @@ func HandleSIP(netConn net.Conn) {
 	rd := bytes.NewReader(buf)
 	req, err := sipnet.ReadRequest(rd)
 	if err != nil {
-		log.Println(err)
+		log.Errorf("[sip     ] error: %v", err)
 	}
-	log.Printf("SIP method: %s", req.Method)
+	log.Printf("[sip     ] SIP method: %s", req.Method)
 	switch req.Method {
 	case sipnet.MethodRegister:
-		log.Println("handling SIP register")
+		log.Println("[sip     ] handling SIP register")
 		server.HandleRegister(req, sipConn)
 	case sipnet.MethodInvite:
-		log.Println("handling SIP invite")
+		log.Println("[sip     ] handling SIP invite")
 		server.HandleInvite(req, sipConn)
 	case sipnet.MethodOptions:
-		log.Println("handling SIP options")
+		log.Println("[sip     ] handling SIP options")
 		resp := sipnet.NewResponse()
 		resp.StatusCode = sipnet.StatusOK
 		resp.Header.Set("Allow", "INVITE, ACK, CANCEL, OPTIONS, BYE")

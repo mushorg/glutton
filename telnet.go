@@ -20,11 +20,12 @@ var miraiCom = map[string][]string{
 	"echo -e \\x6b\\x61\\x6d\\x69/run > /run/.nippon": []string{""},
 	"cat /run/.nippon":                                []string{"kami/run"},
 	"rm /run/.nippon":                                 []string{""},
+	"cat /bin/sh":                                     []string{""},
 }
 
 func writeMsg(conn net.Conn, msg string) error {
 	_, err := conn.Write([]byte(msg))
-	log.Infof("[TELNET -> %v] Payload: %q", conn.RemoteAddr(), msg)
+	log.Infof("[telnet  ] Payload: %q", conn.RemoteAddr(), msg)
 	return err
 }
 
@@ -33,7 +34,7 @@ func readMsg(conn net.Conn) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	log.Infof("[%v -> TELNET] Payload: %q", conn.RemoteAddr(), message)
+	log.Infof("[telnet  ] Payload: %q", conn.RemoteAddr(), message)
 	return message, err
 }
 
@@ -46,13 +47,13 @@ func HandleTelnet(conn net.Conn) {
 	writeMsg(conn, "Username: ")
 	_, err := readMsg(conn)
 	if err != nil {
-		log.Error(err)
+		log.Errorf("[telnet  ] %v", err)
 		return
 	}
 	writeMsg(conn, "Password: ")
 	_, err = readMsg(conn)
 	if err != nil {
-		log.Error(err)
+		log.Errorf("[telnet  ] %v", err)
 		return
 	}
 
@@ -60,7 +61,7 @@ func HandleTelnet(conn net.Conn) {
 	for {
 		msg, err := readMsg(conn)
 		if err != nil {
-			log.Error(err)
+			log.Errorf("[telnet  ] %v", err)
 			return
 		}
 		for _, cmd := range strings.Split(msg, ";") {

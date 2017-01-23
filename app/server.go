@@ -56,11 +56,11 @@ func main() {
 	enableDebug := flag.Bool("debug", false, "Set to enable debug log")
 	flag.Parse()
 
-	log.Infof("Loading rules from: %s", *rulesPath)
+	log.Infof("[glutton ] Loading rules from: %s", *rulesPath)
 	rulesFile, err := os.Open(*rulesPath)
 	rules, err := freki.ReadRulesFromFile(rulesFile)
 	onErrorExit(err)
-	log.Infof("Rules: %+v", rules)
+	log.Infof("[glutton ] Rules: %+v", rules)
 
 	// Write log to file and stdout
 	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
@@ -107,7 +107,7 @@ func main() {
 				ck := freki.NewConnKeyByString(host, port)
 				md := processor.Connections.GetByFlow(ck)
 
-				logger.Debugf("new connection: %s:%s -> %d", host, port, md.TargetPort)
+				logger.Debugf("[glutton ] new connection: %s:%s -> %d", host, port, md.TargetPort)
 
 				if md.Rule.Name == "telnet" {
 					go glutton.HandleTelnet(conn)
