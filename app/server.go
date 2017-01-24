@@ -116,6 +116,10 @@ func main() {
 					go glutton.HandleTelnet(conn)
 				} else if md.TargetPort == 25 {
 					go glutton.HandleSMTP(conn)
+				} else if md.TargetPort == 21 {
+					go glutton.HandleFTP(conn)
+				} else if md.TargetPort == 5060 {
+					go glutton.HandleSIP(conn)
 				} else if md.TargetPort == 5900 {
 					go glutton.HandleRFB(conn)
 				} else {
@@ -126,7 +130,7 @@ func main() {
 					if _, ok := httpMap[string(snip)]; ok == true {
 						go glutton.HandleHTTP(bufConn)
 					} else {
-						go glutton.HandleTCP(conn)
+						go glutton.HandleTCP(bufConn)
 					}
 				}
 			}(conn)

@@ -12,7 +12,7 @@ func HandleTCP(conn net.Conn) {
 	defer func() {
 		err := conn.Close()
 		if err != nil {
-			log.Error(err)
+			log.Errorf("[log.tcp ] %v", err)
 		}
 	}()
 
