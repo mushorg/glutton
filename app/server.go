@@ -85,12 +85,15 @@ func main() {
 	exit := func() {
 		exitMtx.Lock()
 		println() // make it look nice after the ^C
+		logger.Debugf("[glutton ] shutting down...")
 		onErrorExit(processor.Shutdown())
-		os.Exit(0)
 	}
 
 	defer exit()
-	onInterruptSignal(exit)
+	onInterruptSignal(func() {
+		exit()
+		os.Exit(0)
+	})
 
 	go func() {
 		ln, err := net.Listen("tcp", ":5000")
@@ -129,5 +132,5 @@ func main() {
 		}
 	}()
 
-	processor.Start()
+	onErrorExit(processor.Start())
 }

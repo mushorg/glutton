@@ -1,5 +1,5 @@
-hash: 6c10dfc346f8dfba7b387dba29a9135e86d838e75e9bccb148609776e6fe46f5
-updated: 2017-01-20T15:55:08.283617136+01:00
+hash: dfb6e524e2e742ef5eca45a50883194e5f2575c8ab078db2766b7346de93979d
+updated: 2017-01-24T10:27:39.295962437+01:00
 imports:
 - name: github.com/1lann/go-sip
   version: 68e86c65407ef8cf672ae38526e7f3d29944b94f
@@ -11,7 +11,7 @@ imports:
   subpackages:
   - iptables
 - name: github.com/docker/distribution
-  version: 56b712f454ca9895425cd42d3a0a31e5ba08ba1f
+  version: 7a0972304e201e2a5336a69d00e112c27823f554
   subpackages:
   - digestset
   - reference
@@ -47,7 +47,7 @@ imports:
   - layers
   - pcap
 - name: github.com/kung-foo/freki
-  version: beb7be07084de09cfcb832c83adcc03c452b7b24
+  version: 7caccfa911960e35721059c058faf315e15cd804
   subpackages:
   - netfilter
 - name: github.com/Microsoft/go-winio
