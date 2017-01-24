@@ -116,6 +116,8 @@ func main() {
 					go glutton.HandleTelnet(conn)
 				} else if md.TargetPort == 25 {
 					go glutton.HandleSMTP(conn)
+				} else if md.TargetPort == 3389 {
+					go glutton.HandleRDP(conn)
 				} else if md.TargetPort == 21 {
 					go glutton.HandleFTP(conn)
 				} else if md.TargetPort == 5060 {
@@ -125,7 +127,6 @@ func main() {
 				} else {
 					snip, bufConn, err := glutton.Peek(conn, 4)
 					onErrorClose(err, conn)
-					log.Infof("[peek    ] Got data: %s", string(snip))
 					httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true}
 					if _, ok := httpMap[string(snip)]; ok == true {
 						go glutton.HandleHTTP(bufConn)
