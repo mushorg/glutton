@@ -4,6 +4,9 @@ before_install:
   - sudo apt-get -qq update
   - sudo apt-get install -y libpcap-dev libnetfilter-queue-dev iptables-dev
 
-install: go get -t ./...
+install:
+  - go get -v github.com/Masterminds/glide
+  - glide install
+  - go get -t ./...
 
 script: go test

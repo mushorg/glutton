@@ -25,7 +25,7 @@ var miraiCom = map[string][]string{
 
 func writeMsg(conn net.Conn, msg string) error {
 	_, err := conn.Write([]byte(msg))
-	log.Infof("[telnet  ] Payload: %q", conn.RemoteAddr(), msg)
+	log.Infof("[telnet  ] send: %q", msg)
 	return err
 }
 
@@ -34,7 +34,7 @@ func readMsg(conn net.Conn) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	log.Infof("[telnet  ] Payload: %q", conn.RemoteAddr(), message)
+	log.Infof("[telnet  ] recv: %q", message)
 	return message, err
 }
 

@@ -121,6 +121,7 @@ func main() {
 				} else {
 					snip, bufConn, err := glutton.Peek(conn, 4)
 					onErrorClose(err, conn)
+					log.Infof("[peek    ] Got data: %s", string(snip))
 					httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true}
 					if _, ok := httpMap[string(snip)]; ok == true {
 						go glutton.HandleHTTP(bufConn)

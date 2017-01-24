@@ -25,7 +25,5 @@ func HandleTCP(conn net.Conn) {
 	}
 	if n > 0 {
 		log.Infof("[log.tcp ] %s\n%s", host, hex.Dump(buffer[0:n]))
-	} else {
-		log.Infof("[log.tcp ] %s", host)
 	}
 }
