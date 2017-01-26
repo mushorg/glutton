@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 
 	log "github.com/Sirupsen/logrus"
@@ -58,6 +59,7 @@ func main() {
 
 	log.Infof("[glutton ] Loading rules from: %s", *rulesPath)
 	rulesFile, err := os.Open(*rulesPath)
+	onErrorExit(err)
 	rules, err := freki.ReadRulesFromFile(rulesFile)
 	onErrorExit(err)
 	log.Infof("[glutton ] Rules: %+v", rules)
@@ -127,8 +129,8 @@ func main() {
 				} else {
 					snip, bufConn, err := glutton.Peek(conn, 4)
 					onErrorClose(err, conn)
-					httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true}
-					if _, ok := httpMap[string(snip)]; ok == true {
+					httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true}
+					if _, ok := httpMap[strings.ToUpper(string(snip))]; ok == true {
 						go glutton.HandleHTTP(bufConn)
 					} else {
 						go glutton.HandleTCP(bufConn)

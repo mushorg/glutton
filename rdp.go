@@ -1,6 +1,7 @@
 package glutton
 
 import (
+	"encoding/hex"
 	"net"
 
 	log "github.com/Sirupsen/logrus"
@@ -15,6 +16,7 @@ func HandleRDP(conn net.Conn) {
 		log.Errorf("[rdp     ] error: %v", err)
 	}
 	if n > 0 {
+		log.Infof("[rdp     ]\n%s", hex.Dump(buffer[0:n]))
 		pdu, err := rdp.ParsePDU(buffer)
 		if err != nil {
 			log.Errorf("[rdp     ] error: %v", err)
