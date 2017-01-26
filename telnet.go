@@ -2,15 +2,13 @@ package glutton
 
 import (
 	"bufio"
-	"log"
 	"math/rand"
 	"net"
 	"regexp"
 	"strings"
-)
 
-// ConnID is used to relate logs in a connection
-var connID int64
+	log "github.com/Sirupsen/logrus"
+)
 
 // Based on https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
 var miraiCom = map[string][]string{
@@ -22,11 +20,12 @@ var miraiCom = map[string][]string{
 	"echo -e \\x6b\\x61\\x6d\\x69/run > /run/.nippon": []string{""},
 	"cat /run/.nippon":                                []string{"kami/run"},
 	"rm /run/.nippon":                                 []string{""},
+	"cat /bin/sh":                                     []string{""},
 }
 
 func writeMsg(conn net.Conn, msg string) error {
 	_, err := conn.Write([]byte(msg))
-	log.Printf("[%v] [TCP] [TELNET -> %v] Payload: %q", connID, conn.RemoteAddr(), msg)
+	log.Infof("[telnet  ] send: %q", msg)
 	return err
 }
 
@@ -35,31 +34,35 @@ func readMsg(conn net.Conn) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	log.Printf("[%v] [TCP] [%v -> TELNET] Payload: %v", connID, conn.RemoteAddr(), message)
+	log.Infof("[telnet  ] recv: %q", message)
 	return message, err
 }
 
-func handleTelnet(id int64, conn net.Conn) error {
+// HandleTelnet handles telnet communication on a connection
+func HandleTelnet(conn net.Conn) {
 	defer conn.Close()
-	connID = id
+
 	// TODO (glaslos): Add device banner
 	// User name prompt
 	writeMsg(conn, "Username: ")
 	_, err := readMsg(conn)
 	if err != nil {
-		return err
+		log.Errorf("[telnet  ] %v", err)
+		return
 	}
 	writeMsg(conn, "Password: ")
 	_, err = readMsg(conn)
 	if err != nil {
-		return err
+		log.Errorf("[telnet  ] %v", err)
+		return
 	}
 
 	writeMsg(conn, "welcome\r\n> ")
 	for {
 		msg, err := readMsg(conn)
 		if err != nil {
-			return err
+			log.Errorf("[telnet  ] %v", err)
+			return
 		}
 		for _, cmd := range strings.Split(msg, ";") {
 			if resp := miraiCom[strings.TrimSpace(cmd)]; len(resp) > 0 {

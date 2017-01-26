@@ -1,0 +1,76 @@
+hash: dfb6e524e2e742ef5eca45a50883194e5f2575c8ab078db2766b7346de93979d
+updated: 2017-01-24T10:27:39.295962437+01:00
+imports:
+- name: github.com/1lann/go-sip
+  version: 68e86c65407ef8cf672ae38526e7f3d29944b94f
+  subpackages:
+  - server
+  - sipnet
+- name: github.com/coreos/go-iptables
+  version: 5463fbac3bcc6b990663941c2e12660d19f6b36d
+  subpackages:
+  - iptables
+- name: github.com/docker/distribution
+  version: 7a0972304e201e2a5336a69d00e112c27823f554
+  subpackages:
+  - digestset
+  - reference
+- name: github.com/docker/engine-api
+  version: 4290f40c056686fcaa5c9caf02eac1dde9315adf
+  subpackages:
+  - client
+  - client/transport
+  - client/transport/cancellable
+  - types
+  - types/blkiodev
+  - types/container
+  - types/filters
+  - types/mount
+  - types/network
+  - types/reference
+  - types/registry
+  - types/strslice
+  - types/swarm
+  - types/time
+  - types/versions
+- name: github.com/docker/go-connections
+  version: eb315e36415380e7c2fdee175262560ff42359da
+  subpackages:
+  - nat
+  - sockets
+  - tlsconfig
+- name: github.com/docker/go-units
+  version: e30f1e79f3cd72542f2026ceec18d3bd67ab859c
+- name: github.com/google/gopacket
+  version: b83f94714c36e30ce851be1d5a0a5226f9f1bca4
+  subpackages:
+  - layers
+  - pcap
+- name: github.com/kung-foo/freki
+  version: 7caccfa911960e35721059c058faf315e15cd804
+  subpackages:
+  - netfilter
+- name: github.com/Microsoft/go-winio
+  version: 307e919c663683a9000576fdc855acaf9534c165
+- name: github.com/opencontainers/go-digest
+  version: 21dfd564fd89c944783d00d069f33e3e7123c448
+- name: github.com/pkg/errors
+  version: 645ef00459ed84a119197bfb8d8205042c6df63d
+- name: github.com/sirupsen/logrus
+  version: d26492970760ca5d33129d2d799e34be5c4782eb
+- name: github.com/Sirupsen/logrus
+  version: d26492970760ca5d33129d2d799e34be5c4782eb
+- name: golang.org/x/net
+  version: f2499483f923065a842d38eb4c7f1927e6fc6e6d
+  subpackages:
+  - bpf
+  - context
+  - proxy
+- name: golang.org/x/sys
+  version: d75a52659825e75fff6158388dddc6a5b04f9ba5
+  subpackages:
+  - unix
+  - windows
+- name: gopkg.in/yaml.v2
+  version: a5b47d31c556af34a302ce5d659e6fea44d90de0
+testImports: []
