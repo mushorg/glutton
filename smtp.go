@@ -7,6 +7,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 )
 
+// Client is a connection container
 type Client struct {
 	conn   net.Conn
 	bufin  *bufio.Reader
@@ -25,6 +26,7 @@ func (c *Client) r() string {
 	return reply
 }
 
+// HandleSMTP takes a net.Conn and does basic SMTP communication
 func HandleSMTP(conn net.Conn) {
 	defer conn.Close()
 	client := &Client{

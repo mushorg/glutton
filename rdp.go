@@ -8,6 +8,7 @@ import (
 	"github.com/mushorg/glutton/rdp"
 )
 
+// HandleRDP takes a net.Conn and does basic RDP communication
 func HandleRDP(conn net.Conn) {
 	defer conn.Close()
 	buffer := make([]byte, 1024)
@@ -17,7 +18,7 @@ func HandleRDP(conn net.Conn) {
 	}
 	if n > 0 {
 		log.Infof("[rdp     ]\n%s", hex.Dump(buffer[0:n]))
-		pdu, err := rdp.ParsePDU(buffer)
+		pdu, err := rdp.ParsePDU(buffer[0:n])
 		if err != nil {
 			log.Errorf("[rdp     ] error: %v", err)
 		}

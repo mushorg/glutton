@@ -18,6 +18,7 @@ func readRFB(conn net.Conn) {
 	log.Printf("[rfb     ] message %q", msg)
 }
 
+// PixelFormat represents a RFB communication unit
 type PixelFormat struct {
 	Width, Heigth                   uint16
 	BPP, Depth                      uint8
@@ -28,6 +29,7 @@ type PixelFormat struct {
 	ServerNameLength                int32
 }
 
+// HandleRFB takes a net.Conn and does basic RFB/VNC communication
 func HandleRFB(conn net.Conn) {
 	defer conn.Close()
 	conn.Write([]byte("RFB 003.008\n"))

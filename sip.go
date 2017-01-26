@@ -10,6 +10,7 @@ import (
 	"github.com/1lann/go-sip/sipnet"
 )
 
+// HandleSIP takes a net.Conn and does basic SIP communication
 func HandleSIP(netConn net.Conn) {
 	defer netConn.Close()
 	sipConn := &sipnet.Conn{

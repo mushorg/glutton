@@ -17,6 +17,7 @@ func readFTP(conn net.Conn) (msg string, err error) {
 	return
 }
 
+// HandleFTP takes a net.Conn and does basic FTP communication
 func HandleFTP(conn net.Conn) {
 	defer conn.Close()
 	conn.Write([]byte("220 Welcome!\r\n"))

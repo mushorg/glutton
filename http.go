@@ -9,6 +9,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 )
 
+// HandleHTTP takes a net.Conn and does basic HTTP communication
 func HandleHTTP(conn net.Conn) {
 	defer conn.Close()
 	req, err := http.ReadRequest(bufio.NewReader(conn))

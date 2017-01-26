@@ -8,6 +8,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 )
 
+// HandleTCP takes a net.Conn and peeks at the data send
 func HandleTCP(conn net.Conn) {
 	defer func() {
 		err := conn.Close()
