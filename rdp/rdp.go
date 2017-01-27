@@ -13,8 +13,8 @@ type TKIPHeader struct {
 	LSLength byte
 }
 
-// TPDU see http://go.microsoft.com/fwlink/?LinkId=90588 section 13.3
-type TPDU struct {
+// CRTPDU Connection Request see http://go.microsoft.com/fwlink/?LinkId=90588 section 13.3
+type CRTPDU struct {
 	Length                byte
 	ConnectionRequestCode byte
 	DstRef                [2]byte
@@ -29,16 +29,43 @@ type RDPNegReq struct {
 	RequestedProtocols [4]byte
 }
 
-type PDU struct {
+type ConnectionRequestPDU struct {
 	Header    TKIPHeader
-	TPDU      TPDU
+	TPDU      CRTPDU
 	Data      []byte
 	RDPNegReq RDPNegReq
 }
 
+// CCTPDU Connection Confirm see http://go.microsoft.com/fwlink/?LinkId=90588 section 13.3
+type CCTPDU struct {
+	Length      byte
+	CCCDT       byte
+	DstRef      [2]byte
+	SrcRef      [2]byte
+	ClassOption byte
+}
+
+type ConnectionConfirmPDU struct {
+	Header TKIPHeader
+	TPDU   CCTPDU
+}
+
+func ConnectionConfirm() ConnectionConfirmPDU {
+	cc := ConnectionConfirmPDU{
+		Header: TKIPHeader{
+			Version:  3,
+			LSLength: 11,
+		},
+		TPDU: CCTPDU{
+			CCCDT: 208,
+		},
+	}
+	return cc
+}
+
 // ParsePDU takes raw data and parses into struct
-func ParsePDU(data []byte) (pdu PDU, err error) {
-	pdu = PDU{}
+func ParseCRPDU(data []byte) (pdu ConnectionRequestPDU, err error) {
+	pdu = ConnectionRequestPDU{}
 	buffer := bytes.NewBuffer(data)
 	err = binary.Read(buffer, binary.LittleEndian, &pdu.Header)
 	if err != nil {
