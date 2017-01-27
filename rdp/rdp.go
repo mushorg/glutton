@@ -13,7 +13,7 @@ type TKIPHeader struct {
 	LSLength byte
 }
 
-// CRTPDU Connection Request see http://go.microsoft.com/fwlink/?LinkId=90588 section 13.3
+// CRTPDU see http://go.microsoft.com/fwlink/?LinkId=90588 section 13.3
 type CRTPDU struct {
 	Length                byte
 	ConnectionRequestCode byte
@@ -78,14 +78,18 @@ func ParseCRPDU(data []byte) (pdu ConnectionRequestPDU, err error) {
 	if err != nil {
 		return
 	}
-	pdu.Data = make([]byte, pdu.TPDU.Length-7-7)
+	// Not sure if this is the best way to get the offset...
+	offset := bytes.Index(data, []byte("\r\n"))
+	pdu.Data = make([]byte, offset-4-7)
 	err = binary.Read(buffer, binary.LittleEndian, &pdu.Data)
 	if err != nil {
 		return
 	}
-	err = binary.Read(buffer, binary.LittleEndian, &pdu.RDPNegReq)
-	if err != nil {
-		return
+	if buffer.Len() >= 8 {
+		err = binary.Read(buffer, binary.LittleEndian, &pdu.RDPNegReq)
+		if err != nil {
+			return
+		}
 	}
 	return
 }
