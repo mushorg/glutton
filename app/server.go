@@ -68,6 +68,7 @@ func main() {
 	if *enableDebug == true {
 		logger.Level = log.DebugLevel
 	}
+	logger.Formatter = &log.TextFormatter{ForceColors: true}
 	// Loading and parsing the rules
 	logger.Infof("[glutton ] Loading rules from: %s", *rulesPath)
 	rulesFile, err := os.Open(*rulesPath)
