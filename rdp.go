@@ -22,10 +22,12 @@ func HandleRDP(conn net.Conn) {
 		if err != nil {
 			log.Errorf("[rdp     ] error: %v", err)
 		}
-		log.Infof("[rdp     ] pdu: %+v", pdu)
+		log.Infof("[rdp     ] req pdu: %+v", pdu)
 		if len(pdu.Data) > 0 {
-			log.Infof("[rdp     ] data: %q", string(pdu.Data))
+			log.Infof("[rdp     ] data: %s", string(pdu.Data))
 		}
-		// Send response
+		resp := rdp.ConnectionConfirm()
+		log.Infof("[rdp     ] resp pdu: %+v", pdu)
+		conn.Write(resp)
 	}
 }
