@@ -5,16 +5,14 @@ import (
 	"bytes"
 	"net"
 	"net/http"
-
-	log "github.com/Sirupsen/logrus"
 )
 
 // HandleHTTP takes a net.Conn and does basic HTTP communication
-func HandleHTTP(conn net.Conn) {
+func (g *Glutton) HandleHTTP(conn net.Conn) {
 	defer conn.Close()
 	req, err := http.ReadRequest(bufio.NewReader(conn))
 	if err != nil {
-		log.Errorf("[glutton ] %v", err)
+		g.Logger.Errorf("[glutton ] %v", err)
 		return
 	}
 	if req.ContentLength > 0 {
@@ -22,11 +20,11 @@ func HandleHTTP(conn net.Conn) {
 		buf := bytes.NewBuffer(make([]byte, 0, req.ContentLength))
 		_, err = buf.ReadFrom(req.Body)
 		if err != nil {
-			log.Errorf("[glutton ] %v", err)
+			g.Logger.Errorf("[glutton ] %v", err)
 			return
 		}
 		body := buf.Bytes()
-		log.Printf("[glutton ]\n%s", string(body))
+		g.Logger.Printf("[glutton ]\n%s", string(body))
 	}
 	conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 }

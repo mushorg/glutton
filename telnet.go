@@ -6,8 +6,6 @@ import (
 	"net"
 	"regexp"
 	"strings"
-
-	log "github.com/Sirupsen/logrus"
 )
 
 // Based on https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
@@ -23,59 +21,59 @@ var miraiCom = map[string][]string{
 	"cat /bin/sh":                                     []string{""},
 }
 
-func writeMsg(conn net.Conn, msg string) error {
+func writeMsg(conn net.Conn, msg string, g *Glutton) error {
 	_, err := conn.Write([]byte(msg))
-	log.Infof("[telnet  ] send: %q", msg)
+	g.Logger.Infof("[telnet  ] send: %q", msg)
 	return err
 }
 
-func readMsg(conn net.Conn) (string, error) {
+func readMsg(conn net.Conn, g *Glutton) (string, error) {
 	message, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		return "", err
 	}
-	log.Infof("[telnet  ] recv: %q", message)
+	g.Logger.Infof("[telnet  ] recv: %q", message)
 	return message, err
 }
 
 // HandleTelnet handles telnet communication on a connection
-func HandleTelnet(conn net.Conn) {
+func (g *Glutton) HandleTelnet(conn net.Conn) {
 	defer conn.Close()
 
 	// TODO (glaslos): Add device banner
 	// User name prompt
-	writeMsg(conn, "Username: ")
-	_, err := readMsg(conn)
+	writeMsg(conn, "Username: ", g)
+	_, err := readMsg(conn, g)
 	if err != nil {
-		log.Errorf("[telnet  ] %v", err)
+		g.Logger.Errorf("[telnet  ] %v", err)
 		return
 	}
-	writeMsg(conn, "Password: ")
-	_, err = readMsg(conn)
+	writeMsg(conn, "Password: ", g)
+	_, err = readMsg(conn, g)
 	if err != nil {
-		log.Errorf("[telnet  ] %v", err)
+		g.Logger.Errorf("[telnet  ] %v", err)
 		return
 	}
 
-	writeMsg(conn, "welcome\r\n> ")
+	writeMsg(conn, "welcome\r\n> ", g)
 	for {
-		msg, err := readMsg(conn)
+		msg, err := readMsg(conn, g)
 		if err != nil {
-			log.Errorf("[telnet  ] %v", err)
+			g.Logger.Errorf("[telnet  ] %v", err)
 			return
 		}
 		for _, cmd := range strings.Split(msg, ";") {
 			if resp := miraiCom[strings.TrimSpace(cmd)]; len(resp) > 0 {
-				writeMsg(conn, resp[rand.Intn(len(resp))]+"\r\n")
+				writeMsg(conn, resp[rand.Intn(len(resp))]+"\r\n", g)
 			} else {
 				// /bin/busybox YDKBI
 				re := regexp.MustCompile(`\/bin\/busybox (?P<applet>[A-Z]+)`)
 				match := re.FindStringSubmatch(cmd)
 				if len(match) > 1 {
-					writeMsg(conn, match[1]+": applet not found\r\n")
+					writeMsg(conn, match[1]+": applet not found\r\n", g)
 				}
 			}
 		}
-		writeMsg(conn, "> ")
+		writeMsg(conn, "> ", g)
 	}
 }

@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"net"
 
-	log "github.com/Sirupsen/logrus"
-
 	"github.com/1lann/go-sip/server"
 	"github.com/1lann/go-sip/sipnet"
 )
 
 // HandleSIP takes a net.Conn and does basic SIP communication
-func HandleSIP(netConn net.Conn) {
+func (g *Glutton) HandleSIP(netConn net.Conn) {
 	defer netConn.Close()
 	sipConn := &sipnet.Conn{
 		Conn: netConn,
@@ -20,18 +18,18 @@ func HandleSIP(netConn net.Conn) {
 	rd := bytes.NewReader(buf)
 	req, err := sipnet.ReadRequest(rd)
 	if err != nil {
-		log.Errorf("[sip     ] error: %v", err)
+		g.Logger.Errorf("[sip     ] error: %v", err)
 	}
-	log.Printf("[sip     ] SIP method: %s", req.Method)
+	g.Logger.Printf("[sip     ] SIP method: %s", req.Method)
 	switch req.Method {
 	case sipnet.MethodRegister:
-		log.Println("[sip     ] handling SIP register")
+		g.Logger.Println("[sip     ] handling SIP register")
 		server.HandleRegister(req, sipConn)
 	case sipnet.MethodInvite:
-		log.Println("[sip     ] handling SIP invite")
+		g.Logger.Println("[sip     ] handling SIP invite")
 		server.HandleInvite(req, sipConn)
 	case sipnet.MethodOptions:
-		log.Println("[sip     ] handling SIP options")
+		g.Logger.Println("[sip     ] handling SIP options")
 		resp := sipnet.NewResponse()
 		resp.StatusCode = sipnet.StatusOK
 		resp.Header.Set("Allow", "INVITE, ACK, CANCEL, OPTIONS, BYE")

@@ -100,6 +100,9 @@ func main() {
 		os.Exit(0)
 	})
 
+	gtn := glutton.New()
+	gtn.Logger = logger
+
 	// This is the main listener for rewritten package
 	go func() {
 		ln, err := net.Listen("tcp", ":5000")
@@ -119,25 +122,25 @@ func main() {
 				logger.Debugf("[glutton ] new connection: %s:%s -> %d", host, port, md.TargetPort)
 
 				if md.Rule.Name == "telnet" {
-					go glutton.HandleTelnet(conn)
+					go gtn.HandleTelnet(conn)
 				} else if md.TargetPort == 25 {
-					go glutton.HandleSMTP(conn)
+					go gtn.HandleSMTP(conn)
 				} else if md.TargetPort == 3389 {
-					go glutton.HandleRDP(conn)
+					go gtn.HandleRDP(conn)
 				} else if md.TargetPort == 21 {
-					go glutton.HandleFTP(conn)
+					go gtn.HandleFTP(conn)
 				} else if md.TargetPort == 5060 {
-					go glutton.HandleSIP(conn)
+					go gtn.HandleSIP(conn)
 				} else if md.TargetPort == 5900 {
-					go glutton.HandleRFB(conn)
+					go gtn.HandleRFB(conn)
 				} else {
-					snip, bufConn, err := glutton.Peek(conn, 4)
+					snip, bufConn, err := gtn.Peek(conn, 4)
 					onErrorClose(err, conn)
 					httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true}
 					if _, ok := httpMap[strings.ToUpper(string(snip))]; ok == true {
-						go glutton.HandleHTTP(bufConn)
+						go gtn.HandleHTTP(bufConn)
 					} else {
-						go glutton.HandleTCP(bufConn)
+						go gtn.HandleTCP(bufConn)
 					}
 				}
 			}(conn)

@@ -4,25 +4,23 @@ import (
 	"bufio"
 	"net"
 	"strings"
-
-	log "github.com/Sirupsen/logrus"
 )
 
-func readFTP(conn net.Conn) (msg string, err error) {
+func readFTP(conn net.Conn, g *Glutton) (msg string, err error) {
 	msg, err = bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		log.Errorf("[ftp     ] error: %v", err)
+		g.Logger.Errorf("[ftp     ] error: %v", err)
 	}
-	log.Printf("[ftp     ] recv: %q", msg)
+	g.Logger.Printf("[ftp     ] recv: %q", msg)
 	return
 }
 
 // HandleFTP takes a net.Conn and does basic FTP communication
-func HandleFTP(conn net.Conn) {
+func (g *Glutton) HandleFTP(conn net.Conn) {
 	defer conn.Close()
 	conn.Write([]byte("220 Welcome!\r\n"))
 	for {
-		msg, err := readFTP(conn)
+		msg, err := readFTP(conn, g)
 		if len(msg) < 1 && err != nil {
 			break
 		}

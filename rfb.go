@@ -6,16 +6,14 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-
-	log "github.com/Sirupsen/logrus"
 )
 
-func readRFB(conn net.Conn) {
+func readRFB(conn net.Conn, g *Glutton) {
 	msg, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		log.Errorf("[rfb     ] error: %v", err)
+		g.Logger.Errorf("[rfb     ] error: %v", err)
 	}
-	log.Printf("[rfb     ] message %q", msg)
+	g.Logger.Printf("[rfb     ] message %q", msg)
 }
 
 // PixelFormat represents a RFB communication unit
@@ -30,10 +28,10 @@ type PixelFormat struct {
 }
 
 // HandleRFB takes a net.Conn and does basic RFB/VNC communication
-func HandleRFB(conn net.Conn) {
+func (g *Glutton) HandleRFB(conn net.Conn) {
 	defer conn.Close()
 	conn.Write([]byte("RFB 003.008\n"))
-	readRFB(conn)
+	readRFB(conn, g)
 	var authNone uint32 = 1
 	bs := make([]byte, 4)
 	binary.LittleEndian.PutUint32(bs, authNone)
@@ -63,5 +61,5 @@ func HandleRFB(conn net.Conn) {
 		fmt.Println("binary.Write failed:", err)
 	}
 	conn.Write(buf.Bytes())
-	readRFB(conn)
+	readRFB(conn, g)
 }
