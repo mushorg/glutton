@@ -15,18 +15,20 @@ import (
 	"github.com/mushorg/glutton"
 )
 
+var logger = log.New()
+
 func onErrorExit(err error) {
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 }
 
 func onErrorClose(err error, conn net.Conn) {
 	if err != nil {
-		log.Error(err)
+		logger.Error(err)
 		err = conn.Close()
 		if err != nil {
-			log.Error(err)
+			logger.Error(err)
 		}
 	}
 }
@@ -57,22 +59,22 @@ func main() {
 	enableDebug := flag.Bool("debug", false, "Set to enable debug log")
 	flag.Parse()
 
-	log.Infof("[glutton ] Loading rules from: %s", *rulesPath)
+	// Write log to file and stdout
+	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	logger.Out = io.MultiWriter(f, os.Stdout)
+	if *enableDebug == true {
+		logger.Level = log.DebugLevel
+	}
+	// Loading and parsing the rules
+	logger.Infof("[glutton ] Loading rules from: %s", *rulesPath)
 	rulesFile, err := os.Open(*rulesPath)
 	onErrorExit(err)
 	rules, err := freki.ReadRulesFromFile(rulesFile)
 	onErrorExit(err)
-	log.Infof("[glutton ] Rules: %+v", rules)
-
-	// Write log to file and stdout
-	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	onErrorExit(err)
-	log.SetOutput(io.MultiWriter(f, os.Stdout))
-
-	logger := log.New()
-	if *enableDebug == true {
-		logger.Level = log.DebugLevel
-	}
+	logger.Infof("[glutton ] Rules: %+v", rules)
 
 	// Initiate the freki processor
 	processor, err := freki.New(*iface, rules, logger)
@@ -97,6 +99,7 @@ func main() {
 		os.Exit(0)
 	})
 
+	// This is the main listener for rewritten package
 	go func() {
 		ln, err := net.Listen("tcp", ":5000")
 		onErrorExit(err)

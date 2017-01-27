@@ -18,13 +18,16 @@ func HandleRDP(conn net.Conn) {
 	}
 	if n > 0 {
 		log.Infof("[rdp     ]\n%s", hex.Dump(buffer[0:n]))
-		pdu, err := rdp.ParsePDU(buffer[0:n])
+		pdu, err := rdp.ParseCRPDU(buffer[0:n])
 		if err != nil {
 			log.Errorf("[rdp     ] error: %v", err)
 		}
-		log.Infof("[rdp     ] pdu: %+v", pdu)
+		log.Infof("[rdp     ] req pdu: %+v", pdu)
 		if len(pdu.Data) > 0 {
 			log.Infof("[rdp     ] data: %s", string(pdu.Data))
 		}
+		resp := rdp.ConnectionConfirm()
+		log.Infof("[rdp     ] resp pdu: %+v", pdu)
+		conn.Write(resp)
 	}
 }
