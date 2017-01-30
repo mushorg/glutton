@@ -86,7 +86,21 @@ func ParseCRPDU(data []byte) (pdu ConnectionRequestPDU, err error) {
 	}
 	// Not sure if this is the best way to get the offset...
 	offset := bytes.Index(data, []byte("\r\n"))
-	pdu.Data = make([]byte, offset-4-7)
+	switch {
+	case offset < 4:
+		return
+	case offset < 4+7:
+		if offset-4 == 0 {
+			return
+		}
+		pdu.Data = make([]byte, offset-4)
+	default:
+		if offset-4-7 == 0 {
+			return
+		}
+		pdu.Data = make([]byte, offset-4-7)
+	}
+
 	err = binary.Read(buffer, binary.LittleEndian, &pdu.Data)
 	if err != nil {
 		return
