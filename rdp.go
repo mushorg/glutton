@@ -4,7 +4,7 @@ import (
 	"encoding/hex"
 	"net"
 
-	"github.com/mushorg/glutton/rdp"
+	"github.com/mushorg/glutton/protocols/rdp"
 )
 
 // HandleRDP takes a net.Conn and does basic RDP communication

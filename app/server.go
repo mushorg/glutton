@@ -127,6 +127,8 @@ func main() {
 					go gtn.HandleSMTP(conn)
 				} else if md.TargetPort == 3389 {
 					go gtn.HandleRDP(conn)
+				} else if md.TargetPort == 445 {
+					go gtn.HandleSMB(conn)
 				} else if md.TargetPort == 21 {
 					go gtn.HandleFTP(conn)
 				} else if md.TargetPort == 5060 {
