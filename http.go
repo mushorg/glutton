@@ -3,6 +3,7 @@ package glutton
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"net"
 	"net/http"
 )
@@ -12,19 +13,20 @@ func (g *Glutton) HandleHTTP(conn net.Conn) {
 	defer conn.Close()
 	req, err := http.ReadRequest(bufio.NewReader(conn))
 	if err != nil {
-		g.Logger.Errorf("[glutton ] %v", err)
+		g.Logger.Errorf("[http    ] %v", err)
 		return
 	}
+	g.Logger.Printf("[http    ] %+v", req)
 	if req.ContentLength > 0 {
 		defer req.Body.Close()
 		buf := bytes.NewBuffer(make([]byte, 0, req.ContentLength))
 		_, err = buf.ReadFrom(req.Body)
 		if err != nil {
-			g.Logger.Errorf("[glutton ] %v", err)
+			g.Logger.Errorf("[http    ] %v", err)
 			return
 		}
 		body := buf.Bytes()
-		g.Logger.Printf("[glutton ]\n%s", string(body))
+		g.Logger.Printf("[http    ] http body:\n%s", hex.Dump(body[:]))
 	}
 	conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 }
