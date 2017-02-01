@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -57,6 +61,7 @@ func main() {
 	iface := flag.String("interface", "eth0", "Interface to work with")
 	rulesPath := flag.String("rules", "/etc/glutton/rules.yaml", "Rules path")
 	enableDebug := flag.Bool("debug", false, "Set to enable debug log")
+	enableGollum := flag.Bool("gollum", false, "Set to enable gollum logging")
 	flag.Parse()
 
 	// Write log to file and stdout
@@ -100,7 +105,8 @@ func main() {
 		os.Exit(0)
 	})
 
-	gtn := glutton.New()
+	gtn, err := glutton.New()
+	onErrorExit(err)
 	gtn.Logger = logger
 
 	// This is the main listener for rewritten package
@@ -120,6 +126,36 @@ func main() {
 				md := processor.Connections.GetByFlow(ck)
 
 				logger.Debugf("[glutton ] new connection: %s:%s -> %d", host, port, md.TargetPort)
+
+				if *enableGollum {
+					client := &http.Client{}
+					event := glutton.Event{
+						SrcHost:  host,
+						SrcPort:  port,
+						DstPort:  string(md.TargetPort),
+						SensorID: gtn.ID.String(),
+					}
+					data, err := json.Marshal(event)
+					if err != nil {
+						panic(err)
+					}
+					req, err := http.NewRequest("POST", "http://localhost:9090", bytes.NewBuffer(data))
+					req.SetBasicAuth("gollum", "gollum")
+					req.Header.Set("Content-Type", "application/json")
+					if err != nil {
+						panic(err)
+					}
+					resp, err := client.Do(req)
+					if err != nil {
+						panic(err)
+					}
+					defer resp.Body.Close()
+
+					fmt.Println("response Status:", resp.Status)
+					fmt.Println("response Headers:", resp.Header)
+					body, _ := ioutil.ReadAll(resp.Body)
+					fmt.Println("response Body:", string(body))
+				}
 
 				if md.Rule.Name == "telnet" {
 					go gtn.HandleTelnet(conn)
