@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
@@ -132,7 +131,7 @@ func main() {
 					event := glutton.Event{
 						SrcHost:  host,
 						SrcPort:  port,
-						DstPort:  string(md.TargetPort),
+						DstPort:  md.TargetPort.String(),
 						SensorID: gtn.ID.String(),
 					}
 					data, err := json.Marshal(event)
@@ -150,11 +149,7 @@ func main() {
 						panic(err)
 					}
 					defer resp.Body.Close()
-
-					fmt.Println("response Status:", resp.Status)
-					fmt.Println("response Headers:", resp.Header)
-					body, _ := ioutil.ReadAll(resp.Body)
-					fmt.Println("response Body:", string(body))
+					logger.Debugf("[gollum  ] response: %d", resp.Status)
 				}
 
 				if md.Rule.Name == "telnet" {
