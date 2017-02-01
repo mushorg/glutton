@@ -149,7 +149,7 @@ func main() {
 						panic(err)
 					}
 					defer resp.Body.Close()
-					logger.Debugf("[gollum  ] response: %d", resp.Status)
+					logger.Debugf("[gollum  ] response: %s", resp.Status)
 				}
 
 				if md.Rule.Name == "telnet" {
