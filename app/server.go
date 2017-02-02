@@ -161,7 +161,10 @@ func main() {
 				logger.Debugf("[glutton ] new connection: %s:%s -> %d", host, port, md.TargetPort)
 
 				if *connectGollum != "" {
-					logGollum(*connectGollum, host, port, md.TargetPort.String(), gtn.ID.String(), md.Rule.String())
+					err = logGollum(*connectGollum, host, port, md.TargetPort.String(), gtn.ID.String(), md.Rule.String())
+					if err != nil {
+						log.Error(err)
+					}
 				}
 
 				if md.Rule.Name == "telnet" {
