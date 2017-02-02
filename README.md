@@ -1,56 +1,28 @@
 # Glutton [![Build Status](https://travis-ci.org/mushorg/glutton.svg?branch=master)](https://travis-ci.org/mushorg/glutton)
 
-The Glutton server listens on both TCP and UDP port 5000 for new connections.
-
-First make sure you have installed iptables-persistent. During installation select YES for saving your current firewall rules for both ipv4 and ipv6.
+Setup `go 1.7+`. Install required packages -
 ```
-apt-get install iptables-persistent conntrack golang libpcap-dev
-```
-Download and set up glutton, add GOPATH to /etc/environment. Example
-```
-mkdir /opt/go
-echo export GOPATH=/opt/go >> /etc/environment
-source /etc/environment
-go get github.com/mushorg/glutton
+apt-get install libnetfilter-queue-dev libpcap-dev iptables-dev
 ```
 To change your SSH server default port (i.e. 5001)
 ```
 sed -i 's/Port 22/Port 5001/' /etc/ssh/sshd_config
 ```
-Implement following iptables rules in order to redirect all traffic to port 5000 (tested on Ubuntu 14.04 and 16.04). (enable the redirect while leaving out the port you picked for sshd)
+Download glutton, and install dependencies using `glide` -
 ```
-iptables -t nat -A PREROUTING -p tcp --dport 1:5000 -j REDIRECT --to-port 5000
-iptables -t nat -A PREROUTING -p tcp --dport 5002:65389 -j REDIRECT --to-port 5000  
-iptables -t nat -A PREROUTING -p udp -j REDIRECT --to-port 5000  
+go get github.com/mushorg/glutton
+mkdir /etc/glutton
+cp $GOPATH/src/github.com/mushorg/glutton/rules/rules.yaml /etc/glutton
+curl https://glide.sh/get | sh
+glide install
+glide update
 ```
-Save the new rules
+Install `glutton` -
 ```
-service iptables-persistent save  
-service iptables-persistent reload  
+cd $GOPATH/src/github.com/mushorg/glutton
+make
 ```
-In case of error try
+To test glutton -
 ```
-service netfilter-persistent save  
-service netfilter-persistent reload
-```
-To test glutton
-```
-mkdir -p /etc/glutton  
-mkdir -p /var/log/glutton
-go get github.com/google/gopacket
-go get pkg.re/essentialkaos/z7.v2
-cp $GOPATH/src/github.com/mushorg/glutton/config/ports.yml /etc/glutton
-go run $GOPATH/src/github.com/mushorg/glutton/server/glutton_server.go -log /tmp/glutton.log
-```
-To make glutton start on boot using upstart
-```
-cd $GOPATH/src/github.com/mushorg/glutton/glutton
-go install
-cp $GOPATH/src/github.com/mushorg/glutton/scripts/glutton.conf /etc/init
-```
-Now Glutton server listening on all tcp udp ports of the system except one for SSH 5001 :]
-
-For testing Telnet locally:
-```
-sudo iptables -t nat -A OUTPUT -p tcp --dport 23 -j REDIRECT --to-port 5000
+gluttonserver -log /tmp/glutton.log
 ```

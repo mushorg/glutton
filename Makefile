@@ -3,9 +3,7 @@
 default: build
 
 build:
-	@mkdir -p bin/
-	go build -o bin/sensor app/server.go
-	upx -1 bin/sensor
+	go build -o $$GOPATH/bin/gluttonserver app/server.go
 
 static:
 	@mkdir -p bin/
