@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -19,6 +20,7 @@ import (
 )
 
 var logger = log.New()
+var client = &http.Client{}
 
 func onErrorExit(err error) {
 	if err != nil {
@@ -34,6 +36,38 @@ func onErrorClose(err error, conn net.Conn) {
 			logger.Error(err)
 		}
 	}
+}
+
+func logGollum(rawConn, host, port, dstPort, sensorID, rule string) (err error) {
+	conn, err := url.Parse(rawConn)
+	if err != nil {
+		return
+	}
+	event := glutton.Event{
+		SrcHost:  host,
+		SrcPort:  port,
+		DstPort:  dstPort,
+		SensorID: sensorID,
+		Rule:     rule,
+	}
+	data, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequest("POST", conn.Scheme+"://"+conn.Host, bytes.NewBuffer(data))
+	if err != nil {
+		return
+	}
+	password, _ := conn.User.Password()
+	req.SetBasicAuth(conn.User.Username(), password)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	logger.Debugf("[gollum  ] response: %s", resp.Status)
+	return
 }
 
 func onInterruptSignal(fn func()) {
@@ -60,7 +94,7 @@ func main() {
 	iface := flag.String("interface", "eth0", "Interface to work with")
 	rulesPath := flag.String("rules", "/etc/glutton/rules.yaml", "Rules path")
 	enableDebug := flag.Bool("debug", false, "Set to enable debug log")
-	enableGollum := flag.Bool("gollum", false, "Set to enable gollum logging")
+	connectGollum := flag.String("gollum", "http://gollum:gollum@localhost:9000", "Gollum connection string")
 	flag.Parse()
 
 	// Write log to file and stdout
@@ -126,30 +160,8 @@ func main() {
 
 				logger.Debugf("[glutton ] new connection: %s:%s -> %d", host, port, md.TargetPort)
 
-				if *enableGollum {
-					client := &http.Client{}
-					event := glutton.Event{
-						SrcHost:  host,
-						SrcPort:  port,
-						DstPort:  md.TargetPort.String(),
-						SensorID: gtn.ID.String(),
-					}
-					data, err := json.Marshal(event)
-					if err != nil {
-						panic(err)
-					}
-					req, err := http.NewRequest("POST", "http://localhost:9090", bytes.NewBuffer(data))
-					req.SetBasicAuth("gollum", "gollum")
-					req.Header.Set("Content-Type", "application/json")
-					if err != nil {
-						panic(err)
-					}
-					resp, err := client.Do(req)
-					if err != nil {
-						panic(err)
-					}
-					defer resp.Body.Close()
-					logger.Debugf("[gollum  ] response: %s", resp.Status)
+				if *connectGollum != "" {
+					logGollum(*connectGollum, host, port, md.TargetPort.String(), gtn.ID.String(), md.Rule.String())
 				}
 
 				if md.Rule.Name == "telnet" {

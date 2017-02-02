@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/kung-foo/freki"
 	uuid "github.com/satori/go.uuid"
 )
 
@@ -18,11 +17,11 @@ type Glutton struct {
 
 // Event is a struct for glutton events
 type Event struct {
-	SrcHost  string     `json:"srcHost"`
-	SrcPort  string     `json:"srcPort"`
-	DstPort  string     `json:"dstPort"`
-	SensorID string     `json:"sensorID"`
-	Rule     freki.Rule `json:"-"`
+	SrcHost  string `json:"srcHost"`
+	SrcPort  string `json:"srcPort"`
+	DstPort  string `json:"dstPort"`
+	SensorID string `json:"sensorID"`
+	Rule     string `json:"rule"`
 }
 
 func (g *Glutton) makeID() error {
