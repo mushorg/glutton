@@ -157,6 +157,10 @@ func main() {
 				host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 				ck := freki.NewConnKeyByString(host, port)
 				md := processor.Connections.GetByFlow(ck)
+				if md == nil {
+					logger.Debugf("[glutton ] connection not tracked: %s:%s", host, port)
+					return
+				}
 
 				logger.Debugf("[glutton ] new connection: %s:%s -> %d", host, port, md.TargetPort)
 
