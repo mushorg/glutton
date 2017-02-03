@@ -3,18 +3,17 @@
 default: build
 
 build:
-	go build -o $$GOPATH/bin/gluttonserver app/server.go
+	go build -o $$GOPATH/bin/server app/server.go
 
 static:
-	@mkdir -p bin/
-	go build --ldflags '-extldflags "-static"' -o bin/sensor app/server.go
-	upx -1 bin/sensor
+	go build --ldflags '-extldflags "-static"' -o bin/server app/server.go
+	upx -1 bin/server
 
 clean:
 	rm -rf bin/
 
 run: build
-	sudo ./bin/sensor -rules rules/rules.yaml
+	sudo ./bin/server -rules rules/rules.yaml
 
 docker:
 	docker build -t glutton .

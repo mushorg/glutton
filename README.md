@@ -1,28 +1,28 @@
 # Glutton [![Build Status](https://travis-ci.org/mushorg/glutton.svg?branch=master)](https://travis-ci.org/mushorg/glutton)
 
-Setup `go 1.7+`. Install required packages -
+Setup `go 1.7+`. Install required system packages:
 ```
 apt-get install libnetfilter-queue-dev libpcap-dev iptables-dev
 ```
-To change your SSH server default port (i.e. 5001)
+To change your SSH server default port (i.e. 5001, see `rules.yaml`) and restart sshd:
 ```
 sed -i 's/Port 22/Port 5001/' /etc/ssh/sshd_config
 ```
-Download glutton, and install dependencies using `glide` -
+Download glutton, and install dependencies using `glide`:
 ```
 go get github.com/mushorg/glutton
 mkdir /etc/glutton
-cp $GOPATH/src/github.com/mushorg/glutton/rules/rules.yaml /etc/glutton
+cd $GOPATH/src/github.com/mushorg/glutton/
+cp rules/rules.yaml /etc/glutton
 curl https://glide.sh/get | sh
 glide install
 glide update
 ```
-Install `glutton` -
+Build glutton:
 ```
-cd $GOPATH/src/github.com/mushorg/glutton
-make
+make build
 ```
-To test glutton -
+To run/test glutton:
 ```
-gluttonserver -log /tmp/glutton.log
+bin/server -log /tmp/glutton.log
 ```

@@ -8,10 +8,10 @@ ADD . .
 RUN apk add g++
 
 RUN mkdir -p bin/
-RUN go build -o bin/sensor app/server.go
+RUN go build -o bin/server app/server.go
 
 # RUN mkdir -p /opt/glutton
 # WORKDIR /opt/glutton
-# ADD bin/sensor .
+# ADD bin/server .
 # ADD rules/rules.yaml .
-CMD ["bin/sensor", "-interface", "eth0", "-rules", "rules/rules.yaml"]
+CMD ["bin/server", "-interface", "eth0", "-rules", "rules/rules.yaml"]
