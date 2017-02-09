@@ -14,20 +14,20 @@ func (g *Glutton) HandleSMB(conn net.Conn) {
 	for {
 		n, err := conn.Read(buffer)
 		if err != nil {
-			g.Logger.Errorf("[smb     ] error: %v", err)
+			g.logger.Errorf("[smb     ] error: %v", err)
 		}
 		if err != nil && n <= 0 {
 			break
 		}
 		if n > 0 {
-			g.Logger.Infof("[smb     ]\n%s", hex.Dump(buffer[0:n]))
+			g.logger.Infof("[smb     ]\n%s", hex.Dump(buffer[0:n]))
 			packet, err := smb.ParseSMB(buffer[0:n])
 			if err != nil {
-				g.Logger.Errorf("[smb     ] error: %v", err)
+				g.logger.Errorf("[smb     ] error: %v", err)
 			}
-			g.Logger.Infof("[smb     ] req packet: %+v", packet)
+			g.logger.Infof("[smb     ] req packet: %+v", packet)
 			if len(packet.Data.DialectString) > 0 {
-				g.Logger.Infof("[smb     ] data: %s", string(packet.Data.DialectString[:]))
+				g.logger.Infof("[smb     ] data: %s", string(packet.Data.DialectString[:]))
 			}
 		}
 	}

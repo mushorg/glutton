@@ -18,18 +18,18 @@ func (g *Glutton) HandleSIP(netConn net.Conn) {
 	rd := bytes.NewReader(buf)
 	req, err := sipnet.ReadRequest(rd)
 	if err != nil {
-		g.Logger.Errorf("[sip     ] error: %v", err)
+		g.logger.Errorf("[sip     ] error: %v", err)
 	}
-	g.Logger.Printf("[sip     ] SIP method: %s", req.Method)
+	g.logger.Printf("[sip     ] SIP method: %s", req.Method)
 	switch req.Method {
 	case sipnet.MethodRegister:
-		g.Logger.Println("[sip     ] handling SIP register")
+		g.logger.Println("[sip     ] handling SIP register")
 		server.HandleRegister(req, sipConn)
 	case sipnet.MethodInvite:
-		g.Logger.Println("[sip     ] handling SIP invite")
+		g.logger.Println("[sip     ] handling SIP invite")
 		server.HandleInvite(req, sipConn)
 	case sipnet.MethodOptions:
-		g.Logger.Println("[sip     ] handling SIP options")
+		g.logger.Println("[sip     ] handling SIP options")
 		resp := sipnet.NewResponse()
 		resp.StatusCode = sipnet.StatusOK
 		resp.Header.Set("Allow", "INVITE, ACK, CANCEL, OPTIONS, BYE")

@@ -11,9 +11,9 @@ import (
 func readRFB(conn net.Conn, g *Glutton) {
 	msg, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		g.Logger.Errorf("[rfb     ] error: %v", err)
+		g.logger.Errorf("[rfb     ] error: %v", err)
 	}
-	g.Logger.Printf("[rfb     ] message %q", msg)
+	g.logger.Printf("[rfb     ] message %q", msg)
 }
 
 // PixelFormat represents a RFB communication unit
