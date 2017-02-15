@@ -11,7 +11,7 @@ func (g *Glutton) HandleTCP(conn net.Conn) {
 	defer func() {
 		err := conn.Close()
 		if err != nil {
-			g.Logger.Errorf("[log.tcp ] %v", err)
+			g.logger.Errorf("[log.tcp ] %v", err)
 		}
 	}()
 	conn.SetReadDeadline(time.Now().Add(10))
@@ -19,9 +19,9 @@ func (g *Glutton) HandleTCP(conn net.Conn) {
 	buffer := make([]byte, 1024)
 	n, err := conn.Read(buffer)
 	if err != nil {
-		g.Logger.Errorf("[log.tcp ] %v", err)
+		g.logger.Errorf("[log.tcp ] %v", err)
 	}
 	if n > 0 {
-		g.Logger.Infof("[log.tcp ] %s\n%s", host, hex.Dump(buffer[0:n]))
+		g.logger.Infof("[log.tcp ] %s\n%s", host, hex.Dump(buffer[0:n]))
 	}
 }

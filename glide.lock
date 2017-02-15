@@ -1,5 +1,5 @@
 hash: dfb6e524e2e742ef5eca45a50883194e5f2575c8ab078db2766b7346de93979d
-updated: 2017-02-01T17:16:03.203051175+01:00
+updated: 2017-02-09T19:13:34.578115338+05:00
 imports:
 - name: github.com/1lann/go-sip
   version: 68e86c65407ef8cf672ae38526e7f3d29944b94f
@@ -59,20 +59,20 @@ imports:
 - name: github.com/satori/go.uuid
   version: b061729afc07e77a8aa4fad0a2fd840958f1942a
 - name: github.com/sirupsen/logrus
-  version: d26492970760ca5d33129d2d799e34be5c4782eb
+  version: c078b1e43f58d563c74cebe63c85789e76ddb627
 - name: github.com/Sirupsen/logrus
-  version: d26492970760ca5d33129d2d799e34be5c4782eb
+  version: 61e43dc76f7ee59a82bdf3d71033dc12bea4c77d
 - name: golang.org/x/net
-  version: f2499483f923065a842d38eb4c7f1927e6fc6e6d
+  version: 007e530097ad7f954752df63046b4036f98ba6a6
   subpackages:
   - bpf
   - context
   - proxy
 - name: golang.org/x/sys
-  version: d75a52659825e75fff6158388dddc6a5b04f9ba5
+  version: 7a6e5648d140666db5d920909e082ca00a87ba2c
   subpackages:
   - unix
   - windows
 - name: gopkg.in/yaml.v2
-  version: a5b47d31c556af34a302ce5d659e6fea44d90de0
+  version: 4c78c975fe7c825c6d1466c42be594d1d6f3aba6
 testImports: []

@@ -9,9 +9,9 @@ import (
 func readFTP(conn net.Conn, g *Glutton) (msg string, err error) {
 	msg, err = bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		g.Logger.Errorf("[ftp     ] error: %v", err)
+		g.logger.Errorf("[ftp     ] error: %v", err)
 	}
-	g.Logger.Printf("[ftp     ] recv: %q", msg)
+	g.logger.Printf("[ftp     ] recv: %q", msg)
 	return
 }
 

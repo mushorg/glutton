@@ -23,7 +23,7 @@ var miraiCom = map[string][]string{
 
 func writeMsg(conn net.Conn, msg string, g *Glutton) error {
 	_, err := conn.Write([]byte(msg))
-	g.Logger.Infof("[telnet  ] send: %q", msg)
+	g.logger.Infof("[telnet  ] send: %q", msg)
 	return err
 }
 
@@ -32,7 +32,7 @@ func readMsg(conn net.Conn, g *Glutton) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	g.Logger.Infof("[telnet  ] recv: %q", message)
+	g.logger.Infof("[telnet  ] recv: %q", message)
 	return message, err
 }
 
@@ -45,13 +45,13 @@ func (g *Glutton) HandleTelnet(conn net.Conn) {
 	writeMsg(conn, "Username: ", g)
 	_, err := readMsg(conn, g)
 	if err != nil {
-		g.Logger.Errorf("[telnet  ] %v", err)
+		g.logger.Errorf("[telnet  ] %v", err)
 		return
 	}
 	writeMsg(conn, "Password: ", g)
 	_, err = readMsg(conn, g)
 	if err != nil {
-		g.Logger.Errorf("[telnet  ] %v", err)
+		g.logger.Errorf("[telnet  ] %v", err)
 		return
 	}
 
@@ -59,7 +59,7 @@ func (g *Glutton) HandleTelnet(conn net.Conn) {
 	for {
 		msg, err := readMsg(conn, g)
 		if err != nil {
-			g.Logger.Errorf("[telnet  ] %v", err)
+			g.logger.Errorf("[telnet  ] %v", err)
 			return
 		}
 		for _, cmd := range strings.Split(msg, ";") {
