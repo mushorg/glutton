@@ -13,12 +13,15 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
+const gluttonServer = 5000
+
 // Glutton struct
 type Glutton struct {
 	logger    *log.Logger
 	id        uuid.UUID
 	processor *freki.Processor
-	address   *producer.Address
+
+	address *producer.Address
 }
 
 func (g *Glutton) makeID() error {
@@ -66,60 +69,50 @@ func New(processor *freki.Processor, log *log.Logger, logHTTP *string) (g *Glutt
 
 // Start this is the main listener for rewritten package
 func (g *Glutton) Start() {
-	ln, err := net.Listen("tcp", ":5000")
-	g.OnErrorExit(err)
+	g.processor.AddServer(freki.NewUserConnServer(gluttonServer))
+	g.processor.RegisterConnHandler("glutton", func(conn net.Conn, md *freki.Metadata) error {
+		host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
+		if md == nil {
+			g.logger.Debugf("[glutton ] connection not tracked: %s:%s", host, port)
+			return nil
+		}
 
-	for {
-		conn, err := ln.Accept()
-		g.OnErrorExit(err)
+		g.logger.Debugf("[glutton ] new connection: %s:%s -> %d", host, port, uint(md.TargetPort))
 
-		go func(conn net.Conn) {
-			// TODO: Figure out how this works.
-			//conn.SetReadDeadline(time.Now().Add(time.Second * 5))
-			host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
-			ck := freki.NewConnKeyByString(host, port)
-			md := g.processor.Connections.GetByFlow(ck)
-			if md == nil {
-				g.logger.Debugf("[glutton ] connection not tracked: %s:%s", host, port)
-				return
+		addr := *g.address.HTTPAddr
+		if addr != "" {
+			err := g.address.LogHTTP(addr, host, port, md.TargetPort.String(), g.id.String(), md.Rule.String())
+			if err != nil {
+				g.logger.Error(err)
 			}
-
-			g.logger.Debugf("[glutton ] new connection: %s:%s -> %d", host, port, md.TargetPort)
-
-			addr := *g.address.HTTPAddr
-			if addr != "" {
-				err = g.address.LogHTTP(addr, host, port, md.TargetPort.String(), g.id.String(), md.Rule.String())
-				if err != nil {
-					g.logger.Error(err)
-				}
-			}
-
-			if md.Rule.Name == "telnet" {
-				go g.HandleTelnet(conn)
-			} else if md.TargetPort == 25 {
-				go g.HandleSMTP(conn)
-			} else if md.TargetPort == 3389 {
-				go g.HandleRDP(conn)
-			} else if md.TargetPort == 445 {
-				go g.HandleSMB(conn)
-			} else if md.TargetPort == 21 {
-				go g.HandleFTP(conn)
-			} else if md.TargetPort == 5060 {
-				go g.HandleSIP(conn)
-			} else if md.TargetPort == 5900 {
-				go g.HandleRFB(conn)
+		}
+		if md.Rule.Name == "telnet" {
+			go g.HandleTelnet(conn)
+		} else if md.TargetPort == 25 {
+			go g.HandleSMTP(conn)
+		} else if md.TargetPort == 3389 {
+			go g.HandleRDP(conn)
+		} else if md.TargetPort == 445 {
+			go g.HandleSMB(conn)
+		} else if md.TargetPort == 21 {
+			go g.HandleFTP(conn)
+		} else if md.TargetPort == 5060 {
+			go g.HandleSIP(conn)
+		} else if md.TargetPort == 5900 {
+			go g.HandleRFB(conn)
+		} else {
+			snip, bufConn, err := g.Peek(conn, 4)
+			g.OnErrorClose(err, conn)
+			httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true}
+			if _, ok := httpMap[strings.ToUpper(string(snip))]; ok == true {
+				go g.HandleHTTP(bufConn)
 			} else {
-				snip, bufConn, err := g.Peek(conn, 4)
-				g.OnErrorClose(err, conn)
-				httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true}
-				if _, ok := httpMap[strings.ToUpper(string(snip))]; ok == true {
-					go g.HandleHTTP(bufConn)
-				} else {
-					go g.HandleTCP(bufConn)
-				}
+				go g.HandleTCP(bufConn)
 			}
-		}(conn)
-	}
+
+		}
+		return nil
+	})
 }
 
 func (g *Glutton) OnErrorExit(err error) {

@@ -3,10 +3,10 @@ rules:
     type: passthrough
     name: ssh
   - match: tcp dst port 23 or port 2323 or port 23231
-    type: rewrite
-    target: 5000
+    type: conn_handler
+    target: glutton
     name: telnet
   - match: tcp
-    type: rewrite
-    target: 5000
+    type: conn_handler
+    target: glutton
     name: default
