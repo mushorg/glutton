@@ -20,6 +20,10 @@ func (g *Glutton) HandleSIP(netConn net.Conn) {
 	if err != nil {
 		g.logger.Errorf("[sip     ] error: %v", err)
 	}
+	if req == nil {
+		g.logger.Info("[sip     ] failed to parse SIP req")
+		return
+	}
 	g.logger.Printf("[sip     ] SIP method: %s", req.Method)
 	switch req.Method {
 	case sipnet.MethodRegister:
