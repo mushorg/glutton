@@ -3,6 +3,7 @@ package producer
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -12,8 +13,8 @@ import (
 
 // Address provides remote address to producer
 type Address struct {
-	Logger   *log.Logger
-	HTTPAddr *string // Address of HTTP consumer
+	logger   *log.Logger
+	httpAddr *string // Address of HTTP consumer
 }
 
 // Event is a struct for glutton events
@@ -26,10 +27,21 @@ type Event struct {
 	Rule      string    `json:"rule"`
 }
 
+func NewAddress(log *log.Logger, logHTTP *string) *Address {
+	return &Address{
+		logger:   log,
+		httpAddr: logHTTP,
+	}
+}
+
 // Send logs to web socket
-func (addr *Address) LogHTTP(rawConn, host, port, dstPort, sensorID, rule string) (err error) {
+func (addr *Address) LogHTTP(host, port, dstPort, sensorID, rule string) (err error) {
+	if *addr.httpAddr == "" {
+		return fmt.Errorf("[glutton ] Address is nil in HTTP log producer.", nil)
+	}
+
 	client := &http.Client{}
-	conn, err := url.Parse(*addr.HTTPAddr)
+	conn, err := url.Parse(*addr.httpAddr)
 	if err != nil {
 		return
 	}
@@ -57,6 +69,6 @@ func (addr *Address) LogHTTP(rawConn, host, port, dstPort, sensorID, rule string
 		return
 	}
 	defer resp.Body.Close()
-	addr.Logger.Debugf("[glutton  ] response: %s", resp.Status)
+	addr.logger.Debugf("[glutton  ] response: %s", resp.Status)
 	return
 }

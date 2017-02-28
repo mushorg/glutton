@@ -5,7 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
+	// "strings"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/kung-foo/freki"
@@ -13,16 +13,22 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
-const gluttonServer = 5000
+const (
+	gluttonServer = 5000
+	tcpProxy      = 6000
+)
 
 // Glutton struct
 type Glutton struct {
-	logger    *log.Logger
-	id        uuid.UUID
-	processor *freki.Processor
-
-	address *producer.Address
+	logger           *log.Logger
+	id               uuid.UUID
+	processor        *freki.Processor
+	rules            []*freki.Rule
+	address          *producer.Address
+	protocolHandlers map[string]protocolHandlerFunc
 }
+
+type protocolHandlerFunc func(conn net.Conn)
 
 func (g *Glutton) makeID() error {
 	dirName := "/var/lib/glutton"
@@ -54,65 +60,61 @@ func (g *Glutton) makeID() error {
 	return nil
 }
 
+func (g *Glutton) addServers() {
+	// Adding a proxy server
+	g.processor.AddServer(freki.NewTCPProxy(tcpProxy))
+	// Adding Glutton Server
+	g.processor.AddServer(freki.NewUserConnServer(gluttonServer))
+}
+
 // New creates a new Glutton instance
-func New(processor *freki.Processor, log *log.Logger, logHTTP *string) (g *Glutton, err error) {
-	g = &Glutton{}
+func New(processor *freki.Processor, log *log.Logger, rule []*freki.Rule, logHTTP *string) (g *Glutton, err error) {
+
 	g.makeID()
-	g.processor = processor
-	g.logger = log
-	g.address = &producer.Address{
-		Logger:   log,
-		HTTPAddr: logHTTP,
+	g.addServers()
+	g.mapProtocolHandler()
+
+	g = &Glutton{
+		processor:        processor,
+		logger:           log,
+		rules:            rule,
+		protocolHandlers: make(map[string]protocolHandlerFunc, 0),
+		address:          producer.NewAddress(log, logHTTP),
 	}
+
 	return
 }
 
 // Start this is the main listener for rewritten package
 func (g *Glutton) Start() {
-	g.processor.AddServer(freki.NewUserConnServer(gluttonServer))
-	g.processor.RegisterConnHandler("glutton", func(conn net.Conn, md *freki.Metadata) error {
-		host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
-		if md == nil {
-			g.logger.Debugf("[glutton ] connection not tracked: %s:%s", host, port)
-			return nil
-		}
+	g.registerHandlers()
+}
 
-		g.logger.Debugf("[glutton ] new connection: %s:%s -> %d", host, port, uint(md.TargetPort))
+// registerConnections register protocol handlers to GluttonServer
+func (g *Glutton) registerHandlers() {
+	for _, rule := range g.rules {
+		if rule.Type == "conn_handler" && rule.Target != "" {
+			protocol := rule.Target
+			g.processor.RegisterConnHandler(protocol, func(conn net.Conn, md *freki.Metadata) error {
 
-		addr := *g.address.HTTPAddr
-		if addr != "" {
-			err := g.address.LogHTTP(addr, host, port, md.TargetPort.String(), g.id.String(), md.Rule.String())
-			if err != nil {
-				g.logger.Error(err)
-			}
-		}
-		if md.Rule.Name == "telnet" {
-			go g.HandleTelnet(conn)
-		} else if md.TargetPort == 25 {
-			go g.HandleSMTP(conn)
-		} else if md.TargetPort == 3389 {
-			go g.HandleRDP(conn)
-		} else if md.TargetPort == 445 {
-			go g.HandleSMB(conn)
-		} else if md.TargetPort == 21 {
-			go g.HandleFTP(conn)
-		} else if md.TargetPort == 5060 {
-			go g.HandleSIP(conn)
-		} else if md.TargetPort == 5900 {
-			go g.HandleRFB(conn)
-		} else {
-			snip, bufConn, err := g.Peek(conn, 4)
-			g.OnErrorClose(err, conn)
-			httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true}
-			if _, ok := httpMap[strings.ToUpper(string(snip))]; ok == true {
-				go g.HandleHTTP(bufConn)
-			} else {
-				go g.HandleTCP(bufConn)
-			}
+				host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
+				if md == nil {
+					g.logger.Debugf("[glutton ] connection not tracked: %s:%s", host, port)
+					return nil
+				}
+				g.logger.Debugf("[glutton ] new connection: %s:%s -> %d", host, port, uint(md.TargetPort))
 
+				err := g.address.LogHTTP(host, port, md.TargetPort.String(), g.id.String(), md.Rule.String())
+				if err != nil {
+					g.logger.Error(err)
+				}
+
+				protocolHandler := g.protocolHandlers[protocol]
+				go protocolHandler(conn)
+				return nil
+			})
 		}
-		return nil
-	})
+	}
 }
 
 func (g *Glutton) OnErrorExit(err error) {
