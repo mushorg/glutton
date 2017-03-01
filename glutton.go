@@ -5,7 +5,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	// "strings"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/kung-foo/freki"
@@ -24,7 +23,7 @@ type Glutton struct {
 	id               uuid.UUID
 	processor        *freki.Processor
 	rules            []*freki.Rule
-	address          *producer.Address
+	producer         *producer.Config
 	protocolHandlers map[string]protocolHandlerFunc
 }
 
@@ -70,18 +69,17 @@ func (g *Glutton) addServers() {
 // New creates a new Glutton instance
 func New(processor *freki.Processor, log *log.Logger, rule []*freki.Rule, logHTTP *string) (g *Glutton, err error) {
 
-	g.makeID()
-	g.addServers()
-	g.mapProtocolHandler()
-
 	g = &Glutton{
 		processor:        processor,
 		logger:           log,
 		rules:            rule,
 		protocolHandlers: make(map[string]protocolHandlerFunc, 0),
-		address:          producer.NewAddress(log, logHTTP),
 	}
 
+	g.makeID()
+	g.producer = producer.Init(g.id.String(), log, logHTTP)
+	g.addServers()
+	g.mapProtocolHandler()
 	return
 }
 
@@ -95,6 +93,10 @@ func (g *Glutton) registerHandlers() {
 	for _, rule := range g.rules {
 		if rule.Type == "conn_handler" && rule.Target != "" {
 			protocol := rule.Target
+			if g.protocolHandlers[protocol] == nil {
+				g.logger.Errorf("[glutton ] No handler found for %v Protocol", protocol)
+				continue
+			}
 			g.processor.RegisterConnHandler(protocol, func(conn net.Conn, md *freki.Metadata) error {
 
 				host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
@@ -104,7 +106,7 @@ func (g *Glutton) registerHandlers() {
 				}
 				g.logger.Debugf("[glutton ] new connection: %s:%s -> %d", host, port, uint(md.TargetPort))
 
-				err := g.address.LogHTTP(host, port, md.TargetPort.String(), g.id.String(), md.Rule.String())
+				err := g.producer.LogHTTP(host, port, md.TargetPort.String(), md.Rule.String())
 				if err != nil {
 					g.logger.Error(err)
 				}

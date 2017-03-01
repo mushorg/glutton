@@ -20,9 +20,6 @@ rules:
   - match: tcp dst port 5060
     type: conn_handler
     target: sip
-  - match: tcp dst port 5900
-    type: conn_handler
-    target: temp
   - match: tcp
     type: conn_handler
     target: default
