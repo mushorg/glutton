@@ -1,5 +1,5 @@
-hash: dfb6e524e2e742ef5eca45a50883194e5f2575c8ab078db2766b7346de93979d
-updated: 2017-02-09T19:13:34.578115338+05:00
+hash: 3e6b4b9bb0b70a05c306bb586c6cc212a49d832a64d1a21bea7234d026b14f57
+updated: 2017-02-16T01:19:33.748530286+05:00
 imports:
 - name: github.com/1lann/go-sip
   version: 68e86c65407ef8cf672ae38526e7f3d29944b94f
@@ -47,7 +47,7 @@ imports:
   - layers
   - pcap
 - name: github.com/kung-foo/freki
-  version: b6a126f46f7b0ce15cdc1d50df8d3626377ff7a7
+  version: b8cdce0aabd6d6aa3552467ebf83f5dafdf9d51c
   subpackages:
   - netfilter
 - name: github.com/Microsoft/go-winio

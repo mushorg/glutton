@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-
 	"os"
 	"os/signal"
 	"sync"
@@ -63,6 +62,7 @@ func main() {
 	logger.Infof("[glutton ] Loading rules from: %s", *rulesPath)
 	rulesFile, err := os.Open(*rulesPath)
 	onErrorExit(err)
+
 	rules, err := freki.ReadRulesFromFile(rulesFile)
 	onErrorExit(err)
 	logger.Infof("[glutton ] Rules: %+v", rules)
@@ -70,8 +70,11 @@ func main() {
 	// Initiate the freki processor
 	processor, err := freki.New(*iface, rules, logger)
 	onErrorExit(err)
-	// Adding a proxy server
-	processor.AddServer(freki.NewTCPProxy(6000))
+
+	// Initiate glutton
+	gtn, err := glutton.New(processor, logger, rules, connectGollum)
+	onErrorExit(err)
+	go gtn.Start()
 
 	err = processor.Init()
 	onErrorExit(err)
@@ -89,11 +92,6 @@ func main() {
 		exit()
 		os.Exit(0)
 	})
-
-	// Initiate glutton
-	gtn, err := glutton.New(processor, logger, connectGollum)
-	onErrorExit(err)
-	go gtn.Start()
 
 	onErrorExit(processor.Start())
 }
