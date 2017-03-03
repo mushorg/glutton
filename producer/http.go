@@ -11,10 +11,12 @@ import (
 	log "github.com/Sirupsen/logrus"
 )
 
+// Config for the producer
 type Config struct {
-	sensorID string
-	logger   *log.Logger
-	httpAddr *string // Address of HTTP consumer
+	sensorID   string
+	logger     *log.Logger
+	httpAddr   *string // Address of HTTP consumer
+	httpClient *http.Client
 }
 
 // Event is a struct for glutton events
@@ -27,21 +29,22 @@ type Event struct {
 	Rule      string    `json:"rule"`
 }
 
+// Init initializes the producer
 func Init(sensorID string, log *log.Logger, logHTTP *string) *Config {
 	return &Config{
-		sensorID: sensorID,
-		logger:   log,
-		httpAddr: logHTTP,
+		sensorID:   sensorID,
+		logger:     log,
+		httpAddr:   logHTTP,
+		httpClient: &http.Client{},
 	}
 }
 
-// Send logs to web socket
+// LogHTTP send logs to web socket
 func (conf *Config) LogHTTP(host, port, dstPort, rule string) (err error) {
 	if *conf.httpAddr == "" {
-		return fmt.Errorf("[glutton ] Address is nil in HTTP log producer.", nil)
+		return fmt.Errorf("[glutton ] Address is nil in HTTP log producer")
 	}
 
-	client := &http.Client{}
 	conn, err := url.Parse(*conf.httpAddr)
 	if err != nil {
 		return
@@ -65,11 +68,11 @@ func (conf *Config) LogHTTP(host, port, dstPort, rule string) (err error) {
 	password, _ := conn.User.Password()
 	req.SetBasicAuth(conn.User.Username(), password)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err := conf.httpClient.Do(req)
 	if err != nil {
 		return
 	}
 	defer resp.Body.Close()
-	conf.logger.Debugf("[glutton ] response: %s", resp.Status)
+	conf.logger.Debugf("[glutton ] gollum response: %s", resp.Status)
 	return
 }
