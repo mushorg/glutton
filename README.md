@@ -11,9 +11,7 @@ sed -i 's/Port 22/Port 5001/' /etc/ssh/sshd_config
 Download glutton, and install dependencies using `glide`:
 ```
 go get github.com/mushorg/glutton
-mkdir /etc/glutton
 cd $GOPATH/src/github.com/mushorg/glutton/
-cp rules/rules.yaml /etc/glutton
 curl https://glide.sh/get | sh
 glide install
 glide update
@@ -24,5 +22,5 @@ make build
 ```
 To run/test glutton:
 ```
-bin/server -log /tmp/glutton.log
+bin/server -log /tmp/glutton.log -rules rules/rules.yaml
 ```
