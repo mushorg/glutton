@@ -70,6 +70,6 @@ func (conf *Config) LogHTTP(host, port, dstPort, rule string) (err error) {
 		return
 	}
 	defer resp.Body.Close()
-	conf.logger.Debugf("[glutton  ] response: %s", resp.Status)
+	conf.logger.Debugf("[glutton ] response: %s", resp.Status)
 	return
 }
