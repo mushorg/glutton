@@ -81,6 +81,8 @@ func main() {
 
 	exitMtx := sync.RWMutex{}
 	exit := func() {
+		// See if there was a panic...
+		fmt.Println(recover())
 		exitMtx.Lock()
 		println() // make it look nice after the ^C
 		logger.Info("[glutton ] shutting down...")
