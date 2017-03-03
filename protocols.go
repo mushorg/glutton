@@ -2,6 +2,7 @@ package glutton
 
 import (
 	"net"
+	"net/url"
 	"strings"
 )
 
@@ -29,7 +30,10 @@ func (g *Glutton) mapProtocolHandler() {
 	g.protocolHandlers["telnet"] = func(conn net.Conn) {
 		g.HandleTelnet(conn)
 	}
-
+	g.protocolHandlers["proxy_ssh"] = func(conn net.Conn) {
+		destination := &url.URL{Scheme: "tcp", Host: "192.168.1.8:22"}
+		g.NewSSHProxy(conn, destination.Host)
+	}
 	g.protocolHandlers["default"] = func(conn net.Conn) {
 		snip, bufConn, err := g.Peek(conn, 4)
 		g.OnErrorClose(err, conn)

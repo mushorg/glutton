@@ -1,5 +1,5 @@
-hash: 3e6b4b9bb0b70a05c306bb586c6cc212a49d832a64d1a21bea7234d026b14f57
-updated: 2017-02-16T01:19:33.748530286+05:00
+hash: 8f4e6d79173fc7c9b8ff441c19dfdf2427188e5997ba4362e931e6e65ed5bd89
+updated: 2017-03-04T03:53:27.42410414+05:00
 imports:
 - name: github.com/1lann/go-sip
   version: 68e86c65407ef8cf672ae38526e7f3d29944b94f
@@ -50,6 +50,8 @@ imports:
   version: b8cdce0aabd6d6aa3552467ebf83f5dafdf9d51c
   subpackages:
   - netfilter
+- name: github.com/lunixbochs/vtclean
+  version: 4428d67a89b36ecae7998e983e5814d0d9c45a04
 - name: github.com/Microsoft/go-winio
   version: fff283ad5116362ca252298cfc9b95828956d85d
 - name: github.com/opencontainers/go-digest
@@ -59,9 +61,16 @@ imports:
 - name: github.com/satori/go.uuid
   version: b061729afc07e77a8aa4fad0a2fd840958f1942a
 - name: github.com/sirupsen/logrus
-  version: c078b1e43f58d563c74cebe63c85789e76ddb627
+  version: 0208149b40d863d2c1a2f8fe5753096a9cf2cc8b
 - name: github.com/Sirupsen/logrus
   version: 61e43dc76f7ee59a82bdf3d71033dc12bea4c77d
+- name: golang.org/x/crypto
+  version: 40541ccb1c6e64c947ed6f606b8a6cb4b67d7436
+  subpackages:
+  - curve25519
+  - ed25519
+  - ed25519/internal/edwards25519
+  - ssh
 - name: golang.org/x/net
   version: 007e530097ad7f954752df63046b4036f98ba6a6
   subpackages:
