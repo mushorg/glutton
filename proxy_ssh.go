@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/lunixbochs/vtclean"
@@ -33,13 +34,18 @@ type ReadSession struct {
 	n         int // Number of bytes written to buffer
 }
 
-func (g *Glutton) NewSSHProxy(conn net.Conn, dest string) {
+func (g *Glutton) NewSSHProxy(conn net.Conn) {
 	sshProxy := &SSHProxy{
 		conn:   conn,
 		logger: g.logger,
 	}
 
-	err := sshProxy.initConf(dest)
+	dest, err := url.Parse(g.conf.GetString("sshProxy"))
+	if err != nil {
+		g.logger.Error("Failed to parse destination address, check config.yaml", "ssh.prxy")
+	}
+
+	err = sshProxy.initConf(dest.Host)
 	if err != nil {
 		g.logger.Error(errors.Wrap(interpreter("Connection failed at SSH Proxy: ", err), "ssh.prxy"))
 		sshProxy.conn.Close()
@@ -279,7 +285,7 @@ func (rs *ReadSession) collector(n int) {
 	if n > 0 {
 		// Clean up raw terminal output by stripping escape sequences
 		line := vtclean.Clean(string(b[:]), false)
-		log.Debugf("[ssh.prxy] %s", line)
+		log.Infof("[ssh.prxy] %s", line)
 	}
 	b = nil
 }

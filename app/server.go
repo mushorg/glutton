@@ -11,6 +11,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/kung-foo/freki"
 	"github.com/mushorg/glutton"
+	"github.com/mushorg/glutton/config"
 )
 
 func onErrorExit(err error) {
@@ -41,15 +42,15 @@ func main() {
 	`)
 	logger := log.New()
 
-	logPath := flag.String("log", "/dev/null", "Log path")
+	logger.Info("[glutton ] Loading configurations from: config/conf.yaml")
+	conf := config.Init(logger)
+
 	iface := flag.String("interface", "eth0", "Interface to work with")
-	rulesPath := flag.String("rules", "/etc/glutton/rules.yaml", "Rules path")
 	enableDebug := flag.Bool("debug", false, "Set to enable debug log")
-	connectGollum := flag.String("gollum", "http://gollum:gollum@localhost:9000", "Gollum connection string")
 	flag.Parse()
 
 	// Write log to file and stdout
-	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(conf.GetString("logPath"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -59,8 +60,8 @@ func main() {
 	}
 	logger.Formatter = &log.TextFormatter{ForceColors: true}
 	// Loading and parsing the rules
-	logger.Infof("[glutton ] Loading rules from: %s", *rulesPath)
-	rulesFile, err := os.Open(*rulesPath)
+	logger.Infof("[glutton ] Loading rules from: %s", conf.GetString("rulesPath"))
+	rulesFile, err := os.Open(conf.GetString("rulesPath"))
 	onErrorExit(err)
 
 	rules, err := freki.ReadRulesFromFile(rulesFile)
@@ -72,7 +73,7 @@ func main() {
 	onErrorExit(err)
 
 	// Initiate glutton
-	gtn, err := glutton.New(processor, logger, rules, connectGollum)
+	gtn, err := glutton.New(processor, logger, rules, conf)
 	onErrorExit(err)
 	go gtn.Start()
 

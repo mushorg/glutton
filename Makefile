@@ -13,7 +13,7 @@ clean:
 	rm -rf bin/
 
 run: build
-	sudo ./bin/server -rules rules/rules.yaml
+	sudo ./bin/server
 
 docker:
 	docker build -t glutton .

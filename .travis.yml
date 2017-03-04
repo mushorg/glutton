@@ -1,5 +1,10 @@
 language: go
 
+before_script:
+ - echo "deb http://archive.ubuntu.com/ubuntu xenial universe" | sudo tee -a /etc/apt/sources.list
+ - echo "deb http://archive.ubuntu.com/ubuntu xenial-updates universe" | sudo tee -a /etc/apt/sources.list
+ - sudo apt-get -qq update
+
 before_install:
   - sudo apt-get -qq update
   - sudo apt-get install -y libpcap-dev libnetfilter-queue-dev iptables-dev

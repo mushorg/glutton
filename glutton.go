@@ -10,17 +10,14 @@ import (
 	"github.com/kung-foo/freki"
 	"github.com/mushorg/glutton/producer"
 	uuid "github.com/satori/go.uuid"
-)
-
-const (
-	gluttonServer = 5000
-	tcpProxy      = 6000
+	"github.com/spf13/viper"
 )
 
 // Glutton struct
 type Glutton struct {
-	logger           *log.Logger
 	id               uuid.UUID
+	conf             *viper.Viper
+	logger           *log.Logger
 	processor        *freki.Processor
 	rules            []*freki.Rule
 	producer         *producer.Config
@@ -60,24 +57,28 @@ func (g *Glutton) makeID() error {
 }
 
 func (g *Glutton) addServers() {
+	p1 := uint(g.conf.GetInt("tcpProxy"))
+	p2 := uint(g.conf.GetInt("gluttonServer"))
+
 	// Adding a proxy server
-	g.processor.AddServer(freki.NewTCPProxy(tcpProxy))
+	g.processor.AddServer(freki.NewTCPProxy(p1))
 	// Adding Glutton Server
-	g.processor.AddServer(freki.NewUserConnServer(gluttonServer))
+	g.processor.AddServer(freki.NewUserConnServer(p2))
 }
 
 // New creates a new Glutton instance
-func New(processor *freki.Processor, log *log.Logger, rule []*freki.Rule, logHTTP *string) (g *Glutton, err error) {
+func New(processor *freki.Processor, log *log.Logger, rule []*freki.Rule, conf *viper.Viper) (g *Glutton, err error) {
 
 	g = &Glutton{
-		processor:        processor,
+		conf:             conf,
 		logger:           log,
+		processor:        processor,
 		rules:            rule,
 		protocolHandlers: make(map[string]protocolHandlerFunc, 0),
 	}
 
 	g.makeID()
-	g.producer = producer.Init(g.id.String(), log, logHTTP)
+	g.producer = producer.Init(g.id.String(), log, conf.GetString("gollum"))
 	g.addServers()
 	g.mapProtocolHandler()
 	return
