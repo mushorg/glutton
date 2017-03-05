@@ -30,7 +30,7 @@ func (g *Glutton) mapProtocolHandler() {
 		g.HandleTelnet(conn)
 	}
 	g.protocolHandlers["proxy_ssh"] = func(conn net.Conn) {
-		g.NewSSHProxy(conn)
+		g.sshProxy.handle(conn)
 	}
 	g.protocolHandlers["default"] = func(conn net.Conn) {
 		snip, bufConn, err := g.Peek(conn, 4)

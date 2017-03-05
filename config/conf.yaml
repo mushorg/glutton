@@ -1,12 +1,12 @@
 ports:
-  glutton: 5000
-  tcpProxy: 6000
+  glutton_server: 5000
+  proxy_tcp: 6000
 
-rulesPath: rules/rules.yaml
+rules_path: rules/rules.yaml
 
-logPath: /dev/null
+log_path: /dev/null
 
-# TODO: Provide flag to activate of deactivate producer
+# TODO: Provide flag to active or deactive producer
 # Glutton will produce events at the following address
 gollum: http://gollum:gollum@localhost:9000
   
@@ -17,7 +17,7 @@ gollum: http://gollum:gollum@localhost:9000
 # tcp://user:pass@192.168.0.123:22
 # tcp://192.168.0.123:22
 
-sshProxy:
+proxy_ssh:
   - tcp://172.17.0.2:22
   # TODO:
   # - docker://user:pass@172.17.0.3:22  // Not supported yet

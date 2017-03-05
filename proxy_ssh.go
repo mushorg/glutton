@@ -18,7 +18,6 @@ import (
 )
 
 type SSHProxy struct {
-	conn       net.Conn
 	logger     *log.Logger
 	config     *ssh.ServerConfig
 	callbackFn func(c ssh.ConnMetadata) (*ssh.Client, error)
@@ -34,27 +33,24 @@ type ReadSession struct {
 	n         int // Number of bytes written to buffer
 }
 
-func (g *Glutton) NewSSHProxy(conn net.Conn) {
+func (g *Glutton) NewSSHProxy() (err error) {
 	sshProxy := &SSHProxy{
-		conn:   conn,
 		logger: g.logger,
 	}
 
-	dest, err := url.Parse(g.conf.GetString("sshProxy"))
+	dest, err := url.Parse(g.conf.GetString("proxy_ssh"))
 	if err != nil {
 		g.logger.Error("Failed to parse destination address, check config.yaml", "ssh.prxy")
+		return err
 	}
 
 	err = sshProxy.initConf(dest.Host)
 	if err != nil {
 		g.logger.Error(errors.Wrap(interpreter("Connection failed at SSH Proxy: ", err), "ssh.prxy"))
-		sshProxy.conn.Close()
-		return
+		return err
 	}
-	err = sshProxy.handle()
-	if err != nil {
-		g.logger.Error(errors.Wrap(interpreter("Connection closed unexpectedly: ", err), "ssh.prxy"))
-	}
+	g.sshProxy = sshProxy
+	return
 }
 
 func (s *SSHProxy) initConf(dest string) error {
@@ -121,10 +117,9 @@ func (s *SSHProxy) initConf(dest string) error {
 	return nil
 }
 
-func (s *SSHProxy) handle() error {
-
-	serverConn, chans, reqs, err := ssh.NewServerConn(s.conn, s.config)
-	defer s.conn.Close()
+func (s *SSHProxy) handle(conn net.Conn) error {
+	serverConn, chans, reqs, err := ssh.NewServerConn(conn, s.config)
+	defer conn.Close()
 	if err != nil {
 		s.logger.Error(errors.Wrap(interpreter("Failed to handshake", err), "ssh.prxy"))
 		return (err)
@@ -220,6 +215,7 @@ func (s *SSHProxy) handle() error {
 	return nil
 }
 
+// TODO: Use of existing key
 func (s *SSHProxy) SSHKeyGen() ([]byte, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2014)
 	if err != nil {

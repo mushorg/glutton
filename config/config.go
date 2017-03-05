@@ -23,12 +23,12 @@ func Init(logger *log.Logger) (v *viper.Viper) {
 	validate(logger, v)
 
 	// If no config is found, use the defaults
-	v.SetDefault("gluttonServer", 5000)
-	v.SetDefault("tcpProxy", 6000)
-	v.SetDefault("rulesPath", "rules/rules.yaml")
-	v.SetDefault("logPath", "/dev/null")
+	v.SetDefault("glutton_server", 5000)
+	v.SetDefault("proxy_tcp", 6000)
+	v.SetDefault("rules_path", "rules/rules.yaml")
+	v.SetDefault("log_path", "/dev/null")
 	v.SetDefault("gollum", "http://gollum:gollum@localhost:9000")
-	v.SetDefault("sshProxy", "tcp://localhost:22")
+	v.SetDefault("proxy_ssh", "tcp://localhost:22")
 
 	logger.Debug("[glutton ] Configuration file loaded successfully")
 	return
@@ -42,7 +42,7 @@ func validate(logger *log.Logger, v *viper.Viper) {
 	}
 
 	for key, value := range ports {
-		if key != "glutton" && key != "tcpproxy" {
+		if key != "glutton_server" && key != "proxy_tcp" {
 			logger.Errorf("[glutton ] Invalid key found: %s", key)
 			continue
 		}
@@ -52,19 +52,19 @@ func validate(logger *log.Logger, v *viper.Viper) {
 			v.Set(key, port)
 		}
 	}
-	sshProxy := v.Get("sshProxy")
+	sshProxy := v.Get("proxy_ssh")
 	if sshProxy != nil {
 		p := sshProxy.([]interface{})
-		v.Set("sshProxy", p[0].(string))
+		v.Set("proxy_ssh", p[0].(string))
 	} else {
-		logger.Debug("[glutton ] Using default value for sshProxy")
+		logger.Debug("[glutton ] Using default value for proxy_ssh")
 	}
 
-	if v.GetString("rulesPath") == "" {
-		logger.Debug("[glutton ] Using default value for rulesPath")
+	if v.GetString("rules_path") == "" {
+		logger.Debug("[glutton ] Using default value for rules_path")
 	}
-	if v.GetString("logPath") == "" {
-		logger.Debug("[glutton ] Using default value for logPath")
+	if v.GetString("log_path") == "" {
+		logger.Debug("[glutton ] Using default value for log_path")
 	}
 	if v.GetString("gollum") == "" {
 		logger.Debug("[glutton ] Using default value for gollum")

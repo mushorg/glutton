@@ -9,6 +9,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/kung-foo/freki"
 	"github.com/mushorg/glutton/producer"
+	"github.com/pkg/errors"
 	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/viper"
 )
@@ -22,6 +23,7 @@ type Glutton struct {
 	rules            []*freki.Rule
 	producer         *producer.Config
 	protocolHandlers map[string]protocolHandlerFunc
+	sshProxy         *SSHProxy
 }
 
 type protocolHandlerFunc func(conn net.Conn)
@@ -57,8 +59,8 @@ func (g *Glutton) makeID() error {
 }
 
 func (g *Glutton) addServers() {
-	p1 := uint(g.conf.GetInt("tcpProxy"))
-	p2 := uint(g.conf.GetInt("gluttonServer"))
+	p1 := uint(g.conf.GetInt("proxy_tcp"))
+	p2 := uint(g.conf.GetInt("glutton_server"))
 
 	// Adding a proxy server
 	g.processor.AddServer(freki.NewTCPProxy(p1))
@@ -89,7 +91,7 @@ func (g *Glutton) Start() {
 	g.registerHandlers()
 }
 
-// registerConnections register protocol handlers to GluttonServer
+// registerConnections register protocol handlers to glutton_server
 func (g *Glutton) registerHandlers() {
 	for _, rule := range g.rules {
 		if rule.Type == "conn_handler" && rule.Target != "" {
@@ -97,6 +99,13 @@ func (g *Glutton) registerHandlers() {
 			if g.protocolHandlers[protocol] == nil {
 				g.logger.Errorf("[glutton ] No handler found for %v Protocol", protocol)
 				continue
+			}
+			if protocol == "proxy_ssh" {
+				err := g.NewSSHProxy()
+				if err != nil {
+					g.logger.Error(errors.Wrap(interpreter("Failed to initialize SSH Proxy: ", err), "ssh.prxy"))
+					continue
+				}
 			}
 			g.processor.RegisterConnHandler(protocol, func(conn net.Conn, md *freki.Metadata) error {
 

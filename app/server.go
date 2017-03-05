@@ -50,7 +50,7 @@ func main() {
 	flag.Parse()
 
 	// Write log to file and stdout
-	f, err := os.OpenFile(conf.GetString("logPath"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(conf.GetString("log_path"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -60,8 +60,8 @@ func main() {
 	}
 	logger.Formatter = &log.TextFormatter{ForceColors: true}
 	// Loading and parsing the rules
-	logger.Infof("[glutton ] Loading rules from: %s", conf.GetString("rulesPath"))
-	rulesFile, err := os.Open(conf.GetString("rulesPath"))
+	logger.Infof("[glutton ] Loading rules from: %s", conf.GetString("rules_path"))
+	rulesFile, err := os.Open(conf.GetString("rules_path"))
 	onErrorExit(err)
 
 	rules, err := freki.ReadRulesFromFile(rulesFile)
