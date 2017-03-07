@@ -33,7 +33,7 @@ type readSession struct {
 	n         int // Number of bytes written to buffer
 }
 
-func (g *Glutton) NewsshProxy() (err error) {
+func (g *Glutton) NewSSHProxy() (err error) {
 	sshProxy := &sshProxy{
 		logger: g.logger,
 	}

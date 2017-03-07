@@ -23,7 +23,7 @@ type Glutton struct {
 	rules            []*freki.Rule
 	producer         *producer.Config
 	protocolHandlers map[string]protocolHandlerFunc
-	sshProxy         *SSHProxy
+	sshProxy         *sshProxy
 }
 
 type protocolHandlerFunc func(conn net.Conn)
@@ -59,13 +59,13 @@ func (g *Glutton) makeID() error {
 }
 
 func (g *Glutton) addServers() {
-	p1 := uint(g.conf.GetInt("proxy_tcp"))
-	p2 := uint(g.conf.GetInt("glutton_server"))
+	proxyPort := uint(g.conf.GetInt("proxy_tcp"))
+	gluttonPort := uint(g.conf.GetInt("glutton_server"))
 
 	// Adding a proxy server
-	g.processor.AddServer(freki.NewTCPProxy(p1))
+	g.processor.AddServer(freki.NewTCPProxy(proxyPort))
 	// Adding Glutton Server
-	g.processor.AddServer(freki.NewUserConnServer(p2))
+	g.processor.AddServer(freki.NewUserConnServer(gluttonPort))
 }
 
 // New creates a new Glutton instance
