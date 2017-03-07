@@ -103,7 +103,7 @@ func (g *Glutton) registerHandlers() {
 			if protocol == "proxy_ssh" {
 				err := g.NewSSHProxy()
 				if err != nil {
-					g.logger.Error(errors.Wrap(interpreter("Failed to initialize SSH Proxy: ", err), "ssh.prxy"))
+					g.logger.Error(errors.Wrap(formatErrorMsg("Failed to initialize SSH Proxy: ", err), "ssh.prxy"))
 					continue
 				}
 			}

@@ -17,24 +17,24 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-type SSHProxy struct {
+type sshProxy struct {
 	logger     *log.Logger
 	config     *ssh.ServerConfig
 	callbackFn func(c ssh.ConnMetadata) (*ssh.Client, error)
 	wrapFn     func(c ssh.ConnMetadata, r io.ReadCloser) (io.ReadCloser, error)
 	closeFn    func(c ssh.ConnMetadata) error
-	reader     *ReadSession
+	reader     *readSession
 }
 
-type ReadSession struct {
+type readSession struct {
 	io.ReadCloser
 	buffer    bytes.Buffer
 	delimiter []byte
 	n         int // Number of bytes written to buffer
 }
 
-func (g *Glutton) NewSSHProxy() (err error) {
-	sshProxy := &SSHProxy{
+func (g *Glutton) NewsshProxy() (err error) {
+	sshProxy := &sshProxy{
 		logger: g.logger,
 	}
 
@@ -46,15 +46,15 @@ func (g *Glutton) NewSSHProxy() (err error) {
 
 	err = sshProxy.initConf(dest.Host)
 	if err != nil {
-		g.logger.Error(errors.Wrap(interpreter("Connection failed at SSH Proxy: ", err), "ssh.prxy"))
+		g.logger.Error(errors.Wrap(formatErrorMsg("Connection failed at SSH Proxy: ", err), "ssh.prxy"))
 		return err
 	}
 	g.sshProxy = sshProxy
 	return
 }
 
-func (s *SSHProxy) initConf(dest string) error {
-	rsaKey, err := s.SSHKeyGen()
+func (s *sshProxy) initConf(dest string) error {
+	rsaKey, err := s.sshKeyGen()
 	if err != nil {
 		s.logger.Error(errors.Wrap(err, "ssh.prxy"))
 		return err
@@ -103,7 +103,7 @@ func (s *SSHProxy) initConf(dest string) error {
 		return client, nil
 	}
 	s.wrapFn = func(c ssh.ConnMetadata, r io.ReadCloser) (io.ReadCloser, error) {
-		s.reader = &ReadSession{
+		s.reader = &readSession{
 			ReadCloser: r,
 			delimiter:  []byte("\n"),
 		}
@@ -117,11 +117,11 @@ func (s *SSHProxy) initConf(dest string) error {
 	return nil
 }
 
-func (s *SSHProxy) handle(conn net.Conn) error {
+func (s *sshProxy) handle(conn net.Conn) error {
 	serverConn, chans, reqs, err := ssh.NewServerConn(conn, s.config)
 	defer conn.Close()
 	if err != nil {
-		s.logger.Error(errors.Wrap(interpreter("Failed to handshake", err), "ssh.prxy"))
+		s.logger.Error(errors.Wrap(formatErrorMsg("Failed to handshake", err), "ssh.prxy"))
 		return (err)
 	}
 
@@ -138,13 +138,13 @@ func (s *SSHProxy) handle(conn net.Conn) error {
 
 		sshClientChan, clientReq, err := clientConn.OpenChannel(ch.ChannelType(), ch.ExtraData())
 		if err != nil {
-			s.logger.Error(errors.Wrap(interpreter(" Could not accept client channel: ", err), "ssh.prxy"))
+			s.logger.Error(errors.Wrap(formatErrorMsg(" Could not accept client channel: ", err), "ssh.prxy"))
 			return err
 		}
 
 		sshServerChan, serverReq, err := ch.Accept()
 		if err != nil {
-			s.logger.Error(errors.Wrap(interpreter(" Could not accept server channel: ", err), "ssh.prxy"))
+			s.logger.Error(errors.Wrap(formatErrorMsg(" Could not accept server channel: ", err), "ssh.prxy"))
 			return err
 		}
 
@@ -216,7 +216,7 @@ func (s *SSHProxy) handle(conn net.Conn) error {
 }
 
 // TODO: Use of existing key
-func (s *SSHProxy) SSHKeyGen() ([]byte, error) {
+func (s *sshProxy) sshKeyGen() ([]byte, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2014)
 	if err != nil {
 		s.logger.Error(errors.Wrap(err, "ssh.prxy"))
@@ -224,7 +224,7 @@ func (s *SSHProxy) SSHKeyGen() ([]byte, error) {
 	}
 	err = priv.Validate()
 	if err != nil {
-		s.logger.Error(errors.Wrap(interpreter("Validation failed.", err), "ssh.prxy"))
+		s.logger.Error(errors.Wrap(formatErrorMsg("Validation failed.", err), "ssh.prxy"))
 		return nil, err
 	}
 
@@ -247,11 +247,11 @@ func (s *SSHProxy) SSHKeyGen() ([]byte, error) {
 	return RSA_Key, nil
 }
 
-func interpreter(msg string, err error) error {
+func formatErrorMsg(msg string, err error) error {
 	return errors.New(fmt.Sprintf("%s  %s\n", msg, err))
 }
 
-func (rs *ReadSession) Read(p []byte) (n int, err error) {
+func (rs *readSession) Read(p []byte) (n int, err error) {
 	n, err = rs.ReadCloser.Read(p)
 
 	if bytes.Contains(p[:n], rs.delimiter) {
@@ -265,18 +265,18 @@ func (rs *ReadSession) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func (rs *ReadSession) String() string {
+func (rs *readSession) String() string {
 	return rs.buffer.String()
 }
 
-func (rs *ReadSession) Close() error {
+func (rs *readSession) Close() error {
 	return rs.ReadCloser.Close()
 }
 
-func (rs *ReadSession) collector(n int) {
+func (rs *readSession) collector(n int) {
 	b := rs.buffer.Next(n)
 	if len(b) != n {
-		log.Error(errors.Wrap(interpreter("Logging is not working properly.", nil), "ssh.prxy"))
+		log.Error(errors.Wrap(formatErrorMsg("Logging is not working properly.", nil), "ssh.prxy"))
 	}
 	if n > 0 {
 		// Clean up raw terminal output by stripping escape sequences
