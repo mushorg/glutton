@@ -63,6 +63,18 @@ func (g *Glutton) HandleTelnet(conn net.Conn) {
 			return
 		}
 		for _, cmd := range strings.Split(msg, ";") {
+			if strings.TrimRight(cmd, "") == " rm /dev/.t" {
+				continue
+			}
+			if strings.TrimRight(cmd, "\r\n") == " rm /dev/.sh" {
+				continue
+			}
+			if strings.TrimRight(cmd, "\r\n") == "cd /dev/" {
+				writeMsg(conn, "ECCHI: applet not found\r\n", g)
+				writeMsg(conn, "\r\nBusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-it shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n", g)
+				continue
+			}
+
 			if resp := miraiCom[strings.TrimSpace(cmd)]; len(resp) > 0 {
 				writeMsg(conn, resp[rand.Intn(len(resp))]+"\r\n", g)
 			} else {
@@ -71,6 +83,7 @@ func (g *Glutton) HandleTelnet(conn net.Conn) {
 				match := re.FindStringSubmatch(cmd)
 				if len(match) > 1 {
 					writeMsg(conn, match[1]+": applet not found\r\n", g)
+					writeMsg(conn, "\r\nBusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-it shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n", g)
 				}
 			}
 		}
