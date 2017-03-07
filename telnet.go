@@ -83,7 +83,7 @@ func (g *Glutton) HandleTelnet(conn net.Conn) {
 				match := re.FindStringSubmatch(cmd)
 				if len(match) > 1 {
 					writeMsg(conn, match[1]+": applet not found\r\n", g)
-					writeMsg(conn, "\r\nBusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-it shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n", g)
+					writeMsg(conn, "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-in shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n", g)
 				}
 			}
 		}
