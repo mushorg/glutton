@@ -9,6 +9,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/kung-foo/freki"
 )
 
 // Config for the producer
@@ -27,6 +28,7 @@ type Event struct {
 	DstPort   string    `json:"dstPort"`
 	SensorID  string    `json:"sensorID"`
 	Rule      string    `json:"rule"`
+	ConnKey   [2]uint64 `json:"connKey"`
 }
 
 // Init initializes the producer
@@ -56,6 +58,7 @@ func (conf *Config) LogHTTP(host, port, dstPort, rule string) (err error) {
 		DstPort:   dstPort,
 		SensorID:  conf.sensorID,
 		Rule:      rule,
+		ConnKey:   freki.NewConnKeyByString(host, port),
 	}
 	data, err := json.Marshal(event)
 	if err != nil {
