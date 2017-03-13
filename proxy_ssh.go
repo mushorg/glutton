@@ -41,13 +41,13 @@ func (g *Glutton) NewSSHProxy() (err error) {
 
 	dest, err := url.Parse(g.conf.GetString("proxy_ssh"))
 	if err != nil {
-		g.logger.Error("Failed to parse destination address, check config.yaml", "ssh.prxy")
+		g.logger.Error("Failed to parse destination address, check config.yaml", "[ssh.prxy]")
 		return err
 	}
 
 	err = sshProxy.initConf(dest.Host)
 	if err != nil {
-		g.logger.Error(errors.Wrap(formatErrorMsg("Connection failed at SSH Proxy: ", err), "ssh.prxy"))
+		g.logger.Error(errors.Wrap(formatErrorMsg("Connection failed at SSH Proxy: ", err), "[ssh.prxy]"))
 		return err
 	}
 	g.sshProxy = sshProxy
@@ -57,7 +57,7 @@ func (g *Glutton) NewSSHProxy() (err error) {
 func (s *sshProxy) initConf(dest string) error {
 	rsaKey, err := s.sshKeyGen()
 	if err != nil {
-		s.logger.Error(errors.Wrap(err, "ssh.prxy"))
+		s.logger.Error(errors.Wrap(err, "[ssh.prxy]"))
 		return err
 	}
 
@@ -122,14 +122,14 @@ func (s *sshProxy) handle(conn net.Conn) error {
 	serverConn, chans, reqs, err := ssh.NewServerConn(conn, s.config)
 	defer conn.Close()
 	if err != nil {
-		s.logger.Error(errors.Wrap(formatErrorMsg("Failed to handshake", err), "ssh.prxy"))
+		s.logger.Error(errors.Wrap(formatErrorMsg("Failed to handshake", err), "[ssh.prxy]"))
 		return (err)
 	}
 
 	clientConn, err := s.callbackFn(serverConn)
 	defer clientConn.Close()
 	if err != nil {
-		s.logger.Error(errors.Wrap(err, "ssh.prxy"))
+		s.logger.Error(errors.Wrap(err, "[ssh.prxy]"))
 		return (err)
 	}
 
@@ -139,13 +139,13 @@ func (s *sshProxy) handle(conn net.Conn) error {
 
 		sshClientChan, clientReq, err := clientConn.OpenChannel(ch.ChannelType(), ch.ExtraData())
 		if err != nil {
-			s.logger.Error(errors.Wrap(formatErrorMsg(" Could not accept client channel: ", err), "ssh.prxy"))
+			s.logger.Error(errors.Wrap(formatErrorMsg(" Could not accept client channel: ", err), "[ssh.prxy]"))
 			return err
 		}
 
 		sshServerChan, serverReq, err := ch.Accept()
 		if err != nil {
-			s.logger.Error(errors.Wrap(formatErrorMsg(" Could not accept server channel: ", err), "ssh.prxy"))
+			s.logger.Error(errors.Wrap(formatErrorMsg(" Could not accept server channel: ", err), "[ssh.prxy]"))
 			return err
 		}
 
@@ -174,7 +174,7 @@ func (s *sshProxy) handle(conn net.Conn) error {
 				s.logger.Debugf("[prxy.ssh] Request: \n\n%s %s %s %s\n\n", dst, req.Type, req.WantReply, req.Payload)
 				b, sendErr := dst.SendRequest(req.Type, req.WantReply, req.Payload)
 				if sendErr != nil {
-					s.logger.Error(errors.Wrap(sendErr, "ssh.prxy"))
+					s.logger.Error(errors.Wrap(sendErr, "[ssh.prxy]"))
 				}
 
 				if req.WantReply {
@@ -204,7 +204,7 @@ func (s *sshProxy) handle(conn net.Conn) error {
 		if s.wrapFn != nil {
 			wrappedClientChan, err = s.wrapFn(serverConn, sshClientChan)
 			if err != nil {
-				s.logger.Error(errors.Wrap(err, "ssh.prxy"))
+				s.logger.Error(errors.Wrap(err, "[ssh.prxy]"))
 			}
 		}
 
@@ -223,12 +223,12 @@ func (s *sshProxy) handle(conn net.Conn) error {
 func (s *sshProxy) sshKeyGen() ([]byte, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2014)
 	if err != nil {
-		s.logger.Error(errors.Wrap(err, "ssh.prxy"))
+		s.logger.Error(errors.Wrap(err, "[ssh.prxy]"))
 		return nil, err
 	}
 	err = priv.Validate()
 	if err != nil {
-		s.logger.Error(errors.Wrap(formatErrorMsg("Validation failed.", err), "ssh.prxy"))
+		s.logger.Error(errors.Wrap(formatErrorMsg("Validation failed.", err), "[ssh.prxy]"))
 		return nil, err
 	}
 
@@ -245,7 +245,7 @@ func (s *sshProxy) sshKeyGen() ([]byte, error) {
 	// Shot to validating private bytes
 	_, err = ssh.ParsePrivateKey(RSAKey)
 	if err != nil {
-		s.logger.Error(errors.Wrap(err, "ssh.prxy"))
+		s.logger.Error(errors.Wrap(err, "[ssh.prxy]"))
 		return nil, err
 	}
 	return RSAKey, nil
@@ -280,7 +280,7 @@ func (rs *readSession) Close() error {
 func (rs *readSession) collector(n int) {
 	b := rs.buffer.Next(n)
 	if len(b) != n {
-		log.Error(errors.Wrap(formatErrorMsg("Logging is not working properly.", nil), "ssh.prxy"))
+		log.Error(errors.Wrap(formatErrorMsg("Logging is not working properly.", nil), "[ssh.prxy]"))
 	}
 	if n > 0 {
 		// Clean up raw terminal output by stripping escape sequences
