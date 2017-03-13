@@ -62,10 +62,10 @@ func (s *sshProxy) initConf(dest string) error {
 
 	private, _ := ssh.ParsePrivateKey(rsaKey)
 
-	var sessions map[net.Addr]map[string]interface{} = make(map[net.Addr]map[string]interface{})
+	var sessions = make(map[net.Addr]map[string]interface{})
 	conf := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-			s.logger.Infof("[prxy.ssh] logging attempt: %s, user %s password: %s\n", c.RemoteAddr(), c.User(), string(pass))
+			s.logger.Infof("[prxy.ssh] login attempt: %s, user %s password: %q\n", c.RemoteAddr(), c.User(), string(pass))
 
 			sessions[c.RemoteAddr()] = map[string]interface{}{
 				"username": c.User(),
