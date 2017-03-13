@@ -17,7 +17,7 @@ import (
 type Config struct {
 	sensorID   string
 	logger     *log.Logger
-	httpAddr   *string // Address of HTTP consumer
+	httpAddr   string // Address of HTTP consumer
 	httpClient *http.Client
 }
 
@@ -35,7 +35,7 @@ type Event struct {
 }
 
 // Init initializes the producer
-func Init(sensorID string, log *log.Logger, logHTTP *string) *Config {
+func Init(sensorID string, log *log.Logger, logHTTP string) *Config {
 	return &Config{
 		sensorID:   sensorID,
 		logger:     log,

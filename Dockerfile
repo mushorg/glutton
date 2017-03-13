@@ -14,4 +14,4 @@ RUN go build -o bin/server app/server.go
 # WORKDIR /opt/glutton
 # ADD bin/server .
 # ADD rules/rules.yaml .
-CMD ["bin/server", "-interface", "eth0", "-rules", "rules/rules.yaml"]
+CMD ["bin/server", "-interface", "eth0"]

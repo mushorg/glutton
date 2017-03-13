@@ -22,5 +22,5 @@ make build
 ```
 To run/test glutton:
 ```
-bin/server -log /tmp/glutton.log -rules rules/rules.yaml
+bin/server
 ```
