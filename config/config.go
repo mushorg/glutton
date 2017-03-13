@@ -7,18 +7,17 @@ import (
 	"github.com/spf13/viper"
 )
 
-func Init(logger *log.Logger) (v *viper.Viper) {
+// Init initializes the configuration
+func Init(confPath string, logger *log.Logger) (v *viper.Viper) {
 
 	v = viper.New()
 
 	// Loading config file
 	v.SetConfigName("conf")
-	v.AddConfigPath("../")
-	v.AddConfigPath("$GOPATH/src/github.com/mushorg/glutton/config/")
-	v.AddConfigPath("config/")
+	v.AddConfigPath(confPath)
 	err := v.ReadInConfig()
 	if err != nil {
-		logger.Error("[glutton ] No configuration file loaded - using defaults")
+		logger.Errorf("[glutton ] No configuration file loaded - using defaults: %s", err)
 	}
 	validate(logger, v)
 
@@ -26,7 +25,6 @@ func Init(logger *log.Logger) (v *viper.Viper) {
 	v.SetDefault("glutton_server", 5000)
 	v.SetDefault("proxy_tcp", 6000)
 	v.SetDefault("rules_path", "rules/rules.yaml")
-	v.SetDefault("log_path", "/dev/null")
 	v.SetDefault("gollum", "http://gollum:gollum@localhost:9000")
 	v.SetDefault("proxy_ssh", "tcp://localhost:22")
 

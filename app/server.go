@@ -43,6 +43,7 @@ func main() {
 
 	iface := flag.String("interface", "eth0", "Interface to work with")
 	logPath := flag.String("log-path", "/dev/null", "Log file path")
+	confPath := flag.String("conf-path", "config/", "Config directory path")
 	enableDebug := flag.Bool("debug", false, "Set to enable debug log")
 	flag.Parse()
 
@@ -61,7 +62,7 @@ func main() {
 
 	// Loading the congiguration
 	logger.Info("[glutton ] Loading configurations from: config/conf.yaml")
-	conf := config.Init(logger)
+	conf := config.Init(*confPath, logger)
 
 	// Loading and parsing the rules
 	logger.Infof("[glutton ] Loading rules from: %s", conf.GetString("rules_path"))

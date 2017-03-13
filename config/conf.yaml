@@ -8,7 +8,6 @@ rules_path: rules/rules.yaml
 # Glutton will produce events at the following address
 gollum: http://gollum:gollum@localhost:9000
 
-
 # Address of SSH server behind proxy
 # Example:
 #
