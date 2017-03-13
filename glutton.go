@@ -133,12 +133,14 @@ func (g *Glutton) registerHandlers() {
 	}
 }
 
+// OnErrorExit prints the error and exits
 func (g *Glutton) OnErrorExit(err error) {
 	if err != nil {
 		g.logger.Fatalf("[glutton ] %+v", err)
 	}
 }
 
+// OnErrorClose prints the error, closes the connection and exits
 func (g *Glutton) OnErrorClose(err error, conn net.Conn) {
 	if err != nil {
 		g.logger.Error(err)

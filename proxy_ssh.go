@@ -33,6 +33,7 @@ type readSession struct {
 	n         int // Number of bytes written to buffer
 }
 
+// NewSSHProxy creates a new SSH proxy instance
 func (g *Glutton) NewSSHProxy() (err error) {
 	sshProxy := &sshProxy{
 		logger: g.logger,
@@ -65,7 +66,7 @@ func (s *sshProxy) initConf(dest string) error {
 	var sessions = make(map[net.Addr]map[string]interface{})
 	conf := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-			s.logger.Infof("[prxy.ssh] login attempt: %s, user %s password: %q\n", c.RemoteAddr(), c.User(), string(pass))
+			s.logger.Infof("[prxy.ssh] login attempt: %s, user %s password: %s", c.RemoteAddr(), c.User(), string(pass))
 
 			sessions[c.RemoteAddr()] = map[string]interface{}{
 				"username": c.User(),
@@ -171,9 +172,9 @@ func (s *sshProxy) handle(conn net.Conn) error {
 				}
 
 				s.logger.Debugf("[prxy.ssh] Request: \n\n%s %s %s %s\n\n", dst, req.Type, req.WantReply, req.Payload)
-				b, err := dst.SendRequest(req.Type, req.WantReply, req.Payload)
-				if err != nil {
-					s.logger.Error(errors.Wrap(err, "ssh.prxy"))
+				b, sendErr := dst.SendRequest(req.Type, req.WantReply, req.Payload)
+				if sendErr != nil {
+					s.logger.Error(errors.Wrap(sendErr, "ssh.prxy"))
 				}
 
 				if req.WantReply {
@@ -202,6 +203,9 @@ func (s *sshProxy) handle(conn net.Conn) error {
 
 		if s.wrapFn != nil {
 			wrappedClientChan, err = s.wrapFn(serverConn, sshClientChan)
+			if err != nil {
+				s.logger.Error(errors.Wrap(err, "ssh.prxy"))
+			}
 		}
 
 		go io.Copy(sshClientChan, wrappedServerChan)
@@ -228,27 +232,27 @@ func (s *sshProxy) sshKeyGen() ([]byte, error) {
 		return nil, err
 	}
 
-	priv_der := x509.MarshalPKCS1PrivateKey(priv)
+	privDer := x509.MarshalPKCS1PrivateKey(priv)
 
-	priv_blk := pem.Block{
+	privBlk := pem.Block{
 		Type:    "RSA PRIVATE KEY",
 		Headers: nil,
-		Bytes:   priv_der,
+		Bytes:   privDer,
 	}
 
-	RSA_Key := pem.EncodeToMemory(&priv_blk)
+	RSAKey := pem.EncodeToMemory(&privBlk)
 
 	// Shot to validating private bytes
-	_, err = ssh.ParsePrivateKey(RSA_Key)
+	_, err = ssh.ParsePrivateKey(RSAKey)
 	if err != nil {
 		s.logger.Error(errors.Wrap(err, "ssh.prxy"))
 		return nil, err
 	}
-	return RSA_Key, nil
+	return RSAKey, nil
 }
 
 func formatErrorMsg(msg string, err error) error {
-	return errors.New(fmt.Sprintf("%s  %s\n", msg, err))
+	return fmt.Errorf("%s: %s", msg, err)
 }
 
 func (rs *readSession) Read(p []byte) (n int, err error) {
@@ -283,5 +287,4 @@ func (rs *readSession) collector(n int) {
 		line := vtclean.Clean(string(b[:]), false)
 		log.Infof("[ssh.prxy] %s", line)
 	}
-	b = nil
 }
