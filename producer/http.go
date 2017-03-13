@@ -51,11 +51,11 @@ func (conf *Config) LogHTTP(conn net.Conn, md *freki.Metadata, payload interface
 		return
 	}
 	connKey := freki.NewConnKeyByString(host, port)
-	if *conf.httpAddr == "" {
+	if conf.httpAddr == "" {
 		return fmt.Errorf("[glutton ] Address is nil in HTTP log producer")
 	}
 
-	gConn, err := url.Parse(*conf.httpAddr)
+	gConn, err := url.Parse(conf.httpAddr)
 	if err != nil {
 		return
 	}
