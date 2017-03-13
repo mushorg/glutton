@@ -4,16 +4,14 @@ ports:
 
 rules_path: rules/rules.yaml
 
-log_path: /dev/null
-
 # TODO: Provide flag to active or deactive producer
 # Glutton will produce events at the following address
 gollum: http://gollum:gollum@localhost:9000
-  
+
 
 # Address of SSH server behind proxy
 # Example:
-#  
+#
 # tcp://user:pass@192.168.0.123:22
 # tcp://192.168.0.123:22
 

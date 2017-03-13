@@ -40,17 +40,16 @@ func main() {
  \_____|_|\__,_|\__|\__\___/|_| |_|
 
 	`)
-	logger := log.New()
-
-	logger.Info("[glutton ] Loading configurations from: config/conf.yaml")
-	conf := config.Init(logger)
 
 	iface := flag.String("interface", "eth0", "Interface to work with")
+	logPath := flag.String("log-path", "/dev/null", "Log file path")
 	enableDebug := flag.Bool("debug", false, "Set to enable debug log")
 	flag.Parse()
 
+	// Setting up the logger
+	logger := log.New()
 	// Write log to file and stdout
-	f, err := os.OpenFile(conf.GetString("log_path"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -59,6 +58,11 @@ func main() {
 		logger.Level = log.DebugLevel
 	}
 	logger.Formatter = &log.TextFormatter{ForceColors: true}
+
+	// Loading the congiguration
+	logger.Info("[glutton ] Loading configurations from: config/conf.yaml")
+	conf := config.Init(logger)
+
 	// Loading and parsing the rules
 	logger.Infof("[glutton ] Loading rules from: %s", conf.GetString("rules_path"))
 	rulesFile, err := os.Open(conf.GetString("rules_path"))
