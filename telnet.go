@@ -6,6 +6,8 @@ import (
 	"net"
 	"regexp"
 	"strings"
+
+	"github.com/kung-foo/freki"
 )
 
 // Based on https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
@@ -24,16 +26,20 @@ var miraiCom = map[string][]string{
 func writeMsg(conn net.Conn, msg string, g *Glutton) error {
 	_, err := conn.Write([]byte(msg))
 	g.logger.Infof("[telnet  ] send: %q", msg)
+	md := g.processor.Connections.GetByFlow(freki.NewConnKeyFromNetConn(conn))
+	g.producer.LogHTTP(conn, md, msg, "write")
 	return err
 }
 
-func readMsg(conn net.Conn, g *Glutton) (string, error) {
-	message, err := bufio.NewReader(conn).ReadString('\n')
+func readMsg(conn net.Conn, g *Glutton) (msg string, err error) {
+	msg, err = bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		return "", err
 	}
-	g.logger.Infof("[telnet  ] recv: %q", message)
-	return message, err
+	g.logger.Infof("[telnet  ] recv: %q", msg)
+	md := g.processor.Connections.GetByFlow(freki.NewConnKeyFromNetConn(conn))
+	g.producer.LogHTTP(conn, md, msg, "read")
+	return msg, err
 }
 
 // HandleTelnet handles telnet communication on a connection

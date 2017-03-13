@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/kung-foo/freki"
 )
 
 // Config for the producer
@@ -21,12 +23,15 @@ type Config struct {
 
 // Event is a struct for glutton events
 type Event struct {
-	Timestamp time.Time `json:"timestamp"`
-	SrcHost   string    `json:"srcHost"`
-	SrcPort   string    `json:"srcPort"`
-	DstPort   string    `json:"dstPort"`
-	SensorID  string    `json:"sensorID"`
-	Rule      string    `json:"rule"`
+	Timestamp time.Time   `json:"timestamp"`
+	SrcHost   string      `json:"srcHost"`
+	SrcPort   string      `json:"srcPort"`
+	DstPort   string      `json:"dstPort"`
+	SensorID  string      `json:"sensorID"`
+	Rule      string      `json:"rule"`
+	ConnKey   [2]uint64   `json:"connKey"`
+	Payload   interface{} `json:"payload"`
+	Direction string      `json:"direction"`
 }
 
 // Init initializes the producer
@@ -39,13 +44,18 @@ func Init(sensorID string, log *log.Logger, logHTTP string) *Config {
 	}
 }
 
-// LogHTTP send logs to web socket
-func (conf *Config) LogHTTP(host, port, dstPort, rule string) (err error) {
-	if conf.httpAddr == "" {
+// LogHTTP send logs to HTTP endpoint
+func (conf *Config) LogHTTP(conn net.Conn, md *freki.Metadata, payload interface{}, direction string) (err error) {
+	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
+	if err != nil {
+		return
+	}
+	connKey := freki.NewConnKeyByString(host, port)
+	if *conf.httpAddr == "" {
 		return fmt.Errorf("[glutton ] Address is nil in HTTP log producer")
 	}
 
-	conn, err := url.Parse(conf.httpAddr)
+	gConn, err := url.Parse(*conf.httpAddr)
 	if err != nil {
 		return
 	}
@@ -53,20 +63,23 @@ func (conf *Config) LogHTTP(host, port, dstPort, rule string) (err error) {
 		Timestamp: time.Now().UTC(),
 		SrcHost:   host,
 		SrcPort:   port,
-		DstPort:   dstPort,
+		DstPort:   md.TargetPort.String(),
 		SensorID:  conf.sensorID,
-		Rule:      rule,
+		Rule:      md.Rule.String(),
+		ConnKey:   connKey,
+		Payload:   payload,
+		Direction: direction,
 	}
 	data, err := json.Marshal(event)
 	if err != nil {
 		return
 	}
-	req, err := http.NewRequest("POST", conn.Scheme+"://"+conn.Host, bytes.NewBuffer(data))
+	req, err := http.NewRequest("POST", gConn.Scheme+"://"+gConn.Host, bytes.NewBuffer(data))
 	if err != nil {
 		return
 	}
-	password, _ := conn.User.Password()
-	req.SetBasicAuth(conn.User.Username(), password)
+	password, _ := gConn.User.Password()
+	req.SetBasicAuth(gConn.User.Username(), password)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := conf.httpClient.Do(req)
 	if err != nil {
