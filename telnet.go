@@ -21,6 +21,17 @@ var miraiCom = map[string][]string{
 	"cat /run/.nippon":                                []string{"kami/run"},
 	"rm /run/.nippon":                                 []string{""},
 	"cat /bin/sh":                                     []string{""},
+	"/bin/busybox ps":                                              []string{"1 pts/21   00:00:00 init"},
+	"/bin/busybox cat /proc/mounts":                                []string{"tmpfs /run tmpfs rw,nosuid,noexec,relatime,size=3231524k,mode=755 0 0"},
+	"/bin/busybox echo -e \\x6b\\x61\\x6d\\x69/dev > /dev/.nippon": []string{""},
+	"/bin/busybox cat /dev/.nippon":                                []string{"kami/dev"},
+	"/bin/busybox rm /dev/.nippon":                                 []string{""},
+	"/bin/busybox echo -e \\x6b\\x61\\x6d\\x69/run > /run/.nippon": []string{""},
+	"/bin/busybox cat /run/.nippon":                                []string{"kami/run"},
+	"/bin/busybox rm /run/.nippon":                                 []string{""},
+	"/bin/busybox cat /bin/sh":                                     []string{""},
+	"/bin/busybox cat /bin/echo":                                   []string{"/bin/busybox cat /bin/echo\r\n\x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00\x01\x00\x00\x00\x6c\xb9\x00\x00\x34\x00\x00\x00"},
+        "rm /dev/.human":                                               []string{"rm: can't remote '/.t': No such file or directory\r\nrm: can't remote '/.sh': No such file or directory\r\nrm: can't remote '/.human': No such file or directory\r\ncd /dev"},
 }
 
 func writeMsg(conn net.Conn, msg string, g *Glutton) error {
@@ -47,6 +58,10 @@ func (g *Glutton) HandleTelnet(conn net.Conn) {
 	defer conn.Close()
 
 	// TODO (glaslos): Add device banner
+
+	// telnet window size negotiation response
+	writeMsg(conn, "\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27", g)
+
 	// User name prompt
 	writeMsg(conn, "Username: ", g)
 	_, err := readMsg(conn, g)
