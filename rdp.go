@@ -13,13 +13,11 @@ func (g *Glutton) HandleRDP(conn net.Conn) {
 	buffer := make([]byte, 1024)
 	for {
 		n, err := conn.Read(buffer)
-		if err != nil {
-			g.logger.Errorf("[rdp     ] error: %v", err)
-		}
 		if err != nil && n <= 0 {
+			g.logger.Errorf("[rdp     ] error: %v", err)
 			break
 		}
-		if n > 0 {
+		if n > 0 && n < 1024 {
 			g.logger.Infof("[rdp     ]\n%s", hex.Dump(buffer[0:n]))
 			pdu, err := rdp.ParseCRPDU(buffer[0:n])
 			if err != nil {

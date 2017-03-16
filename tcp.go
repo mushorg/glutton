@@ -21,7 +21,7 @@ func (g *Glutton) HandleTCP(conn net.Conn) {
 	if err != nil {
 		g.logger.Errorf("[log.tcp ] %v", err)
 	}
-	if n > 0 {
+	if n > 0 && n < 1024 {
 		g.logger.Infof("[log.tcp ] %s\n%s", host, hex.Dump(buffer[0:n]))
 	}
 }

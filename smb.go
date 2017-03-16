@@ -13,13 +13,11 @@ func (g *Glutton) HandleSMB(conn net.Conn) {
 	buffer := make([]byte, 1024)
 	for {
 		n, err := conn.Read(buffer)
-		if err != nil {
-			g.logger.Errorf("[smb     ] error: %v", err)
-		}
 		if err != nil && n <= 0 {
+			g.logger.Errorf("[smb     ] error: %v", err)
 			break
 		}
-		if n > 0 {
+		if n > 0 && n < 1024 {
 			g.logger.Infof("[smb     ]\n%s", hex.Dump(buffer[0:n]))
 			packet, err := smb.ParseSMB(buffer[0:n])
 			if err != nil {
