@@ -3,6 +3,8 @@ package smb
 import (
 	"bytes"
 	"encoding/binary"
+
+	"github.com/pkg/errors"
 )
 
 type SMBHeader struct {
@@ -38,6 +40,11 @@ type SMB struct {
 func ParseSMB(data []byte) (smb SMB, err error) {
 	smb = SMB{}
 	// HACK: Not sure what the data in front is supposed to be...
+	if !bytes.Contains(data, []byte("\xff")) {
+		err = errors.New("Packet is unrecognizable")
+		return
+	}
+
 	start := bytes.Index(data, []byte("\xff"))
 	buffer := bytes.NewBuffer(data[start:])
 	err = binary.Read(buffer, binary.LittleEndian, &smb.Header)
