@@ -16,7 +16,7 @@ func (g *Glutton) HandleHTTP(conn net.Conn) {
 		g.logger.Errorf("[http    ] %v", err)
 		return
 	}
-	g.logger.Printf("[http    ] %+v", req)
+	g.logger.Infof("[http    ] %+v", req)
 	if req.ContentLength > 0 {
 		defer req.Body.Close()
 		buf := bytes.NewBuffer(make([]byte, 0, req.ContentLength))
@@ -26,7 +26,7 @@ func (g *Glutton) HandleHTTP(conn net.Conn) {
 			return
 		}
 		body := buf.Bytes()
-		g.logger.Printf("[http    ] http body:\n%s", hex.Dump(body[:]))
+		g.logger.Infof("[http    ] http body:\n%s", hex.Dump(body[:]))
 	}
 	conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 }

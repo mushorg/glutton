@@ -1,5 +1,5 @@
 hash: 8357c46cce4711ecc057093611936de418f463289daf5c07be9b5b69c7e08c5c
-updated: 2017-03-13T13:20:48.819110865+01:00
+updated: 2017-03-19T16:19:21.368206909+05:00
 imports:
 - name: github.com/1lann/go-sip
   version: 68e86c65407ef8cf672ae38526e7f3d29944b94f
@@ -11,7 +11,7 @@ imports:
   subpackages:
   - iptables
 - name: github.com/docker/distribution
-  version: 08b06dc023674763e7b36d404cf0c7664cee1f5e
+  version: fb0bebc4b64e3881cc52a2478d749845ed76d2a8
   subpackages:
   - digestset
   - reference
@@ -34,7 +34,7 @@ imports:
   - types/time
   - types/versions
 - name: github.com/docker/go-connections
-  version: a2afab9802043837035592f1c24827fb70766de9
+  version: 9670439d95da2651d9dfc7acc5d2ed92d3f25ee6
   subpackages:
   - nat
   - sockets
@@ -70,7 +70,7 @@ imports:
 - name: github.com/Microsoft/go-winio
   version: fff283ad5116362ca252298cfc9b95828956d85d
 - name: github.com/mitchellh/mapstructure
-  version: 53818660ed4955e899c0bcafa97299a388bd7c8e
+  version: db1efb556f84b25a0a13a04aad883943538ad2e0
 - name: github.com/opencontainers/go-digest
   version: aa2ec055abd10d26d539eb630a92241b781ce4bc
 - name: github.com/pelletier/go-buffruneio
@@ -82,7 +82,7 @@ imports:
 - name: github.com/satori/go.uuid
   version: b061729afc07e77a8aa4fad0a2fd840958f1942a
 - name: github.com/Sirupsen/logrus
-  version: 0208149b40d863d2c1a2f8fe5753096a9cf2cc8b
+  version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
 - name: github.com/spf13/afero
   version: 9be650865eab0c12963d8753212f4f9c66cdcf12
   subpackages:
@@ -96,20 +96,20 @@ imports:
 - name: github.com/spf13/viper
   version: 7538d73b4eb9511d85a9f1dfef202eeb8ac260f4
 - name: golang.org/x/crypto
-  version: 728b753d0135da6801d45a38e6f43ff55779c5c2
+  version: 40541ccb1c6e64c947ed6f606b8a6cb4b67d7436
   subpackages:
   - curve25519
   - ed25519
   - ed25519/internal/edwards25519
   - ssh
 - name: golang.org/x/net
-  version: a6577fac2d73be281a500b310739095313165611
+  version: 007e530097ad7f954752df63046b4036f98ba6a6
   subpackages:
   - bpf
   - context
   - proxy
 - name: golang.org/x/sys
-  version: d75a52659825e75fff6158388dddc6a5b04f9ba5
+  version: 7a6e5648d140666db5d920909e082ca00a87ba2c
   subpackages:
   - unix
   - windows
@@ -119,5 +119,5 @@ imports:
   - transform
   - unicode/norm
 - name: gopkg.in/yaml.v2
-  version: a5b47d31c556af34a302ce5d659e6fea44d90de0
+  version: 4c78c975fe7c825c6d1466c42be594d1d6f3aba6
 testImports: []
