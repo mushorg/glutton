@@ -37,7 +37,7 @@ var miraiCom = map[string][]string{
 	"/bin/busybox rm /run/.nippon":                                 []string{""},
 	"/bin/busybox cat /bin/sh":                                     []string{""},
 	"/bin/busybox cat /bin/echo":                                   []string{"/bin/busybox cat /bin/echo\r\n\x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00\x01\x00\x00\x00\x6c\xb9\x00\x00\x34\x00\x00\x00"},
-        "rm /dev/.human":                                               []string{"rm: can't remote '/.t': No such file or directory\r\nrm: can't remote '/.sh': No such file or directory\r\nrm: can't remote '/.human': No such file or directory\r\ncd /dev"},
+        "rm /dev/.human":                                               []string{"rm: can't remove '/.t': No such file or directory\r\nrm: can't remove '/.sh': No such file or directory\r\nrm: can't remove '/.human': No such file or directory\r\ncd /dev"},
 }
 
 func writeMsg(conn net.Conn, msg string, g *Glutton) error {
