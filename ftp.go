@@ -21,7 +21,7 @@ func (g *Glutton) HandleFTP(conn net.Conn) {
 	conn.Write([]byte("220 Welcome!\r\n"))
 	for {
 		msg, err := readFTP(conn, g)
-		if len(msg) < 1 && err != nil {
+		if len(msg) < 4 || err != nil {
 			break
 		}
 		cmd := strings.ToUpper(msg[:4])

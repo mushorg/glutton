@@ -83,9 +83,9 @@ func (conf *Config) LogHTTP(conn net.Conn, md *freki.Metadata, payload interface
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := conf.httpClient.Do(req)
 	if err != nil {
+		conf.logger.Debugf("[glutton ] gollum error: %s", err)
 		return
 	}
-	defer resp.Body.Close()
-	conf.logger.Debugf("[glutton ] gollum response: %s", resp.Status)
+	resp.Body.Close()
 	return
 }

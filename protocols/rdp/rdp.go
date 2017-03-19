@@ -95,7 +95,7 @@ func ParseCRPDU(data []byte) (pdu ConnectionRequestPDU, err error) {
 		}
 		pdu.Data = make([]byte, offset-4)
 	default:
-		if offset-4-7 == 0 {
+		if offset-4-7 <= 0 {
 			return
 		}
 		pdu.Data = make([]byte, offset-4-7)
