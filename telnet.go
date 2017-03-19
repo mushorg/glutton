@@ -10,10 +10,16 @@ import (
 	"github.com/kung-foo/freki"
 )
 
-// Based on https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
+// Mirai botnet  - https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
+// Hajime botnet - https://security.rapiditynetworks.com/publications/2016-10-16/hajime.pdf
 var miraiCom = map[string][]string{
 	"ps":                                              []string{"1 pts/21   00:00:00 init"},
-	"cat /proc/mounts":                                []string{"tmpfs /run tmpfs rw,nosuid,noexec,relatime,size=3231524k,mode=755 0 0"},
+	"cat /proc/mounts":                                []string{"rootfs / rootfs rw 0 0\r\n/dev/root / ext2 rw,relatime,errors=continue 0 0\r\nproc /proc proc rw,relatime 0 0\r\nsysfs /sys sysfs rw,relatime 0 0\r\nudev /dev tmpfs rw,relatime 0 0\r\ndevpts /dev/pts devpts rw,relatime,mode=600,ptmxmode=000 0 0\r\n/dev/mtdblock1 /home/hik jffs2 rw,relatime 0 0\r\ntmpfs /run tmpfs rw,nosuid,noexec,relatime,size=3231524k,mode=755 0 0\r\n"},
+	"(cat .s || cp /bin/echo .s)": 			   []string{"cat: .s: No such file or directory"},
+	"nc": 						   []string{"nc: command not found"},
+	"wget": 					   []string{"wget: missing URL"},
+	"(dd bs=52 count=1 if=.s || cat .s)": 		   []string{"\x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00\x01\x00\x00\x00\xbc\x14\x01\x00\x34\x00\x00\x00"},
+	"sh": 					           []string{"$"},
 	"echo -e \\x6b\\x61\\x6d\\x69/dev > /dev/.nippon": []string{""},
 	"cat /dev/.nippon":                                []string{"kami/dev"},
 	"rm /dev/.nippon":                                 []string{""},
@@ -31,7 +37,7 @@ var miraiCom = map[string][]string{
 	"/bin/busybox rm /run/.nippon":                                 []string{""},
 	"/bin/busybox cat /bin/sh":                                     []string{""},
 	"/bin/busybox cat /bin/echo":                                   []string{"/bin/busybox cat /bin/echo\r\n\x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00\x01\x00\x00\x00\x6c\xb9\x00\x00\x34\x00\x00\x00"},
-        "rm /dev/.human":                                               []string{"rm: can't remote '/.t': No such file or directory\r\nrm: can't remote '/.sh': No such file or directory\r\nrm: can't remote '/.human': No such file or directory\r\ncd /dev"},
+        "rm /dev/.human":                                               []string{"rm: can't remove '/.t': No such file or directory\r\nrm: can't remove '/.sh': No such file or directory\r\nrm: can't remove '/.human': No such file or directory\r\ncd /dev"},
 }
 
 func writeMsg(conn net.Conn, msg string, g *Glutton) error {
