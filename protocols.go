@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// mapProtocolHandler map protocol handlers to corresponding protocol
-func (g *Glutton) mapProtocolHandler() {
+// mapProtocolHandlers map protocol handlers to corresponding protocol
+func (g *Glutton) mapProtocolHandlers() {
 
 	g.protocolHandlers["smtp"] = func(conn net.Conn) {
 		g.HandleSMTP(conn)
@@ -34,7 +34,7 @@ func (g *Glutton) mapProtocolHandler() {
 	}
 	g.protocolHandlers["default"] = func(conn net.Conn) {
 		snip, bufConn, err := g.Peek(conn, 4)
-		g.OnErrorClose(err, conn)
+		g.onErrorClose(err, conn)
 		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true}
 		if _, ok := httpMap[strings.ToUpper(string(snip))]; ok == true {
 			g.HandleHTTP(bufConn)

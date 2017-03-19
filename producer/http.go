@@ -9,14 +9,13 @@ import (
 	"net/url"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/kung-foo/freki"
 )
 
 // Config for the producer
 type Config struct {
 	sensorID   string
-	logger     *log.Logger
+	logger     freki.Logger
 	httpAddr   string // Address of HTTP consumer
 	httpClient *http.Client
 }
@@ -35,7 +34,7 @@ type Event struct {
 }
 
 // Init initializes the producer
-func Init(sensorID string, log *log.Logger, logHTTP string) *Config {
+func Init(sensorID string, log freki.Logger, logHTTP string) *Config {
 	return &Config{
 		sensorID:   sensorID,
 		logger:     log,

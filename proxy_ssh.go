@@ -11,14 +11,14 @@ import (
 	"net"
 	"net/url"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/kung-foo/freki"
 	"github.com/lunixbochs/vtclean"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 )
 
 type sshProxy struct {
-	logger     *log.Logger
+	logger     freki.Logger
 	config     *ssh.ServerConfig
 	callbackFn func(c ssh.ConnMetadata) (*ssh.Client, error)
 	wrapFn     func(c ssh.ConnMetadata, r io.ReadCloser) (io.ReadCloser, error)
@@ -28,6 +28,7 @@ type sshProxy struct {
 
 type readSession struct {
 	io.ReadCloser
+	logger    freki.Logger
 	buffer    bytes.Buffer
 	delimiter []byte
 	n         int // Number of bytes written to buffer
@@ -106,6 +107,7 @@ func (s *sshProxy) initConf(dest string) error {
 	s.wrapFn = func(c ssh.ConnMetadata, r io.ReadCloser) (io.ReadCloser, error) {
 		s.reader = &readSession{
 			ReadCloser: r,
+			logger:     s.logger,
 			delimiter:  []byte("\n"),
 		}
 		return s.reader, nil
@@ -280,11 +282,11 @@ func (rs *readSession) Close() error {
 func (rs *readSession) collector(n int) {
 	b := rs.buffer.Next(n)
 	if len(b) != n {
-		log.Error(errors.Wrap(formatErrorMsg("Logging is not working properly.", nil), "[ssh.prxy]"))
+		rs.logger.Error(errors.Wrap(formatErrorMsg("Logging is not working properly.", nil), "[ssh.prxy]"))
 	}
 	if n > 0 {
 		// Clean up raw terminal output by stripping escape sequences
 		line := vtclean.Clean(string(b[:]), false)
-		log.Infof("[ssh.prxy] %s", line)
+		rs.logger.Infof("[ssh.prxy] %s", line)
 	}
 }

@@ -24,16 +24,16 @@ func (g *Glutton) HandleSIP(netConn net.Conn) {
 		g.logger.Info("[sip     ] failed to parse SIP req")
 		return
 	}
-	g.logger.Printf("[sip     ] SIP method: %s", req.Method)
+	g.logger.Infof("[sip     ] SIP method: %s", req.Method)
 	switch req.Method {
 	case sipnet.MethodRegister:
-		g.logger.Println("[sip     ] handling SIP register")
+		g.logger.Info("[sip     ] handling SIP register")
 		server.HandleRegister(req, sipConn)
 	case sipnet.MethodInvite:
-		g.logger.Println("[sip     ] handling SIP invite")
+		g.logger.Info("[sip     ] handling SIP invite")
 		server.HandleInvite(req, sipConn)
 	case sipnet.MethodOptions:
-		g.logger.Println("[sip     ] handling SIP options")
+		g.logger.Info("[sip     ] handling SIP options")
 		resp := sipnet.NewResponse()
 		resp.StatusCode = sipnet.StatusOK
 		resp.Header.Set("Allow", "INVITE, ACK, CANCEL, OPTIONS, BYE")

@@ -13,7 +13,7 @@ func readRFB(conn net.Conn, g *Glutton) {
 	if err != nil {
 		g.logger.Errorf("[rfb     ] error: %v", err)
 	}
-	g.logger.Printf("[rfb     ] message %q", msg)
+	g.logger.Infof("[rfb     ] message %q", msg)
 }
 
 // PixelFormat represents a RFB communication unit

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/kung-foo/freki"
 	"github.com/mushorg/glutton/producer"
 	"github.com/pkg/errors"
@@ -18,7 +17,7 @@ import (
 type Glutton struct {
 	id               uuid.UUID
 	conf             *viper.Viper
-	logger           *log.Logger
+	logger           freki.Logger
 	processor        *freki.Processor
 	rules            []*freki.Rule
 	producer         *producer.Config
@@ -27,6 +26,68 @@ type Glutton struct {
 }
 
 type protocolHandlerFunc func(conn net.Conn)
+
+func New(iface string, conf *viper.Viper, logger freki.Logger) (*Glutton, error) {
+	rulesPath := conf.GetString("rules_path")
+	rulesFile, err := os.Open(rulesPath)
+	if err != nil {
+		// TODO formate error
+		return nil, err
+	}
+
+	rules, err := freki.ReadRulesFromFile(rulesFile)
+	if err != nil {
+		return nil, err
+	}
+
+	// Initiate the freki processor
+	processor, err := freki.New(iface, rules, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	glutton := &Glutton{
+		conf:             conf,
+		logger:           logger,
+		processor:        processor,
+		rules:            rules,
+		protocolHandlers: make(map[string]protocolHandlerFunc, 0),
+	}
+
+	return glutton, nil
+
+}
+
+func (g *Glutton) Init() (err error) {
+
+	tcpProxyPort := uint(g.conf.GetInt("proxy_tcp"))
+	gluttonServerPort := uint(g.conf.GetInt("glutton_server"))
+
+	// Initiating tcp proxy server
+	g.processor.AddServer(freki.NewTCPProxy(tcpProxyPort))
+	// Initiating glutton server
+	g.processor.AddServer(freki.NewUserConnServer(gluttonServerPort))
+
+	g.makeID()
+	g.producer = producer.Init(g.id.String(), g.logger, g.conf.GetString("gollum"))
+
+	// TODO: in Freki updated version
+	// g.processor.GetPublicAddresses()
+
+	g.mapProtocolHandlers()
+	g.registerHandlers()
+	err = g.processor.Init()
+	if err != nil {
+		return
+	}
+
+	return nil
+}
+
+func (g *Glutton) Start() (err error) {
+	err = g.processor.Start()
+	return
+}
 
 func (g *Glutton) makeID() error {
 	dirName := "/var/lib/glutton"
@@ -58,41 +119,9 @@ func (g *Glutton) makeID() error {
 	return nil
 }
 
-func (g *Glutton) addServers() {
-	proxyPort := uint(g.conf.GetInt("proxy_tcp"))
-	gluttonPort := uint(g.conf.GetInt("glutton_server"))
-
-	// Adding a proxy server
-	g.processor.AddServer(freki.NewTCPProxy(proxyPort))
-	// Adding Glutton Server
-	g.processor.AddServer(freki.NewUserConnServer(gluttonPort))
-}
-
-// New creates a new Glutton instance
-func New(processor *freki.Processor, log *log.Logger, rule []*freki.Rule, conf *viper.Viper) (g *Glutton, err error) {
-
-	g = &Glutton{
-		conf:             conf,
-		logger:           log,
-		processor:        processor,
-		rules:            rule,
-		protocolHandlers: make(map[string]protocolHandlerFunc, 0),
-	}
-
-	g.makeID()
-	g.producer = producer.Init(g.id.String(), log, conf.GetString("gollum"))
-	g.addServers()
-	g.mapProtocolHandler()
-	return
-}
-
-// Start this is the main listener for rewritten package
-func (g *Glutton) Start() {
-	g.registerHandlers()
-}
-
-// registerConnections register protocol handlers to glutton_server
+// registerHandlers register protocol handlers to glutton_server
 func (g *Glutton) registerHandlers() {
+
 	for _, rule := range g.rules {
 		if rule.Type == "conn_handler" && rule.Target != "" {
 			protocol := rule.Target
@@ -133,15 +162,12 @@ func (g *Glutton) registerHandlers() {
 	}
 }
 
-// OnErrorExit prints the error and exits
-func (g *Glutton) OnErrorExit(err error) {
-	if err != nil {
-		g.logger.Fatalf("[glutton ] %+v", err)
-	}
+func (g *Glutton) Shutdown() (err error) {
+	return g.processor.Shutdown()
 }
 
 // OnErrorClose prints the error, closes the connection and exits
-func (g *Glutton) OnErrorClose(err error, conn net.Conn) {
+func (g *Glutton) onErrorClose(err error, conn net.Conn) {
 	if err != nil {
 		g.logger.Error(err)
 		err = conn.Close()

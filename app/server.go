@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/kung-foo/freki"
 	"github.com/mushorg/glutton"
 	"github.com/mushorg/glutton/config"
 )
@@ -49,11 +48,10 @@ func main() {
 
 	// Setting up the logger
 	logger := log.New()
+
 	// Write log to file and stdout
 	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		logger.Fatal(err)
-	}
+	onErrorExit(err)
 	logger.Out = io.MultiWriter(f, os.Stdout)
 	if *enableDebug == true {
 		logger.Level = log.DebugLevel
@@ -64,25 +62,10 @@ func main() {
 	logger.Info("[glutton ] Loading configurations from: config/conf.yaml")
 	conf := config.Init(*confPath, logger)
 
-	// Loading and parsing the rules
-	logger.Infof("[glutton ] Loading rules from: %s", conf.GetString("rules_path"))
-	rulesFile, err := os.Open(conf.GetString("rules_path"))
+	gtn, err := glutton.New(*iface, conf, logger)
 	onErrorExit(err)
 
-	rules, err := freki.ReadRulesFromFile(rulesFile)
-	onErrorExit(err)
-	logger.Infof("[glutton ] Rules: %+v", rules)
-
-	// Initiate the freki processor
-	processor, err := freki.New(*iface, rules, logger)
-	onErrorExit(err)
-
-	// Initiate glutton
-	gtn, err := glutton.New(processor, logger, rules, conf)
-	onErrorExit(err)
-	go gtn.Start()
-
-	err = processor.Init()
+	err = gtn.Init()
 	onErrorExit(err)
 
 	exitMtx := sync.RWMutex{}
@@ -92,14 +75,14 @@ func main() {
 		exitMtx.Lock()
 		println() // make it look nice after the ^C
 		logger.Info("[glutton ] shutting down...")
-		onErrorExit(processor.Shutdown())
+		onErrorExit(gtn.Shutdown())
 	}
-
 	defer exit()
+
 	onInterruptSignal(func() {
 		exit()
 		os.Exit(0)
 	})
 
-	onErrorExit(processor.Start())
+	onErrorExit(gtn.Start())
 }
