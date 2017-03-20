@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/http"
@@ -75,16 +76,20 @@ func getSample(cmd string, g *Glutton) error {
 	client := http.Client{
 		Timeout: timeout,
 	}
+	g.logger.Infof("[telnet  ] getSample target URL: %s", url)
 	resp, err := client.Get(url)
 	if err != nil {
 		g.logger.Errorf("[telnet  ] getSample http error: %v", err)
 		return err
 	}
 	defer resp.Body.Close()
-	g.logger.Infof("[telnet  ] getSample body length: %s", resp.Header.Get("ContentLength"))
-	p := new([]byte)
-	resp.Body.Read(*p)
-	sum := sha256.Sum256(*p)
+	g.logger.Infof("[telnet  ] getSample body length: %d", resp.ContentLength)
+	bodyBuffer, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		g.logger.Errorf("[telnet  ] getSample read http: %v", err)
+		return err
+	}
+	sum := sha256.Sum256(bodyBuffer)
 	// Ignoring errors for if the folder already exists
 	os.MkdirAll("samples", os.ModePerm)
 	sha256Hash := hex.EncodeToString(sum[:])
@@ -95,7 +100,7 @@ func getSample(cmd string, g *Glutton) error {
 		return err
 	}
 	defer out.Close()
-	_, err = out.Write(*p)
+	_, err = out.Write(bodyBuffer)
 	if err != nil {
 		g.logger.Errorf("[telnet  ] getSample write error: %v", err)
 		return err
