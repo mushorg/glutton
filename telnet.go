@@ -136,7 +136,7 @@ func (g *Glutton) HandleTelnet(conn net.Conn) {
 		}
 		for _, cmd := range strings.Split(msg, ";") {
 			if strings.HasPrefix(strings.Trim(cmd, " "), "wget http") {
-				go getSample(cmd, g)
+				go getSample(strings.Trim(cmd, " "), g)
 			}
 			if strings.TrimRight(cmd, "") == " rm /dev/.t" {
 				continue
