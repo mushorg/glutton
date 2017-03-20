@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/kung-foo/freki"
 )
@@ -71,7 +72,11 @@ func getSample(cmd string, g *Glutton) error {
 		return nil
 	}
 	url := parts[1]
-	resp, err := http.Get(url)
+	timeout := time.Duration(5 * time.Second)
+	client := http.Client{
+		Timeout: timeout,
+	}
+	resp, err := client.Get(url)
 	if err != nil {
 		g.logger.Errorf("[telnet  ] getSample error: %v", err)
 		return err
@@ -130,8 +135,8 @@ func (g *Glutton) HandleTelnet(conn net.Conn) {
 			return
 		}
 		for _, cmd := range strings.Split(msg, ";") {
-			if strings.HasPrefix(strings.TrimRight(cmd, ""), "wget http") {
-				getSample(cmd, g)
+			if strings.HasPrefix(strings.Trim(cmd, " "), "wget http") {
+				go getSample(cmd, g)
 			}
 			if strings.TrimRight(cmd, "") == " rm /dev/.t" {
 				continue
