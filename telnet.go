@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
-	"io"
 	"math/rand"
 	"net"
 	"net/http"
@@ -78,10 +77,11 @@ func getSample(cmd string, g *Glutton) error {
 	}
 	resp, err := client.Get(url)
 	if err != nil {
-		g.logger.Errorf("[telnet  ] getSample error: %v", err)
+		g.logger.Errorf("[telnet  ] getSample http error: %v", err)
 		return err
 	}
 	defer resp.Body.Close()
+	g.logger.Infof("[telnet  ] getSample body length: %s", resp.Header.Get("ContentLength"))
 	p := new([]byte)
 	resp.Body.Read(*p)
 	sum := sha256.Sum256(*p)
@@ -91,13 +91,13 @@ func getSample(cmd string, g *Glutton) error {
 	path := filepath.Join("samples", sha256Hash)
 	out, err := os.Create(path)
 	if err != nil {
-		g.logger.Errorf("[telnet  ] getSample error: %v", err)
+		g.logger.Errorf("[telnet  ] getSample create error: %v", err)
 		return err
 	}
 	defer out.Close()
-	_, err = io.Copy(out, resp.Body)
+	_, err = out.Write(*p)
 	if err != nil {
-		g.logger.Errorf("[telnet  ] getSample error: %v", err)
+		g.logger.Errorf("[telnet  ] getSample write error: %v", err)
 		return err
 	}
 	g.logger.Infof("[telnet  ] getSample succcess: %s", path)
