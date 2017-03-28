@@ -67,11 +67,7 @@ func readMsg(conn net.Conn, g *Glutton) (msg string, err error) {
 }
 
 func getSample(cmd string, g *Glutton) error {
-	parts := strings.Split(cmd, " ")
-	if len(parts) < 2 {
-		return nil
-	}
-	url := parts[1]
+	url := cmd[strings.Index(cmd, "http"):]
 	timeout := time.Duration(5 * time.Second)
 	client := http.Client{
 		Timeout: timeout,
@@ -140,7 +136,7 @@ func (g *Glutton) HandleTelnet(conn net.Conn) {
 			return
 		}
 		for _, cmd := range strings.Split(msg, ";") {
-			if strings.HasPrefix(strings.Trim(cmd, " "), "wget http") {
+			if strings.Contains(strings.Trim(cmd, " "), "wget http") {
 				go getSample(strings.Trim(cmd, " "), g)
 			}
 			if strings.TrimRight(cmd, "") == " rm /dev/.t" {

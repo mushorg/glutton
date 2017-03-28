@@ -27,6 +27,7 @@ type Glutton struct {
 
 type protocolHandlerFunc func(conn net.Conn)
 
+// New creates a new Glutton instance
 func New(iface string, conf *viper.Viper, logger freki.Logger) (*Glutton, error) {
 	rulesPath := conf.GetString("rules_path")
 	rulesFile, err := os.Open(rulesPath)
@@ -58,8 +59,8 @@ func New(iface string, conf *viper.Viper, logger freki.Logger) (*Glutton, error)
 
 }
 
+// Init initializes freki and handles
 func (g *Glutton) Init() (err error) {
-
 	tcpProxyPort := uint(g.conf.GetInt("proxy_tcp"))
 	gluttonServerPort := uint(g.conf.GetInt("glutton_server"))
 
@@ -84,6 +85,7 @@ func (g *Glutton) Init() (err error) {
 	return nil
 }
 
+// Start the packet processor
 func (g *Glutton) Start() (err error) {
 	err = g.processor.Start()
 	return
@@ -162,6 +164,7 @@ func (g *Glutton) registerHandlers() {
 	}
 }
 
+// Shutdown the packet processor
 func (g *Glutton) Shutdown() (err error) {
 	return g.processor.Shutdown()
 }
