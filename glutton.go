@@ -151,7 +151,7 @@ func (g *Glutton) registerHandlers() {
 				}
 				g.logger.Debugf("[glutton ] new connection: %s:%s -> %d", host, port, uint(md.TargetPort))
 
-				err = g.producer.LogHTTP(conn, md, "", "")
+				err = g.producer.LogHTTP(conn, md, nil, "")
 				if err != nil {
 					g.logger.Error(err)
 				}

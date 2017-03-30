@@ -52,7 +52,7 @@ func writeMsg(conn net.Conn, msg string, g *Glutton) error {
 	_, err := conn.Write([]byte(msg))
 	g.logger.Infof("[telnet  ] send: %q", msg)
 	md := g.processor.Connections.GetByFlow(freki.NewConnKeyFromNetConn(conn))
-	g.producer.LogHTTP(conn, md, msg, "write")
+	g.producer.LogHTTP(conn, md, []byte(msg), "write")
 	return err
 }
 
@@ -63,7 +63,7 @@ func readMsg(conn net.Conn, g *Glutton) (msg string, err error) {
 	}
 	g.logger.Infof("[telnet  ] recv: %q", msg)
 	md := g.processor.Connections.GetByFlow(freki.NewConnKeyFromNetConn(conn))
-	g.producer.LogHTTP(conn, md, msg, "read")
+	g.producer.LogHTTP(conn, md, []byte(msg), "read")
 	return msg, err
 }
 
