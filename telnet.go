@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io/ioutil"
 	"math/rand"
 	"net"
@@ -78,7 +79,17 @@ func getSample(cmd string, g *Glutton) error {
 		g.logger.Errorf("[telnet  ] getSample http error: %v", err)
 		return err
 	}
+	if resp.StatusCode != 200 {
+		err = errors.New("Non 200 status code on getSample")
+		g.logger.Errorf("[telnet  ] getSample read http: %v", err)
+		return err
+	}
 	defer resp.Body.Close()
+	if resp.ContentLength <= 0 {
+		err = errors.New("Empty response body")
+		g.logger.Errorf("[telnet  ] getSample read http: %v", err)
+		return err
+	}
 	g.logger.Infof("[telnet  ] getSample body length: %d", resp.ContentLength)
 	bodyBuffer, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
