@@ -10,7 +10,7 @@ import (
 )
 
 // maximum lines that can be read after the "DATA" command
-var maxDataRead int = 500
+const maxDataRead = 500
 
 // Client is a connection container
 type Client struct {
