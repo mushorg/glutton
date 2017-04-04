@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// maximum lines that can be read after the "DATA" command
+var maxDataRead int = 500
+
 // Client is a connection container
 type Client struct {
 	conn   net.Conn
@@ -75,7 +78,13 @@ func (g *Glutton) HandleSMTP(conn net.Conn) {
 			client.w("250 OK")
 		} else if strings.Compare(query, "DATA") == 0 {
 			client.w("354 End data with <CRLF>.<CRLF>")
-			for strings.Compare(client.r(g), ".\r\n") != 0 {
+			for readctr := maxDataRead; readctr >= 0; readctr -= 1 {
+				data := client.r(g)
+				g.logger.Infof("[smtp    ] Data : %q", data)
+				// exit condition
+				if strings.Compare(data, ".\r\n") == 0 {
+					break
+				}
 			}
 			rwait()
 			client.w("250 OK")
