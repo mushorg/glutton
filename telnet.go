@@ -69,6 +69,7 @@ func readMsg(conn net.Conn, g *Glutton) (msg string, err error) {
 
 func getSample(cmd string, g *Glutton) error {
 	url := cmd[strings.Index(cmd, "http"):]
+	url = strings.Split(url, " ")[0]
 	timeout := time.Duration(5 * time.Second)
 	client := http.Client{
 		Timeout: timeout,
