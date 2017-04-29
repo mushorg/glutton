@@ -2,6 +2,7 @@ package producer
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -9,33 +10,32 @@ import (
 	"net/url"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/kung-foo/freki"
 )
 
 // Config for the producer
 type Config struct {
 	sensorID   string
-	logger     *log.Logger
+	logger     freki.Logger
 	httpAddr   string // Address of HTTP consumer
 	httpClient *http.Client
 }
 
 // Event is a struct for glutton events
 type Event struct {
-	Timestamp time.Time   `json:"timestamp"`
-	SrcHost   string      `json:"srcHost"`
-	SrcPort   string      `json:"srcPort"`
-	DstPort   string      `json:"dstPort"`
-	SensorID  string      `json:"sensorID"`
-	Rule      string      `json:"rule"`
-	ConnKey   [2]uint64   `json:"connKey"`
-	Payload   interface{} `json:"payload"`
-	Direction string      `json:"direction"`
+	Timestamp time.Time `json:"timestamp"`
+	SrcHost   string    `json:"srcHost"`
+	SrcPort   string    `json:"srcPort"`
+	DstPort   string    `json:"dstPort"`
+	SensorID  string    `json:"sensorID"`
+	Rule      string    `json:"rule"`
+	ConnKey   [2]uint64 `json:"connKey"`
+	Payload   string    `json:"payload"`
+	Action    string    `json:"action"`
 }
 
 // Init initializes the producer
-func Init(sensorID string, log *log.Logger, logHTTP string) *Config {
+func Init(sensorID string, log freki.Logger, logHTTP string) *Config {
 	return &Config{
 		sensorID:   sensorID,
 		logger:     log,
@@ -45,7 +45,7 @@ func Init(sensorID string, log *log.Logger, logHTTP string) *Config {
 }
 
 // LogHTTP send logs to HTTP endpoint
-func (conf *Config) LogHTTP(conn net.Conn, md *freki.Metadata, payload interface{}, direction string) (err error) {
+func (conf *Config) LogHTTP(conn net.Conn, md *freki.Metadata, payload []byte, action string) (err error) {
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
 		return
@@ -67,8 +67,8 @@ func (conf *Config) LogHTTP(conn net.Conn, md *freki.Metadata, payload interface
 		SensorID:  conf.sensorID,
 		Rule:      md.Rule.String(),
 		ConnKey:   connKey,
-		Payload:   payload,
-		Direction: direction,
+		Payload:   base64.StdEncoding.EncodeToString(payload),
+		Action:    action,
 	}
 	data, err := json.Marshal(event)
 	if err != nil {

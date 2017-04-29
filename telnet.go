@@ -2,10 +2,18 @@ package glutton
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io/ioutil"
 	"math/rand"
 	"net"
+	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/kung-foo/freki"
 )
@@ -13,20 +21,20 @@ import (
 // Mirai botnet  - https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
 // Hajime botnet - https://security.rapiditynetworks.com/publications/2016-10-16/hajime.pdf
 var miraiCom = map[string][]string{
-	"ps":                                              []string{"1 pts/21   00:00:00 init"},
-	"cat /proc/mounts":                                []string{"rootfs / rootfs rw 0 0\r\n/dev/root / ext2 rw,relatime,errors=continue 0 0\r\nproc /proc proc rw,relatime 0 0\r\nsysfs /sys sysfs rw,relatime 0 0\r\nudev /dev tmpfs rw,relatime 0 0\r\ndevpts /dev/pts devpts rw,relatime,mode=600,ptmxmode=000 0 0\r\n/dev/mtdblock1 /home/hik jffs2 rw,relatime 0 0\r\ntmpfs /run tmpfs rw,nosuid,noexec,relatime,size=3231524k,mode=755 0 0\r\n"},
-	"(cat .s || cp /bin/echo .s)": 			   []string{"cat: .s: No such file or directory"},
-	"nc": 						   []string{"nc: command not found"},
-	"wget": 					   []string{"wget: missing URL"},
-	"(dd bs=52 count=1 if=.s || cat .s)": 		   []string{"\x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00\x01\x00\x00\x00\xbc\x14\x01\x00\x34\x00\x00\x00"},
-	"sh": 					           []string{"$"},
-	"echo -e \\x6b\\x61\\x6d\\x69/dev > /dev/.nippon": []string{""},
-	"cat /dev/.nippon":                                []string{"kami/dev"},
-	"rm /dev/.nippon":                                 []string{""},
-	"echo -e \\x6b\\x61\\x6d\\x69/run > /run/.nippon": []string{""},
-	"cat /run/.nippon":                                []string{"kami/run"},
-	"rm /run/.nippon":                                 []string{""},
-	"cat /bin/sh":                                     []string{""},
+	"ps":                          []string{"1 pts/21   00:00:00 init"},
+	"cat /proc/mounts":            []string{"rootfs / rootfs rw 0 0\r\n/dev/root / ext2 rw,relatime,errors=continue 0 0\r\nproc /proc proc rw,relatime 0 0\r\nsysfs /sys sysfs rw,relatime 0 0\r\nudev /dev tmpfs rw,relatime 0 0\r\ndevpts /dev/pts devpts rw,relatime,mode=600,ptmxmode=000 0 0\r\n/dev/mtdblock1 /home/hik jffs2 rw,relatime 0 0\r\ntmpfs /run tmpfs rw,nosuid,noexec,relatime,size=3231524k,mode=755 0 0\r\n"},
+	"(cat .s || cp /bin/echo .s)": []string{"cat: .s: No such file or directory"},
+	"nc":   []string{"nc: command not found"},
+	"wget": []string{"wget: missing URL"},
+	"(dd bs=52 count=1 if=.s || cat .s)": []string{"\x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00\x01\x00\x00\x00\xbc\x14\x01\x00\x34\x00\x00\x00"},
+	"sh": []string{"$"},
+	"echo -e \\x6b\\x61\\x6d\\x69/dev > /dev/.nippon":              []string{""},
+	"cat /dev/.nippon":                                             []string{"kami/dev"},
+	"rm /dev/.nippon":                                              []string{""},
+	"echo -e \\x6b\\x61\\x6d\\x69/run > /run/.nippon":              []string{""},
+	"cat /run/.nippon":                                             []string{"kami/run"},
+	"rm /run/.nippon":                                              []string{""},
+	"cat /bin/sh":                                                  []string{""},
 	"/bin/busybox ps":                                              []string{"1 pts/21   00:00:00 init"},
 	"/bin/busybox cat /proc/mounts":                                []string{"tmpfs /run tmpfs rw,nosuid,noexec,relatime,size=3231524k,mode=755 0 0"},
 	"/bin/busybox echo -e \\x6b\\x61\\x6d\\x69/dev > /dev/.nippon": []string{""},
@@ -37,14 +45,14 @@ var miraiCom = map[string][]string{
 	"/bin/busybox rm /run/.nippon":                                 []string{""},
 	"/bin/busybox cat /bin/sh":                                     []string{""},
 	"/bin/busybox cat /bin/echo":                                   []string{"/bin/busybox cat /bin/echo\r\n\x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00\x01\x00\x00\x00\x6c\xb9\x00\x00\x34\x00\x00\x00"},
-        "rm /dev/.human":                                               []string{"rm: can't remove '/.t': No such file or directory\r\nrm: can't remove '/.sh': No such file or directory\r\nrm: can't remove '/.human': No such file or directory\r\ncd /dev"},
+	"rm /dev/.human":                                               []string{"rm: can't remove '/.t': No such file or directory\r\nrm: can't remove '/.sh': No such file or directory\r\nrm: can't remove '/.human': No such file or directory\r\ncd /dev"},
 }
 
 func writeMsg(conn net.Conn, msg string, g *Glutton) error {
 	_, err := conn.Write([]byte(msg))
 	g.logger.Infof("[telnet  ] send: %q", msg)
 	md := g.processor.Connections.GetByFlow(freki.NewConnKeyFromNetConn(conn))
-	g.producer.LogHTTP(conn, md, msg, "write")
+	g.producer.LogHTTP(conn, md, []byte(msg), "write")
 	return err
 }
 
@@ -55,8 +63,58 @@ func readMsg(conn net.Conn, g *Glutton) (msg string, err error) {
 	}
 	g.logger.Infof("[telnet  ] recv: %q", msg)
 	md := g.processor.Connections.GetByFlow(freki.NewConnKeyFromNetConn(conn))
-	g.producer.LogHTTP(conn, md, msg, "read")
+	g.producer.LogHTTP(conn, md, []byte(msg), "read")
 	return msg, err
+}
+
+func getSample(cmd string, g *Glutton) error {
+	url := cmd[strings.Index(cmd, "http"):]
+	url = strings.Split(url, " ")[0]
+	timeout := time.Duration(5 * time.Second)
+	client := http.Client{
+		Timeout: timeout,
+	}
+	g.logger.Infof("[telnet  ] getSample target URL: %s", url)
+	resp, err := client.Get(url)
+	if err != nil {
+		g.logger.Errorf("[telnet  ] getSample http error: %v", err)
+		return err
+	}
+	if resp.StatusCode != 200 {
+		err = errors.New("Non 200 status code on getSample")
+		g.logger.Errorf("[telnet  ] getSample read http: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.ContentLength <= 0 {
+		err = errors.New("Empty response body")
+		g.logger.Errorf("[telnet  ] getSample read http: %v", err)
+		return err
+	}
+	g.logger.Infof("[telnet  ] getSample body length: %d", resp.ContentLength)
+	bodyBuffer, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		g.logger.Errorf("[telnet  ] getSample read http: %v", err)
+		return err
+	}
+	sum := sha256.Sum256(bodyBuffer)
+	// Ignoring errors for if the folder already exists
+	os.MkdirAll("samples", os.ModePerm)
+	sha256Hash := hex.EncodeToString(sum[:])
+	path := filepath.Join("samples", sha256Hash)
+	out, err := os.Create(path)
+	if err != nil {
+		g.logger.Errorf("[telnet  ] getSample create error: %v", err)
+		return err
+	}
+	defer out.Close()
+	_, err = out.Write(bodyBuffer)
+	if err != nil {
+		g.logger.Errorf("[telnet  ] getSample write error: %v", err)
+		return err
+	}
+	g.logger.Infof("[telnet  ] getSample succcess: %s", path)
+	return nil
 }
 
 // HandleTelnet handles telnet communication on a connection
@@ -90,6 +148,9 @@ func (g *Glutton) HandleTelnet(conn net.Conn) {
 			return
 		}
 		for _, cmd := range strings.Split(msg, ";") {
+			if strings.Contains(strings.Trim(cmd, " "), "wget http") {
+				go getSample(strings.Trim(cmd, " "), g)
+			}
 			if strings.TrimRight(cmd, "") == " rm /dev/.t" {
 				continue
 			}

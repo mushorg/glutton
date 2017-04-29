@@ -11,7 +11,7 @@ func readFTP(conn net.Conn, g *Glutton) (msg string, err error) {
 	if err != nil {
 		g.logger.Errorf("[ftp     ] error: %v", err)
 	}
-	g.logger.Printf("[ftp     ] recv: %q", msg)
+	g.logger.Infof("[ftp     ] recv: %q", msg)
 	return
 }
 
