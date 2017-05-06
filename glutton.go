@@ -87,6 +87,7 @@ func (g *Glutton) Init() (err error) {
 
 // Start the packet processor
 func (g *Glutton) Start() (err error) {
+	defer g.Shutdown()
 	err = g.processor.Start()
 	return
 }
@@ -157,7 +158,7 @@ func (g *Glutton) registerHandlers() {
 				}
 
 				protocolHandler := g.protocolHandlers[protocol]
-				go protocolHandler(conn)
+				protocolHandler(conn)
 				return nil
 			})
 		}
