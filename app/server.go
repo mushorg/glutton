@@ -75,6 +75,9 @@ func main() {
 		exitMtx.Lock()
 		println() // make it look nice after the ^C
 		logger.Info("[glutton ] shutting down...")
+
+		// TODO
+		// Close connections on shutdown.
 		onErrorExit(gtn.Shutdown())
 	}
 	defer exit()
