@@ -159,7 +159,7 @@ func (g *Glutton) registerHandlers() {
 
 				err = g.producer.LogHTTP(conn, md, nil, "")
 				if err != nil {
-					return err
+					g.logger.Errorf("[glutton ] %v", err)
 				}
 
 				// TODO: modify handlers to return an error
