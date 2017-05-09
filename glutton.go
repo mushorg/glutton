@@ -140,12 +140,17 @@ func (g *Glutton) registerHandlers() {
 				}
 			}
 			g.processor.RegisterConnHandler(protocol, func(conn net.Conn, md *freki.Metadata) error {
+				defer func() {
+					if conn != nil {
+						conn.Close()
+					}
+				}()
 
 				host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 				if err != nil {
-					g.logger.Error(err)
-					return nil
+					return err
 				}
+
 				if md == nil {
 					g.logger.Debugf("[glutton ] connection not tracked: %s:%s", host, port)
 					return nil
@@ -154,11 +159,11 @@ func (g *Glutton) registerHandlers() {
 
 				err = g.producer.LogHTTP(conn, md, nil, "")
 				if err != nil {
-					g.logger.Error(err)
+					return err
 				}
 
-				protocolHandler := g.protocolHandlers[protocol]
-				protocolHandler(conn)
+				// TODO: modify handlers to return an error
+				g.protocolHandlers[protocol](conn)
 				return nil
 			})
 		}
