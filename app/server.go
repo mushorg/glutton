@@ -48,7 +48,6 @@ func main() {
 
 	// Setting up the logger
 	logger := log.New()
-
 	// Write log to file and stdout
 	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	onErrorExit(err)
