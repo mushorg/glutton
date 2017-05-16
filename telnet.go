@@ -63,7 +63,9 @@ func readMsg(conn net.Conn, g *Glutton) (msg string, err error) {
 	}
 	g.logger.Infof("[telnet  ] recv: %q", msg)
 	md := g.processor.Connections.GetByFlow(freki.NewConnKeyFromNetConn(conn))
-	g.producer.LogHTTP(conn, md, []byte(msg), "read")
+	if md != nil {
+		g.producer.LogHTTP(conn, md, []byte(msg), "read")
+	}
 	return msg, err
 }
 
