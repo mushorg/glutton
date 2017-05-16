@@ -75,6 +75,8 @@ func (g *Glutton) Init() (err error) {
 	// TODO: in Freki updated version
 	// g.processor.GetPublicAddresses()
 
+	g.startMonitor()
+
 	g.mapProtocolHandlers()
 	g.registerHandlers()
 	err = g.processor.Init()
