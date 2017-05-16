@@ -81,17 +81,14 @@ func getSample(cmd string, g *Glutton) error {
 		return err
 	}
 	if resp.StatusCode != 200 {
-		err = errors.New("Non 200 status code on getSample")
-		g.logger.Errorf("[telnet  ] getSample read http: %v", err)
+		g.logger.Errorf("[telnet  ] getSample read http: %v", errors.New("Non 200 status code on getSample"))
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.ContentLength <= 0 {
-		err = errors.New("Empty response body")
-		g.logger.Errorf("[telnet  ] getSample read http: %v", err)
+		g.logger.Errorf("[telnet  ] getSample read http: %v", errors.New("Empty response body"))
 		return err
 	}
-	g.logger.Infof("[telnet  ] getSample body length: %d", resp.ContentLength)
 	bodyBuffer, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		g.logger.Errorf("[telnet  ] getSample read http: %v", err)
@@ -102,6 +99,10 @@ func getSample(cmd string, g *Glutton) error {
 	os.MkdirAll("samples", os.ModePerm)
 	sha256Hash := hex.EncodeToString(sum[:])
 	path := filepath.Join("samples", sha256Hash)
+	if _, err = os.Stat(path); err == nil {
+		g.logger.Info("[telnet  ] getSample already known")
+		return nil
+	}
 	out, err := os.Create(path)
 	if err != nil {
 		g.logger.Errorf("[telnet  ] getSample create error: %v", err)
@@ -113,7 +114,7 @@ func getSample(cmd string, g *Glutton) error {
 		g.logger.Errorf("[telnet  ] getSample write error: %v", err)
 		return err
 	}
-	g.logger.Infof("[telnet  ] getSample succcess: %s", path)
+	g.logger.Infof("[telnet  ] getSample new: %s", path)
 	return nil
 }
 
