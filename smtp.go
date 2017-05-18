@@ -83,7 +83,7 @@ func (g *Glutton) HandleSMTP(conn net.Conn) {
 			client.w("250 OK")
 		} else if strings.Compare(query, "DATA") == 0 {
 			client.w("354 End data with <CRLF>.<CRLF>")
-			for readctr := maxDataRead; readctr >= 0; readctr -= 1 {
+			for readctr := maxDataRead; readctr >= 0; readctr-- {
 				data, err := client.r(g)
 				if err != nil {
 					break

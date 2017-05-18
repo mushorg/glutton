@@ -37,6 +37,16 @@ type SMB struct {
 	Data   SMBData
 }
 
+func NegotiateProtocolResponse() SMB {
+	smb := SMB{}
+	smb.Header.Protocol = [4]byte{255, 83, 77, 66}
+	smb.Header.Command = 0x72
+	smb.Header.Status = [4]byte{0, 0, 0, 0}
+	smb.Header.Flags = 0x98
+	smb.Header.Flags2 = [2]byte{28, 1}
+	return smb
+}
+
 func ParseSMB(data []byte) (smb SMB, err error) {
 	smb = SMB{}
 	// HACK: Not sure what the data in front is supposed to be...
