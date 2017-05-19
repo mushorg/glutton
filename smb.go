@@ -26,6 +26,12 @@ func (g *Glutton) HandleSMB(conn net.Conn) {
 			g.logger.Infof("[smb     ] req packet: %+v", packet)
 			if len(packet.Data.DialectString) > 0 {
 				g.logger.Infof("[smb     ] data: %s", string(packet.Data.DialectString[:]))
+				resp, err := smb.MakeNegotiateProtocolResponse(&packet)
+				if err != nil {
+					g.logger.Errorf("[smb     ] error: %v", err)
+				}
+				g.logger.Infof("[smb     ] resp packet: %+v", resp)
+				conn.Write(resp)
 			}
 		}
 	}

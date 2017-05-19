@@ -3,8 +3,11 @@ package smb
 import (
 	"bytes"
 	"encoding/binary"
+	"math/rand"
+	"time"
 
 	"github.com/pkg/errors"
+	uuid "github.com/satori/go.uuid"
 )
 
 type SMBHeader struct {
@@ -31,24 +34,80 @@ type SMBData struct {
 	DialectString []byte
 }
 
-type SMB struct {
+type NegotiateProtocolRequest struct {
 	Header SMBHeader
 	Param  SMBParameters
 	Data   SMBData
 }
 
-func NegotiateProtocolResponse() SMB {
-	smb := SMB{}
-	smb.Header.Protocol = [4]byte{255, 83, 77, 66}
-	smb.Header.Command = 0x72
+type NegotiateProtocolResponse struct {
+	Header                 SMBHeader
+	StructureSize          [2]byte
+	SecurityMode           [2]byte
+	DialectRevision        [2]byte
+	NegotiateContextCount  [2]byte
+	ServerGUID             [16]byte
+	Capabilities           [4]byte
+	MaxTransactSize        [4]byte
+	MaxReadSize            [4]byte
+	MaxWriteSize           [4]byte
+	SystemTime             Filetime
+	ServerStartTime        Filetime
+	SecurityBufferOffset   [2]byte
+	SecurityBufferLength   [2]byte
+	NegotiateContextOffset [4]byte
+	Buffer                 []byte
+	Padding                []byte
+	NegotiateContextList   []byte
+}
+
+type Filetime struct {
+	low  uint32
+	high uint32
+}
+
+func filetime(offset time.Duration) Filetime {
+	epochAsFiletime := int64(116444736000000000) // January 1, 1970 as MS file time
+	hundredsOfNanoseconds := int64(10000000)
+	fileTime := epochAsFiletime + time.Now().Add(offset).Unix()*hundredsOfNanoseconds
+	return Filetime{
+		low:  uint32(fileTime),
+		high: uint32(fileTime << 32),
+	}
+}
+
+func random(min, max int) int {
+	rand.Seed(time.Now().Unix())
+	return rand.Intn(max-min) + min
+}
+
+func MakeNegotiateProtocolResponse(req *NegotiateProtocolRequest) ([]byte, error) {
+	smb := NegotiateProtocolResponse{}
+	smb.Header.Protocol = req.Header.Protocol
+	smb.Header.Command = req.Header.Command
 	smb.Header.Status = [4]byte{0, 0, 0, 0}
 	smb.Header.Flags = 0x98
 	smb.Header.Flags2 = [2]byte{28, 1}
-	return smb
+	smb.StructureSize = [2]byte{65}
+	smb.SecurityMode = [2]byte{0x0003}
+	smb.DialectRevision = [2]byte{0x03, 0x00}
+	copy(smb.ServerGUID[:], uuid.NewV4().Bytes())
+	smb.Capabilities = [4]byte{0x80, 0x01, 0xe3, 0xfc}
+	smb.MaxTransactSize = [4]byte{0x04, 0x11}
+	smb.MaxReadSize = [4]byte{0x00, 0x00, 0x01}
+	smb.SystemTime = filetime(0)
+	smb.ServerStartTime = filetime(time.Duration(random(1000, 2000)) * time.Hour)
+
+	var buf bytes.Buffer
+	err := binary.Write(&buf, binary.LittleEndian, smb)
+	if err != nil {
+		return nil, nil
+	}
+	return buf.Bytes(), nil
 }
 
-func ParseSMB(data []byte) (smb SMB, err error) {
-	smb = SMB{}
+func ParseSMB(data []byte) (smb NegotiateProtocolRequest, err error) {
+	smb = NegotiateProtocolRequest{}
 	// HACK: Not sure what the data in front is supposed to be...
 	if !bytes.Contains(data, []byte("\xff")) {
 		err = errors.New("Packet is unrecognizable")
