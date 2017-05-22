@@ -56,9 +56,6 @@ type NegotiateProtocolResponse struct {
 	SecurityBufferOffset   [2]byte
 	SecurityBufferLength   [2]byte
 	NegotiateContextOffset [4]byte
-	Buffer                 []byte
-	Padding                []byte
-	NegotiateContextList   []byte
 }
 
 type Filetime struct {
@@ -101,7 +98,7 @@ func MakeNegotiateProtocolResponse(req *NegotiateProtocolRequest) ([]byte, error
 	var buf bytes.Buffer
 	err := binary.Write(&buf, binary.LittleEndian, smb)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	return buf.Bytes(), nil
 }

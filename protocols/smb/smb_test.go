@@ -24,14 +24,18 @@ func TestParseSMB(t *testing.T) {
 		"0024c4d312e325830303200024c414e4d414e322e3100024e54204c4d20302e313200"
 	data, _ := hex.DecodeString(raw)
 	parsed, err := ParseSMB(data)
-	if err != nil {
-		t.Error(err)
-	}
 	if string(parsed.Header.Protocol[1:]) != "SMB" {
+		if err != nil {
+			t.Error(err)
+		}
 		t.Errorf("Protocol doesn't match 'SMB': %+v\n", parsed.Header.Protocol)
 	}
 	dialectString := bytes.Split(parsed.Data.DialectString, []byte("\x00"))
 	if string(dialectString[0][:]) != "PC NETWORK PROGRAM 1.0" {
 		t.Errorf("Dialect String mismatch: %s", string(dialectString[0][:]))
+	}
+	_, err = MakeNegotiateProtocolResponse(&parsed)
+	if err != nil {
+		t.Error(err)
 	}
 }
