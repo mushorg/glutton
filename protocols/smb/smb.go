@@ -3,10 +3,10 @@ package smb
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"math/rand"
 	"time"
 
-	"github.com/pkg/errors"
 	uuid "github.com/satori/go.uuid"
 )
 
@@ -56,11 +56,26 @@ type NegotiateProtocolResponse struct {
 	SecurityBufferOffset   [2]byte
 	SecurityBufferLength   [2]byte
 	NegotiateContextOffset [4]byte
+	//Buffer                 []byte
+	//Padding                []byte
+	//NegotiateContextList   []byte
 }
 
 type Filetime struct {
 	low  uint32
 	high uint32
+}
+
+func ValidateData(data []byte) (*bytes.Buffer, error) {
+	// HACK: Not sure what the data in front is supposed to be...
+	if !bytes.Contains(data, []byte("\xff")) {
+		err := errors.New("Packet is unrecognizable")
+		return nil, err
+	}
+
+	start := bytes.Index(data, []byte("\xff"))
+	buffer := bytes.NewBuffer(data[start:])
+	return buffer, nil
 }
 
 func filetime(offset time.Duration) Filetime {
@@ -78,10 +93,26 @@ func random(min, max int) int {
 	return rand.Intn(max-min) + min
 }
 
-func MakeNegotiateProtocolResponse(req *NegotiateProtocolRequest) ([]byte, error) {
+func MakeHeaderResponse(header SMBHeader) ([]byte, error) {
 	smb := NegotiateProtocolResponse{}
-	smb.Header.Protocol = req.Header.Protocol
-	smb.Header.Command = req.Header.Command
+	smb.Header.Protocol = header.Protocol
+	smb.Header.Command = header.Command
+	smb.Header.Status = [4]byte{0, 0, 0, 0}
+	smb.Header.Flags = 0x98
+	smb.Header.Flags2 = [2]byte{28, 1}
+
+	var buf bytes.Buffer
+	err := binary.Write(&buf, binary.LittleEndian, smb)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func MakeNegotiateProtocolResponse() ([]byte, error) {
+	smb := NegotiateProtocolResponse{}
+	smb.Header.Protocol = [4]byte{255, 83, 77, 66}
+	smb.Header.Command = 0x72
 	smb.Header.Status = [4]byte{0, 0, 0, 0}
 	smb.Header.Flags = 0x98
 	smb.Header.Flags2 = [2]byte{28, 1}
@@ -103,21 +134,26 @@ func MakeNegotiateProtocolResponse(req *NegotiateProtocolRequest) ([]byte, error
 	return buf.Bytes(), nil
 }
 
-func ParseSMB(data []byte) (smb NegotiateProtocolRequest, err error) {
-	smb = NegotiateProtocolRequest{}
-	// HACK: Not sure what the data in front is supposed to be...
-	if !bytes.Contains(data, []byte("\xff")) {
-		err = errors.New("Packet is unrecognizable")
-		return
-	}
-
-	start := bytes.Index(data, []byte("\xff"))
-	buffer := bytes.NewBuffer(data[start:])
-	err = binary.Read(buffer, binary.LittleEndian, &smb.Header)
+func ParseHeader(buffer *bytes.Buffer, header *SMBHeader) error {
+	err := binary.Read(buffer, binary.LittleEndian, header)
 	if err != nil {
-		return
+		return err
 	}
-	err = binary.Read(buffer, binary.LittleEndian, &smb.Param)
+	return nil
+}
+
+func ParseParam(buffer *bytes.Buffer, param *SMBParameters) error {
+	err := binary.Read(buffer, binary.LittleEndian, param)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func ParseNegotiateProtocolRequest(buffer *bytes.Buffer, header SMBHeader) (smb NegotiateProtocolRequest, err error) {
+	smb = NegotiateProtocolRequest{}
+	smb.Header = header
+	err = ParseParam(buffer, &smb.Param)
 	if err != nil {
 		return
 	}

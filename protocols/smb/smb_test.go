@@ -23,7 +23,16 @@ func TestParseSMB(t *testing.T) {
 		"2050524f4752414d20312e3000024c414e4d414e312e30000257696e646f777320666f7220576f726b67726f75707320332e31610" +
 		"0024c4d312e325830303200024c414e4d414e322e3100024e54204c4d20302e313200"
 	data, _ := hex.DecodeString(raw)
-	parsed, err := ParseSMB(data)
+	buffer, err := ValidateData(data)
+	if err != nil {
+		t.Error(err)
+	}
+	header := SMBHeader{}
+	err = ParseHeader(buffer, &header)
+	if err != nil {
+		t.Error(err)
+	}
+	parsed, err := ParseNegotiateProtocolRequest(buffer, header)
 	if string(parsed.Header.Protocol[1:]) != "SMB" {
 		if err != nil {
 			t.Error(err)
@@ -34,7 +43,7 @@ func TestParseSMB(t *testing.T) {
 	if string(dialectString[0][:]) != "PC NETWORK PROGRAM 1.0" {
 		t.Errorf("Dialect String mismatch: %s", string(dialectString[0][:]))
 	}
-	_, err = MakeNegotiateProtocolResponse(&parsed)
+	_, err = MakeNegotiateProtocolResponse()
 	if err != nil {
 		t.Error(err)
 	}
