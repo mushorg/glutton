@@ -145,8 +145,14 @@ func MakeComTransaction2Response(header SMBHeader) ([]byte, error) {
 	return toBytes(smb)
 }
 
+type ComTransaction2Error struct {
+	Header    SMBHeader
+	WordCount byte
+	ByteCount [2]byte
+}
+
 func MakeComTransaction2Error(header SMBHeader) ([]byte, error) {
-	smb := ComTransaction2Response{}
+	smb := ComTransaction2Error{}
 	smb.Header = header
 	smb.Header.Status = [4]byte{0x02, 0x00, 0x00, 0xc0}
 	smb.WordCount = 0x00

@@ -36,21 +36,19 @@ func (g *Glutton) HandleSMB(conn net.Conn) {
 				if err != nil {
 					g.logger.Errorf("[smb     ] error: %v", err)
 				}
-				g.logger.Infof("[smb     ] resp packet: %+v", resp)
 				conn.Write(resp)
 			case 0x32:
 				resp, err := smb.MakeComTransaction2Error(header)
 				if err != nil {
 					g.logger.Errorf("[smb     ] error: %v", err)
 				}
-				g.logger.Infof("[smb     ] resp packet: %+v", resp)
 				conn.Write(resp)
 			case 0x25:
 				resp, err := smb.MakeHeaderResponse(header)
 				if err != nil {
 					g.logger.Errorf("[smb     ] error: %v", err)
+					continue
 				}
-				g.logger.Infof("[smb     ] resp packet: %+v", resp)
 				conn.Write(resp)
 			}
 		}
