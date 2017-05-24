@@ -93,14 +93,7 @@ func random(min, max int) int {
 	return rand.Intn(max-min) + min
 }
 
-func MakeHeaderResponse(header SMBHeader) ([]byte, error) {
-	smb := NegotiateProtocolResponse{}
-	smb.Header.Protocol = header.Protocol
-	smb.Header.Command = header.Command
-	smb.Header.Status = [4]byte{0, 0, 0, 0}
-	smb.Header.Flags = 0x98
-	smb.Header.Flags2 = [2]byte{28, 1}
-
+func toBytes(smb interface{}) ([]byte, error) {
 	var buf bytes.Buffer
 	err := binary.Write(&buf, binary.LittleEndian, smb)
 	if err != nil {
@@ -109,10 +102,63 @@ func MakeHeaderResponse(header SMBHeader) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func MakeNegotiateProtocolResponse() ([]byte, error) {
+func MakeHeaderResponse(header SMBHeader) ([]byte, error) {
 	smb := NegotiateProtocolResponse{}
-	smb.Header.Protocol = [4]byte{255, 83, 77, 66}
-	smb.Header.Command = 0x72
+	smb.Header.Protocol = header.Protocol
+	smb.Header.Command = header.Command
+	smb.Header.Status = [4]byte{0, 0, 0, 0}
+	smb.Header.Flags = 0x98
+	smb.Header.Flags2 = [2]byte{28, 1}
+
+	return toBytes(smb)
+}
+
+type ComTransaction2Response struct {
+	Header                SMBHeader
+	WordCount             byte
+	TotalParameterCount   [2]byte
+	TotalDataCount        [2]byte
+	Reserved1             [2]byte
+	ParameterCount        [2]byte
+	ParameterOffset       [2]byte
+	ParameterDisplacement [2]byte
+	DataCount             [2]byte
+	DataOffset            [2]byte
+	DataDisplacement      [2]byte
+	SetupCount            byte
+	Reserved2             byte
+	Setup                 []byte
+	SMBData               []byte
+	ByteCount             [2]byte
+	Bytes                 []byte
+	Pad1                  []byte
+	Trans2Parameters      []byte
+	Pad2                  []byte
+	Trans2Data            []byte
+}
+
+func MakeComTransaction2Response(header SMBHeader) ([]byte, error) {
+	smb := ComTransaction2Response{}
+	smb.Header = header
+	smb.WordCount = 0x0A
+
+	return toBytes(smb)
+}
+
+func MakeComTransaction2Error(header SMBHeader) ([]byte, error) {
+	smb := ComTransaction2Response{}
+	smb.Header = header
+	smb.Header.Status = [4]byte{0x02, 0x00, 0x00, 0xc0}
+	smb.WordCount = 0x00
+	smb.ByteCount = [2]byte{}
+
+	return toBytes(smb)
+}
+
+func MakeNegotiateProtocolResponse(header SMBHeader) ([]byte, error) {
+	smb := NegotiateProtocolResponse{}
+	smb.Header.Protocol = header.Protocol
+	smb.Header.Command = header.Command
 	smb.Header.Status = [4]byte{0, 0, 0, 0}
 	smb.Header.Flags = 0x98
 	smb.Header.Flags2 = [2]byte{28, 1}
@@ -126,12 +172,7 @@ func MakeNegotiateProtocolResponse() ([]byte, error) {
 	smb.SystemTime = filetime(0)
 	smb.ServerStartTime = filetime(time.Duration(random(1000, 2000)) * time.Hour)
 
-	var buf bytes.Buffer
-	err := binary.Write(&buf, binary.LittleEndian, smb)
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return toBytes(smb)
 }
 
 func ParseHeader(buffer *bytes.Buffer, header *SMBHeader) error {

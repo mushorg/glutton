@@ -43,7 +43,7 @@ func TestParseSMB(t *testing.T) {
 	if string(dialectString[0][:]) != "PC NETWORK PROGRAM 1.0" {
 		t.Errorf("Dialect String mismatch: %s", string(dialectString[0][:]))
 	}
-	_, err = MakeNegotiateProtocolResponse()
+	_, err = MakeNegotiateProtocolResponse(header)
 	if err != nil {
 		t.Error(err)
 	}
