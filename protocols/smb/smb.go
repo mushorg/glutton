@@ -151,6 +151,32 @@ type ComTransaction2Error struct {
 	ByteCount [2]byte
 }
 
+type ComTransactionResponse struct {
+	Header                SMBHeader
+	WordCount             byte
+	TotalParameterCount   [2]byte
+	TotalDataCount        [2]byte
+	Reserved1             [2]byte
+	ParameterCount        [2]byte
+	ParameterOffset       [2]byte
+	ParameterDisplacement [2]byte
+	DataCount             [2]byte
+	DataOffset            [2]byte
+	DataDisplacement      [2]byte
+	SetupCount            byte
+	Reserved2             byte
+}
+
+func MakeComTransactionResponse(header SMBHeader) ([]byte, error) {
+	smb := ComTransactionResponse{}
+	smb.Header = header
+	smb.WordCount = 10
+	smb.ParameterOffset = [2]byte{56}
+	smb.DataOffset = [2]byte{56}
+
+	return toBytes(smb)
+}
+
 func MakeComTransaction2Error(header SMBHeader) ([]byte, error) {
 	smb := ComTransaction2Error{}
 	smb.Header = header

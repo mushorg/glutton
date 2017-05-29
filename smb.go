@@ -44,7 +44,7 @@ func (g *Glutton) HandleSMB(conn net.Conn) {
 				}
 				conn.Write(resp)
 			case 0x25:
-				resp, err := smb.MakeHeaderResponse(header)
+				resp, err := smb.MakeComTransactionResponse(header)
 				if err != nil {
 					g.logger.Errorf("[smb     ] error: %v", err)
 					continue
