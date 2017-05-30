@@ -5,10 +5,13 @@ RUN apk add libnetfilter_queue-dev iptables-dev libpcap-dev
 RUN mkdir -p $GOPATH/src/github.com/mushorg/glutton
 WORKDIR $GOPATH/src/github.com/mushorg/glutton
 ADD . .
-RUN apk add g++
-
-RUN mkdir -p bin/
-RUN go build -o bin/server app/server.go
+RUN apk add g++ glide git && \
+    glide install && \
+    glide update && \
+    mkdir -p bin/ && \
+    go build -o bin/server app/server.go && \
+    apk del g++ glide git && \
+    rm -rf /var/cache/apk/*
 
 # RUN mkdir -p /opt/glutton
 # WORKDIR /opt/glutton
