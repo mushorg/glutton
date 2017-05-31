@@ -8,14 +8,20 @@ import (
 )
 
 // HandleRDP takes a net.Conn and does basic RDP communication
-func (g *Glutton) HandleRDP(conn net.Conn) {
-	defer conn.Close()
+func (g *Glutton) HandleRDP(conn net.Conn) (err error) {
+	defer func() {
+		err = conn.Close()
+		if err != nil {
+			g.logger.Errorf("[rdp     ]  %v", err)
+		}
+	}()
+
 	buffer := make([]byte, 1024)
 	for {
 		n, err := conn.Read(buffer)
 		if err != nil && n <= 0 {
 			g.logger.Errorf("[rdp     ] error: %v", err)
-			break
+			return err
 		}
 		if n > 0 && n < 1024 {
 			g.logger.Infof("[rdp     ]\n%s", hex.Dump(buffer[0:n]))

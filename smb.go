@@ -8,21 +8,27 @@ import (
 )
 
 // HandleSMB takes a net.Conn and does basic SMB communication
-func (g *Glutton) HandleSMB(conn net.Conn) {
-	defer conn.Close()
+func (g *Glutton) HandleSMB(conn net.Conn) (err error) {
+	defer func() {
+		err = conn.Close()
+		if err != nil {
+			g.logger.Errorf("[smb     ]  %v", err)
+		}
+	}()
+
 	buffer := make([]byte, 1024)
 	for {
 		n, err := conn.Read(buffer)
 		if err != nil && n <= 0 {
 			g.logger.Errorf("[smb     ] error: %v", err)
-			break
+			return err
 		}
 		if n > 0 && n < 1024 {
 			g.logger.Infof("[smb     ]\n%s", hex.Dump(buffer[0:n]))
 			buffer, err := smb.ValidateData(buffer[0:n])
 			if err != nil {
 				g.logger.Errorf("[smb     ] error: %v", err)
-				return
+				return err
 			}
 			header := smb.SMBHeader{}
 			err = smb.ParseHeader(buffer, &header)
