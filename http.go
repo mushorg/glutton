@@ -38,12 +38,18 @@ func formatRequest(r *http.Request) string {
 }
 
 // HandleHTTP takes a net.Conn and does basic HTTP communication
-func (g *Glutton) HandleHTTP(conn net.Conn) {
-	defer conn.Close()
+func (g *Glutton) HandleHTTP(conn net.Conn) (err error) {
+	defer func() {
+		err = conn.Close()
+		if err != nil {
+			g.logger.Errorf("[http    ]  %v", err)
+		}
+	}()
+
 	req, err := http.ReadRequest(bufio.NewReader(conn))
 	if err != nil {
 		g.logger.Errorf("[http    ] %v", err)
-		return
+		return err
 	}
 	g.logger.Infof("[http    ] %s", formatRequest(req))
 	if req.ContentLength > 0 {
@@ -52,10 +58,11 @@ func (g *Glutton) HandleHTTP(conn net.Conn) {
 		_, err = buf.ReadFrom(req.Body)
 		if err != nil {
 			g.logger.Errorf("[http    ] %v", err)
-			return
+			return err
 		}
 		body := buf.Bytes()
 		g.logger.Infof("[http    ] http body:\n%s", hex.Dump(body[:]))
 	}
 	conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+	return nil
 }

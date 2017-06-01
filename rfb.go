@@ -28,8 +28,14 @@ type PixelFormat struct {
 }
 
 // HandleRFB takes a net.Conn and does basic RFB/VNC communication
-func (g *Glutton) HandleRFB(conn net.Conn) {
-	defer conn.Close()
+func (g *Glutton) HandleRFB(conn net.Conn) (err error) {
+	defer func() {
+		err = conn.Close()
+		if err != nil {
+			g.logger.Errorf("[rfb     ]  %v", err)
+		}
+	}()
+
 	conn.Write([]byte("RFB 003.008\n"))
 	readRFB(conn, g)
 	var authNone uint32 = 1
@@ -56,10 +62,11 @@ func (g *Glutton) HandleRFB(conn net.Conn) {
 		BlueShift:        0,
 		ServerNameLength: lenName,
 	}
-	err := binary.Write(buf, binary.LittleEndian, f)
+	err = binary.Write(buf, binary.LittleEndian, f)
 	if err != nil {
 		fmt.Println("binary.Write failed:", err)
 	}
 	conn.Write(buf.Bytes())
 	readRFB(conn, g)
+	return err
 }

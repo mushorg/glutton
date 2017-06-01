@@ -56,8 +56,14 @@ func validateRCPT(query string) bool {
 }
 
 // HandleSMTP takes a net.Conn and does basic SMTP communication
-func (g *Glutton) HandleSMTP(conn net.Conn) {
-	defer conn.Close()
+func (g *Glutton) HandleSMTP(conn net.Conn) (err error) {
+	defer func() {
+		err = conn.Close()
+		if err != nil {
+			g.logger.Errorf("[smtp    ]  %v", err)
+		}
+	}()
+
 	client := &Client{
 		conn:   conn,
 		bufin:  bufio.NewReader(conn),
@@ -65,12 +71,14 @@ func (g *Glutton) HandleSMTP(conn net.Conn) {
 	}
 	rwait()
 	client.w("220 Welcome!")
+
+	var data string
 	for {
-		msg, err := client.r(g)
+		data, err = client.r(g)
 		if err != nil {
 			break
 		}
-		query := strings.Trim(msg, "\r\n")
+		query := strings.Trim(data, "\r\n")
 		g.logger.Infof("[smtp    ] Payload : %q", query)
 		if strings.HasPrefix(query, "HELO ") {
 			rwait()
@@ -84,7 +92,7 @@ func (g *Glutton) HandleSMTP(conn net.Conn) {
 		} else if strings.Compare(query, "DATA") == 0 {
 			client.w("354 End data with <CRLF>.<CRLF>")
 			for readctr := maxDataRead; readctr >= 0; readctr-- {
-				data, err := client.r(g)
+				data, err = client.r(g)
 				if err != nil {
 					break
 				}
@@ -103,4 +111,5 @@ func (g *Glutton) HandleSMTP(conn net.Conn) {
 			client.w("Recheck the command you entered.")
 		}
 	}
+	return err
 }

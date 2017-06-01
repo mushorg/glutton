@@ -120,19 +120,32 @@ func (s *sshProxy) initConf(dest string) error {
 	return nil
 }
 
-func (s *sshProxy) handle(conn net.Conn) error {
+func (s *sshProxy) handle(conn net.Conn) (err error) {
+	defer func() {
+		err = conn.Close()
+		if err != nil {
+			s.logger.Errorf("[ssh.prxy]  %v", err)
+		}
+	}()
+
 	serverConn, chans, reqs, err := ssh.NewServerConn(conn, s.config)
-	defer conn.Close()
+
 	if err != nil {
 		s.logger.Error(errors.Wrap(formatErrorMsg("Failed to handshake", err), "[ssh.prxy]"))
-		return (err)
+		return err
 	}
 
 	clientConn, err := s.callbackFn(serverConn)
-	defer clientConn.Close()
+	defer func() {
+		err = clientConn.Close()
+		if err != nil {
+			s.logger.Errorf("[ssh.prxy]  %v", err)
+		}
+	}()
+
 	if err != nil {
 		s.logger.Error(errors.Wrap(err, "[ssh.prxy]"))
-		return (err)
+		return err
 	}
 
 	go ssh.DiscardRequests(reqs)

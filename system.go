@@ -23,10 +23,8 @@ func countRunningRoutines() int {
 	return runtime.NumGoroutine()
 }
 
-func (g *Glutton) startMonitor() {
+func (g *Glutton) startMonitor(quit chan struct{}) {
 	ticker := time.NewTicker(10 * time.Second)
-	// TODO: return channel and stop monitor on shutdown
-	quit := make(chan struct{})
 	go func() {
 		for {
 			select {
@@ -35,6 +33,7 @@ func (g *Glutton) startMonitor() {
 				runningRoutines := countRunningRoutines()
 				g.logger.Infof("[system  ] Running Go routines: %d and open files: %d", openFiles, runningRoutines)
 			case <-quit:
+				g.logger.Info("[system  ] Monitoring stopped..")
 				ticker.Stop()
 				return
 			}

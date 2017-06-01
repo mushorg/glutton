@@ -9,8 +9,14 @@ import (
 )
 
 // HandleSIP takes a net.Conn and does basic SIP communication
-func (g *Glutton) HandleSIP(netConn net.Conn) {
-	defer netConn.Close()
+func (g *Glutton) HandleSIP(netConn net.Conn) (err error) {
+	defer func() {
+		err = netConn.Close()
+		if err != nil {
+			g.logger.Errorf("[sip     ]  %v", err)
+		}
+	}()
+
 	sipConn := &sipnet.Conn{
 		Conn: netConn,
 	}
@@ -22,7 +28,7 @@ func (g *Glutton) HandleSIP(netConn net.Conn) {
 	}
 	if req == nil {
 		g.logger.Info("[sip     ] failed to parse SIP req")
-		return
+		return nil
 	}
 	g.logger.Infof("[sip     ] SIP method: %s", req.Method)
 	switch req.Method {
@@ -45,4 +51,5 @@ func (g *Glutton) HandleSIP(netConn net.Conn) {
 		resp.WriteTo(sipConn, req)
 		break
 	}
+	return nil
 }
