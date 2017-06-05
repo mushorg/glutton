@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/kung-foo/freki"
 	"github.com/mushorg/glutton/producer"
@@ -25,7 +26,7 @@ type Glutton struct {
 	sshProxy         *sshProxy
 }
 
-type protocolHandlerFunc func(conn net.Conn)
+type protocolHandlerFunc func(conn net.Conn) error
 
 // New creates a new Glutton instance
 func New(iface string, conf *viper.Viper, logger freki.Logger) (*Glutton, error) {
@@ -75,8 +76,6 @@ func (g *Glutton) Init() (err error) {
 	// TODO: in Freki updated version
 	// g.processor.GetPublicAddresses()
 
-	g.startMonitor()
-
 	g.mapProtocolHandlers()
 	g.registerHandlers()
 	err = g.processor.Init()
@@ -89,7 +88,13 @@ func (g *Glutton) Init() (err error) {
 
 // Start the packet processor
 func (g *Glutton) Start() (err error) {
-	defer g.Shutdown()
+	quit := make(chan struct{}) // stop monitor on shutdown
+	defer func() {
+		quit <- struct{}{}
+		g.Shutdown()
+	}()
+
+	g.startMonitor(quit)
 	err = g.processor.Start()
 	return
 }
@@ -126,7 +131,6 @@ func (g *Glutton) makeID() error {
 
 // registerHandlers register protocol handlers to glutton_server
 func (g *Glutton) registerHandlers() {
-
 	for _, rule := range g.rules {
 		if rule.Type == "conn_handler" && rule.Target != "" {
 			protocol := rule.Target
@@ -142,11 +146,6 @@ func (g *Glutton) registerHandlers() {
 				}
 			}
 			g.processor.RegisterConnHandler(protocol, func(conn net.Conn, md *freki.Metadata) error {
-				defer func() {
-					if conn != nil {
-						conn.Close()
-					}
-				}()
 
 				host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 				if err != nil {
@@ -164,9 +163,8 @@ func (g *Glutton) registerHandlers() {
 					g.logger.Errorf("[glutton ] %v", err)
 				}
 
-				// TODO: modify handlers to return an error
-				g.protocolHandlers[protocol](conn)
-				return nil
+				conn.SetDeadline(time.Now().Add(72 * time.Second))
+				return g.protocolHandlers[protocol](conn)
 			})
 		}
 	}

@@ -7,9 +7,9 @@ import (
 )
 
 // HandleTCP takes a net.Conn and peeks at the data send
-func (g *Glutton) HandleTCP(conn net.Conn) {
+func (g *Glutton) HandleTCP(conn net.Conn) (err error) {
 	defer func() {
-		err := conn.Close()
+		err = conn.Close()
 		if err != nil {
 			g.logger.Errorf("[log.tcp ] %v", err)
 		}
@@ -24,4 +24,5 @@ func (g *Glutton) HandleTCP(conn net.Conn) {
 	if n > 0 && n < 1024 {
 		g.logger.Infof("[log.tcp ] %s\n%s", host, hex.Dump(buffer[0:n]))
 	}
+	return err
 }

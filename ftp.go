@@ -16,8 +16,14 @@ func readFTP(conn net.Conn, g *Glutton) (msg string, err error) {
 }
 
 // HandleFTP takes a net.Conn and does basic FTP communication
-func (g *Glutton) HandleFTP(conn net.Conn) {
-	defer conn.Close()
+func (g *Glutton) HandleFTP(conn net.Conn) (err error) {
+	defer func() {
+		err = conn.Close()
+		if err != nil {
+			g.logger.Errorf("[ftp     ]  %v", err)
+		}
+	}()
+
 	conn.Write([]byte("220 Welcome!\r\n"))
 	for {
 		msg, err := readFTP(conn, g)
@@ -33,4 +39,5 @@ func (g *Glutton) HandleFTP(conn net.Conn) {
 			conn.Write([]byte("200 OK.\r\n"))
 		}
 	}
+	return nil
 }
