@@ -12,5 +12,9 @@ install:
   - go get -v github.com/Masterminds/glide
   - glide install
   - glide update
+  - docker build -t glutton .
+  - docker run -d --privileged=true --name glutton glutton 
 
-script: go test
+script:
+  - go test
+  - docker ps | grep -q glutton
