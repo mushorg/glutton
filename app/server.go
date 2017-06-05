@@ -3,19 +3,17 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/mushorg/glutton"
-	"github.com/mushorg/glutton/config"
 )
 
 func onErrorExit(err error) {
 	if err != nil {
-		log.Fatalf("[glutton ] %+v", err)
+		fmt.Println("[glutton ] %+v", err)
+		os.Exit(0)
 	}
 }
 
@@ -46,22 +44,7 @@ func main() {
 	enableDebug := flag.Bool("debug", false, "Set to enable debug log")
 	flag.Parse()
 
-	// Setting up the logger
-	logger := log.New()
-	// Write log to file and stdout
-	f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	onErrorExit(err)
-	logger.Out = io.MultiWriter(f, os.Stdout)
-	if *enableDebug == true {
-		logger.Level = log.DebugLevel
-	}
-	logger.Formatter = &log.TextFormatter{ForceColors: true}
-
-	// Loading the congiguration
-	logger.Info("[glutton ] Loading configurations from: config/conf.yaml")
-	conf := config.Init(*confPath, logger)
-
-	gtn, err := glutton.New(*iface, conf, logger)
+	gtn, err := glutton.New(iface, confPath, logPath, enableDebug)
 	onErrorExit(err)
 
 	err = gtn.Init()
@@ -73,7 +56,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, recover())
 		exitMtx.Lock()
 		println() // make it look nice after the ^C
-		logger.Info("[glutton ] shutting down...")
+		fmt.Println("[glutton ] shutting down...")
 
 		// TODO
 		// Close connections on shutdown.

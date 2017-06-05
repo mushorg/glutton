@@ -2,6 +2,7 @@ package glutton
 
 import (
 	"bufio"
+	"fmt"
 	"math/rand"
 	"net"
 	"regexp"
@@ -26,7 +27,7 @@ func (c *Client) w(s string) {
 func (c *Client) r(g *Glutton) (string, error) {
 	reply, err := c.bufin.ReadString('\n')
 	if err != nil {
-		g.logger.Errorf("[smpt    ] %v", err)
+		g.logger.Error(fmt.Sprintf("[smpt    ] error: %v", err))
 		return "", err
 	}
 	return reply, nil
@@ -60,7 +61,7 @@ func (g *Glutton) HandleSMTP(conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Errorf("[smtp    ]  %v", err)
+			g.logger.Error(fmt.Sprintf("[smtp    ]  error: %v", err))
 		}
 	}()
 
@@ -79,7 +80,7 @@ func (g *Glutton) HandleSMTP(conn net.Conn) (err error) {
 			break
 		}
 		query := strings.Trim(data, "\r\n")
-		g.logger.Infof("[smtp    ] Payload : %q", query)
+		g.logger.Info(fmt.Sprintf("[smtp    ] Payload : %q", query))
 		if strings.HasPrefix(query, "HELO ") {
 			rwait()
 			client.w("250 Hello! Pleased to meet you.")
@@ -96,7 +97,7 @@ func (g *Glutton) HandleSMTP(conn net.Conn) (err error) {
 				if err != nil {
 					break
 				}
-				g.logger.Infof("[smtp    ] Data : %q", data)
+				g.logger.Info(fmt.Sprintf("[smtp    ] Data : %q", data))
 				// exit condition
 				if strings.Compare(data, ".\r\n") == 0 {
 					break

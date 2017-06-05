@@ -26,4 +26,6 @@ rules:
   - match: tcp
     type: conn_handler
     target: default
+  - match: udp
+    type: drop
 
