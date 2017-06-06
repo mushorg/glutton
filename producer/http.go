@@ -16,7 +16,6 @@ import (
 // Config for the producer
 type Config struct {
 	sensorID   string
-	logger     freki.Logger
 	httpAddr   string // Address of HTTP consumer
 	httpClient *http.Client
 }
@@ -26,7 +25,7 @@ type Event struct {
 	Timestamp time.Time `json:"timestamp"`
 	SrcHost   string    `json:"srcHost"`
 	SrcPort   string    `json:"srcPort"`
-	DstPort   string    `json:"dstPort"`
+	DstPort   uint16    `json:"dstPort"`
 	SensorID  string    `json:"sensorID"`
 	Rule      string    `json:"rule"`
 	ConnKey   [2]uint64 `json:"connKey"`
@@ -35,10 +34,9 @@ type Event struct {
 }
 
 // Init initializes the producer
-func Init(sensorID string, log freki.Logger, logHTTP string) *Config {
+func Init(sensorID string, logHTTP string) *Config {
 	return &Config{
 		sensorID:   sensorID,
-		logger:     log,
 		httpAddr:   logHTTP,
 		httpClient: &http.Client{},
 	}
@@ -63,7 +61,7 @@ func (conf *Config) LogHTTP(conn net.Conn, md *freki.Metadata, payload []byte, a
 		Timestamp: time.Now().UTC(),
 		SrcHost:   host,
 		SrcPort:   port,
-		DstPort:   md.TargetPort.String(),
+		DstPort:   md.TargetPort,
 		SensorID:  conf.sensorID,
 		Rule:      md.Rule.String(),
 		ConnKey:   connKey,
@@ -83,8 +81,7 @@ func (conf *Config) LogHTTP(conn net.Conn, md *freki.Metadata, payload []byte, a
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := conf.httpClient.Do(req)
 	if err != nil {
-		conf.logger.Debugf("[glutton ] gollum error: %s", err)
-		return
+		return err
 	}
 	resp.Body.Close()
 	return

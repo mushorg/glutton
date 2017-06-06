@@ -11,9 +11,9 @@ import (
 func readRFB(conn net.Conn, g *Glutton) {
 	msg, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		g.logger.Errorf("[rfb     ] error: %v", err)
+		g.logger.Error(fmt.Sprintf("[rfb     ] error: %v", err))
 	}
-	g.logger.Infof("[rfb     ] message %q", msg)
+	g.logger.Info(fmt.Sprintf("[rfb     ] message %q", msg))
 }
 
 // PixelFormat represents a RFB communication unit
@@ -32,7 +32,7 @@ func (g *Glutton) HandleRFB(conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Errorf("[rfb     ]  %v", err)
+			g.logger.Error(fmt.Sprintf("[rfb     ] error: %v", err))
 		}
 	}()
 
@@ -64,7 +64,7 @@ func (g *Glutton) HandleRFB(conn net.Conn) (err error) {
 	}
 	err = binary.Write(buf, binary.LittleEndian, f)
 	if err != nil {
-		fmt.Println("binary.Write failed:", err)
+		g.logger.Warn(fmt.Sprintf("[rfb     ] binary.Write failed, error: ", err))
 	}
 	conn.Write(buf.Bytes())
 	readRFB(conn, g)

@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
+	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"net"
@@ -59,9 +59,11 @@ var miraiCom = map[string][]string{
 
 func writeMsg(conn net.Conn, msg string, g *Glutton) error {
 	_, err := conn.Write([]byte(msg))
-	g.logger.Infof("[telnet  ] send: %q", msg)
+	g.logger.Info(fmt.Sprintf("[telnet  ] send: %q", msg))
 	md := g.processor.Connections.GetByFlow(freki.NewConnKeyFromNetConn(conn))
-	g.producer.LogHTTP(conn, md, []byte(msg), "write")
+	if g.producer != nil && md != nil {
+		err = g.producer.LogHTTP(conn, md, []byte(msg), "write")
+	}
 	return err
 }
 
@@ -70,10 +72,10 @@ func readMsg(conn net.Conn, g *Glutton) (msg string, err error) {
 	if err != nil {
 		return "", err
 	}
-	g.logger.Infof("[telnet  ] recv: %q", msg)
+	g.logger.Info(fmt.Sprintf("[telnet  ] recv: %q", msg))
 	md := g.processor.Connections.GetByFlow(freki.NewConnKeyFromNetConn(conn))
-	if md != nil {
-		g.producer.LogHTTP(conn, md, []byte(msg), "read")
+	if g.producer != nil && md != nil {
+		err = g.producer.LogHTTP(conn, md, []byte(msg), "read")
 	}
 	return msg, err
 }
@@ -85,24 +87,24 @@ func getSample(cmd string, g *Glutton) error {
 	client := http.Client{
 		Timeout: timeout,
 	}
-	g.logger.Infof("[telnet  ] getSample target URL: %s", url)
+	g.logger.Info(fmt.Sprintf("[telnet  ] getSample target URL: %s", url))
 	resp, err := client.Get(url)
 	if err != nil {
-		g.logger.Errorf("[telnet  ] getSample http error: %v", err)
+		g.logger.Error(fmt.Sprintf("[telnet  ] getSample http error: %v", err))
 		return err
 	}
 	if resp.StatusCode != 200 {
-		g.logger.Errorf("[telnet  ] getSample read http: %v", errors.New("Non 200 status code on getSample"))
+		g.logger.Error(fmt.Sprintf("[telnet  ] getSample read http: %v, error: Non 200 status code on getSample"))
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.ContentLength <= 0 {
-		g.logger.Errorf("[telnet  ] getSample read http: %v", errors.New("Empty response body"))
+		g.logger.Error(fmt.Sprintf("[telnet  ] getSample read http: %v, error: Empty response body"))
 		return err
 	}
 	bodyBuffer, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		g.logger.Errorf("[telnet  ] getSample read http: %v", err)
+		g.logger.Error(fmt.Sprintf("[telnet  ] getSample read http: %v", err))
 		return err
 	}
 	sum := sha256.Sum256(bodyBuffer)
@@ -111,21 +113,21 @@ func getSample(cmd string, g *Glutton) error {
 	sha256Hash := hex.EncodeToString(sum[:])
 	path := filepath.Join("samples", sha256Hash)
 	if _, err = os.Stat(path); err == nil {
-		g.logger.Info("[telnet  ] getSample already known")
+		g.logger.Info(fmt.Sprintf("[telnet  ] getSample already known"))
 		return nil
 	}
 	out, err := os.Create(path)
 	if err != nil {
-		g.logger.Errorf("[telnet  ] getSample create error: %v", err)
+		g.logger.Error(fmt.Sprintf("[telnet  ] getSample create error: %v", err))
 		return err
 	}
 	defer out.Close()
 	_, err = out.Write(bodyBuffer)
 	if err != nil {
-		g.logger.Errorf("[telnet  ] getSample write error: %v", err)
+		g.logger.Error(fmt.Sprintf("[telnet  ] getSample write error: %v", err))
 		return err
 	}
-	g.logger.Infof("[telnet  ] getSample new: %s", path)
+	g.logger.Info(fmt.Sprintf("[telnet  ] getSample new: %s", path))
 	return nil
 }
 
@@ -134,7 +136,7 @@ func (g *Glutton) HandleTelnet(conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Errorf("[telnet  ]  %v", err)
+			g.logger.Error(fmt.Sprintf("[telnet  ]  error: %v", err))
 		}
 	}()
 
@@ -147,21 +149,21 @@ func (g *Glutton) HandleTelnet(conn net.Conn) (err error) {
 	writeMsg(conn, "Username: ", g)
 	_, err = readMsg(conn, g)
 	if err != nil {
-		g.logger.Errorf("[telnet  ] %v", err)
-		return err
+		g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
+		return
 	}
 	writeMsg(conn, "Password: ", g)
 	_, err = readMsg(conn, g)
 	if err != nil {
-		g.logger.Errorf("[telnet  ] %v", err)
-		return err
+		g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
+		return
 	}
 
 	writeMsg(conn, "welcome\r\n> ", g)
 	for {
 		msg, err := readMsg(conn, g)
 		if err != nil {
-			g.logger.Errorf("[telnet  ] %v", err)
+			g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
 			return err
 		}
 		for _, cmd := range strings.Split(msg, ";") {
