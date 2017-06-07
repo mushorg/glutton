@@ -2,6 +2,7 @@ package glutton
 
 import (
 	"encoding/hex"
+	"fmt"
 	"net"
 
 	"github.com/mushorg/glutton/protocols/rdp"
@@ -12,7 +13,7 @@ func (g *Glutton) HandleRDP(conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Errorf("[rdp     ]  %v", err)
+			g.logger.Error(fmt.Sprintf("[rdp     ]  error: %v", err))
 		}
 	}()
 
@@ -20,21 +21,21 @@ func (g *Glutton) HandleRDP(conn net.Conn) (err error) {
 	for {
 		n, err := conn.Read(buffer)
 		if err != nil && n <= 0 {
-			g.logger.Errorf("[rdp     ] error: %v", err)
+			g.logger.Error(fmt.Sprintf("[rdp     ] error: %v", err))
 			return err
 		}
 		if n > 0 && n < 1024 {
-			g.logger.Infof("[rdp     ]\n%s", hex.Dump(buffer[0:n]))
+			g.logger.Info(fmt.Sprintf("[rdp     ] \n%s", hex.Dump(buffer[0:n])))
 			pdu, err := rdp.ParseCRPDU(buffer[0:n])
 			if err != nil {
-				g.logger.Errorf("[rdp     ] error: %v", err)
+				g.logger.Error(fmt.Sprintf("[rdp     ] error: %v", err))
 			}
-			g.logger.Infof("[rdp     ] req pdu: %+v", pdu)
+			g.logger.Info(fmt.Sprintf("[rdp     ] req pdu: %+v", pdu))
 			if len(pdu.Data) > 0 {
-				g.logger.Infof("[rdp     ] data: %s", string(pdu.Data))
+				g.logger.Info(fmt.Sprintf("[rdp     ] data: %s", string(pdu.Data)))
 			}
 			resp := rdp.ConnectionConfirm()
-			g.logger.Infof("[rdp     ] resp pdu: %+v", resp)
+			g.logger.Info(fmt.Sprintf("[rdp     ]resp pdu: %+v", resp))
 			conn.Write(resp)
 		}
 	}

@@ -2,6 +2,7 @@ package glutton
 
 import (
 	"bytes"
+	"fmt"
 	"net"
 
 	"github.com/1lann/go-sip/server"
@@ -13,7 +14,7 @@ func (g *Glutton) HandleSIP(netConn net.Conn) (err error) {
 	defer func() {
 		err = netConn.Close()
 		if err != nil {
-			g.logger.Errorf("[sip     ]  %v", err)
+			g.logger.Error(fmt.Sprintf("[sip     ]  error: %v", err))
 		}
 	}()
 
@@ -24,22 +25,22 @@ func (g *Glutton) HandleSIP(netConn net.Conn) (err error) {
 	rd := bytes.NewReader(buf)
 	req, err := sipnet.ReadRequest(rd)
 	if err != nil {
-		g.logger.Errorf("[sip     ] error: %v", err)
+		g.logger.Error(fmt.Sprintf("[sip     ] error: %v", err))
 	}
 	if req == nil {
-		g.logger.Info("[sip     ] failed to parse SIP req")
+		g.logger.Info(fmt.Sprintf("[sip     ] failed to parse SIP req"))
 		return nil
 	}
-	g.logger.Infof("[sip     ] SIP method: %s", req.Method)
+	g.logger.Info(fmt.Sprintf("[sip     ] SIP method: %s", req.Method))
 	switch req.Method {
 	case sipnet.MethodRegister:
-		g.logger.Info("[sip     ] handling SIP register")
+		g.logger.Info(fmt.Sprintf("[sip     ] handling SIP register"))
 		server.HandleRegister(req, sipConn)
 	case sipnet.MethodInvite:
-		g.logger.Info("[sip     ] handling SIP invite")
+		g.logger.Info(fmt.Sprintf("[sip     ] handling SIP invite"))
 		server.HandleInvite(req, sipConn)
 	case sipnet.MethodOptions:
-		g.logger.Info("[sip     ] handling SIP options")
+		g.logger.Info(fmt.Sprintf("[sip     ] handling SIP options"))
 		resp := sipnet.NewResponse()
 		resp.StatusCode = sipnet.StatusOK
 		resp.Header.Set("Allow", "INVITE, ACK, CANCEL, OPTIONS, BYE")

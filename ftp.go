@@ -2,6 +2,7 @@ package glutton
 
 import (
 	"bufio"
+	"fmt"
 	"net"
 	"strings"
 )
@@ -9,9 +10,9 @@ import (
 func readFTP(conn net.Conn, g *Glutton) (msg string, err error) {
 	msg, err = bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		g.logger.Errorf("[ftp     ] error: %v", err)
+		g.logger.Error(fmt.Sprintf("[ftp     ] error: %v", err))
 	}
-	g.logger.Infof("[ftp     ] recv: %q", msg)
+	g.logger.Info(fmt.Sprintf("[ftp     ] recv: %q", msg))
 	return
 }
 
@@ -20,7 +21,7 @@ func (g *Glutton) HandleFTP(conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Errorf("[ftp     ]  %v", err)
+			g.logger.Error(fmt.Sprintf("[ftp     ]  error: %v", err))
 		}
 	}()
 
