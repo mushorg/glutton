@@ -2,6 +2,7 @@ package glutton
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -57,7 +58,7 @@ func validateRCPT(query string) bool {
 }
 
 // HandleSMTP takes a net.Conn and does basic SMTP communication
-func (g *Glutton) HandleSMTP(conn net.Conn) (err error) {
+func (g *Glutton) HandleSMTP(ctx context.Context, conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
@@ -75,6 +76,7 @@ func (g *Glutton) HandleSMTP(conn net.Conn) (err error) {
 
 	var data string
 	for {
+		g.updateIdleTime(ctx, conn)
 		data, err = client.r(g)
 		if err != nil {
 			break

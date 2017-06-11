@@ -2,6 +2,7 @@ package glutton
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -132,11 +133,12 @@ func getSample(cmd string, g *Glutton) error {
 }
 
 // HandleTelnet handles telnet communication on a connection
-func (g *Glutton) HandleTelnet(conn net.Conn) (err error) {
+func (g *Glutton) HandleTelnet(ctx context.Context, conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
 			g.logger.Error(fmt.Sprintf("[telnet  ]  error: %v", err))
+			fmt.Println(fmt.Sprintf("[telnet  ]  error: %v", err))
 		}
 	}()
 
@@ -160,7 +162,9 @@ func (g *Glutton) HandleTelnet(conn net.Conn) (err error) {
 	}
 
 	writeMsg(conn, "welcome\r\n> ", g)
+
 	for {
+		g.updateIdleTime(ctx, conn)
 		msg, err := readMsg(conn, g)
 		if err != nil {
 			g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))

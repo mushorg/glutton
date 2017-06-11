@@ -8,8 +8,13 @@ import (
 func initLogger(logPath *string, id string, debug *bool) (*zap.Logger, error) {
 
 	cfg := zap.NewProductionConfig()
-	cfg.ErrorOutputPaths = []string{*logPath + "/logger.err"}
-	cfg.OutputPaths = []string{*logPath + "/glutton.log"}
+	if *logPath != "/dev/null" {
+		cfg.ErrorOutputPaths = []string{*logPath + "/logger.err"}
+		cfg.OutputPaths = []string{*logPath + "/glutton.log"}
+	} else {
+		cfg.ErrorOutputPaths = []string{*logPath}
+		cfg.OutputPaths = []string{*logPath}
+	}
 	cfg.InitialFields = map[string]interface{}{
 		"sensorID": id,
 	}

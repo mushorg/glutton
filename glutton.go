@@ -1,6 +1,7 @@
 package glutton
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -26,6 +27,8 @@ type Glutton struct {
 	producer         *producer.Config
 	protocolHandlers map[string]protocolHandlerFunc
 	sshProxy         *sshProxy
+	ctx              context.Context
+	cancel           context.CancelFunc
 }
 
 type protocolHandlerFunc func(conn net.Conn) error
@@ -70,6 +73,9 @@ func New(iface, confPath, logPath *string, debug *bool) (*Glutton, error) {
 
 // Init initializes freki and handles
 func (g *Glutton) Init() (err error) {
+
+	ctx := context.Background()
+	g.ctx, g.cancel = context.WithCancel(ctx)
 
 	g.protocolHandlers = make(map[string]protocolHandlerFunc, 0)
 
@@ -176,7 +182,7 @@ func (g *Glutton) registerHandlers() {
 					}
 				}
 
-				conn.SetDeadline(time.Now().Add(72 * time.Second))
+				conn.SetDeadline(time.Now().Add(45 * time.Second))
 				return g.protocolHandlers[protocol](conn)
 			})
 		}
@@ -186,6 +192,8 @@ func (g *Glutton) registerHandlers() {
 // Shutdown the packet processor
 func (g *Glutton) Shutdown() (err error) {
 	defer g.logger.Sync()
+	g.cancel() // close all connection
+	time.Sleep(4 * time.Second)
 	return g.processor.Shutdown()
 }
 

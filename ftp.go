@@ -2,6 +2,7 @@ package glutton
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -17,7 +18,7 @@ func readFTP(conn net.Conn, g *Glutton) (msg string, err error) {
 }
 
 // HandleFTP takes a net.Conn and does basic FTP communication
-func (g *Glutton) HandleFTP(conn net.Conn) (err error) {
+func (g *Glutton) HandleFTP(ctx context.Context, conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
@@ -27,6 +28,7 @@ func (g *Glutton) HandleFTP(conn net.Conn) (err error) {
 
 	conn.Write([]byte("220 Welcome!\r\n"))
 	for {
+		g.updateIdleTime(ctx, conn)
 		msg, err := readFTP(conn, g)
 		if len(msg) < 4 || err != nil {
 			break

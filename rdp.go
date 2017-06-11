@@ -1,6 +1,7 @@
 package glutton
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -9,7 +10,7 @@ import (
 )
 
 // HandleRDP takes a net.Conn and does basic RDP communication
-func (g *Glutton) HandleRDP(conn net.Conn) (err error) {
+func (g *Glutton) HandleRDP(ctx context.Context, conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
@@ -19,6 +20,7 @@ func (g *Glutton) HandleRDP(conn net.Conn) (err error) {
 
 	buffer := make([]byte, 1024)
 	for {
+		g.updateIdleTime(ctx, conn)
 		n, err := conn.Read(buffer)
 		if err != nil && n <= 0 {
 			g.logger.Error(fmt.Sprintf("[rdp     ] error: %v", err))
