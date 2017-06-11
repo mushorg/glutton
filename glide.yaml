@@ -12,3 +12,5 @@ import:
 - package: github.com/lunixbochs/vtclean
   version: d14193dfc626125c831501c1c42340b4248e1f5a
 - package: github.com/spf13/viper
+- package: github.com/docopt/docopt-go
+  version: ^0.6.2

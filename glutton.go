@@ -34,20 +34,26 @@ type Glutton struct {
 type protocolHandlerFunc func(conn net.Conn) error
 
 // New creates a new Glutton instance
-func New(iface, confPath, logPath *string, debug *bool) (*Glutton, error) {
+func New(args map[string]interface{}) (*Glutton, error) {
+	var (
+		iface    string = args["--interface"].(string)
+		logPath         = args["--logpath"].(string)
+		confPath        = args["--confpath"].(string)
+		debug    bool   = args["--debug"].(bool)
+	)
 
 	gtn := &Glutton{}
 	err := gtn.makeID()
 	if err != nil {
 		return nil, err
 	}
-	if gtn.logger, err = initLogger(logPath, gtn.id.String(), debug); err != nil {
+	if gtn.logger, err = initLogger(&logPath, gtn.id.String(), &debug); err != nil {
 		return nil, err
 	}
 
 	// Loading the congiguration
 	gtn.logger.Info("[glutton ] Loading configurations from: config/conf.yaml")
-	gtn.conf = config.Init(confPath, gtn.logger)
+	gtn.conf = config.Init(&confPath, gtn.logger)
 
 	rulesPath := gtn.conf.GetString("rules_path")
 	rulesFile, err := os.Open(rulesPath)
@@ -62,7 +68,7 @@ func New(iface, confPath, logPath *string, debug *bool) (*Glutton, error) {
 	}
 
 	// Initiate the freki processor
-	gtn.processor, err = freki.New(*iface, gtn.rules, nil)
+	gtn.processor, err = freki.New(iface, gtn.rules, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -1,5 +1,5 @@
-hash: 878d56418e0478343b3687024c212a4ce475675750ff3d189d762ebf5fcf6dcc
-updated: 2017-06-04T18:19:55.752602876+05:00
+hash: e285cd0b0d554311a40d41c76d432de0d382f3c5ebe33413cb02f5a77e480708
+updated: 2017-06-11T10:03:08.783059053+05:00
 imports:
 - name: github.com/1lann/go-sip
   version: 68e86c65407ef8cf672ae38526e7f3d29944b94f
@@ -41,6 +41,8 @@ imports:
   - tlsconfig
 - name: github.com/docker/go-units
   version: 0dadbb0345b35ec7ef35e228dabb8de89a65bf52
+- name: github.com/docopt/docopt-go
+  version: 784ddc588536785e7299f7272f39101f7faccc3f
 - name: github.com/fsnotify/fsnotify
   version: 7d7316ed6e1ed2de075aab8dfc76de5d158d66e1
 - name: github.com/google/gopacket
@@ -81,6 +83,8 @@ imports:
   version: 645ef00459ed84a119197bfb8d8205042c6df63d
 - name: github.com/satori/go.uuid
   version: b061729afc07e77a8aa4fad0a2fd840958f1942a
+- name: github.com/Sirupsen/logrus
+  version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
 - name: github.com/spf13/afero
   version: 9be650865eab0c12963d8753212f4f9c66cdcf12
   subpackages:
@@ -96,7 +100,7 @@ imports:
 - name: go.uber.org/atomic
   version: 4e336646b2ef9fc6e47be8e21594178f98e5ebcf
 - name: go.uber.org/zap
-  version: fab453050a7a08c35f31fc5fff6f2dbd962285ab
+  version: 9cabc84638b70e564c3dab2766efcb1ded2aac9f
   subpackages:
   - buffer
   - internal/bufferpool
