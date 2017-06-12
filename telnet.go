@@ -164,7 +164,7 @@ func (g *Glutton) HandleTelnet(ctx context.Context, conn net.Conn) (err error) {
 	writeMsg(conn, "welcome\r\n> ", g)
 
 	for {
-		g.updateIdleTime(ctx, conn)
+		g.updateConnectionTimeout(ctx, conn)
 		msg, err := readMsg(conn, g)
 		if err != nil {
 			g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))

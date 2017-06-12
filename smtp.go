@@ -76,7 +76,7 @@ func (g *Glutton) HandleSMTP(ctx context.Context, conn net.Conn) (err error) {
 
 	var data string
 	for {
-		g.updateIdleTime(ctx, conn)
+		g.updateConnectionTimeout(ctx, conn)
 		data, err = client.r(g)
 		if err != nil {
 			break

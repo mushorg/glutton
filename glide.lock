@@ -1,5 +1,5 @@
-hash: e285cd0b0d554311a40d41c76d432de0d382f3c5ebe33413cb02f5a77e480708
-updated: 2017-06-11T10:03:08.783059053+05:00
+hash: 9db52eb11d5af8a8c6fc83e1316d0250f16e31429af61550512f7fb874e9d709
+updated: 2017-06-12T17:41:44.319463579+05:00
 imports:
 - name: github.com/1lann/go-sip
   version: 68e86c65407ef8cf672ae38526e7f3d29944b94f
@@ -83,6 +83,8 @@ imports:
   version: 645ef00459ed84a119197bfb8d8205042c6df63d
 - name: github.com/satori/go.uuid
   version: b061729afc07e77a8aa4fad0a2fd840958f1942a
+- name: github.com/Sirupsen/logrus
+  version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
 - name: github.com/spf13/afero
   version: 9be650865eab0c12963d8753212f4f9c66cdcf12
   subpackages:
@@ -95,6 +97,8 @@ imports:
   version: 9ff6c6923cfffbcd502984b8e0c80539a94968b7
 - name: github.com/spf13/viper
   version: 7538d73b4eb9511d85a9f1dfef202eeb8ac260f4
+- name: github.com/Unknwon/com
+  version: 28b053d5a2923b87ce8c5a08f3af779894a72758
 - name: go.uber.org/atomic
   version: 4e336646b2ef9fc6e47be8e21594178f98e5ebcf
 - name: go.uber.org/zap

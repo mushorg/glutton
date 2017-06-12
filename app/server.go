@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"sync"
 
-	docopt "github.com/docopt/docopt-go"
+	"github.com/docopt/docopt-go"
 	"github.com/mushorg/glutton"
 )
 

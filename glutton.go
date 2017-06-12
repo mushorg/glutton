@@ -31,7 +31,7 @@ type Glutton struct {
 	cancel           context.CancelFunc
 }
 
-type protocolHandlerFunc func(conn net.Conn) error
+type protocolHandlerFunc func(ctx context.Context, conn net.Conn) error
 
 // New creates a new Glutton instance
 func New(args map[string]interface{}) (*Glutton, error) {
@@ -188,8 +188,13 @@ func (g *Glutton) registerHandlers() {
 					}
 				}
 
+				done := make(chan struct{})
+				go g.closeOnShutdown(conn, done)
 				conn.SetDeadline(time.Now().Add(45 * time.Second))
-				return g.protocolHandlers[protocol](conn)
+				ctx := g.contextWithTimeout(72)
+				err = g.protocolHandlers[protocol](ctx, conn)
+				done <- struct{}{}
+				return err
 			})
 		}
 	}
@@ -199,7 +204,18 @@ func (g *Glutton) registerHandlers() {
 func (g *Glutton) Shutdown() (err error) {
 	defer g.logger.Sync()
 	g.cancel() // close all connection
-	time.Sleep(4 * time.Second)
+
+	/** TODO:
+	 ** May be there exist a better way to wait for all connections to be closed but I am unable
+	 ** to find. The only link we have between program and goroutines is context.
+	 ** context.cancel() signal routines to abandon their work and does not wait
+	 ** for the work to stop. And in any case if fails then there will be definitely a
+	 ** goroutine leak. May be it is possible in future when we have connection counter so we can keep
+	 ** that counter synchronized with number of goroutines (connections) with help of context and on
+	 ** shutdown we wait until counter goes to zero.
+	 */
+
+	time.Sleep(2 * time.Second)
 	return g.processor.Shutdown()
 }
 

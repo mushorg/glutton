@@ -11,81 +11,53 @@ import (
 // mapProtocolHandlers map protocol handlers to corresponding protocol
 func (g *Glutton) mapProtocolHandlers() {
 
-	g.protocolHandlers["smtp"] = func(conn net.Conn) (err error) {
-		done := make(chan struct{})
-		go g.closeOnShutdown(conn, done)
-		ctx := g.withTimeout(72) // context with timeout
-		err = g.HandleSMTP(ctx, conn)
-		done <- struct{}{}
-		return err
+	g.protocolHandlers["smtp"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleSMTP(ctx, conn)
 	}
-	g.protocolHandlers["rdp"] = func(conn net.Conn) (err error) {
-		done := make(chan struct{})
-		go g.closeOnShutdown(conn, done)
-		ctx := g.withTimeout(72) // context with timeout
-		err = g.HandleRDP(ctx, conn)
-		done <- struct{}{}
-		return err
+
+	g.protocolHandlers["rdp"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleRDP(ctx, conn)
 	}
-	g.protocolHandlers["smb"] = func(conn net.Conn) (err error) {
-		done := make(chan struct{})
-		go g.closeOnShutdown(conn, done)
-		ctx := g.withTimeout(72) // context with timeout
-		err = g.HandleSMB(ctx, conn)
-		done <- struct{}{}
-		return err
+
+	g.protocolHandlers["smb"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleSMB(ctx, conn)
 	}
-	g.protocolHandlers["ftp"] = func(conn net.Conn) (err error) {
-		done := make(chan struct{})
-		go g.closeOnShutdown(conn, done)
-		ctx := g.withTimeout(72) // context with timeout
-		err = g.HandleFTP(ctx, conn)
-		done <- struct{}{}
-		return err
+
+	g.protocolHandlers["ftp"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleFTP(ctx, conn)
 	}
-	g.protocolHandlers["sip"] = func(conn net.Conn) (err error) {
-		done := make(chan struct{})
-		go g.closeOnShutdown(conn, done)
-		err = g.HandleSIP(g.ctx, conn)
-		done <- struct{}{}
-		return err
+
+	g.protocolHandlers["sip"] = func(ctx context.Context, conn net.Conn) (err error) {
+		// TODO: remove 'context.TODO()' when handler code start using context.
+		ctx = context.TODO()
+		return g.HandleSIP(ctx, conn)
 	}
-	g.protocolHandlers["rfb"] = func(conn net.Conn) (err error) {
-		done := make(chan struct{})
-		go g.closeOnShutdown(conn, done)
-		err = g.HandleRFB(g.ctx, conn)
-		done <- struct{}{}
-		return err
+
+	g.protocolHandlers["rfb"] = func(ctx context.Context, conn net.Conn) (err error) {
+		// TODO: remove 'context.TODO()' when handler code start using context.
+		ctx = context.TODO()
+		return g.HandleRFB(ctx, conn)
 	}
-	g.protocolHandlers["telnet"] = func(conn net.Conn) (err error) {
-		done := make(chan struct{})
-		go g.closeOnShutdown(conn, done)
-		ctx := g.withTimeout(72) // context with timeout
-		err = g.HandleTelnet(ctx, conn)
-		done <- struct{}{}
-		return err
+
+	g.protocolHandlers["telnet"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleTelnet(ctx, conn)
 	}
-	g.protocolHandlers["proxy_ssh"] = func(conn net.Conn) (err error) {
-		done := make(chan struct{})
-		go g.closeOnShutdown(conn, done)
-		ctx := g.withTimeout(72) // context with timeout
-		err = g.sshProxy.handle(ctx, conn)
-		done <- struct{}{}
-		return err
+
+	g.protocolHandlers["proxy_ssh"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.sshProxy.handle(ctx, conn)
 	}
-	g.protocolHandlers["default"] = func(conn net.Conn) (err error) {
-		done := make(chan struct{})
-		go g.closeOnShutdown(conn, done)
+
+	g.protocolHandlers["default"] = func(ctx context.Context, conn net.Conn) (err error) {
+		// TODO: remove 'context.TODO()' when handler code start using context.
+		ctx = context.TODO()
 		snip, bufConn, err := g.Peek(conn, 4)
 		g.onErrorClose(err, conn)
 		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true}
 		if _, ok := httpMap[strings.ToUpper(string(snip))]; ok == true {
-			err = g.HandleHTTP(g.ctx, bufConn)
+			return g.HandleHTTP(ctx, bufConn)
 		} else {
-			err = g.HandleTCP(g.ctx, bufConn)
+			return g.HandleTCP(ctx, bufConn)
 		}
-		done <- struct{}{}
-		return err
 	}
 }
 
@@ -103,13 +75,13 @@ func (g *Glutton) closeOnShutdown(conn net.Conn, done <-chan struct{}) {
 }
 
 // Drive child context from parent context with additional value required for sepcific handler
-func (g *Glutton) withTimeout(timeInSeconds uint8) context.Context {
+func (g *Glutton) contextWithTimeout(timeInSeconds uint8) context.Context {
 	limit := time.Duration(timeInSeconds) * time.Second
 	return context.WithValue(g.ctx, "timeout", time.Now().Add(limit))
 }
 
-// updateIdleTime increase connection timeout limit on connection I/O operation
-func (g *Glutton) updateIdleTime(ctx context.Context, conn net.Conn) {
+// updateConnectionTimeout increase connection timeout limit on connection I/O operation
+func (g *Glutton) updateConnectionTimeout(ctx context.Context, conn net.Conn) {
 	if timeout, ok := ctx.Value("timeout").(time.Time); ok {
 		conn.SetDeadline(timeout)
 	}

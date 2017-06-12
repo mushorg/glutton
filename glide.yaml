@@ -14,3 +14,7 @@ import:
 - package: github.com/spf13/viper
 - package: github.com/docopt/docopt-go
   version: ^0.6.2
+- package: github.com/Unknwon/com
+  version: ^1
+
+

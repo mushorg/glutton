@@ -28,7 +28,7 @@ func (g *Glutton) HandleFTP(ctx context.Context, conn net.Conn) (err error) {
 
 	conn.Write([]byte("220 Welcome!\r\n"))
 	for {
-		g.updateIdleTime(ctx, conn)
+		g.updateConnectionTimeout(ctx, conn)
 		msg, err := readFTP(conn, g)
 		if len(msg) < 4 || err != nil {
 			break

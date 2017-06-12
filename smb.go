@@ -20,7 +20,7 @@ func (g *Glutton) HandleSMB(ctx context.Context, conn net.Conn) (err error) {
 
 	buffer := make([]byte, 1024)
 	for {
-		g.updateIdleTime(ctx, conn)
+		g.updateConnectionTimeout(ctx, conn)
 		n, err := conn.Read(buffer)
 		if err != nil && n <= 0 {
 			g.logger.Error(fmt.Sprintf("[smb     ] error: %v", err))
