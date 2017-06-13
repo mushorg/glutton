@@ -1,21 +1,20 @@
 package glutton
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"net"
-	"time"
 )
 
 // HandleTCP takes a net.Conn and peeks at the data send
-func (g *Glutton) HandleTCP(conn net.Conn) (err error) {
+func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
 			g.logger.Error(fmt.Sprintf("[log.tcp ] error: %v", err))
 		}
 	}()
-	conn.SetReadDeadline(time.Now().Add(10))
 	host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 	buffer := make([]byte, 1024)
 	n, err := conn.Read(buffer)

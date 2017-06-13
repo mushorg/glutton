@@ -3,6 +3,7 @@ package glutton
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -38,7 +39,7 @@ func formatRequest(r *http.Request) string {
 }
 
 // HandleHTTP takes a net.Conn and does basic HTTP communication
-func (g *Glutton) HandleHTTP(conn net.Conn) (err error) {
+func (g *Glutton) HandleHTTP(ctx context.Context, conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {

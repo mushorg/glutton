@@ -1,6 +1,7 @@
 package glutton
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -26,25 +27,33 @@ type Glutton struct {
 	producer         *producer.Config
 	protocolHandlers map[string]protocolHandlerFunc
 	sshProxy         *sshProxy
+	ctx              context.Context
+	cancel           context.CancelFunc
 }
 
-type protocolHandlerFunc func(conn net.Conn) error
+type protocolHandlerFunc func(ctx context.Context, conn net.Conn) error
 
 // New creates a new Glutton instance
-func New(iface, confPath, logPath *string, debug *bool) (*Glutton, error) {
+func New(args map[string]interface{}) (*Glutton, error) {
+	var (
+		iface    string = args["--interface"].(string)
+		logPath         = args["--logpath"].(string)
+		confPath        = args["--confpath"].(string)
+		debug    bool   = args["--debug"].(bool)
+	)
 
 	gtn := &Glutton{}
 	err := gtn.makeID()
 	if err != nil {
 		return nil, err
 	}
-	if gtn.logger, err = initLogger(logPath, gtn.id.String(), debug); err != nil {
+	if gtn.logger, err = initLogger(&logPath, gtn.id.String(), &debug); err != nil {
 		return nil, err
 	}
 
 	// Loading the congiguration
 	gtn.logger.Info("[glutton ] Loading configurations from: config/conf.yaml")
-	gtn.conf = config.Init(confPath, gtn.logger)
+	gtn.conf = config.Init(&confPath, gtn.logger)
 
 	rulesPath := gtn.conf.GetString("rules_path")
 	rulesFile, err := os.Open(rulesPath)
@@ -59,7 +68,7 @@ func New(iface, confPath, logPath *string, debug *bool) (*Glutton, error) {
 	}
 
 	// Initiate the freki processor
-	gtn.processor, err = freki.New(*iface, gtn.rules, nil)
+	gtn.processor, err = freki.New(iface, gtn.rules, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -70,6 +79,9 @@ func New(iface, confPath, logPath *string, debug *bool) (*Glutton, error) {
 
 // Init initializes freki and handles
 func (g *Glutton) Init() (err error) {
+
+	ctx := context.Background()
+	g.ctx, g.cancel = context.WithCancel(ctx)
 
 	g.protocolHandlers = make(map[string]protocolHandlerFunc, 0)
 
@@ -176,8 +188,13 @@ func (g *Glutton) registerHandlers() {
 					}
 				}
 
-				conn.SetDeadline(time.Now().Add(72 * time.Second))
-				return g.protocolHandlers[protocol](conn)
+				done := make(chan struct{})
+				go g.closeOnShutdown(conn, done)
+				conn.SetDeadline(time.Now().Add(45 * time.Second))
+				ctx := g.contextWithTimeout(72)
+				err = g.protocolHandlers[protocol](ctx, conn)
+				done <- struct{}{}
+				return err
 			})
 		}
 	}
@@ -186,6 +203,19 @@ func (g *Glutton) registerHandlers() {
 // Shutdown the packet processor
 func (g *Glutton) Shutdown() (err error) {
 	defer g.logger.Sync()
+	g.cancel() // close all connection
+
+	/** TODO:
+	 ** May be there exist a better way to wait for all connections to be closed but I am unable
+	 ** to find. The only link we have between program and goroutines is context.
+	 ** context.cancel() signal routines to abandon their work and does not wait
+	 ** for the work to stop. And in any case if fails then there will be definitely a
+	 ** goroutine leak. May be it is possible in future when we have connection counter so we can keep
+	 ** that counter synchronized with number of goroutines (connections) with help of context and on
+	 ** shutdown we wait until counter goes to zero.
+	 */
+
+	time.Sleep(2 * time.Second)
 	return g.processor.Shutdown()
 }
 

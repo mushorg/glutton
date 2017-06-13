@@ -2,6 +2,7 @@ package glutton
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -119,7 +120,7 @@ func (s *sshProxy) initConf(dest string) error {
 	return nil
 }
 
-func (s *sshProxy) handle(conn net.Conn) (err error) {
+func (s *sshProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
