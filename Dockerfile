@@ -8,13 +8,15 @@ ADD . .
 RUN apk add g++ glide git && \
     glide install && \
     glide update && \
-    mkdir -p bin/ && \
+   mkdir -p bin/ && \
     go build -o bin/server app/server.go && \
     apk del g++ glide git && \
     rm -rf /var/cache/apk/*
+#RUN mkdir -p bin/ && \
+#    go build -o bin/server app/server.go
 
 # RUN mkdir -p /opt/glutton
 # WORKDIR /opt/glutton
 # ADD bin/server .
 # ADD rules/rules.yaml .
-CMD ["bin/server", "--interface", "eth0"]
+#CMD ["bin/server", "-i", "eth0","-l","/var/gluttonlogs"]

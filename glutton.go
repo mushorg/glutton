@@ -154,6 +154,10 @@ func (g *Glutton) makeID() error {
 
 // registerHandlers register protocol handlers to glutton_server
 func (g *Glutton) registerHandlers() {
+	if g.conf.GetBool("enableProxy") {
+		go g.startHTTPProxy()
+	}
+
 	for _, rule := range g.rules {
 		if rule.Type == "conn_handler" && rule.Target != "" {
 			protocol := rule.Target
@@ -168,6 +172,7 @@ func (g *Glutton) registerHandlers() {
 					continue
 				}
 			}
+
 			g.processor.RegisterConnHandler(protocol, func(conn net.Conn, md *freki.Metadata) error {
 
 				host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
