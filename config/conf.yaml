@@ -18,3 +18,13 @@ proxy_ssh:
   - tcp://172.17.0.2:22
   # TODO:
   # - docker://user:pass@172.17.0.3:22  // Not supported yet
+
+proxy_http:
+  enableProxy: false
+  address: 127.0.0.1
+  httpPort: 1080
+  enableSSL: false
+  sslPort: 10443    # Port to bind to (SSL mode)
+  certPath:  proxy_http/ssl/rootCA.crt     # Path to root CA certificate
+  keyPath:   proxy_http/ssl/rootCA.key     # Path to root CA key
+  targetAddress: 172.17.0.3

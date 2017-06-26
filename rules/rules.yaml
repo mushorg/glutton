@@ -23,6 +23,9 @@ rules:
   - match: tcp dst port 5060
     type: conn_handler
     target: sip
+  - match: tcp dst port 1080
+    type: passthrough
+    name: http
   - match: tcp
     type: conn_handler
     target: default

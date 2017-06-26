@@ -1,23 +1,25 @@
 package glutton
 
 import (
-	"errors"
-	"github.com/Unknwon/com"
+	// "errors"
+	"fmt"
+	// "github.com/Unknwon/com"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 func initLogger(logPath *string, id string, debug *bool) (*zap.Logger, error) {
+	fmt.Println("[glutton ] log path: ", *logPath)
 
 	var cfg zap.Config
-	if !com.IsDir(*logPath) {
-		cfg = zap.NewProductionConfig()
-		cfg.ErrorOutputPaths = []string{*logPath}
-		cfg.OutputPaths = []string{*logPath + ".err"}
-	} else {
-		err := errors.New("[glutton ] file name is missing in log path")
-		return nil, err
-	}
+	// logFile := *logPath + ".log"
+	// if !com.IsDir(logFile) {
+	cfg = zap.NewProductionConfig()
+	// cfg.OutputPaths = []string{logFile}
+	// } else {
+	// 	err := errors.New("[glutton ] file name is missing in log path")
+	// 	return nil, err
+	// }
 
 	cfg.InitialFields = map[string]interface{}{
 		"sensorID": id,

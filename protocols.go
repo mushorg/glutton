@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
+
+	proxy "github.com/mushorg/glutton/proxy_http"
 )
 
 // mapProtocolHandlers map protocol handlers to corresponding protocol
@@ -85,4 +88,97 @@ func (g *Glutton) updateConnectionTimeout(ctx context.Context, conn net.Conn) {
 	if timeout, ok := ctx.Value("timeout").(time.Time); ok {
 		conn.SetDeadline(timeout)
 	}
+}
+
+func (g *Glutton) startHTTPProxy() {
+	// Is SSL enabled?
+	var sslEnabled = g.conf.GetBool("enableSSL")
+
+	// User requested SSL mode.
+	if sslEnabled {
+		os.Setenv(proxy.EnvSSLCert, g.conf.GetString("certPath"))
+		os.Setenv(proxy.EnvSSLKey, g.conf.GetString("keyPath"))
+	}
+
+	// Creating proxy.
+	p := proxy.NewProxy()
+
+	// Attaching logger.
+	p.AddLogger(g.logger)
+
+	// Attaching capture tool.
+	res := make(chan proxy.Response, 256)
+
+	p.AddBodyWriteCloser(proxy.New(res))
+
+	// Saving captured data with a goroutine.
+	go func() {
+		for {
+			select {
+			case r := <-res:
+				go func() {
+					// log.Printf(`Captured Object:
+					// ID: %v
+					// Origin: %v
+					// Method: %v
+					// Status: %v
+					// ContentType: %v
+					// ContentLength: %v
+					// Host: %v
+					// URL: %v
+					// Scheme: %v
+					// Path: %v
+					// Header: %v
+					// Body: %v
+					// RequestHeader: %v
+					// RequestBody: %v
+					// DateStart: %v
+					// DateEnd: %v
+					// TimeTaken: %v
+					// `, r.ID, r.Origin, r.Method, r.Status, r.ContentType, r.ContentLength,
+					// 	r.Host, r.Scheme, r.Path, r.Header, r.Body, r.RequestHeader, r.RequestBody,
+					// 	r.DateStart, r.DateEnd, r.TimeTaken)
+					g.logger.Info(fmt.Sprintf("[http.prxy] %q", r))
+				}()
+			}
+		}
+	}()
+
+	bindAddress := g.conf.GetString("address")
+	port := g.conf.GetInt("httpPort")
+	targetAddress := g.conf.GetString("targetAddress")
+
+	done := make(chan struct{})
+	go func() {
+		if err := p.Start(fmt.Sprintf("%s:%d", bindAddress, port), targetAddress); err != nil {
+			g.logger.Error(fmt.Sprintf("[http.prxy] Failed to bind on the given interface (HTTP): %q", err))
+		}
+		g.logger.Info("[http.prxy] HTTP server stopped...")
+	}()
+
+	if sslEnabled {
+		go func() {
+			sslPort := g.conf.GetInt("sslPort")
+			g.logger.Info(fmt.Sprintf("[***********] httpS  started %s:%d", bindAddress, sslPort))
+			if err := p.StartTLS(fmt.Sprintf("%s:%d", bindAddress, sslPort)); err != nil {
+				g.logger.Error(fmt.Sprintf("[http.prxy] Failed to bind on the given interface (HTTPS): %q", err))
+			}
+			g.logger.Info("[http.prxy] HTTPS server stopped...")
+		}()
+	}
+
+	closed := 0
+	for {
+		select {
+		case <-done:
+			closed++
+			if closed == 2 {
+				return
+			}
+		case <-g.ctx.Done():
+			g.logger.Info("[http.prxy] http proxy service stopped successfully.")
+			return
+		}
+	}
+
 }
