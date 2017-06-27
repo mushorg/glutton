@@ -14,7 +14,6 @@ func (g *Glutton) mapProtocolHandlers() {
   g.protocolHandlers["jabber"] = func(conn net.Conn) {
           g.HandleJabber(conn)
   }
-	g.protocolHandlers["default"] = func(conn net.Conn) {
 
 	g.protocolHandlers["smtp"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.HandleSMTP(ctx, conn)
