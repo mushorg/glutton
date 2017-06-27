@@ -17,4 +17,4 @@ RUN apk add g++ glide git && \
 # WORKDIR /opt/glutton
 # ADD bin/server .
 # ADD rules/rules.yaml .
-CMD ["bin/server", "-interface", "eth0"]
+CMD ["bin/server", "--interface", "eth0"]

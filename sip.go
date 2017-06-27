@@ -2,6 +2,7 @@ package glutton
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 
@@ -10,7 +11,7 @@ import (
 )
 
 // HandleSIP takes a net.Conn and does basic SIP communication
-func (g *Glutton) HandleSIP(netConn net.Conn) (err error) {
+func (g *Glutton) HandleSIP(ctx context.Context, netConn net.Conn) (err error) {
 	defer func() {
 		err = netConn.Close()
 		if err != nil {

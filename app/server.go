@@ -1,18 +1,30 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"sync"
 
+	"github.com/docopt/docopt-go"
 	"github.com/mushorg/glutton"
 )
 
+var usage = `
+Usage:
+    server -i <interface> [options] 
+    server -h | --help
+Options:
+    -i --interface=<iface>  Bind to this interface [default: eth0]. 
+    -l --logpath=<path>     Log file path [default: /dev/null].
+    -c --confpath=<path>    Configuration file path [default: config/].
+    -d --debug              Enable debug mode [default: false].
+    -h --help               Show this screen.
+`
+
 func onErrorExit(err error) {
 	if err != nil {
-		fmt.Println("[glutton ] %+v", err)
+		fmt.Printf("[glutton ] %+v\n", err)
 		os.Exit(0)
 	}
 }
@@ -38,13 +50,10 @@ func main() {
 
 	`)
 
-	iface := flag.String("interface", "eth0", "Interface to work with")
-	logPath := flag.String("log-path", "/dev/null", "Log file path")
-	confPath := flag.String("conf-path", "config/", "Config directory path")
-	enableDebug := flag.Bool("debug", false, "Set to enable debug log")
-	flag.Parse()
+	args, err := docopt.Parse(usage, os.Args[1:], true, "", true)
+	onErrorExit(err)
 
-	gtn, err := glutton.New(iface, confPath, logPath, enableDebug)
+	gtn, err := glutton.New(args)
 	onErrorExit(err)
 
 	err = gtn.Init()
@@ -57,9 +66,6 @@ func main() {
 		exitMtx.Lock()
 		println() // make it look nice after the ^C
 		fmt.Println("[glutton ] shutting down...")
-
-		// TODO
-		// Close connections on shutdown.
 		onErrorExit(gtn.Shutdown())
 	}
 	defer exit()

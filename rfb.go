@@ -3,6 +3,7 @@ package glutton
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -28,7 +29,7 @@ type PixelFormat struct {
 }
 
 // HandleRFB takes a net.Conn and does basic RFB/VNC communication
-func (g *Glutton) HandleRFB(conn net.Conn) (err error) {
+func (g *Glutton) HandleRFB(ctx context.Context, conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {

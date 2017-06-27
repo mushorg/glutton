@@ -1,48 +1,95 @@
 package glutton
 
 import (
+	"context"
+	"fmt"
 	"net"
 	"strings"
+	"time"
 )
 
 // mapProtocolHandlers map protocol handlers to corresponding protocol
 func (g *Glutton) mapProtocolHandlers() {
 
-	g.protocolHandlers["smtp"] = func(conn net.Conn) {
-		g.HandleSMTP(conn)
-	}
-	g.protocolHandlers["rdp"] = func(conn net.Conn) {
-		g.HandleRDP(conn)
-	}
-	g.protocolHandlers["smb"] = func(conn net.Conn) {
-		g.HandleSMB(conn)
-	}
-	g.protocolHandlers["ftp"] = func(conn net.Conn) {
-		g.HandleFTP(conn)
-	}
-	g.protocolHandlers["sip"] = func(conn net.Conn) {
-		g.HandleSIP(conn)
-	}
-	g.protocolHandlers["rfb"] = func(conn net.Conn) {
-		g.HandleRFB(conn)
-	}
-	g.protocolHandlers["telnet"] = func(conn net.Conn) {
-		g.HandleTelnet(conn)
-	}
-        g.protocolHandlers["jabber"] = func(conn net.Conn) {
-                g.HandleJabber(conn)
-        }
-	g.protocolHandlers["proxy_ssh"] = func(conn net.Conn) {
-		g.sshProxy.handle(conn)
-	}
+  g.protocolHandlers["jabber"] = func(conn net.Conn) {
+          g.HandleJabber(conn)
+  }
 	g.protocolHandlers["default"] = func(conn net.Conn) {
+
+	g.protocolHandlers["smtp"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleSMTP(ctx, conn)
+	}
+
+	g.protocolHandlers["rdp"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleRDP(ctx, conn)
+	}
+
+	g.protocolHandlers["smb"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleSMB(ctx, conn)
+	}
+
+	g.protocolHandlers["ftp"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleFTP(ctx, conn)
+	}
+
+	g.protocolHandlers["sip"] = func(ctx context.Context, conn net.Conn) (err error) {
+		// TODO: remove 'context.TODO()' when handler code start using context.
+		ctx = context.TODO()
+		return g.HandleSIP(ctx, conn)
+	}
+
+	g.protocolHandlers["rfb"] = func(ctx context.Context, conn net.Conn) (err error) {
+		// TODO: remove 'context.TODO()' when handler code start using context.
+		ctx = context.TODO()
+		return g.HandleRFB(ctx, conn)
+	}
+
+	g.protocolHandlers["telnet"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleTelnet(ctx, conn)
+	}
+
+	g.protocolHandlers["proxy_ssh"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.sshProxy.handle(ctx, conn)
+	}
+
+	g.protocolHandlers["default"] = func(ctx context.Context, conn net.Conn) (err error) {
+		// TODO: remove 'context.TODO()' when handler code start using context.
+		ctx = context.TODO()
+
 		snip, bufConn, err := g.Peek(conn, 4)
 		g.onErrorClose(err, conn)
 		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true}
 		if _, ok := httpMap[strings.ToUpper(string(snip))]; ok == true {
-			g.HandleHTTP(bufConn)
+			return g.HandleHTTP(ctx, bufConn)
 		} else {
-			g.HandleTCP(bufConn)
+			return g.HandleTCP(ctx, bufConn)
+
 		}
+	}
+}
+
+// closeOnShutdown close all connections before system shutdown
+func (g *Glutton) closeOnShutdown(conn net.Conn, done <-chan struct{}) {
+	select {
+	case <-g.ctx.Done():
+		if err := conn.Close(); err != nil {
+			g.logger.Error(fmt.Sprintf("[glutton  ]  error: %v", err))
+		}
+		return
+	case <-done:
+		return
+	}
+}
+
+// Drive child context from parent context with additional value required for sepcific handler
+func (g *Glutton) contextWithTimeout(timeInSeconds uint8) context.Context {
+	limit := time.Duration(timeInSeconds) * time.Second
+	return context.WithValue(g.ctx, "timeout", time.Now().Add(limit))
+}
+
+// updateConnectionTimeout increase connection timeout limit on connection I/O operation
+func (g *Glutton) updateConnectionTimeout(ctx context.Context, conn net.Conn) {
+	if timeout, ok := ctx.Value("timeout").(time.Time); ok {
+		conn.SetDeadline(timeout)
 	}
 }
