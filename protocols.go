@@ -11,10 +11,6 @@ import (
 // mapProtocolHandlers map protocol handlers to corresponding protocol
 func (g *Glutton) mapProtocolHandlers() {
 
-  g.protocolHandlers["jabber"] = func(conn net.Conn) {
-          g.HandleJabber(conn)
-  }
-
 	g.protocolHandlers["smtp"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.HandleSMTP(ctx, conn)
 	}
@@ -51,10 +47,13 @@ func (g *Glutton) mapProtocolHandlers() {
 		return g.sshProxy.handle(ctx, conn)
 	}
 
+	g.protocolHandlers["jabber"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleJabber(ctx, conn)
+	}
+
 	g.protocolHandlers["default"] = func(ctx context.Context, conn net.Conn) (err error) {
 		// TODO: remove 'context.TODO()' when handler code start using context.
 		ctx = context.TODO()
-
 		snip, bufConn, err := g.Peek(conn, 4)
 		g.onErrorClose(err, conn)
 		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true}
@@ -62,7 +61,6 @@ func (g *Glutton) mapProtocolHandlers() {
 			return g.HandleHTTP(ctx, bufConn)
 		} else {
 			return g.HandleTCP(ctx, bufConn)
-
 		}
 	}
 }

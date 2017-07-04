@@ -3,6 +3,7 @@ package glutton
 import (
 	"fmt"
 	"net"
+	"context"
 	"encoding/xml"
 	"bufio"
 	"encoding/hex"
@@ -86,7 +87,7 @@ func readMsgJabber(conn net.Conn, g *Glutton) (msg string, err error) {
 
 
 // HandleJabber
-func (g *Glutton) HandleJabber(conn net.Conn) (err error) {
+func (g *Glutton) HandleJabber(ctx context.Context, conn net.Conn) (err error) {
 	g.logger.Info(fmt.Sprintf("---------------[Jabber  ] send:"))
 	defer func() {
 		err = conn.Close()
