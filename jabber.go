@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/xml"
 	"bufio"
-	"encoding/hex"
 	"reflect"
 	"unsafe"
 )
@@ -45,13 +44,13 @@ func parseJabberClient( dataClient string , g *Glutton) string  {
 
 	err := xml.Unmarshal([]byte(dataClient), &v)
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("[Jabber  *********   ] err: %v", err))
+		g.logger.Error(fmt.Sprintf("[Jabber    ] err: %v", err))
 	}
 	
-	g.logger.Info(fmt.Sprintf("[Jabber  *********   ] STo: %v", v.STo))
-	g.logger.Info(fmt.Sprintf("[Jabber  *********   ] Version: %v", v.Version))
-	g.logger.Info(fmt.Sprintf("[Jabber  *********   ] Xmlns: %v", v.Xmlns))
-	g.logger.Info(fmt.Sprintf("[Jabber  *********   ] XMLName: %v", v.XMLName))
+	g.logger.Info(fmt.Sprintf("[Jabber     ] Jabber STo: %v", v.STo))
+	g.logger.Info(fmt.Sprintf("[Jabber     ] Jabber Version: %v", v.Version))
+	g.logger.Info(fmt.Sprintf("[Jabber     ] Jabber Xmlns: %v", v.Xmlns))
+	g.logger.Info(fmt.Sprintf("[Jabber     ] Jabber XMLName: %v", v.XMLName))
 	return v.STo
 
 }
@@ -66,16 +65,13 @@ func readMsgJabber(conn net.Conn, g *Glutton) (msg string, err error) {
 	for i := 1; true; i++ {
 		line, isPrefix, err = r.ReadLine()
 		if err != nil {
-			g.logger.Error(fmt.Sprintf("[Jabber     ] errJ: %v", err))
+			g.logger.Error(fmt.Sprintf("[Jabber     ] error: %v", err))
 			break
 			return
 		}
 		
-		g.logger.Info(fmt.Sprintf("[Jabber     ] isPrefix: %v", isPrefix))
-		g.logger.Info(fmt.Sprintf("[Jabber     ] line: %v", line))
-		g.logger.Info(fmt.Sprintf("[Jabber     ] BytesToString: %v", bytesToString(line)))
-		g.logger.Info(fmt.Sprintf("[Jabber     ] type line[0]: %T", reflect.TypeOf(line[0]) ))		
-		g.logger.Info(fmt.Sprintf("[Jabber     ] \n%s", hex.Dump(line[0:])))
+		g.logger.Info(fmt.Sprintf("[Jabber     ] Jabber isPrefix: %v", isPrefix))
+		g.logger.Info(fmt.Sprintf("[Jabber     ] Jabber line: %v", line))
 		dataClient := bytesToString(line)
 		parseJabberClient(dataClient, g)
 
@@ -88,11 +84,10 @@ func readMsgJabber(conn net.Conn, g *Glutton) (msg string, err error) {
 
 // HandleJabber
 func (g *Glutton) HandleJabber(ctx context.Context, conn net.Conn) (err error) {
-	g.logger.Info(fmt.Sprintf("---------------[Jabber  ] send:"))
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Error(fmt.Sprintf("[>>>>>>>>>>>>>>jabber<<<<<<<<<<<<<     ]  error: %v", err))
+			g.logger.Error(fmt.Sprintf("[Jabber     ]  error: %v", err))
 		}
 	}()
 	
@@ -102,17 +97,16 @@ func (g *Glutton) HandleJabber(ctx context.Context, conn net.Conn) (err error) {
  
     output, err := xml.MarshalIndent(v, "  ", "    ")
     if err != nil {
-        g.logger.Error(fmt.Sprintf("[>>>>>>>>>>>>>>jabber<<<<<<<<<<<<<     ]  error: %v", err))
+        g.logger.Error(fmt.Sprintf("[Jabber     ]  error: %v", err))
     }
  
     conn.Write(output)
 
     msg, err := readMsgJabber(conn, g)
     if err != nil {
-		g.logger.Error(fmt.Sprintf("[Jaber......  ] error: %v", err))
+		g.logger.Error(fmt.Sprintf("[Jaber     ] error: %v", err))
 	}
-	g.logger.Info(fmt.Sprintf("[>>>>>>>>>>>>>>jabber<<<<<<<<<<<<<     ]  msg: %v", msg))
-    g.logger.Info(fmt.Sprintf("------ write XML Server ---------"))
+	g.logger.Info(fmt.Sprintf("[Jabber     ]  msg: %v", msg))
     return nil    
 
 }
