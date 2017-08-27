@@ -35,12 +35,12 @@ type readSession struct {
 }
 
 // NewSSHProxy creates a new SSH proxy instance
-func (g *Glutton) NewSSHProxy() (err error) {
+func (g *Glutton) NewSSHProxy(destinationURL string) (err error) {
 	sshProxy := &sshProxy{
 		logger: g.logger,
 	}
 
-	dest, err := url.Parse(g.conf.GetString("proxy_ssh"))
+	dest, err := url.Parse(destinationURL)
 	if err != nil {
 		g.logger.Error("[ssh.prxy] failed to parse destination address, check config.yaml")
 		return err

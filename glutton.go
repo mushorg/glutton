@@ -85,11 +85,8 @@ func (g *Glutton) Init() (err error) {
 
 	g.protocolHandlers = make(map[string]protocolHandlerFunc, 0)
 
-	tcpProxyPort := uint(g.conf.GetInt("proxy_tcp"))
 	gluttonServerPort := uint(g.conf.GetInt("glutton_server"))
 
-	// Initiating tcp proxy server
-	g.processor.AddServer(freki.NewTCPProxy(tcpProxyPort))
 	// Initiating glutton server
 	g.processor.AddServer(freki.NewUserConnServer(gluttonServerPort))
 	// Initiating log producer
@@ -154,21 +151,43 @@ func (g *Glutton) makeID() error {
 
 // registerHandlers register protocol handlers to glutton_server
 func (g *Glutton) registerHandlers() {
+
 	for _, rule := range g.rules {
+
 		if rule.Type == "conn_handler" && rule.Target != "" {
-			protocol := rule.Target
-			if g.protocolHandlers[protocol] == nil {
-				g.logger.Warn(fmt.Sprintf("[glutton ] no handler found for %v protocol", protocol))
-				continue
-			}
-			if protocol == "proxy_ssh" {
-				err := g.NewSSHProxy()
+
+			var handler string
+
+			switch rule.Name {
+
+			case "proxy_tcp":
+				handler = rule.Name
+				g.protocolHandlers[rule.Target] = g.protocolHandlers[handler]
+				delete(g.protocolHandlers, handler)
+				handler = rule.Target
+				break
+
+			case "proxy_ssh":
+				handler = rule.Name
+				err := g.NewSSHProxy(rule.Target)
 				if err != nil {
 					g.logger.Error(fmt.Sprintf("[ssh.prxy] failed to initialize SSH proxy"))
 					continue
 				}
+				rule.Target = handler
+				break
+
+			default:
+				handler = rule.Target
+				break
 			}
-			g.processor.RegisterConnHandler(protocol, func(conn net.Conn, md *freki.Metadata) error {
+
+			if g.protocolHandlers[handler] == nil {
+				g.logger.Warn(fmt.Sprintf("[glutton ] no handler found for %v protocol", handler))
+				continue
+			}
+
+			g.processor.RegisterConnHandler(handler, func(conn net.Conn, md *freki.Metadata) error {
 
 				host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 				if err != nil {
@@ -192,7 +211,7 @@ func (g *Glutton) registerHandlers() {
 				go g.closeOnShutdown(conn, done)
 				conn.SetDeadline(time.Now().Add(45 * time.Second))
 				ctx := g.contextWithTimeout(72)
-				err = g.protocolHandlers[protocol](ctx, conn)
+				err = g.protocolHandlers[handler](ctx, conn)
 				done <- struct{}{}
 				return err
 			})

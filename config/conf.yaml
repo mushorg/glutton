@@ -1,20 +1,8 @@
 ports:
   glutton_server: 5000
-  proxy_tcp: 6000
 
 rules_path: rules/rules.yaml
 
 # Glutton will produce events at the following address
 enableGollum: false
 gollumAddress: http://gollum:gollum@localhost:9000
-
-# Address of SSH server behind proxy
-# Example:
-#
-# tcp://user:pass@192.168.0.123:22
-# tcp://192.168.0.123:22
-
-proxy_ssh:
-  - tcp://172.17.0.2:22
-  # TODO:
-  # - docker://user:pass@172.17.0.3:22  // Not supported yet
