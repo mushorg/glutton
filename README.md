@@ -24,3 +24,8 @@ To run/test glutton:
 ```
 bin/server
 ```
+
+# Use as Proxy  
+
+Glutton provide SSH and TCP proxy. SSH proxy work as MITM between attacker and server to log every thing in plan text. TCP proxy does not provide facility for logging yet. Examples can be found [here](https://github.com/mushorg/glutton/tree/master/examples). 
+
