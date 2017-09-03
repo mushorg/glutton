@@ -18,7 +18,7 @@ Options:
     -i --interface=<iface>  Bind to this interface [default: eth0]. 
     -l --logpath=<path>     Log file path [default: /dev/null].
     -c --confpath=<path>    Configuration file path [default: config/].
-    -d --debug              Enable debug mode [default: false].
+    -d --debug=<boolean>    Enable debug mode [default: false].
     -h --help               Show this screen.
 `
 
