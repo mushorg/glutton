@@ -39,6 +39,10 @@ func (g *Glutton) mapProtocolHandlers() {
 		return g.HandleRFB(ctx, conn)
 	}
 
+	g.protocolHandlers["proxy_tcp"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.tcpProxy(ctx, conn)
+	}
+
 	g.protocolHandlers["telnet"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.HandleTelnet(ctx, conn)
 	}
