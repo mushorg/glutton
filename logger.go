@@ -5,9 +5,10 @@ import (
 	"github.com/Unknwon/com"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"strconv"
 )
 
-func initLogger(logPath *string, id string, debug *bool) (*zap.Logger, error) {
+func initLogger(logPath *string, id string, debug *string) (*zap.Logger, error) {
 
 	var cfg zap.Config
 	if !com.IsDir(*logPath) {
@@ -23,7 +24,8 @@ func initLogger(logPath *string, id string, debug *bool) (*zap.Logger, error) {
 		"sensorID": id,
 	}
 
-	if *debug {
+	check_debug, _ := strconv.ParseBool(*debug)
+	if check_debug {
 		cfg.Level.SetLevel(zapcore.DebugLevel)
 	}
 
