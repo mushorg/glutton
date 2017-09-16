@@ -24,7 +24,10 @@ func initLogger(logPath *string, id string, debug *string) (*zap.Logger, error) 
 		"sensorID": id,
 	}
 
-	check_debug, _ := strconv.ParseBool(*debug)
+	check_debug, err := strconv.ParseBool(*debug)
+	if err != nil {
+		return nil, err
+	}
 	if check_debug {
 		cfg.Level.SetLevel(zapcore.DebugLevel)
 	}
