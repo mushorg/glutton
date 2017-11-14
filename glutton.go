@@ -39,7 +39,7 @@ func New(args map[string]interface{}) (*Glutton, error) {
 		iface    string = args["--interface"].(string)
 		logPath         = args["--logpath"].(string)
 		confPath        = args["--confpath"].(string)
-		debug    bool   = args["--debug"].(bool)
+		debug    string = args["--debug"].(string)
 	)
 
 	gtn := &Glutton{}
