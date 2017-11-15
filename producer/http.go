@@ -61,7 +61,7 @@ func (conf *Config) LogHTTP(conn net.Conn, md *freki.Metadata, payload []byte, a
 		Timestamp: time.Now().UTC(),
 		SrcHost:   host,
 		SrcPort:   port,
-		DstPort:   md.TargetPort,
+		DstPort:   uint16(md.TargetPort),
 		SensorID:  conf.sensorID,
 		Rule:      md.Rule.String(),
 		ConnKey:   connKey,

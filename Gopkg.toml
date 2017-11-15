@@ -1,0 +1,39 @@
+[[constraint]]
+  branch = "master"
+  name = "github.com/1lann/go-sip"
+
+[[constraint]]
+  name = "github.com/Sirupsen/logrus"
+  version = "1.0.3"
+
+[[constraint]]
+  name = "github.com/Unknwon/com"
+  version = "1.0.0"
+
+[[constraint]]
+  name = "github.com/docopt/docopt-go"
+  version = "0.6.2"
+
+[[constraint]]
+  name = "github.com/kung-foo/freki"
+  revision = "b4042f6dd12c8d141636194fa79c028226ac3ec8"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/lunixbochs/vtclean"
+
+[[constraint]]
+  name = "github.com/satori/go.uuid"
+  version = "1.1.0"
+
+[[constraint]]
+  name = "github.com/spf13/viper"
+  version = "1.0.0"
+
+[[constraint]]
+  name = "go.uber.org/zap"
+  version = "1.7.1"
+
+[[constraint]]
+  branch = "master"
+  name = "golang.org/x/crypto"
