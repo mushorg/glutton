@@ -160,7 +160,7 @@ func (s *sshProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 
 		sshServerChan, serverReq, err := ch.Accept()
 		if err != nil {
-			s.logger.Error(fmt.Sprintf("[ssh.prxy] could not accept server channel, error: ", err))
+			s.logger.Error(fmt.Sprintf("[ssh.prxy] could not accept server channel, error: %+v", err))
 			return err
 		}
 
@@ -186,7 +186,7 @@ func (s *sshProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 					return
 				}
 
-				s.logger.Debug(fmt.Sprintf("[ssh.prxy] request: \n\n%s %s %s %s\n\n", dst, req.Type, req.WantReply, req.Payload))
+				s.logger.Debug(fmt.Sprintf("[ssh.prxy] request: \n\n%s %s %v %s\n\n", dst, req.Type, req.WantReply, req.Payload))
 				b, sendErr := dst.SendRequest(req.Type, req.WantReply, req.Payload)
 				if sendErr != nil {
 					s.logger.Error(fmt.Sprintf("[ssh.prxy] error: %v", sendErr))

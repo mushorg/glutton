@@ -29,7 +29,7 @@ func (g *Glutton) tcpProxy(ctx context.Context, conn net.Conn) (err error) {
 
 	target := md.Rule.Target
 
-	fmt.Printf("Rule Traget: ", target)
+	fmt.Printf("Rule Traget: %+v\n", target)
 
 	dest, err := url.Parse(target)
 	if err != nil {

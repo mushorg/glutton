@@ -95,12 +95,12 @@ func getSample(cmd string, g *Glutton) error {
 		return err
 	}
 	if resp.StatusCode != 200 {
-		g.logger.Error(fmt.Sprintf("[telnet  ] getSample read http: %v, error: Non 200 status code on getSample"))
+		g.logger.Error(fmt.Sprintf("[telnet  ] getSample read http: error: Non 200 status code on getSample"))
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.ContentLength <= 0 {
-		g.logger.Error(fmt.Sprintf("[telnet  ] getSample read http: %v, error: Empty response body"))
+		g.logger.Error(fmt.Sprintf("[telnet  ] getSample read http: error: Empty response body"))
 		return err
 	}
 	bodyBuffer, err := ioutil.ReadAll(resp.Body)

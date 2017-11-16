@@ -2,10 +2,11 @@ package glutton
 
 import (
 	"errors"
+	"strconv"
+
 	"github.com/Unknwon/com"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"strconv"
 )
 
 func initLogger(logPath *string, id string, debug *string) (*zap.Logger, error) {
@@ -24,11 +25,11 @@ func initLogger(logPath *string, id string, debug *string) (*zap.Logger, error) 
 		"sensorID": id,
 	}
 
-	check_debug, err := strconv.ParseBool(*debug)
+	checkDebug, err := strconv.ParseBool(*debug)
 	if err != nil {
 		return nil, err
 	}
-	if check_debug {
+	if checkDebug {
 		cfg.Level.SetLevel(zapcore.DebugLevel)
 	}
 

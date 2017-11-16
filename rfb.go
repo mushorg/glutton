@@ -65,7 +65,7 @@ func (g *Glutton) HandleRFB(ctx context.Context, conn net.Conn) (err error) {
 	}
 	err = binary.Write(buf, binary.LittleEndian, f)
 	if err != nil {
-		g.logger.Warn(fmt.Sprintf("[rfb     ] binary.Write failed, error: ", err))
+		g.logger.Warn(fmt.Sprintf("[rfb     ] binary.Write failed, error: %+v", err))
 	}
 	conn.Write(buf.Bytes())
 	readRFB(conn, g)
