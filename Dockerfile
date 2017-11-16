@@ -13,4 +13,4 @@ RUN go build -o server app/server.go && \
     apk del g++ git && \
     rm -rf /var/cache/apk/*
 
-CMD ["./server", "-i", "eth0"]
+CMD ["./server", "-i", "eth0", "-l", "/var/log/glutton.log", "-d", "true"]

@@ -16,7 +16,7 @@
 
 [[constraint]]
   name = "github.com/kung-foo/freki"
-  revision = "b4042f6dd12c8d141636194fa79c028226ac3ec8"
+  branch = "v2"
 
 [[constraint]]
   branch = "master"
