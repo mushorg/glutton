@@ -2,15 +2,14 @@ dist: trusty
 
 language: go
 go:
-  - 1.7.x
+  - 1.8.x
 
 before_install:
   - sudo apt-get -qq update
   - sudo apt-get install -y libpcap-dev libnetfilter-queue-dev iptables-dev
 
 install:
-  - go get -v github.com/Masterminds/glide
-  - glide install
-  - glide update
+  - go get -u github.com/golang/dep/cmd/dep
+  - dep ensure
 
 script: go test
