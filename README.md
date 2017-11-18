@@ -6,7 +6,7 @@ apt-get install libnetfilter-queue-dev libpcap-dev iptables-dev
 ```
 To change your SSH server default port (i.e. 5001, see `rules.yaml`) and restart sshd:
 ```
-sed -i 's/Port 22/Port 5001/' /etc/ssh/sshd_config
+sed -i 's/[# ]*Port .*/Port 5001/g' /etc/ssh/sshd_config
 ```
 Download glutton, and install dependencies using `glide`:
 ```
