@@ -11,6 +11,7 @@ sed -i 's/Port 22/Port 5001/' /etc/ssh/sshd_config
 Download glutton, and install dependencies using `dep`:
 ```
 go get github.com/mushorg/glutton
+go get -u github.com/golang/dep/cmd/dep
 cd $GOPATH/src/github.com/mushorg/glutton/
 dep ensure
 ```
