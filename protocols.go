@@ -63,9 +63,8 @@ func (g *Glutton) mapProtocolHandlers() {
 		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true}
 		if _, ok := httpMap[strings.ToUpper(string(snip))]; ok == true {
 			return g.HandleHTTP(ctx, bufConn)
-		} else {
-			return g.HandleTCP(ctx, bufConn)
 		}
+		return g.HandleTCP(ctx, bufConn)
 	}
 }
 

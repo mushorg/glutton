@@ -26,3 +26,6 @@ _testmain.go
 *.exe
 *.test
 *.prof
+
+# Artifacts
+glutton.log*
