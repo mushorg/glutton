@@ -32,7 +32,7 @@ func onErrorExit(err error) {
 
 func onInterruptSignal(fn func()) {
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGHUP)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
 		<-sig
