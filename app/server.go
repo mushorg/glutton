@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 
 	"github.com/docopt/docopt-go"
 	"github.com/mushorg/glutton"
@@ -12,10 +13,10 @@ import (
 
 var usage = `
 Usage:
-    server -i <interface> [options] 
+    server -i <interface> [options]
     server -h | --help
 Options:
-    -i --interface=<iface>  Bind to this interface [default: eth0]. 
+    -i --interface=<iface>  Bind to this interface [default: eth0].
     -l --logpath=<path>     Log file path [default: /dev/null].
     -c --confpath=<path>    Configuration file path [default: config/].
     -d --debug=<boolean>    Enable debug mode [default: false].
@@ -31,7 +32,7 @@ func onErrorExit(err error) {
 
 func onInterruptSignal(fn func()) {
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt)
+	signal.Notify(sig, os.Interrupt, syscall.SIGHUP)
 
 	go func() {
 		<-sig
@@ -62,7 +63,9 @@ func main() {
 	exitMtx := sync.RWMutex{}
 	exit := func() {
 		// See if there was a panic...
-		fmt.Fprintln(os.Stderr, recover())
+		if r := recover(); r != nil {
+			fmt.Fprintln(os.Stderr, recover())
+		}
 		exitMtx.Lock()
 		println() // make it look nice after the ^C
 		fmt.Println("[glutton ] shutting down...")
