@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/kung-foo/freki"
@@ -14,14 +15,14 @@ import (
 	"github.com/mushorg/glutton/producer"
 	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/viper"
-	log "go.uber.org/zap"
+	"go.uber.org/zap"
 )
 
 // Glutton struct
 type Glutton struct {
 	id               uuid.UUID
 	conf             *viper.Viper
-	logger           *log.Logger
+	logger           *zap.Logger
 	processor        *freki.Processor
 	rules            []*freki.Rule
 	producer         *producer.Config
@@ -36,10 +37,10 @@ type protocolHandlerFunc func(ctx context.Context, conn net.Conn) error
 // New creates a new Glutton instance
 func New(args map[string]interface{}) (*Glutton, error) {
 	var (
-		iface    string = args["--interface"].(string)
-		logPath         = args["--logpath"].(string)
-		confPath        = args["--confpath"].(string)
-		debug    string = args["--debug"].(string)
+		iface    = args["--interface"].(string)
+		logPath  = args["--logpath"].(string)
+		confPath = args["--confpath"].(string)
+		debug    = args["--debug"].(string)
 	)
 
 	gtn := &Glutton{}
@@ -188,7 +189,6 @@ func (g *Glutton) registerHandlers() {
 			}
 
 			g.processor.RegisterConnHandler(handler, func(conn net.Conn, md *freki.Metadata) error {
-
 				host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 				if err != nil {
 					return err
@@ -198,7 +198,13 @@ func (g *Glutton) registerHandlers() {
 					g.logger.Debug(fmt.Sprintf("[glutton ] connection not tracked: %s:%s", host, port))
 					return nil
 				}
-				g.logger.Debug(fmt.Sprintf("[glutton ] new connection: %s:%s -> %d", host, port, md.TargetPort))
+				g.logger.Debug(
+					fmt.Sprintf("[glutton ] new connection: %s:%s -> %d", host, port, md.TargetPort),
+					zap.String("host", host),
+					zap.String("sport", port),
+					zap.String("dport", strconv.Itoa(int(md.TargetPort))),
+					zap.String("handler", handler),
+				)
 
 				if g.producer != nil {
 					err = g.producer.LogHTTP(conn, md, nil, "")

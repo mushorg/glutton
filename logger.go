@@ -10,7 +10,6 @@ import (
 )
 
 func initLogger(logPath *string, id string, debug *string) (*zap.Logger, error) {
-
 	var cfg zap.Config
 	if !com.IsDir(*logPath) {
 		cfg = zap.NewProductionConfig()

@@ -69,7 +69,7 @@ func (g *Glutton) closeOnShutdown(conn net.Conn, done <-chan struct{}) {
 	select {
 	case <-g.ctx.Done():
 		if err := conn.Close(); err != nil {
-			g.logger.Error(fmt.Sprintf("[glutton  ]  error: %v", err))
+			g.logger.Error(fmt.Sprintf("[glutton  ]  error on close: %v", err))
 		}
 		return
 	case <-done:
