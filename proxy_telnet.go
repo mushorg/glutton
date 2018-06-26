@@ -116,7 +116,11 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 				break
 			}
 			if len(strings.Trim(msg, " ")) > 0 {
+<<<<<<< HEAD
 				t.logger.Info(fmt.Sprintf("[telnet proxy  ]   Info: Sending: %d bytes(s) to Server, Bytes:\n %s", len(string(msg)), string(msg)))
+=======
+				t.logger.Info(fmt.Sprintf("[telnet proxy  ]   Info: Sending: %d bytes(s) to Server, Bytes:\n %s", len(string(msg)), string(msg)))
+>>>>>>> f12c33ff866cea847842e28de431be10242c3926
 				fmt.Println(fmt.Sprintf("[telnet proxy ]  Info: Sending: %d bytes(s) to Server", len(string(msg))))
 			}
 		}
