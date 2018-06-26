@@ -27,6 +27,7 @@ type Glutton struct {
 	rules            []*freki.Rule
 	producer         *producer.Config
 	protocolHandlers map[string]protocolHandlerFunc
+	telnetProxy      *telnetProxy
 	sshProxy         *sshProxy
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -177,7 +178,15 @@ func (g *Glutton) registerHandlers() {
 				}
 				rule.Target = handler
 				break
-
+			case "proxy_telnet":
+				handler = rule.Name
+				err := g.NewTelnetProxy(rule.Target)
+				if err != nil {
+					g.logger.Error(fmt.Sprint("[telnet.prxy] failed to initialize TELNET proxy"))
+					continue
+				}
+				rule.Target = handler
+				break
 			default:
 				handler = rule.Target
 				break
