@@ -82,12 +82,6 @@
   version = "v0.3.3"
 
 [[projects]]
-  name = "github.com/docopt/docopt-go"
-  packages = ["."]
-  revision = "784ddc588536785e7299f7272f39101f7faccc3f"
-  version = "0.6.2"
-
-[[projects]]
   name = "github.com/fsnotify/fsnotify"
   packages = ["."]
   revision = "c2828203cd70a50dcccfb2761f8b1f8ceef9a8e9"
@@ -287,6 +281,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "9839806d8facda6dade591731194ea21657c7e078acc21bfef767d4800e7593d"
+  inputs-digest = "fbc3c40fe12c48f7fa6bb5549b2017f6d715a49adfecac1c170b9645aa9de62a"
   solver-name = "gps-cdcl"
   solver-version = 1
