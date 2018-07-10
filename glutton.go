@@ -35,12 +35,12 @@ type Glutton struct {
 type protocolHandlerFunc func(ctx context.Context, conn net.Conn) error
 
 // New creates a new Glutton instance
-func New(args map[string]interface{}) (*Glutton, error) {
+func New() (*Glutton, error) {
 	var (
-		iface    = args["--interface"].(string)
-		logPath  = args["--logpath"].(string)
-		confPath = args["--confpath"].(string)
-		debug    = args["--debug"].(string)
+		iface    = viper.GetString("interface")
+		logPath  = viper.GetString("logpath")
+		confPath = viper.GetString("confpath")
+		debug    = viper.GetBool("debug")
 	)
 
 	gtn := &Glutton{}
@@ -48,7 +48,7 @@ func New(args map[string]interface{}) (*Glutton, error) {
 	if err != nil {
 		return nil, err
 	}
-	if gtn.logger, err = initLogger(&logPath, gtn.id.String(), &debug); err != nil {
+	if gtn.logger, err = initLogger(&logPath, gtn.id.String(), debug); err != nil {
 		return nil, err
 	}
 
