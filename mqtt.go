@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/davecgh/go-spew/spew"
+	"go.uber.org/zap"
 )
 
 type MQQTMsg struct {
@@ -40,12 +40,24 @@ func (g *Glutton) HandleMQTT(ctx context.Context, conn net.Conn) error {
 			if err := binary.Read(r, binary.LittleEndian, &msg); err != nil {
 				break
 			}
-			spew.Dump(msg)
-			res := MQQTRes{
-				HeaderFlag: 0x20,
-				Length:     2,
-				Flags:      0,
-				RetCode:    0,
+			g.logger.Info(fmt.Sprintf("new mqqt packet with header flag: %d", msg.HeaderFlag), zap.String("handler", "mqtt"))
+			var res MQQTRes
+			switch msg.HeaderFlag {
+			case 0x10:
+				res = MQQTRes{
+					HeaderFlag: 0x20,
+					Length:     2,
+				}
+			case 0x82:
+				res = MQQTRes{
+					HeaderFlag: 0x90,
+					Length:     3,
+				}
+			case 0xc0:
+				res = MQQTRes{
+					HeaderFlag: 0xd0,
+					Length:     0,
+				}
 			}
 			var buf bytes.Buffer
 			binary.Write(&buf, binary.LittleEndian, res)
