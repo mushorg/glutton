@@ -47,6 +47,10 @@ func (g *Glutton) mapProtocolHandlers() {
 		return g.HandleTelnet(ctx, conn)
 	}
 
+	g.protocolHandlers["mqtt"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleMQTT(ctx, conn)
+	}
+
 	g.protocolHandlers["proxy_ssh"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.sshProxy.handle(ctx, conn)
 	}
