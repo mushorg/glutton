@@ -28,7 +28,7 @@ func (c *Client) w(s string) {
 func (c *Client) r(g *Glutton) (string, error) {
 	reply, err := c.bufin.ReadString('\n')
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("[smpt    ] error: %v", err))
+		g.logger.Error(fmt.Sprintf("[smtp    ] error: %v", err))
 		return "", err
 	}
 	return reply, nil
