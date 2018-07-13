@@ -35,46 +35,35 @@ type Glutton struct {
 type protocolHandlerFunc func(ctx context.Context, conn net.Conn) error
 
 // New creates a new Glutton instance
-func New() (*Glutton, error) {
-	var (
-		iface    = viper.GetString("interface")
-		logPath  = viper.GetString("logpath")
-		confPath = viper.GetString("confpath")
-		debug    = viper.GetBool("debug")
-	)
+func New() (g *Glutton, err error) {
+	g = &Glutton{}
+	g.protocolHandlers = make(map[string]protocolHandlerFunc, 0)
+	viper.SetDefault("var-dir", "/var/lib/glutton")
+	if err = g.makeID(); err != nil {
+		return nil, err
+	}
+	g.logger = NewLogger(g.id.String())
 
-	gtn := &Glutton{}
-	err := gtn.makeID()
+	// Loading the congiguration
+	g.logger.Info("Loading configurations from: config/conf.yaml", zap.String("reporter", "glutton"))
+	g.conf, err = config.Init(g.logger)
 	if err != nil {
 		return nil, err
 	}
-	if gtn.logger, err = initLogger(&logPath, gtn.id.String(), debug); err != nil {
-		return nil, err
-	}
 
-	// Loading the congiguration
-	gtn.logger.Info("[glutton ] Loading configurations from: config/conf.yaml")
-	gtn.conf = config.Init(&confPath, gtn.logger)
-
-	rulesPath := gtn.conf.GetString("rules_path")
+	rulesPath := g.conf.GetString("rules_path")
 	rulesFile, err := os.Open(rulesPath)
 	defer rulesFile.Close()
 	if err != nil {
 		return nil, err
 	}
 
-	gtn.rules, err = freki.ReadRulesFromFile(rulesFile)
+	g.rules, err = freki.ReadRulesFromFile(rulesFile)
 	if err != nil {
 		return nil, err
 	}
 
-	// Initiate the freki processor
-	gtn.processor, err = freki.New(iface, gtn.rules, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return gtn, nil
+	return g, nil
 
 }
 
@@ -84,9 +73,13 @@ func (g *Glutton) Init() (err error) {
 	ctx := context.Background()
 	g.ctx, g.cancel = context.WithCancel(ctx)
 
-	g.protocolHandlers = make(map[string]protocolHandlerFunc, 0)
-
 	gluttonServerPort := uint(g.conf.GetInt("glutton_server"))
+
+	// Initiate the freki processor
+	g.processor, err = freki.New(viper.GetString("interface"), g.rules, nil)
+	if err != nil {
+		return
+	}
 
 	// Initiating glutton server
 	g.processor.AddServer(freki.NewUserConnServer(gluttonServerPort))
@@ -121,10 +114,9 @@ func (g *Glutton) Start() (err error) {
 }
 
 func (g *Glutton) makeID() error {
-	dirName := "/var/lib/glutton"
 	fileName := "glutton.id"
-	filePath := filepath.Join(dirName, fileName)
-	err := os.MkdirAll(dirName, 0644)
+	filePath := filepath.Join(viper.GetString("var-dir"), fileName)
+	err := os.MkdirAll(viper.GetString("var-dir"), 0777)
 	if err != nil {
 		return err
 	}
