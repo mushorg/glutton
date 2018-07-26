@@ -7,21 +7,10 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/docopt/docopt-go"
 	"github.com/mushorg/glutton"
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
-
-var usage = `
-Usage:
-    server -i <interface> [options]
-    server -h | --help
-Options:
-    -i --interface=<iface>  Bind to this interface [default: eth0].
-    -l --logpath=<path>     Log file path [default: /dev/null].
-    -c --confpath=<path>    Configuration file path [default: config/].
-    -d --debug=<boolean>    Enable debug mode [default: false].
-    -h --help               Show this screen.
-`
 
 func onErrorExit(err error) {
 	if err != nil {
@@ -51,10 +40,15 @@ func main() {
 
 	`)
 
-	args, err := docopt.Parse(usage, os.Args[1:], true, "", true)
-	onErrorExit(err)
+	pflag.StringP("interface", "i", "eth0", "Bind to this interface")
+	pflag.StringP("logpath", "l", "/dev/null", "Log file path")
+	pflag.StringP("confpath", "c", "config/", "Configuration file path")
+	pflag.BoolP("debug", "d", false, "Enable debug mode")
 
-	gtn, err := glutton.New(args)
+	pflag.Parse()
+	viper.BindPFlags(pflag.CommandLine)
+
+	gtn, err := glutton.New()
 	onErrorExit(err)
 
 	err = gtn.Init()

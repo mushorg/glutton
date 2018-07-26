@@ -47,12 +47,22 @@ func (g *Glutton) mapProtocolHandlers() {
 		return g.HandleTelnet(ctx, conn)
 	}
 
+	g.protocolHandlers["mqtt"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleMQTT(ctx, conn)
+	}
+
 	g.protocolHandlers["proxy_ssh"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.sshProxy.handle(ctx, conn)
 	}
+  
 	g.protocolHandlers["proxy_telnet"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.telnetProxy.handle(ctx, conn)
+  }
+
+	g.protocolHandlers["jabber"] = func(ctx context.Context, conn net.Conn) (err error) {
+		return g.HandleJabber(ctx, conn)
 	}
+
 	g.protocolHandlers["default"] = func(ctx context.Context, conn net.Conn) (err error) {
 		// TODO: remove 'context.TODO()' when handler code start using context.
 		ctx = context.TODO()
