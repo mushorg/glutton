@@ -80,7 +80,7 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 			t.logger.Info(fmt.Sprintf("[telnet proxy  ]   Info: Recieved: %d bytes(s) from Server. Bytes: %s", len(string(reply)), string(reply)))
 			err = writeMsg(conn, string(reply), g)
 			if(err != nil) {
-				t.logger.Error(fmt.Sprintf("[telnet proxy] Error: %v", err)
+				t.logger.Error(fmt.Sprintf("[telnet proxy] Error: %v", err))
 				break
 			}
 		}
@@ -98,7 +98,7 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 			}
 			msg, err := readMsg(conn, g)
 			if err != nil {
-				t.logger.Error(fmt.Sprintf("[telnet proxy] Error: %v", err)
+				t.logger.Error(fmt.Sprintf("[telnet proxy] Error: %v", err))
 				break
 			}
 			_, err = hconn.Write([]byte(msg))
