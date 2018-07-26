@@ -33,10 +33,9 @@ func (g *Glutton) NewTelnetProxy(destinationURL string) (err error) {
 	dest, err := url.Parse(destinationURL)
 	if err != nil {
 		t.logger.Error("[telnet.prxy] failed to parse destination address, check config.yaml")
-		fmt.Println(fmt.Sprintf("[telnet.prxy ]   failed to parse destination address, check config.yaml"))
 		return err
 	}
-	t.logger.Info("[telnet proxy] " + dest.Host)
+	t.logger.Info(fmt.Sprintf("[telnet proxy] %v", dest.Host))
 	t.host = dest.Host
 	g.telnetProxy = t
 	return
@@ -48,13 +47,12 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 	g := t.glutton
 	tcpAddr, err := net.ResolveTCPAddr("tcp", t.host)
 	if err != nil {
-		println("ResolveTCPAddr failed:", err.Error())
+		t.logger.Error(fmt.Sprintf("ResolveTCPAddr failed: %v", err.Error()))
 		return
 	}
 	hconn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
 		t.logger.Error(fmt.Sprintf("[telnet proxy  ]  Connection error: %v", err))
-		fmt.Println(fmt.Sprintf("[telnet proxy ]  Coonection error: %v", err))
 		return
 	}
 	n := 0
@@ -73,17 +71,18 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 			if err != nil {
 				if err == io.EOF {
 					t.logger.Error(fmt.Sprintf("[telnet proxy  ]   Connection closed by Server"))
-					fmt.Println(fmt.Sprintf("[telnet proxy ]  Connection closed by Server"))
 					break
 				}
 				t.logger.Error(fmt.Sprintf("[telnet proxy  ]   error: %v", err))
-				fmt.Println(fmt.Sprintf("[telnet proxy ]  error: %v", err))
 				break
 			}
 
 			t.logger.Info(fmt.Sprintf("[telnet proxy  ]   Info: Recieved: %d bytes(s) from Server. Bytes: %s", len(string(reply)), string(reply)))
-			fmt.Println(fmt.Sprintf("[telnet proxy ]  Info: Recieved: %d bytes(s) from Server", len(string(reply))))
-			writeMsg(conn, string(reply), g)
+			err = writeMsg(conn, string(reply), g)
+			if(err != nil) {
+				t.logger.Error(fmt.Sprintf("[telnet proxy] Error: %v", err)
+				break
+			}
 		}
 		return
 	}()
@@ -99,17 +98,16 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 			}
 			msg, err := readMsg(conn, g)
 			if err != nil {
+				t.logger.Error(fmt.Sprintf("[telnet proxy] Error: %v", err)
 				break
 			}
 			_, err = hconn.Write([]byte(msg))
 			if err != nil {
 				if err == io.EOF {
 					t.logger.Error(fmt.Sprintf("[telnet proxy  ]   Connection closed by Server"))
-					fmt.Println(fmt.Sprintf("[telnet proxy ]  Connection closed by Server"))
 					break
 				}
 				t.logger.Error(fmt.Sprintf("[telnet proxy  ]   Error: %v", err))
-				fmt.Println(fmt.Sprintf("[telnet proxy ]  Error: %v", err))
 				break
 			}
 			if msg == "^C" {
@@ -117,7 +115,6 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 			}
 			if len(strings.Trim(msg, " ")) > 0 {
 				t.logger.Info(fmt.Sprintf("[telnet proxy  ]   Info: Sending: %d bytes(s) to Server, Bytes:\n %s", len(string(msg)), string(msg)))
-				fmt.Println(fmt.Sprintf("[telnet proxy ]  Info: Sending: %d bytes(s) to Server", len(string(msg))))
 			}
 		}
 		return
