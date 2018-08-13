@@ -2,7 +2,7 @@
 [![Build Status](https://travis-ci.org/mushorg/glutton.svg?branch=master)](https://travis-ci.org/mushorg/glutton)
 [![GoDoc](https://godoc.org/github.com/mushorg/glutton?status.svg)](https://godoc.org/github.com/mushorg/glutton)
 
-Setup `go 1.7+`. Install required system packages:
+Setup `go 1.9+`. Install required system packages:
 ```
 apt-get install libnetfilter-queue-dev libpcap-dev iptables-dev
 ```
