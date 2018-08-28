@@ -6,10 +6,12 @@ RUN mkdir -p $GOPATH/src/github.com/mushorg/glutton
 WORKDIR $GOPATH/src/github.com/mushorg/glutton
 
 RUN apk add g++ git
+RUN go get -u golang.org/x/vgo
 
+RUN cd $WORKDIR
 ADD . .
 
-RUN go build -o server app/server.go && \
+RUN vgo build -o server app/server.go && \
     apk del g++ git && \
     rm -rf /var/cache/apk/*
 
