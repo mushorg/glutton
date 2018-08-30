@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"strconv"
 
 	"github.com/kung-foo/freki"
 	"go.uber.org/zap"
@@ -32,7 +33,7 @@ func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
 	if n > 0 && n < 1024 {
 		g.logger.Info(
 			fmt.Sprintf("Packet got handled by TCP handler"),
-			zap.Uint16("dport", md.TargetPort),
+			zap.String("dport", strconv.Itoa(int(md.TargetPort))),
 			zap.String("saddr", host),
 			zap.String("sport", port),
 			zap.String("handler", "tcp"),
