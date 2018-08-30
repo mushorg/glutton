@@ -33,11 +33,11 @@ func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
 	if n > 0 && n < 1024 {
 		g.logger.Info(
 			fmt.Sprintf("Packet got handled by TCP handler"),
-			zap.String("dport", strconv.Itoa(int(md.TargetPort))),
-			zap.String("saddr", host),
-			zap.String("sport", port),
+			zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+			zap.String("src_ip", host),
+			zap.String("src_port", port),
 			zap.String("handler", "tcp"),
-			zap.String("data_hex", hex.EncodeToString(buffer[0:n])),
+			zap.String("payload_hex", hex.EncodeToString(buffer[0:n])),
 		)
 	}
 	return err
