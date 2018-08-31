@@ -1,19 +1,20 @@
-dist: trusty
-
 language: go
 go:
   - 1.9.x
   - 1.10.x
   - 1.11.x
 
+os:
+  - linux
+
+dist: trusty
+sudo: false
+install: true
+
 before_install:
   - sudo apt-get -qq update
   - sudo apt-get install -y libpcap-dev libnetfilter-queue-dev iptables-dev
 
-install:
-  - docker build -t glutton .
-  - docker run -d --privileged=true --name glutton glutton
-
 script:
-  - go test
-  - docker ps | grep -q glutton
+  - env GO111MODULE=on go build
+  - env GO111MODULE=on go test
