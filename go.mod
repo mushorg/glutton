@@ -26,6 +26,8 @@ require (
 	github.com/pelletier/go-toml v1.2.0
 	github.com/pkg/errors v0.8.0
 	github.com/pmezard/go-difflib v1.0.0
+	github.com/reiver/go-oi v0.0.0-20160325061615-431c83978379
+	github.com/reiver/go-telnet v0.0.0-20180421082511-9ff0b2ab096e
 	github.com/satori/go.uuid v1.2.0
 	github.com/smartystreets/assertions v0.0.0-20180820201707-7c9eb446e3cf
 	github.com/smartystreets/goconvey v0.0.0-20180222194500-ef6db91d284a
