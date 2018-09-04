@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"go.uber.org/zap"
 )
 
 // formatRequest generates ascii representation of a request
@@ -52,7 +54,13 @@ func (g *Glutton) HandleHTTP(ctx context.Context, conn net.Conn) (err error) {
 		g.logger.Error(fmt.Sprintf("[http    ] error: %v", err))
 		return err
 	}
-	g.logger.Info(fmt.Sprintf("[http    ] %s", formatRequest(req)))
+	g.logger.Info(
+		fmt.Sprintf("HTTP %s request handled: %s", req.Method, req.URL.EscapedPath()),
+		zap.String("handler", "http"),
+		zap.String("path", req.URL.EscapedPath()),
+		zap.String("method", req.Method),
+		zap.String("query", req.URL.Query().Encode()),
+	)
 	if req.ContentLength > 0 {
 		defer req.Body.Close()
 		buf := bytes.NewBuffer(make([]byte, 0, req.ContentLength))
@@ -65,7 +73,7 @@ func (g *Glutton) HandleHTTP(ctx context.Context, conn net.Conn) (err error) {
 		g.logger.Info(fmt.Sprintf("[http    ] http body:\n%s", hex.Dump(body[:])))
 	}
 	if strings.Contains(req.RequestURI, "wallet") {
-		conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length:20\r\n\r\n[[\"Lukas Was Here\"]]\r\n\r\n"))
+		conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length:20\r\n\r\n[[\"\"]]\r\n\r\n"))
 		return nil
 	}
 	conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))

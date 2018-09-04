@@ -13,10 +13,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/kung-foo/freki"
+	"go.uber.org/zap"
 )
 
 // Mirai botnet  - https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
@@ -59,26 +61,41 @@ var miraiCom = map[string][]string{
 }
 
 func writeMsg(conn net.Conn, msg string, g *Glutton) error {
-	_, err := conn.Write([]byte(msg))
-	g.logger.Info(fmt.Sprintf("[telnet  ] send: %q", msg))
-	md := g.processor.Connections.GetByFlow(freki.NewConnKeyFromNetConn(conn))
-	if g.producer != nil && md != nil {
-		err = g.producer.LogHTTP(conn, md, []byte(msg), "write")
+	if _, err := conn.Write([]byte(msg)); err != nil {
+		return err
 	}
-	return err
+	md := g.processor.Connections.GetByFlow(freki.NewConnKeyFromNetConn(conn))
+	g.logger.Info(
+		"telnet send",
+		zap.String("msg", fmt.Sprintf("%q", msg)),
+		zap.String("direction", "send"),
+		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+	)
+	if g.producer != nil && md != nil {
+		if err := g.producer.LogHTTP(conn, md, []byte(msg), "write"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func readMsg(conn net.Conn, g *Glutton) (msg string, err error) {
 	msg, err = bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		return "", err
+		return
 	}
-	g.logger.Info(fmt.Sprintf("[telnet  ] recv: %q", msg))
 	md := g.processor.Connections.GetByFlow(freki.NewConnKeyFromNetConn(conn))
+	g.logger.Info(
+		"telnet recv",
+		zap.String("msg", fmt.Sprintf("%q", msg)),
+		zap.String("direction", "recv"),
+	)
 	if g.producer != nil && md != nil {
-		err = g.producer.LogHTTP(conn, md, []byte(msg), "read")
+		if err = g.producer.LogHTTP(conn, md, []byte(msg), "read"); err != nil {
+			return
+		}
 	}
-	return msg, err
+	return
 }
 
 func getSample(cmd string, g *Glutton) error {
@@ -110,7 +127,9 @@ func getSample(cmd string, g *Glutton) error {
 	}
 	sum := sha256.Sum256(bodyBuffer)
 	// Ignoring errors for if the folder already exists
-	os.MkdirAll("samples", os.ModePerm)
+	if err = os.MkdirAll("samples", os.ModePerm); err != nil {
+		return err
+	}
 	sha256Hash := hex.EncodeToString(sum[:])
 	path := filepath.Join("samples", sha256Hash)
 	if _, err = os.Stat(path); err == nil {
@@ -135,33 +154,41 @@ func getSample(cmd string, g *Glutton) error {
 // HandleTelnet handles telnet communication on a connection
 func (g *Glutton) HandleTelnet(ctx context.Context, conn net.Conn) (err error) {
 	defer func() {
-		err = conn.Close()
-		if err != nil {
+		if err = conn.Close(); err != nil {
 			g.logger.Error(fmt.Sprintf("[telnet  ]  error: %v", err))
-			fmt.Println(fmt.Sprintf("[telnet  ]  error: %v", err))
 		}
 	}()
 
 	// TODO (glaslos): Add device banner
 
 	// telnet window size negotiation response
-	writeMsg(conn, "\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27", g)
+	if err = writeMsg(conn, "\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27", g); err != nil {
+		g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
+		return err
+	}
 
 	// User name prompt
-	writeMsg(conn, "Username: ", g)
-	_, err = readMsg(conn, g)
-	if err != nil {
+	if err = writeMsg(conn, "Username: ", g); err != nil {
+		g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
+		return err
+	}
+	if _, err = readMsg(conn, g); err != nil {
 		g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
 		return
 	}
-	writeMsg(conn, "Password: ", g)
-	_, err = readMsg(conn, g)
-	if err != nil {
+	if err = writeMsg(conn, "Password: ", g); err != nil {
+		g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
+		return err
+	}
+	if _, err = readMsg(conn, g); err != nil {
 		g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
 		return
 	}
 
-	writeMsg(conn, "welcome\r\n> ", g)
+	if err = writeMsg(conn, "welcome\r\n> ", g); err != nil {
+		g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
+		return err
+	}
 
 	for {
 		g.updateConnectionTimeout(ctx, conn)
@@ -181,23 +208,41 @@ func (g *Glutton) HandleTelnet(ctx context.Context, conn net.Conn) (err error) {
 				continue
 			}
 			if strings.TrimRight(cmd, "\r\n") == "cd /dev/" {
-				writeMsg(conn, "ECCHI: applet not found\r\n", g)
-				writeMsg(conn, "\r\nBusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-it shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n", g)
+				if err = writeMsg(conn, "ECCHI: applet not found\r\n", g); err != nil {
+					g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
+					return err
+				}
+				if err = writeMsg(conn, "\r\nBusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-it shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n", g); err != nil {
+					g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
+					return err
+				}
 				continue
 			}
 
 			if resp := miraiCom[strings.TrimSpace(cmd)]; len(resp) > 0 {
-				writeMsg(conn, resp[rand.Intn(len(resp))]+"\r\n", g)
+				if err = writeMsg(conn, resp[rand.Intn(len(resp))]+"\r\n", g); err != nil {
+					g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
+					return err
+				}
 			} else {
 				// /bin/busybox YDKBI
 				re := regexp.MustCompile(`\/bin\/busybox (?P<applet>[A-Z]+)`)
 				match := re.FindStringSubmatch(cmd)
 				if len(match) > 1 {
-					writeMsg(conn, match[1]+": applet not found\r\n", g)
-					writeMsg(conn, "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-in shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n", g)
+					if err = writeMsg(conn, match[1]+": applet not found\r\n", g); err != nil {
+						g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
+						return err
+					}
+					if err = writeMsg(conn, "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-in shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n", g); err != nil {
+						g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
+						return err
+					}
 				}
 			}
 		}
-		writeMsg(conn, "> ", g)
+		if err := writeMsg(conn, "> ", g); err != nil {
+			g.logger.Error(fmt.Sprintf("[telnet  ] error: %v", err))
+			return err
+		}
 	}
 }
