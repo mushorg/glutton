@@ -6,7 +6,9 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net"
+	"strconv"
 
+	"github.com/kung-foo/freki"
 	"go.uber.org/zap"
 )
 
@@ -34,14 +36,27 @@ type JabberClient struct {
 }
 
 // parse Jabber client
-func parseJabberClient(dataClient []byte, g *Glutton) error {
+func parseJabberClient(conn net.Conn, dataClient []byte, g *Glutton) error {
 	v := JabberClient{STo: "none", Version: "none"}
-	err := xml.Unmarshal(dataClient, &v)
-	if err != nil {
+	if err := xml.Unmarshal(dataClient, &v); err != nil {
 		g.logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
 		return err
 	}
-	g.logger.Info(fmt.Sprintf("STo : %v Version: %v XMLns: %v XMLName: %v", v.STo, v.Version, v.XMLns, v.XMLName), zap.String("handler", "jabber"))
+
+	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
+	if err != nil {
+		g.logger.Error(fmt.Sprintf("[jabber  ] error: %v", err))
+	}
+	ck := freki.NewConnKeyByString(host, port)
+	md := g.processor.Connections.GetByFlow(ck)
+
+	g.logger.Info(
+		fmt.Sprintf("STo : %v Version: %v XMLns: %v XMLName: %v", v.STo, v.Version, v.XMLns, v.XMLName),
+		zap.String("handler", "jabber"),
+		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+		zap.String("src_ip", host),
+		zap.String("src_port", port),
+	)
 	return nil
 }
 
@@ -54,15 +69,13 @@ func readMsgJabber(conn net.Conn, g *Glutton) (err error) {
 		g.logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
 		return err
 	}
-	parseJabberClient(line[:1024], g)
-	return nil
+	return parseJabberClient(conn, line[:1024], g)
 }
 
 // HandleJabber main handler
 func (g *Glutton) HandleJabber(ctx context.Context, conn net.Conn) (err error) {
 	defer func() {
-		err = conn.Close()
-		if err != nil {
+		if err = conn.Close(); err != nil {
 			g.logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
 		}
 	}()

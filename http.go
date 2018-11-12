@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
+	"github.com/kung-foo/freki"
 	"go.uber.org/zap"
 )
 
@@ -54,9 +56,20 @@ func (g *Glutton) HandleHTTP(ctx context.Context, conn net.Conn) (err error) {
 		g.logger.Error(fmt.Sprintf("[http    ] error: %v", err))
 		return err
 	}
+
+	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
+	if err != nil {
+		g.logger.Error(fmt.Sprintf("[http    ] error: %v", err))
+	}
+	ck := freki.NewConnKeyByString(host, port)
+	md := g.processor.Connections.GetByFlow(ck)
+
 	g.logger.Info(
 		fmt.Sprintf("HTTP %s request handled: %s", req.Method, req.URL.EscapedPath()),
 		zap.String("handler", "http"),
+		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+		zap.String("src_ip", host),
+		zap.String("src_port", port),
 		zap.String("path", req.URL.EscapedPath()),
 		zap.String("method", req.Method),
 		zap.String("query", req.URL.Query().Encode()),
@@ -64,8 +77,7 @@ func (g *Glutton) HandleHTTP(ctx context.Context, conn net.Conn) (err error) {
 	if req.ContentLength > 0 {
 		defer req.Body.Close()
 		buf := bytes.NewBuffer(make([]byte, 0, req.ContentLength))
-		_, err = buf.ReadFrom(req.Body)
-		if err != nil {
+		if _, err = buf.ReadFrom(req.Body); err != nil {
 			g.logger.Error(fmt.Sprintf("[http    ] error: %v", err))
 			return err
 		}
@@ -73,9 +85,9 @@ func (g *Glutton) HandleHTTP(ctx context.Context, conn net.Conn) (err error) {
 		g.logger.Info(fmt.Sprintf("[http    ] http body:\n%s", hex.Dump(body[:])))
 	}
 	if strings.Contains(req.RequestURI, "wallet") {
-		conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length:20\r\n\r\n[[\"\"]]\r\n\r\n"))
-		return nil
+		_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length:20\r\n\r\n[[\"\"]]\r\n\r\n"))
+		return err
 	}
-	conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
-	return nil
+	_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+	return err
 }

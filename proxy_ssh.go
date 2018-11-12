@@ -13,6 +13,7 @@ import (
 	"net/url"
 
 	"github.com/lunixbochs/vtclean"
+	"go.uber.org/zap"
 	log "go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
@@ -67,7 +68,20 @@ func (s *sshProxy) initConf(dest string) error {
 	var sessions = make(map[net.Addr]map[string]interface{})
 	conf := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-			s.logger.Info(fmt.Sprintf("[prxy.ssh] login attempt: %s, user %s password: %s", c.RemoteAddr(), c.User(), string(pass)))
+
+			host, port, err := net.SplitHostPort(c.RemoteAddr().String())
+			if err != nil {
+				s.logger.Error(fmt.Sprintf("[jabber  ] error: %v", err))
+			}
+
+			s.logger.Info(
+				fmt.Sprintf("[prxy.ssh] login attempt: %s, user %s password: %s", c.RemoteAddr(), c.User(), string(pass)),
+				zap.String("handler", "ssh proxy"),
+				zap.String("src_ip", host),
+				zap.String("src_port", port),
+				zap.String("user", c.User()),
+				zap.String("password", string(pass)),
+			)
 
 			sessions[c.RemoteAddr()] = map[string]interface{}{
 				"username": c.User(),

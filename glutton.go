@@ -202,7 +202,7 @@ func (g *Glutton) registerHandlers() {
 				g.logger.Debug(
 					fmt.Sprintf("[glutton ] new connection: %s:%s -> %d", host, port, md.TargetPort),
 					zap.String("host", host),
-					zap.String("sport", port),
+					zap.String("src_port", port),
 					zap.String("dport", strconv.Itoa(int(md.TargetPort))),
 					zap.String("handler", handler),
 				)

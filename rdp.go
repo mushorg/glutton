@@ -30,7 +30,7 @@ func (g *Glutton) HandleRDP(ctx context.Context, conn net.Conn) (err error) {
 			g.logger.Info(fmt.Sprintf("[rdp     ] \n%s", hex.Dump(buffer[0:n])))
 			pdu, err := rdp.ParseCRPDU(buffer[0:n])
 			if err != nil {
-				g.logger.Error(fmt.Sprintf("[rdp     ] error: %v", err))
+				return err
 			}
 			g.logger.Info(fmt.Sprintf("[rdp     ] req pdu: %+v", pdu))
 			if len(pdu.Data) > 0 {
@@ -38,7 +38,9 @@ func (g *Glutton) HandleRDP(ctx context.Context, conn net.Conn) (err error) {
 			}
 			resp := rdp.ConnectionConfirm()
 			g.logger.Info(fmt.Sprintf("[rdp     ]resp pdu: %+v", resp))
-			conn.Write(resp)
+			if _, err = conn.Write(resp); err != nil {
+				return err
+			}
 		}
 	}
 }

@@ -9,8 +9,9 @@ import (
 
 // NewLogger creates a logger instance
 func NewLogger(id string) *zap.Logger {
-	config := zap.NewProductionEncoderConfig()
-	fileEncoder := zapcore.NewJSONEncoder(config)
+	fileEncoder := zapcore.NewJSONEncoder(
+		zap.NewProductionEncoderConfig(),
+	)
 	fileEncoder.AddString("sensorID", id)
 	highPriority := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
 		return lvl >= zapcore.InfoLevel
@@ -22,6 +23,5 @@ func NewLogger(id string) *zap.Logger {
 		Compress: true, // disabled by default
 	})
 	core := zapcore.NewCore(fileEncoder, fileWriter, highPriority)
-	logger := zap.New(core)
-	return logger
+	return zap.New(core)
 }

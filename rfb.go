@@ -9,12 +9,14 @@ import (
 	"net"
 )
 
-func readRFB(conn net.Conn, g *Glutton) {
+func readRFB(conn net.Conn, g *Glutton) error {
 	msg, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		g.logger.Error(fmt.Sprintf("[rfb     ] error: %v", err))
+		return err
 	}
 	g.logger.Info(fmt.Sprintf("[rfb     ] message %q", msg))
+	return nil
 }
 
 // PixelFormat represents a RFB communication unit
@@ -37,12 +39,18 @@ func (g *Glutton) HandleRFB(ctx context.Context, conn net.Conn) (err error) {
 		}
 	}()
 
-	conn.Write([]byte("RFB 003.008\n"))
-	readRFB(conn, g)
+	if _, err := conn.Write([]byte("RFB 003.008\n")); err != nil {
+		return err
+	}
+	if err := readRFB(conn, g); err != nil {
+		return err
+	}
 	var authNone uint32 = 1
 	bs := make([]byte, 4)
 	binary.LittleEndian.PutUint32(bs, authNone)
-	conn.Write(bs)
+	if _, err := conn.Write(bs); err != nil {
+		return err
+	}
 
 	serverName := "rfb-go"
 	lenName := int32(len(serverName))
@@ -66,8 +74,10 @@ func (g *Glutton) HandleRFB(ctx context.Context, conn net.Conn) (err error) {
 	err = binary.Write(buf, binary.LittleEndian, f)
 	if err != nil {
 		g.logger.Warn(fmt.Sprintf("[rfb     ] binary.Write failed, error: %+v", err))
+		return err
 	}
-	conn.Write(buf.Bytes())
-	readRFB(conn, g)
-	return err
+	if _, err := conn.Write(buf.Bytes()); err != nil {
+		return err
+	}
+	return readRFB(conn, g)
 }
