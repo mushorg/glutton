@@ -82,9 +82,17 @@ func (g *Glutton) HandleHTTP(ctx context.Context, conn net.Conn) (err error) {
 			return err
 		}
 		body := buf.Bytes()
-		g.logger.Info(fmt.Sprintf("[http    ] http body:\n%s", hex.Dump(body[:])))
+		g.logger.Info(
+			"HTTP body payload",
+			zap.String("handler", "http"),
+			zap.String("payload_hex", hex.EncodeToString(body[:])),
+		)
 	}
 	if strings.Contains(req.RequestURI, "wallet") {
+		g.logger.Info(
+			"HTTP wallet request",
+			zap.String("handler", "http"),
+		)
 		_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length:20\r\n\r\n[[\"\"]]\r\n\r\n"))
 		return err
 	}
