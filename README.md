@@ -1,8 +1,8 @@
-# Glutton 
+# Glutton
 [![Build Status](https://travis-ci.org/mushorg/glutton.svg?branch=master)](https://travis-ci.org/mushorg/glutton)
 [![GoDoc](https://godoc.org/github.com/mushorg/glutton?status.svg)](https://godoc.org/github.com/mushorg/glutton)
 
-Setup `go 1.9+`. Install required system packages:
+Setup `go 1.11+`. Install required system packages:
 ```
 apt-get install libnetfilter-queue-dev libpcap-dev iptables-dev
 ```
@@ -26,6 +26,6 @@ To run/test glutton:
 bin/server
 ```
 
-# Use as Proxy  
+# Use as Proxy
 
 Glutton provide SSH and TCP proxy. SSH proxy work as MITM between attacker and server to log every thing in plan text. TCP proxy does not provide facility for logging yet. Examples can be found [here](https://github.com/mushorg/glutton/tree/master/examples).
