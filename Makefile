@@ -1,9 +1,17 @@
+VERSION := v1.0.0-pre
+NAME := glutton
+BUILDSTRING := $(shell git log --pretty=format:'%h' -n 1)
+VERSIONSTRING := $(NAME) version $(VERSION)+$(BUILDSTRING)
+BUILDDATE := $(shell date -u -Iseconds)
+
+LDFLAGS := "-X \"main.VERSION=$(VERSIONSTRING)\" -X \"main.BUILDDATE=$(BUILDDATE)\""
+
 .PHONY: all test clean build
 
 default: build
 
 build:
-	go build -o bin/server app/server.go
+	go build -ldflags=$(LDFLAGS) -o bin/server app/server.go
 
 static:
 	go build --ldflags '-extldflags "-static"' -o bin/server app/server.go

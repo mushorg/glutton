@@ -12,6 +12,13 @@ import (
 	"github.com/spf13/viper"
 )
 
+var (
+	// VERSION is set by the makefile
+	VERSION = "v0.0.0"
+	// BUILDDATE is set by the makefile
+	BUILDDATE = ""
+)
+
 func onErrorExit(err error) {
 	if err != nil {
 		fmt.Printf("[glutton ] %+v\n", err)
@@ -44,9 +51,15 @@ func main() {
 	pflag.StringP("logpath", "l", "/dev/null", "Log file path")
 	pflag.StringP("confpath", "c", "config/", "Configuration file path")
 	pflag.BoolP("debug", "d", false, "Enable debug mode")
+	pflag.Bool("version", false, "Print version")
 
 	pflag.Parse()
 	viper.BindPFlags(pflag.CommandLine)
+
+	if viper.GetBool("version") {
+		fmt.Printf("%s %s\n", VERSION, BUILDDATE)
+		return
+	}
 
 	gtn, err := glutton.New()
 	onErrorExit(err)
