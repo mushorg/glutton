@@ -89,10 +89,12 @@ func (g *Glutton) closeOnShutdown(conn net.Conn, done <-chan struct{}) {
 	}
 }
 
+type contextKey string
+
 // Drive child context from parent context with additional value required for sepcific handler
 func (g *Glutton) contextWithTimeout(timeInSeconds uint8) context.Context {
 	limit := time.Duration(timeInSeconds) * time.Second
-	return context.WithValue(g.ctx, "timeout", time.Now().Add(limit))
+	return context.WithValue(g.ctx, contextKey("timeout"), time.Now().Add(limit))
 }
 
 // updateConnectionTimeout increase connection timeout limit on connection I/O operation

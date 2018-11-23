@@ -62,6 +62,7 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 			hconn.Close()
 		}()
 		for {
+			g.updateConnectionTimeout(ctx, conn)
 			if ended == true || hconn == nil || conn == nil {
 				break
 			}

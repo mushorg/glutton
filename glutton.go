@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/kung-foo/freki"
-	"github.com/mushorg/glutton/config"
 	"github.com/mushorg/glutton/producer"
 	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/viper"
@@ -21,7 +20,6 @@ import (
 // Glutton struct
 type Glutton struct {
 	id               uuid.UUID
-	conf             *viper.Viper
 	logger           *zap.Logger
 	processor        *freki.Processor
 	rules            []*freki.Rule
@@ -35,6 +33,25 @@ type Glutton struct {
 
 type protocolHandlerFunc func(ctx context.Context, conn net.Conn) error
 
+// InitConfig initializes the configuration
+func InitConfig(logger *zap.Logger) (err error) {
+	v := viper.New()
+	// Loading config file
+	v.SetConfigName("conf")
+	v.AddConfigPath(viper.GetString("confpath"))
+	if err = v.ReadInConfig(); err != nil {
+		return
+	}
+	// If no config is found, use the defaults
+	v.SetDefault("glutton_server", 5000)
+	v.SetDefault("rules_path", "rules/rules.yaml")
+	v.SetDefault("gollumAddress", "http://gollum:gollum@localhost:9000")
+	v.SetDefault("enableGollum", false)
+
+	logger.Debug("configuration loaded successfully", zap.String("reporter", "glutton"))
+	return
+}
+
 // New creates a new Glutton instance
 func New() (g *Glutton, err error) {
 	g = &Glutton{}
@@ -47,12 +64,11 @@ func New() (g *Glutton, err error) {
 
 	// Loading the congiguration
 	g.logger.Info("Loading configurations from: config/conf.yaml", zap.String("reporter", "glutton"))
-	g.conf, err = config.Init(g.logger)
-	if err != nil {
+	if err = InitConfig(g.logger); err != nil {
 		return nil, err
 	}
 
-	rulesPath := g.conf.GetString("rules_path")
+	rulesPath := viper.GetString("rules_path")
 	rulesFile, err := os.Open(rulesPath)
 	defer rulesFile.Close()
 	if err != nil {
@@ -74,7 +90,7 @@ func (g *Glutton) Init() (err error) {
 	ctx := context.Background()
 	g.ctx, g.cancel = context.WithCancel(ctx)
 
-	gluttonServerPort := uint(g.conf.GetInt("glutton_server"))
+	gluttonServerPort := uint(viper.GetInt("glutton_server"))
 
 	// Initiate the freki processor
 	g.processor, err = freki.New(viper.GetString("interface"), g.rules, nil)
@@ -85,8 +101,8 @@ func (g *Glutton) Init() (err error) {
 	// Initiating glutton server
 	g.processor.AddServer(freki.NewUserConnServer(gluttonServerPort))
 	// Initiating log producer
-	if g.conf.GetBool("enableGollum") {
-		g.producer = producer.Init(g.id.String(), g.conf.GetString("gollumAddress"))
+	if viper.GetBool("enableGollum") {
+		g.producer = producer.Init(g.id.String(), viper.GetString("gollumAddress"))
 	}
 	// Initiating protocol handlers
 	g.mapProtocolHandlers()
