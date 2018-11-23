@@ -27,6 +27,8 @@ github.com/jtolds/gls v0.0.0-20170503224851-77f18212c9c7 h1:EkBV8n/hyCf3FCSmYY5a
 github.com/jtolds/gls v0.0.0-20170503224851-77f18212c9c7/go.mod h1:QJZ7F/aHp+rZTRtaJ1ow/lLfFfVYBRgL+9YlvaHOwJU=
 github.com/kung-foo/freki v0.0.0-20171116055345-2053bf9dd162 h1:/+8eVAj1M+U/3/iccI1rCu2SyBBjRWbXi3jLjv/S+Jo=
 github.com/kung-foo/freki v0.0.0-20171116055345-2053bf9dd162/go.mod h1:WXKoElCPieo+nM50qCXEAxKUQXVoBeqcLAQeQFUs5oA=
+github.com/kung-foo/freki v1.1.1-0.20171116055345-2053bf9dd162 h1:aCbUVsyMvDmFg8vrD2v6kXkLdP3UE/EPkvyZuhqXakU=
+github.com/kung-foo/freki v1.1.1-0.20171116055345-2053bf9dd162/go.mod h1:WXKoElCPieo+nM50qCXEAxKUQXVoBeqcLAQeQFUs5oA=
 github.com/lunixbochs/vtclean v0.0.0-20180621232353-2d01aacdc34a h1:weJVJJRzAJBFRlAiJQROKQs8oC9vOxvm4rZmBBk0ONw=
 github.com/lunixbochs/vtclean v0.0.0-20180621232353-2d01aacdc34a/go.mod h1:pHhQNgMf3btfWnGBVipUOjRYhoOsdGqdm/+2c2E2WMI=
 github.com/magiconair/properties v1.8.0 h1:LLgXmsheXeRoUOBOjtwPQCWIYqM/LU1ayDtDePerRcY=

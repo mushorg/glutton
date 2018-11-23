@@ -15,7 +15,7 @@ require (
 	github.com/gopherjs/gopherjs v0.0.0-20180825215210-0210a2f0f73c // indirect
 	github.com/hashicorp/hcl v0.0.0-20180404174102-ef8a98b0bbce // indirect
 	github.com/jtolds/gls v0.0.0-20170503224851-77f18212c9c7 // indirect
-	github.com/kung-foo/freki v0.0.0-20171116055345-2053bf9dd162
+	github.com/kung-foo/freki v1.1.1-0.20171116055345-2053bf9dd162
 	github.com/lunixbochs/vtclean v0.0.0-20180621232353-2d01aacdc34a
 	github.com/magiconair/properties v1.8.0 // indirect
 	github.com/mitchellh/mapstructure v0.0.0-20180511142126-bb74f1db0675 // indirect
