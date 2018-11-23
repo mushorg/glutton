@@ -1,4 +1,4 @@
-package main // import "github.com/mushorg/glutton"
+package main // import "github.com/mushorg/glutton/app"
 
 import (
 	"fmt"

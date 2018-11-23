@@ -1,4 +1,4 @@
-module github.com/glaslos/glutton
+module github.com/mushorg/glutton
 
 require (
 	github.com/1lann/go-sip v0.0.0-20170106174812-68e86c65407e
