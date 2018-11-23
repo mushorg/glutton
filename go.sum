@@ -34,8 +34,6 @@ github.com/magiconair/properties v1.8.0/go.mod h1:PppfXfuXeibc/6YijjN8zIbojt8czP
 github.com/mitchellh/mapstructure v0.0.0-20180511142126-bb74f1db0675/go.mod h1:FVVH3fgwuzCH5S8UJGiWEs2h04kUh9fWfEaFds41c1Y=
 github.com/moby/moby v1.13.1 h1:0/u5wsRE+Nb2D9TFTUA8PJxkDaneSYyID4ar9BfMoZM=
 github.com/moby/moby v1.13.1/go.mod h1:fDXVQ6+S340veQPv35CzDahGBmHsiclFwfEygB/TWMc=
-github.com/mushorg/glutton v0.0.0-20180813135049-0ed601fe896f h1:zSIwL0X/BWwh2DX72tdkAzvuyBcnxGP7x7+K++KFJ7I=
-github.com/mushorg/glutton v0.0.0-20180813135049-0ed601fe896f/go.mod h1:HiTRcLHg87uhe8+KFje/m7GsExFfHYVsVsPSRXiaR00=
 github.com/pelletier/go-toml v1.2.0 h1:T5zMGML61Wp+FlcbWjRDT7yAxhJNAiPPLOFECq181zc=
 github.com/pelletier/go-toml v1.2.0/go.mod h1:5z9KED0ma1S8pY6P1sdut58dfprrGBbd/94hg7ilaic=
 github.com/pkg/errors v0.8.0/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=

@@ -20,7 +20,6 @@ require (
 	github.com/magiconair/properties v1.8.0 // indirect
 	github.com/mitchellh/mapstructure v0.0.0-20180511142126-bb74f1db0675 // indirect
 	github.com/moby/moby v1.13.1 // indirect
-	github.com/mushorg/glutton v0.0.0-20180813135049-0ed601fe896f
 	github.com/pelletier/go-toml v1.2.0 // indirect
 	github.com/pkg/errors v0.8.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
