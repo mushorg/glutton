@@ -46,6 +46,7 @@ func main() {
  \_____|_|\__,_|\__|\__\___/|_| |_|
 
 	`)
+	fmt.Printf("%s %s\n", VERSION, BUILDDATE)
 
 	pflag.StringP("interface", "i", "eth0", "Bind to this interface")
 	pflag.StringP("logpath", "l", "/dev/null", "Log file path")
@@ -57,7 +58,6 @@ func main() {
 	viper.BindPFlags(pflag.CommandLine)
 
 	if viper.GetBool("version") {
-		fmt.Printf("%s %s\n", VERSION, BUILDDATE)
 		return
 	}
 

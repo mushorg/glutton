@@ -3,6 +3,15 @@ ports:
 
 rules_path: rules/rules.yaml
 
-# Glutton will produce events at the following address
-enableGollum: false
-gollumAddress: http://gollum:gollum@localhost:9000
+producers:
+  enabled: false
+  gollum:
+    enabled: false
+    remote: http://gollum:gollum@localhost:9000
+  hpfeeds:
+    enabled: false
+    host: 172.26.0.2
+    port: 20000
+    ident: ident
+    auth: auth
+    channel: test

@@ -5,13 +5,13 @@ RUN apk add libnetfilter_queue-dev iptables-dev libpcap-dev
 RUN mkdir -p $GOPATH/src/github.com/mushorg/glutton
 WORKDIR $GOPATH/src/github.com/mushorg/glutton
 
-RUN apk add g++ git
+RUN apk add g++ git make
 
 RUN cd $WORKDIR
 ADD . .
 
-RUN go build -o server app/server.go && \
-    apk del g++ git && \
-    rm -rf /var/cache/apk/*
+RUN make build
 
-CMD ["./server", "-i", "eth0", "-l", "/var/log/glutton.log", "-d", "true"]
+RUN apk del g++ git make && rm -rf /var/cache/apk/*
+
+CMD ["./bin/server", "-i", "eth0", "-l", "/var/log/glutton.log", "-d", "true"]

@@ -17,6 +17,8 @@ github.com/docker/go-units v0.3.3 h1:Xk8S3Xj5sLGlG5g67hJmYMmUgXv5N4PhkjJHHqrwnTk
 github.com/docker/go-units v0.3.3/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=
 github.com/fsnotify/fsnotify v1.4.7 h1:IXs+QLmnXW2CcXuY+8Mzv/fWEsPGWxqefPtCP5CnV9I=
 github.com/fsnotify/fsnotify v1.4.7/go.mod h1:jwhsz4b93w/PPRr/qN1Yymfu8t87LnFCMoQvtojpjFo=
+github.com/fw42/go-hpfeeds v0.0.0-20130602172243-651ce0355974 h1:uhCy0C/g2ZHFy6ylWj0fN4q3fhsXz9fk14HhvVwRTXM=
+github.com/fw42/go-hpfeeds v0.0.0-20130602172243-651ce0355974/go.mod h1:JMIrlQe3LV12tF9NCmZEvzxe6hW+JvB0kRhz0k6XR0U=
 github.com/google/gopacket v1.1.14 h1:1+TEhSu8Mh154ZBVjyd1Nt2Bb7cnyOeE3GQyb1WGLqI=
 github.com/google/gopacket v1.1.14/go.mod h1:UCLx9mCmAwsVbn6qQl1WIEt2SO7Nd2fD0th1TBAsqBw=
 github.com/gopherjs/gopherjs v0.0.0-20180825215210-0210a2f0f73c h1:16eHWuMGvCjSfgRJKqIzapE78onvvTbdi1rMkU00lZw=
@@ -25,8 +27,6 @@ github.com/hashicorp/hcl v0.0.0-20180404174102-ef8a98b0bbce h1:xdsDDbiBDQTKASoGE
 github.com/hashicorp/hcl v0.0.0-20180404174102-ef8a98b0bbce/go.mod h1:oZtUIOe8dh44I2q6ScRibXws4Ajl+d+nod3AaR9vL5w=
 github.com/jtolds/gls v0.0.0-20170503224851-77f18212c9c7 h1:EkBV8n/hyCf3FCSmYY5aqZxIXI4VPRMOVH+YVgMJla4=
 github.com/jtolds/gls v0.0.0-20170503224851-77f18212c9c7/go.mod h1:QJZ7F/aHp+rZTRtaJ1ow/lLfFfVYBRgL+9YlvaHOwJU=
-github.com/kung-foo/freki v0.0.0-20171116055345-2053bf9dd162 h1:/+8eVAj1M+U/3/iccI1rCu2SyBBjRWbXi3jLjv/S+Jo=
-github.com/kung-foo/freki v0.0.0-20171116055345-2053bf9dd162/go.mod h1:WXKoElCPieo+nM50qCXEAxKUQXVoBeqcLAQeQFUs5oA=
 github.com/kung-foo/freki v1.1.1-0.20171116055345-2053bf9dd162 h1:aCbUVsyMvDmFg8vrD2v6kXkLdP3UE/EPkvyZuhqXakU=
 github.com/kung-foo/freki v1.1.1-0.20171116055345-2053bf9dd162/go.mod h1:WXKoElCPieo+nM50qCXEAxKUQXVoBeqcLAQeQFUs5oA=
 github.com/lunixbochs/vtclean v0.0.0-20180621232353-2d01aacdc34a h1:weJVJJRzAJBFRlAiJQROKQs8oC9vOxvm4rZmBBk0ONw=

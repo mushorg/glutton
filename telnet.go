@@ -82,7 +82,7 @@ func writeMsg(conn net.Conn, msg string, g *Glutton) error {
 		zap.String("src_port", port),
 	)
 	if g.producer != nil && md != nil {
-		if err := g.producer.LogHTTP(conn, md, []byte(msg), "write"); err != nil {
+		if err := g.producer.Log(conn, md, []byte(msg)); err != nil {
 			return err
 		}
 	}
@@ -112,7 +112,7 @@ func readMsg(conn net.Conn, g *Glutton) (msg string, err error) {
 		zap.String("src_port", port),
 	)
 	if g.producer != nil && md != nil {
-		if err = g.producer.LogHTTP(conn, md, []byte(msg), "read"); err != nil {
+		if err = g.producer.Log(conn, md, []byte(msg)); err != nil {
 			return
 		}
 	}
