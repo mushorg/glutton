@@ -8,6 +8,7 @@ WORKDIR $GOPATH/src/github.com/mushorg/glutton
 RUN apk add g++ git make
 
 RUN cd $WORKDIR
+ENV GO111MODULE=on
 ADD . .
 
 RUN make build
