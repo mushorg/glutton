@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/satori/go.uuid"
+	uuid "github.com/satori/go.uuid"
 )
 
 type SMBHeader struct {
@@ -233,7 +233,7 @@ func MakeComTransaction2Error(header SMBHeader) ([]byte, error) {
 }
 
 func MakeNegotiateProtocolResponse(header SMBHeader) ([]byte, error) {
-	id := uuid.NewV4()
+	id, _ := uuid.NewV4()
 	smb := NegotiateProtocolResponse{}
 	smb.Header.Protocol = header.Protocol
 	smb.Header.Command = header.Command
