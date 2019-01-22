@@ -6,21 +6,17 @@ Setup `go 1.11+`. Install required system packages:
 ```
 apt-get install libnetfilter-queue-dev libpcap-dev iptables-dev
 ```
+
 To change your SSH server default port (i.e. 5001, see `rules.yaml`) and restart sshd:
 ```
 sed -i 's/[# ]*Port .*/Port 5001/g' /etc/ssh/sshd_config
 ```
-Download glutton, and install dependencies using `dep`:
-```
-go get github.com/mushorg/glutton
-go get -u github.com/golang/dep/cmd/dep
-cd $GOPATH/src/github.com/mushorg/glutton/
-dep ensure
-```
+
 Build glutton:
 ```
 make build
 ```
+
 To run/test glutton:
 ```
 bin/server
@@ -28,4 +24,4 @@ bin/server
 
 # Use as Proxy
 
-Glutton provide SSH and TCP proxy. SSH proxy work as MITM between attacker and server to log every thing in plan text. TCP proxy does not provide facility for logging yet. Examples can be found [here](https://github.com/mushorg/glutton/tree/master/examples).
+Glutton provide SSH and a TCP proxy. SSH proxy works as a MITM between attacker and server to log everything in plain text. TCP proxy does not provide facility for logging yet. Examples can be found [here](https://github.com/mushorg/glutton/tree/master/examples).
