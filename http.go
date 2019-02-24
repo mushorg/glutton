@@ -1,6 +1,7 @@
 package glutton
 
 import (
+	"strconv"
 	"bufio"
 	"bytes"
 	"context"
@@ -8,7 +9,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/kung-foo/freki"
@@ -42,21 +42,7 @@ func formatRequest(r *http.Request) string {
 	return strings.Join(request, "\n")
 }
 
-// HandleHTTP takes a net.Conn and does basic HTTP communication
-func (g *Glutton) HandleHTTP(ctx context.Context, conn net.Conn) (err error) {
-	defer func() {
-		err = conn.Close()
-		if err != nil {
-			g.logger.Error(fmt.Sprintf("[http    ] error: %v", err))
-		}
-	}()
-
-	req, err := http.ReadRequest(bufio.NewReader(conn))
-	if err != nil {
-		g.logger.Error(fmt.Sprintf("[http    ] error: %v", err))
-		return err
-	}
-
+func (g *Glutton) logConn(conn net.Conn, msg, handler string, fields []zap.Field) {
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
 		g.logger.Error(fmt.Sprintf("[http    ] error: %v", err))
@@ -64,16 +50,37 @@ func (g *Glutton) HandleHTTP(ctx context.Context, conn net.Conn) (err error) {
 	ck := freki.NewConnKeyByString(host, port)
 	md := g.processor.Connections.GetByFlow(ck)
 
-	g.logger.Info(
-		fmt.Sprintf("HTTP %s request handled: %s", req.Method, req.URL.EscapedPath()),
-		zap.String("handler", "http"),
+	fields = append(fields,
+		zap.String("handler", handler),
 		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
 		zap.String("src_ip", host),
 		zap.String("src_port", port),
+	)
+
+	g.logger.Info(
+		msg,
+		fields...,
+	)
+}
+
+// HandleHTTP takes a net.Conn and does basic HTTP communication
+func (g *Glutton) HandleHTTP(ctx context.Context, conn net.Conn) (err error) {
+	defer conn.Close()
+	req, err := http.ReadRequest(bufio.NewReader(conn))
+	if err != nil {
+		g.logger.Error(fmt.Sprintf("[http    ] error: %v", err))
+		return err
+	}
+
+	msg := fmt.Sprintf("HTTP %s request handled: %s", req.Method, req.URL.EscapedPath())
+	fields := []zap.Field{
 		zap.String("path", req.URL.EscapedPath()),
 		zap.String("method", req.Method),
 		zap.String("query", req.URL.Query().Encode()),
-	)
+	}
+
+	g.logConn(conn, msg, "http", fields)
+
 	if req.ContentLength > 0 {
 		defer req.Body.Close()
 		buf := bytes.NewBuffer(make([]byte, 0, req.ContentLength))
@@ -87,6 +94,7 @@ func (g *Glutton) HandleHTTP(ctx context.Context, conn net.Conn) (err error) {
 			zap.String("handler", "http"),
 			zap.String("payload_hex", hex.EncodeToString(body[:])),
 		)
+
 	}
 	if strings.Contains(req.RequestURI, "wallet") {
 		g.logger.Info(

@@ -28,4 +28,4 @@ _testmain.go
 *.prof
 
 # Artifacts
-glutton.log*
+*.log*

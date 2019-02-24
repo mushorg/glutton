@@ -6,6 +6,8 @@ BUILDDATE := $(shell date -u -Iseconds)
 
 LDFLAGS := "-X \"main.VERSION=$(VERSIONSTRING)\" -X \"main.BUILDDATE=$(BUILDDATE)\""
 
+export GO111MODULE=on
+
 .PHONY: all test clean build
 
 default: build
