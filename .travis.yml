@@ -4,6 +4,9 @@ go:
 
 sudo: required
 
+env:
+  - GO111MODULE=on
+
 install: true
 
 before_install:
@@ -12,6 +15,5 @@ before_install:
   - go get github.com/mattn/goveralls
 
 script:
-  - env GO111MODULE=on go build
-  - env GO111MODULE=on go test
-  - $HOME/gopath/bin/goveralls -v -service=travis-ci
+  - go build
+  - go test
