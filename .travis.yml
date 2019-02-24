@@ -9,7 +9,9 @@ install: true
 before_install:
   - sudo apt-get -qq update
   - sudo apt-get install -y libpcap-dev libnetfilter-queue-dev iptables-dev
+  - go get github.com/mattn/goveralls
 
 script:
   - env GO111MODULE=on go build
   - env GO111MODULE=on go test
+  - $HOME/gopath/bin/goveralls -v -service=travis-ci
