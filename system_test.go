@@ -5,14 +5,13 @@ import (
 )
 
 func TestCountOpenFiles(t *testing.T) {
-	if !(countOpenFiles() > 0) {
-		t.Fatal("countOpenFiles return an unexpected value")
+	if countOpenFiles() < 0 {
+		t.Fatalf("countOpenFiles returned %d, expected > 0", countOpenFiles())
 	}
 }
 
 func TestCountRunningRoutines(t *testing.T) {
-
-	if !(countRunningRoutines() > 0) {
-		t.Fatal("countRunningRoutines return an unexpected value")
+	if countRunningRoutines() < 0 {
+		t.Fatalf("countOpenFiles returned %d, expected > 0", countOpenFiles())
 	}
 }
