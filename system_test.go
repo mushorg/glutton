@@ -14,6 +14,6 @@ func TestCountOpenFiles(t *testing.T) {
 func TestCountRunningRoutines(t *testing.T) {
 	runningRoutines := countRunningRoutines()
 	if runningRoutines <= 0 {
-		t.Fatalf("countOpenFiles returned %d, expected > 0", runningRoutines)
+		t.Fatalf("runningRoutines returned %d, expected > 0", runningRoutines)
 	}
 }
