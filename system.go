@@ -11,12 +11,24 @@ import (
 )
 
 func countOpenFiles() int {
-	out, err := exec.Command("/bin/sh", "-c", fmt.Sprintf("lsof -p %v", os.Getpid())).Output()
-	if err != nil {
-		log.Fatal(err)
+
+	if runtime.GOOS == "linux" {
+
+		if isCommandAvailable("lsof") {
+			out, err := exec.Command("/bin/sh", "-c", fmt.Sprintf("lsof -p %d", os.Getpid())).Output()
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			lines := strings.Split(string(out), "\n")
+			return len(lines) - 1
+		}
+
+		log.Fatalln("lsof command does not exist.kindly run sudo-apt-get install lsof")
+
 	}
-	lines := strings.Split(string(out), "\n")
-	return len(lines) - 1
+	log.Fatalln("this command is not available on non-linux based operating systems")
+	return 0
 }
 
 func countRunningRoutines() int {
@@ -42,4 +54,13 @@ func (g *Glutton) startMonitor(quit chan struct{}) {
 			}
 		}
 	}()
+}
+
+func isCommandAvailable(name string) bool {
+
+	cmd := exec.Command("/bin/sh", "-c", "command -v "+name)
+	if err := cmd.Run(); err != nil {
+		return false
+	}
+	return true
 }
