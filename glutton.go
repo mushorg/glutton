@@ -131,11 +131,14 @@ func (g *Glutton) makeID() error {
 		return err
 	}
 	if f, err := os.OpenFile(filePath, os.O_RDWR, 0644); os.IsNotExist(err) {
-		g.id = uuid.NewV4()
+        var err2 error
+        g.id, err2 = uuid.NewV4()
 		errWrite := ioutil.WriteFile(filePath, g.id.Bytes(), 0644)
 		if err != nil {
 			return errWrite
-		}
+        } else if err2 != nil {
+            return err2
+        }
 	} else {
 		if err != nil {
 			return err
