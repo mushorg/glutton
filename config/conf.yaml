@@ -15,3 +15,7 @@ producers:
     ident: ident
     auth: auth
     channel: test
+
+timeout: 45
+  
+
