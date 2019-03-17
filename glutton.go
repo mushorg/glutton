@@ -222,7 +222,7 @@ func (g *Glutton) registerHandlers() {
 
 				done := make(chan struct{})
 				go g.closeOnShutdown(conn, done)
-				if err = conn.SetDeadline(time.Now().Add(45 * time.Second)); err != nil {
+				if err = conn.SetDeadline(time.Now().Add(time.Duration(viper.GetInt("conn_timeout")) * time.Second)); err != nil {
 					return err
 				}
 				ctx := g.contextWithTimeout(72)
