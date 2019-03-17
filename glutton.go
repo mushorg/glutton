@@ -221,6 +221,7 @@ func (g *Glutton) registerHandlers() {
 				}
 
 				done := make(chan struct{})
+				g.logger.Info("Connection is being closed.")
 				go g.closeOnShutdown(conn, done)
 				if err = conn.SetDeadline(time.Now().Add(45 * time.Second)); err != nil {
 					return err
