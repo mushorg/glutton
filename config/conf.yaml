@@ -16,6 +16,6 @@ producers:
     auth: auth
     channel: test
 
-timeout: 45
+conn_timeout: 45
   
 
