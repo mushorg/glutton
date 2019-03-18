@@ -221,7 +221,6 @@ func (g *Glutton) registerHandlers() {
 				}
 
 				done := make(chan struct{})
-				g.logger.Info("Connection is being closed.")
 				go g.closeOnShutdown(conn, done)
 				if err = conn.SetDeadline(time.Now().Add(45 * time.Second)); err != nil {
 					return err
@@ -257,7 +256,14 @@ func (g *Glutton) Shutdown() (err error) {
 // OnErrorClose prints the error, closes the connection and exits
 func (g *Glutton) onErrorClose(err error, conn net.Conn) {
 	if err != nil {
+		host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
+		if err != nil {
+			g.logger.Error(fmt.Sprintf("[glutton ] error: %v", err))
+		}
 		g.logger.Error(fmt.Sprintf("[glutton ] error: %v", err))
+		g.logger.Debug(
+			fmt.Sprintf("Closing connection on host %s and port %s", host, port),
+		)
 		err = conn.Close()
 		if err != nil {
 			g.logger.Error(fmt.Sprintf("[glutton ] error: %v", err))
