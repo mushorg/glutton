@@ -22,7 +22,7 @@ func countOpenFiles() int {
 		}
 		log.Fatalln("lsof command does not exist. Kindly run sudo apt install lsof")
 	}
-	log.Fatalln("this command is not available on non-linux based operating systems")
+	log.Fatal("Operating system type not supported for this command")
 	return 0
 }
 
