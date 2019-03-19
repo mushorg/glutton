@@ -5,8 +5,8 @@ import (
 )
 
 func TestCountOpenFiles(t *testing.T) {
-	openFiles := countOpenFiles()
-	if openFiles < 0 {
+	openFiles, _ := countOpenFiles()
+	if openFiles <= 0 {
 		t.Fatalf("countOpenFiles returned %d, expected > 0", openFiles)
 	}
 }
