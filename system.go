@@ -1,6 +1,7 @@
 package glutton
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -10,7 +11,7 @@ import (
 	"time"
 )
 
-func countOpenFiles() int {
+func countOpenFiles() (int, error) {
 	if runtime.GOOS == "linux" {
 		if isCommandAvailable("lsof") {
 			out, err := exec.Command("/bin/sh", "-c", fmt.Sprintf("lsof -p %d", os.Getpid())).Output()
@@ -18,12 +19,11 @@ func countOpenFiles() int {
 				log.Fatal(err)
 			}
 			lines := strings.Split(string(out), "\n")
-			return len(lines) - 1
+			return len(lines) - 1, nil
 		}
-		log.Fatalln("lsof command does not exist. Kindly run sudo apt install lsof")
+		return 0, errors.New("lsof command does not exist. Kindly run sudo apt install lsof")
 	}
-	log.Fatal("Operating system type not supported for this command")
-	return 0
+	return 0, errors.New("Operating system type not supported for this command")
 }
 
 func countRunningRoutines() int {
