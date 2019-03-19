@@ -8,7 +8,7 @@ func TestCountOpenFiles(t *testing.T) {
 	openFiles, err := countOpenFiles()
 
 	if err!=nil{
-		t.Fatalf("countOpenFiles returned %d, expected > 0", openFiles)
+		t.Fatalf("Tests failed: %s", err)
 	}
 
 	if openFiles < 0 {
