@@ -50,7 +50,6 @@ func (g *Glutton) initConfig() (err error) {
 func New() (g *Glutton, err error) {
 	g = &Glutton{}
 	g.protocolHandlers = make(map[string]protocolHandlerFunc, 0)
-	viper.SetDefault("var-dir", "/var/lib/glutton")
 	if err = g.makeID(); err != nil {
 		return nil, err
 	}
