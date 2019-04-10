@@ -15,7 +15,7 @@ func TestValidateMail(t *testing.T) {
 	}
 }
 
-func TestValidateRCPT(t *testing.T){
+func TestValidateRCPT(t *testing.T) {
 
 	if validateRCPT("RCPT TO:<example@example.com>") != true {
 		t.Fatal(validateRCPT("Validate rcpt regex failed"))
