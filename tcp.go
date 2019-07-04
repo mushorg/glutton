@@ -2,14 +2,44 @@ package glutton
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/kung-foo/freki"
 	"go.uber.org/zap"
 )
+
+func storePayload(data []byte, handler string, g *Glutton) error {
+	sum := sha256.Sum256(data)
+	if err := os.MkdirAll("payloads", os.ModePerm); err != nil {
+		return err
+	}
+	sha256Hash := hex.EncodeToString(sum[:])
+	path := filepath.Join("payloads", sha256Hash)
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = out.Write(data)
+	if err != nil {
+		return err
+	}
+	g.logger.Info(
+		fmt.Sprintf("new payload stored from %s", handler),
+		zap.String("handler", handler),
+		zap.String("sha256", sha256Hash),
+	)
+	return nil
+}
 
 // HandleTCP takes a net.Conn and peeks at the data send
 func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
@@ -40,5 +70,5 @@ func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
 			zap.String("payload_hex", hex.EncodeToString(buffer[0:n])),
 		)
 	}
-	return err
+	return storePayload(buffer, "tcp", g)
 }
