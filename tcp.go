@@ -14,31 +14,26 @@ import (
 	"go.uber.org/zap"
 )
 
-func storePayload(data []byte, handler string, g *Glutton) error {
+func storePayload(data []byte, g *Glutton) (string, error) {
 	sum := sha256.Sum256(data)
 	if err := os.MkdirAll("payloads", os.ModePerm); err != nil {
-		return err
+		return "", err
 	}
 	sha256Hash := hex.EncodeToString(sum[:])
 	path := filepath.Join("payloads", sha256Hash)
 	if _, err := os.Stat(path); err == nil {
-		return nil
+		return "", nil
 	}
 	out, err := os.Create(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer out.Close()
 	_, err = out.Write(data)
 	if err != nil {
-		return err
+		return "", err
 	}
-	g.logger.Info(
-		fmt.Sprintf("new payload stored from %s", handler),
-		zap.String("handler", handler),
-		zap.String("sha256", sha256Hash),
-	)
-	return nil
+	return sha256Hash, nil
 }
 
 // HandleTCP takes a net.Conn and peeks at the data send
@@ -60,6 +55,9 @@ func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
 	if err != nil {
 		g.logger.Error(fmt.Sprintf("[log.tcp ] error: %v", err))
 	}
+
+	payloadHash, err := storePayload(buffer, g)
+
 	if n > 0 && n < 1024 {
 		g.logger.Info(
 			fmt.Sprintf("Packet got handled by TCP handler"),
@@ -68,7 +66,8 @@ func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
 			zap.String("src_port", port),
 			zap.String("handler", "tcp"),
 			zap.String("payload_hex", hex.EncodeToString(buffer[0:n])),
+			zap.String("payload_hash", payloadHash),
 		)
 	}
-	return storePayload(buffer, "tcp", g)
+	return nil
 }
