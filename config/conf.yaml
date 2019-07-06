@@ -17,5 +17,4 @@ producers:
     channel: test
 
 conn_timeout: 45
-  
-
+max_tcp_payload: 4096

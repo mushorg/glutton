@@ -41,6 +41,7 @@ func (g *Glutton) initConfig() (err error) {
 	}
 	// If no config is found, use the defaults
 	viper.SetDefault("glutton_server", 5000)
+	viper.SetDefault("max_tcp_payload", 4096)
 	viper.SetDefault("rules_path", "rules/rules.yaml")
 	g.logger.Debug("configuration loaded successfully", zap.String("reporter", "glutton"))
 	return
