@@ -1,4 +1,4 @@
-FROM golang:1.13-alpine
+FROM golang:1.13-alpine AS build-env
 RUN apk update
 RUN apk add libnetfilter_queue-dev iptables-dev libpcap-dev
 
@@ -18,6 +18,14 @@ ADD . .
 
 RUN make build
 
-# FIXME: (enable) RUN apk del g++ git make && rm -rf /var/cache/apk/*
+# run container
+FROM alpine
+
+RUN apk add libnetfilter_queue-dev iptables-dev libpcap-dev
+WORKDIR /opt/glutton
+
+COPY --from=build-env /opt/glutton/bin/server /opt/glutton/bin/server
+COPY --from=build-env /opt/glutton/config /opt/glutton/config
+COPY --from=build-env /opt/glutton/rules /opt/glutton/rules
 
 CMD ["./bin/server", "-i", "eth0", "-l", "/var/log/glutton.log", "-d", "true"]
