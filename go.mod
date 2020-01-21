@@ -10,13 +10,11 @@ require (
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.3.3 // indirect
 	github.com/fw42/go-hpfeeds v0.0.0-20130602172243-651ce0355974
-	github.com/google/go-cmp v0.2.0 // indirect
 	github.com/google/gopacket v1.1.17 // indirect
 	github.com/gopherjs/gopherjs v0.0.0-20181103185306-d547d1d9531e // indirect
 	github.com/jtolds/gls v4.2.1+incompatible // indirect
 	github.com/kung-foo/freki v1.1.1-0.20170403115215-37bf522904e2
 	github.com/lunixbochs/vtclean v0.0.0-20180621232353-2d01aacdc34a
-	github.com/mdlayher/raw v0.0.0-20181016155347-fa5ef3332ca9 // indirect
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
 	github.com/pkg/errors v0.8.1 // indirect
 	github.com/reiver/go-oi v0.0.0-20160325061615-431c83978379 // indirect
@@ -32,3 +30,5 @@ require (
 	golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 )
+
+go 1.13

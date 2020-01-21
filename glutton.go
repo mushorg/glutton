@@ -33,32 +33,32 @@ type Glutton struct {
 
 type protocolHandlerFunc func(ctx context.Context, conn net.Conn) error
 
-func (g *Glutton) initConfig() (err error) {
+func (g *Glutton) initConfig() error {
 	viper.SetConfigName("conf")
 	viper.AddConfigPath(viper.GetString("confpath"))
-	if err = viper.ReadInConfig(); err != nil {
-		return
+	if err := viper.ReadInConfig(); err != nil {
+		return err
 	}
 	// If no config is found, use the defaults
 	viper.SetDefault("glutton_server", 5000)
 	viper.SetDefault("max_tcp_payload", 4096)
 	viper.SetDefault("rules_path", "rules/rules.yaml")
 	g.logger.Debug("configuration loaded successfully", zap.String("reporter", "glutton"))
-	return
+	return nil
 }
 
 // New creates a new Glutton instance
-func New() (g *Glutton, err error) {
-	g = &Glutton{}
+func New() (*Glutton, error) {
+	g := &Glutton{}
 	g.protocolHandlers = make(map[string]protocolHandlerFunc, 0)
-	if err = g.makeID(); err != nil {
+	if err := g.makeID(); err != nil {
 		return nil, err
 	}
 	g.logger = NewLogger(g.id.String())
 
-	// Loading the congiguration
+	// Loading the configuration
 	g.logger.Info("Loading configurations from: config/conf.yaml", zap.String("reporter", "glutton"))
-	if err = g.initConfig(); err != nil {
+	if err := g.initConfig(); err != nil {
 		return nil, err
 	}
 
@@ -77,17 +77,17 @@ func New() (g *Glutton, err error) {
 }
 
 // Init initializes freki and handles
-func (g *Glutton) Init() (err error) {
+func (g *Glutton) Init() error {
 	ctx := context.Background()
 	g.ctx, g.cancel = context.WithCancel(ctx)
 
 	gluttonServerPort := uint(viper.GetInt("glutton_server"))
 
 	// Initiate the freki processor
-	//g.processor, err = freki.New(viper.GetString("interface"), g.rules, g.logger)
+	var err error
 	g.processor, err = freki.New(viper.GetString("interface"), g.rules, nil)
 	if err != nil {
-		return
+		return err
 	}
 
 	// Initiating glutton server
@@ -96,7 +96,7 @@ func (g *Glutton) Init() (err error) {
 	if viper.GetBool("producers.enabled") {
 		g.producer, err = producer.New(g.id.String())
 		if err != nil {
-			return
+			return err
 		}
 	}
 	// Initiating protocol handlers
@@ -105,13 +105,13 @@ func (g *Glutton) Init() (err error) {
 
 	err = g.processor.Init()
 	if err != nil {
-		return
+		return err
 	}
-	return
+	return nil
 }
 
 // Start the packet processor
-func (g *Glutton) Start() (err error) {
+func (g *Glutton) Start() error {
 	quit := make(chan struct{}) // stop monitor on shutdown
 	defer func() {
 		quit <- struct{}{}
@@ -119,22 +119,19 @@ func (g *Glutton) Start() (err error) {
 	}()
 
 	g.startMonitor(quit)
-	err = g.processor.Start()
-	return
+	return g.processor.Start()
 }
 
 func (g *Glutton) makeID() error {
 	fileName := "glutton.id"
 	filePath := filepath.Join(viper.GetString("var-dir"), fileName)
-	err := os.MkdirAll(viper.GetString("var-dir"), 0777)
-	if err != nil {
+	if err := os.MkdirAll(viper.GetString("var-dir"), 0644); err != nil {
 		return err
 	}
 	if f, err := os.OpenFile(filePath, os.O_RDWR, 0644); os.IsNotExist(err) {
 		g.id = uuid.NewV4()
-		errWrite := ioutil.WriteFile(filePath, g.id.Bytes(), 0644)
-		if err != nil {
-			return errWrite
+		if err := ioutil.WriteFile(filePath, g.id.Bytes(), 0644); err != nil {
+			return err
 		}
 	} else {
 		if err != nil {
@@ -214,9 +211,9 @@ func (g *Glutton) registerHandlers() {
 				)
 
 				if g.producer != nil {
-					err = g.producer.Log(conn, md, nil)
-					if err != nil {
+					if err := g.producer.Log(conn, md, nil); err != nil {
 						g.logger.Error(fmt.Sprintf("[glutton ] error: %v", err))
+						return err
 					}
 				}
 
@@ -235,7 +232,7 @@ func (g *Glutton) registerHandlers() {
 }
 
 // Shutdown the packet processor
-func (g *Glutton) Shutdown() (err error) {
+func (g *Glutton) Shutdown() error {
 	defer g.logger.Sync()
 	g.cancel() // close all connection
 
