@@ -1,6 +1,7 @@
 language: go
+
 go:
-  - 1.11.x
+  - 1.13.x
 
 sudo: required
 
@@ -17,4 +18,3 @@ before_install:
 script:
   - go build
   - go test
-  - $HOME/gopath/bin/goveralls -service=travis-ci

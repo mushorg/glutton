@@ -10,64 +10,46 @@ import (
 
 // mapProtocolHandlers map protocol handlers to corresponding protocol
 func (g *Glutton) mapProtocolHandlers() {
-
 	g.protocolHandlers["smtp"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.HandleSMTP(ctx, conn)
 	}
-
 	g.protocolHandlers["rdp"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.HandleRDP(ctx, conn)
 	}
-
 	g.protocolHandlers["smb"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.HandleSMB(ctx, conn)
 	}
-
 	g.protocolHandlers["ftp"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.HandleFTP(ctx, conn)
 	}
-
 	g.protocolHandlers["sip"] = func(ctx context.Context, conn net.Conn) (err error) {
-		// TODO: remove 'context.TODO()' when handler code start using context.
-		ctx = context.TODO()
 		return g.HandleSIP(ctx, conn)
 	}
-
 	g.protocolHandlers["rfb"] = func(ctx context.Context, conn net.Conn) (err error) {
-		// TODO: remove 'context.TODO()' when handler code start using context.
-		ctx = context.TODO()
 		return g.HandleRFB(ctx, conn)
 	}
-
 	g.protocolHandlers["proxy_tcp"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.tcpProxy(ctx, conn)
 	}
-
 	g.protocolHandlers["telnet"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.HandleTelnet(ctx, conn)
 	}
-
 	g.protocolHandlers["mqtt"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.HandleMQTT(ctx, conn)
 	}
-
 	g.protocolHandlers["proxy_ssh"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.sshProxy.handle(ctx, conn)
 	}
-
 	g.protocolHandlers["proxy_telnet"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.telnetProxy.handle(ctx, conn)
 	}
-
 	g.protocolHandlers["jabber"] = func(ctx context.Context, conn net.Conn) (err error) {
 		return g.HandleJabber(ctx, conn)
 	}
-
 	g.protocolHandlers["default"] = func(ctx context.Context, conn net.Conn) (err error) {
-		// TODO: remove 'context.TODO()' when handler code start using context.
-		ctx = context.TODO()
 		snip, bufConn, err := g.Peek(conn, 4)
 		g.onErrorClose(err, conn)
+		// poor mans check for HTTP request
 		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true}
 		if _, ok := httpMap[strings.ToUpper(string(snip))]; ok == true {
 			return g.HandleHTTP(ctx, bufConn)
@@ -81,10 +63,13 @@ func (g *Glutton) closeOnShutdown(conn net.Conn, done <-chan struct{}) {
 	select {
 	case <-g.ctx.Done():
 		if err := conn.Close(); err != nil {
-			g.logger.Error(fmt.Sprintf("[glutton  ]  error on close: %v", err))
+			g.logger.Error(fmt.Sprintf("[glutton  ]  error on ctx close: %v", err))
 		}
 		return
 	case <-done:
+		if err := conn.Close(); err != nil {
+			g.logger.Debug(fmt.Sprintf("[glutton  ]  error on handler close: %v", err))
+		}
 		return
 	}
 }
