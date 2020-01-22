@@ -125,15 +125,19 @@ func (g *Glutton) Start() error {
 func (g *Glutton) makeID() error {
 	fileName := "glutton.id"
 	filePath := filepath.Join(viper.GetString("var-dir"), fileName)
-	if err := os.MkdirAll(viper.GetString("var-dir"), 0644); err != nil {
+	if err := os.MkdirAll(viper.GetString("var-dir"), 0744); err != nil {
 		return err
 	}
-	if f, err := os.OpenFile(filePath, os.O_RDWR, 0644); os.IsNotExist(err) {
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		g.id = uuid.NewV4()
-		if err := ioutil.WriteFile(filePath, g.id.Bytes(), 0644); err != nil {
+		if err := ioutil.WriteFile(filePath, g.id.Bytes(), 0744); err != nil {
 			return err
 		}
 	} else {
+		if err != nil {
+			return err
+		}
+		f, err := os.Open(filePath)
 		if err != nil {
 			return err
 		}
