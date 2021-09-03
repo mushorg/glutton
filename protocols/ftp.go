@@ -1,4 +1,4 @@
-package glutton
+package protocols
 
 import (
 	"bufio"
@@ -12,19 +12,19 @@ import (
 	"go.uber.org/zap"
 )
 
-func readFTP(conn net.Conn, g *Glutton) (msg string, err error) {
+func readFTP(conn net.Conn, logger Logger, h Honeypot) (msg string, err error) {
 	msg, err = bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("[ftp     ] error: %v", err))
+		logger.Error(fmt.Sprintf("[ftp     ] error: %v", err))
 	}
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("[ftp     ] error: %v", err))
+		logger.Error(fmt.Sprintf("[ftp     ] error: %v", err))
 	}
 	ck := freki.NewConnKeyByString(host, port)
-	md := g.processor.Connections.GetByFlow(ck)
+	md := h.ConnectionByFlow(ck)
 
-	g.logger.Info(
+	logger.Info(
 		"ftp payload received",
 		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
 		zap.String("src_ip", host),
@@ -36,18 +36,18 @@ func readFTP(conn net.Conn, g *Glutton) (msg string, err error) {
 }
 
 // HandleFTP takes a net.Conn and does basic FTP communication
-func (g *Glutton) HandleFTP(ctx context.Context, conn net.Conn) (err error) {
+func HandleFTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Error(fmt.Sprintf("[ftp     ]  error: %v", err))
+			logger.Error(fmt.Sprintf("[ftp     ]  error: %v", err))
 		}
 	}()
 
 	conn.Write([]byte("220 Welcome!\r\n"))
 	for {
-		g.updateConnectionTimeout(ctx, conn)
-		msg, err := readFTP(conn, g)
+		h.UpdateConnectionTimeout(ctx, conn)
+		msg, err := readFTP(conn, logger, h)
 		if len(msg) < 4 || err != nil {
 			break
 		}

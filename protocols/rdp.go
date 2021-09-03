@@ -1,4 +1,4 @@
-package glutton
+package protocols
 
 import (
 	"context"
@@ -10,34 +10,34 @@ import (
 )
 
 // HandleRDP takes a net.Conn and does basic RDP communication
-func (g *Glutton) HandleRDP(ctx context.Context, conn net.Conn) (err error) {
+func HandleRDP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Error(fmt.Sprintf("[rdp     ]  error: %v", err))
+			logger.Error(fmt.Sprintf("[rdp     ]  error: %v", err))
 		}
 	}()
 
 	buffer := make([]byte, 1024)
 	for {
-		g.updateConnectionTimeout(ctx, conn)
+		h.UpdateConnectionTimeout(ctx, conn)
 		n, err := conn.Read(buffer)
 		if err != nil && n <= 0 {
-			g.logger.Error(fmt.Sprintf("[rdp     ] error: %v", err))
+			logger.Error(fmt.Sprintf("[rdp     ] error: %v", err))
 			return err
 		}
 		if n > 0 && n < 1024 {
-			g.logger.Info(fmt.Sprintf("[rdp     ] \n%s", hex.Dump(buffer[0:n])))
+			logger.Info(fmt.Sprintf("[rdp     ] \n%s", hex.Dump(buffer[0:n])))
 			pdu, err := rdp.ParseCRPDU(buffer[0:n])
 			if err != nil {
 				return err
 			}
-			g.logger.Info(fmt.Sprintf("[rdp     ] req pdu: %+v", pdu))
+			logger.Info(fmt.Sprintf("[rdp     ] req pdu: %+v", pdu))
 			if len(pdu.Data) > 0 {
-				g.logger.Info(fmt.Sprintf("[rdp     ] data: %s", string(pdu.Data)))
+				logger.Info(fmt.Sprintf("[rdp     ] data: %s", string(pdu.Data)))
 			}
 			resp := rdp.ConnectionConfirm()
-			g.logger.Info(fmt.Sprintf("[rdp     ]resp pdu: %+v", resp))
+			logger.Info(fmt.Sprintf("[rdp     ]resp pdu: %+v", resp))
 			if _, err = conn.Write(resp); err != nil {
 				return err
 			}

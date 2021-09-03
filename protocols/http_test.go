@@ -1,4 +1,4 @@
-package glutton
+package protocols
 
 import (
 	"net/http"

@@ -1,4 +1,4 @@
-package glutton
+package protocols
 
 import (
 	"bufio"
@@ -9,13 +9,13 @@ import (
 	"net"
 )
 
-func readRFB(conn net.Conn, g *Glutton) error {
+func readRFB(conn net.Conn, logger Logger) error {
 	msg, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("[rfb     ] error: %v", err))
+		logger.Error(fmt.Sprintf("[rfb     ] error: %v", err))
 		return err
 	}
-	g.logger.Info(fmt.Sprintf("[rfb     ] message %q", msg))
+	logger.Info(fmt.Sprintf("[rfb     ] message %q", msg))
 	return nil
 }
 
@@ -31,18 +31,18 @@ type PixelFormat struct {
 }
 
 // HandleRFB takes a net.Conn and does basic RFB/VNC communication
-func (g *Glutton) HandleRFB(ctx context.Context, conn net.Conn) (err error) {
+func HandleRFB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Error(fmt.Sprintf("[rfb     ] error: %v", err))
+			logger.Error(fmt.Sprintf("[rfb     ] error: %v", err))
 		}
 	}()
 
 	if _, err := conn.Write([]byte("RFB 003.008\n")); err != nil {
 		return err
 	}
-	if err := readRFB(conn, g); err != nil {
+	if err := readRFB(conn, logger); err != nil {
 		return err
 	}
 	var authNone uint32 = 1
@@ -73,11 +73,11 @@ func (g *Glutton) HandleRFB(ctx context.Context, conn net.Conn) (err error) {
 	}
 	err = binary.Write(buf, binary.LittleEndian, f)
 	if err != nil {
-		g.logger.Warn(fmt.Sprintf("[rfb     ] binary.Write failed, error: %+v", err))
+		logger.Warn(fmt.Sprintf("[rfb     ] binary.Write failed, error: %+v", err))
 		return err
 	}
 	if _, err := conn.Write(buf.Bytes()); err != nil {
 		return err
 	}
-	return readRFB(conn, g)
+	return readRFB(conn, logger)
 }

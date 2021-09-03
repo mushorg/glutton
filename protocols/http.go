@@ -1,4 +1,4 @@
-package glutton
+package protocols
 
 import (
 	"bufio"
@@ -43,28 +43,28 @@ func formatRequest(r *http.Request) string {
 }
 
 // HandleHTTP takes a net.Conn and does basic HTTP communication
-func (g *Glutton) HandleHTTP(ctx context.Context, conn net.Conn) (err error) {
+func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Error(fmt.Sprintf("[http    ] error: %v", err))
+			logger.Error(fmt.Sprintf("[http    ] error: %v", err))
 		}
 	}()
 
 	req, err := http.ReadRequest(bufio.NewReader(conn))
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("[http    ] error: %v", err))
+		logger.Error(fmt.Sprintf("[http    ] error: %v", err))
 		return err
 	}
 
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("[http    ] error: %v", err))
+		logger.Error(fmt.Sprintf("[http    ] error: %v", err))
 	}
 	ck := freki.NewConnKeyByString(host, port)
-	md := g.processor.Connections.GetByFlow(ck)
+	md := h.ConnectionByFlow(ck)
 
-	g.logger.Info(
+	logger.Info(
 		fmt.Sprintf("HTTP %s request handled: %s", req.Method, req.URL.EscapedPath()),
 		zap.String("handler", "http"),
 		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
@@ -78,18 +78,18 @@ func (g *Glutton) HandleHTTP(ctx context.Context, conn net.Conn) (err error) {
 		defer req.Body.Close()
 		buf := bytes.NewBuffer(make([]byte, 0, req.ContentLength))
 		if _, err = buf.ReadFrom(req.Body); err != nil {
-			g.logger.Error(fmt.Sprintf("[http    ] error: %v", err))
+			logger.Error(fmt.Sprintf("[http    ] error: %v", err))
 			return err
 		}
 		body := buf.Bytes()
-		g.logger.Info(
+		logger.Info(
 			"HTTP body payload",
 			zap.String("handler", "http"),
 			zap.String("payload_hex", hex.EncodeToString(body[:])),
 		)
 	}
 	if strings.Contains(req.RequestURI, "wallet") {
-		g.logger.Info(
+		logger.Info(
 			"HTTP wallet request",
 			zap.String("handler", "http"),
 		)

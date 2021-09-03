@@ -38,18 +38,18 @@ type readSession struct {
 // NewSSHProxy creates a new SSH proxy instance
 func (g *Glutton) NewSSHProxy(destinationURL string) (err error) {
 	sshProxy := &sshProxy{
-		logger: g.logger,
+		logger: g.Logger,
 	}
 
 	dest, err := url.Parse(destinationURL)
 	if err != nil {
-		g.logger.Error("[ssh.prxy] failed to parse destination address, check config.yaml")
+		g.Logger.Error("[ssh.prxy] failed to parse destination address, check config.yaml")
 		return err
 	}
 
 	err = sshProxy.initConf(dest.Host)
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("[ssh.prxy] connection failed at SSH proxy, error: %v", err))
+		g.Logger.Error(fmt.Sprintf("[ssh.prxy] connection failed at SSH proxy, error: %v", err))
 		return err
 	}
 	g.sshProxy = sshProxy

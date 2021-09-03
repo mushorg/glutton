@@ -1,4 +1,4 @@
-package glutton
+package protocols
 
 import (
 	"bytes"
@@ -11,11 +11,11 @@ import (
 )
 
 // HandleSIP takes a net.Conn and does basic SIP communication
-func (g *Glutton) HandleSIP(ctx context.Context, netConn net.Conn) (err error) {
+func HandleSIP(ctx context.Context, netConn net.Conn, logger Logger, h Honeypot) (err error) {
 	defer func() {
 		err = netConn.Close()
 		if err != nil {
-			g.logger.Error(fmt.Sprintf("[sip     ]  error: %v", err))
+			logger.Error(fmt.Sprintf("[sip     ]  error: %v", err))
 		}
 	}()
 
@@ -26,22 +26,22 @@ func (g *Glutton) HandleSIP(ctx context.Context, netConn net.Conn) (err error) {
 	rd := bytes.NewReader(buf)
 	req, err := sipnet.ReadRequest(rd)
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("[sip     ] error: %v", err))
+		logger.Error(fmt.Sprintf("[sip     ] error: %v", err))
 	}
 	if req == nil {
-		g.logger.Info(fmt.Sprintf("[sip     ] failed to parse SIP req"))
+		logger.Info(fmt.Sprintf("[sip     ] failed to parse SIP req"))
 		return nil
 	}
-	g.logger.Info(fmt.Sprintf("[sip     ] SIP method: %s", req.Method))
+	logger.Info(fmt.Sprintf("[sip     ] SIP method: %s", req.Method))
 	switch req.Method {
 	case sipnet.MethodRegister:
-		g.logger.Info(fmt.Sprintf("[sip     ] handling SIP register"))
+		logger.Info(fmt.Sprintf("[sip     ] handling SIP register"))
 		server.HandleRegister(req, sipConn)
 	case sipnet.MethodInvite:
-		g.logger.Info(fmt.Sprintf("[sip     ] handling SIP invite"))
+		logger.Info(fmt.Sprintf("[sip     ] handling SIP invite"))
 		server.HandleInvite(req, sipConn)
 	case sipnet.MethodOptions:
-		g.logger.Info(fmt.Sprintf("[sip     ] handling SIP options"))
+		logger.Info(fmt.Sprintf("[sip     ] handling SIP options"))
 		resp := sipnet.NewResponse()
 		resp.StatusCode = sipnet.StatusOK
 		resp.Header.Set("Allow", "INVITE, ACK, CANCEL, OPTIONS, BYE")

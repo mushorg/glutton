@@ -1,4 +1,4 @@
-FROM golang:1.13-alpine AS build-env
+FROM golang:1.17-alpine AS build-env
 RUN apk update
 RUN apk add libnetfilter_queue-dev iptables-dev libpcap-dev
 

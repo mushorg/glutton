@@ -42,15 +42,15 @@ func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Error("failed to close connection", zap.String("handler", "tcp"), zap.Error(err))
+			g.Logger.Error("failed to close connection", zap.String("handler", "tcp"), zap.Error(err))
 		}
 	}()
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
-		g.logger.Error("faild to split remote address", zap.String("handler", "tcp"), zap.Error(err))
+		g.Logger.Error("faild to split remote address", zap.String("handler", "tcp"), zap.Error(err))
 	}
 	ck := freki.NewConnKeyByString(host, port)
-	md := g.processor.Connections.GetByFlow(ck)
+	md := g.Processor.Connections.GetByFlow(ck)
 
 	msgLength := 0
 	data := []byte{}
@@ -58,7 +58,7 @@ func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
 		buffer := make([]byte, 1024)
 		n, err := conn.Read(buffer)
 		if err != nil {
-			g.logger.Error("read error", zap.String("handler", "tcp"), zap.Error(err))
+			g.Logger.Error("read error", zap.String("handler", "tcp"), zap.Error(err))
 			break
 		}
 		msgLength += n
@@ -67,7 +67,7 @@ func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
 			break
 		}
 		if msgLength > viper.GetInt("max_tcp_payload") {
-			g.logger.Debug("max message length reached", zap.String("handler", "tcp"))
+			g.Logger.Debug("max message length reached", zap.String("handler", "tcp"))
 			break
 		}
 	}
@@ -77,7 +77,7 @@ func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
 		if err != nil {
 			return err
 		}
-		g.logger.Info(
+		g.Logger.Info(
 			fmt.Sprintf("Packet got handled by TCP handler"),
 			zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
 			zap.String("src_ip", host),

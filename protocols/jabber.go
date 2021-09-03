@@ -1,4 +1,4 @@
-package glutton
+package protocols
 
 import (
 	"bufio"
@@ -36,21 +36,21 @@ type JabberClient struct {
 }
 
 // parse Jabber client
-func parseJabberClient(conn net.Conn, dataClient []byte, g *Glutton) error {
+func parseJabberClient(conn net.Conn, dataClient []byte, logger Logger, h Honeypot) error {
 	v := JabberClient{STo: "none", Version: "none"}
 	if err := xml.Unmarshal(dataClient, &v); err != nil {
-		g.logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
+		logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
 		return err
 	}
 
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("[jabber  ] error: %v", err))
+		logger.Error(fmt.Sprintf("[jabber  ] error: %v", err))
 	}
 	ck := freki.NewConnKeyByString(host, port)
-	md := g.processor.Connections.GetByFlow(ck)
+	md := h.ConnectionByFlow(ck)
 
-	g.logger.Info(
+	logger.Info(
 		fmt.Sprintf("STo : %v Version: %v XMLns: %v XMLName: %v", v.STo, v.Version, v.XMLns, v.XMLName),
 		zap.String("handler", "jabber"),
 		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
@@ -61,22 +61,22 @@ func parseJabberClient(conn net.Conn, dataClient []byte, g *Glutton) error {
 }
 
 // read client msg
-func readMsgJabber(conn net.Conn, g *Glutton) (err error) {
+func readMsgJabber(conn net.Conn, logger Logger, h Honeypot) (err error) {
 	var line []byte
 	r := bufio.NewReader(conn)
 	line, _, err = r.ReadLine()
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
+		logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
 		return err
 	}
-	return parseJabberClient(conn, line[:1024], g)
+	return parseJabberClient(conn, line[:1024], logger, h)
 }
 
 // HandleJabber main handler
-func (g *Glutton) HandleJabber(ctx context.Context, conn net.Conn) (err error) {
+func HandleJabber(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (err error) {
 	defer func() {
 		if err = conn.Close(); err != nil {
-			g.logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
+			logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
 		}
 	}()
 
@@ -85,15 +85,15 @@ func (g *Glutton) HandleJabber(ctx context.Context, conn net.Conn) (err error) {
 
 	output, err := xml.MarshalIndent(v, "  ", "    ")
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
+		logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
 		return err
 	}
 	if _, err := conn.Write(output); err != nil {
-		g.logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
+		logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
 		return err
 	}
-	if err := readMsgJabber(conn, g); err != nil {
-		g.logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
+	if err := readMsgJabber(conn, logger, h); err != nil {
+		logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
 		return err
 	}
 	return nil

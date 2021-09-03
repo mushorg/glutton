@@ -8,6 +8,11 @@ Setup `go 1.11+`. Install required system packages:
 apt-get install libnetfilter-queue-dev libpcap-dev iptables-dev
 ```
 
+Arch:
+```
+pacman -S libnetfilter_queue libpcap iptables
+```
+
 To change your SSH server default port (i.e. 5001, see `rules.yaml`) and restart sshd:
 ```
 sed -i 's/[# ]*Port .*/Port 5001/g' /etc/ssh/sshd_config

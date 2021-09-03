@@ -11,19 +11,21 @@ import (
 	"github.com/kung-foo/freki"
 )
 
+const dialTimeout = 120 * time.Second
+
 func (g *Glutton) tcpProxy(ctx context.Context, conn net.Conn) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Error(fmt.Sprintf("[tcp.prxy] error: %v", err))
+			g.Logger.Error(fmt.Sprintf("[tcp.prxy] error: %v", err))
 		}
 	}()
 
 	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 	ck := freki.NewConnKeyByString(host, port)
-	md := g.processor.Connections.GetByFlow(ck)
+	md := g.Processor.Connections.GetByFlow(ck)
 	if md == nil {
-		g.logger.Warn(fmt.Sprintf("[tcp.prxy] untracked connection: %s", conn.RemoteAddr().String()))
+		g.Logger.Warn(fmt.Sprintf("[tcp.prxy] untracked connection: %s", conn.RemoteAddr().String()))
 		return
 	}
 
@@ -33,21 +35,21 @@ func (g *Glutton) tcpProxy(ctx context.Context, conn net.Conn) (err error) {
 
 	dest, err := url.Parse(target)
 	if err != nil {
-		g.logger.Error("[tcp.prxy]failed to parse destination address, check rules file")
+		g.Logger.Error("[tcp.prxy]failed to parse destination address, check rules file")
 		return err
 	}
 
 	if dest.Scheme != "tcp" && dest.Scheme != "docker" {
-		g.logger.Error(fmt.Sprintf("[tcp.prxy] unsuppported scheme: %s", dest.Scheme))
+		g.Logger.Error(fmt.Sprintf("[tcp.prxy] unsuppported scheme: %s", dest.Scheme))
 		return
 	}
 
-	g.logger.Info(fmt.Sprintf("[prxy.tcp] %s -> %v to %s", host, md.TargetPort, dest.String()))
+	g.Logger.Info(fmt.Sprintf("[prxy.tcp] %s -> %v to %s", host, md.TargetPort, dest.String()))
 
-	proxyConn, err := net.DialTimeout("tcp", dest.Host, time.Second*120)
+	proxyConn, err := net.DialTimeout("tcp", dest.Host, dialTimeout)
 
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("[prxy.tcp] %v", err))
+		g.Logger.Error(fmt.Sprintf("[prxy.tcp] %v", err))
 		return err
 	}
 
@@ -55,13 +57,13 @@ func (g *Glutton) tcpProxy(ctx context.Context, conn net.Conn) (err error) {
 	go func() {
 		_, err = io.Copy(proxyConn, conn)
 		if err != nil {
-			g.logger.Error(fmt.Sprintf("[prxy.tcp] %v", err))
+			g.Logger.Error(fmt.Sprintf("[prxy.tcp] %v", err))
 		}
 	}()
 
 	_, err = io.Copy(conn, proxyConn)
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("[prxy.tcp] %v", err))
+		g.Logger.Error(fmt.Sprintf("[prxy.tcp] %v", err))
 	}
 
 	return err

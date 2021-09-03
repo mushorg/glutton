@@ -20,10 +20,10 @@ import (
 // Glutton struct
 type Glutton struct {
 	id               uuid.UUID
-	logger           *zap.Logger
-	processor        *freki.Processor
+	Logger           *zap.Logger
+	Processor        *freki.Processor
 	rules            []*freki.Rule
-	producer         *producer.Producer
+	Producer         *producer.Producer
 	protocolHandlers map[string]protocolHandlerFunc
 	telnetProxy      *telnetProxy
 	sshProxy         *sshProxy
@@ -43,7 +43,7 @@ func (g *Glutton) initConfig() error {
 	viper.SetDefault("glutton_server", 5000)
 	viper.SetDefault("max_tcp_payload", 4096)
 	viper.SetDefault("rules_path", "rules/rules.yaml")
-	g.logger.Debug("configuration loaded successfully", zap.String("reporter", "glutton"))
+	g.Logger.Debug("configuration loaded successfully", zap.String("reporter", "glutton"))
 	return nil
 }
 
@@ -54,10 +54,10 @@ func New() (*Glutton, error) {
 	if err := g.makeID(); err != nil {
 		return nil, err
 	}
-	g.logger = NewLogger(g.id.String())
+	g.Logger = NewLogger(g.id.String())
 
 	// Loading the configuration
-	g.logger.Info("Loading configurations from: config/conf.yaml", zap.String("reporter", "glutton"))
+	g.Logger.Info("Loading configurations from: config/conf.yaml", zap.String("reporter", "glutton"))
 	if err := g.initConfig(); err != nil {
 		return nil, err
 	}
@@ -85,16 +85,16 @@ func (g *Glutton) Init() error {
 
 	// Initiate the freki processor
 	var err error
-	g.processor, err = freki.New(viper.GetString("interface"), g.rules, nil)
+	g.Processor, err = freki.New(viper.GetString("interface"), g.rules, nil)
 	if err != nil {
 		return err
 	}
 
 	// Initiating glutton server
-	g.processor.AddServer(freki.NewUserConnServer(gluttonServerPort))
+	g.Processor.AddServer(freki.NewUserConnServer(gluttonServerPort))
 	// Initiating log producers
 	if viper.GetBool("producers.enabled") {
-		g.producer, err = producer.New(g.id.String())
+		g.Producer, err = producer.New(g.id.String())
 		if err != nil {
 			return err
 		}
@@ -103,11 +103,7 @@ func (g *Glutton) Init() error {
 	g.mapProtocolHandlers()
 	g.registerHandlers()
 
-	err = g.processor.Init()
-	if err != nil {
-		return err
-	}
-	return nil
+	return g.Processor.Init()
 }
 
 // Start the packet processor
@@ -119,7 +115,7 @@ func (g *Glutton) Start() error {
 	}()
 
 	g.startMonitor(quit)
-	return g.processor.Start()
+	return g.Processor.Start()
 }
 
 func (g *Glutton) makeID() error {
@@ -172,7 +168,7 @@ func (g *Glutton) registerHandlers() {
 				handler = rule.Name
 				err := g.NewSSHProxy(rule.Target)
 				if err != nil {
-					g.logger.Error(fmt.Sprintf("[ssh.prxy] failed to initialize SSH proxy"))
+					g.Logger.Error(fmt.Sprintf("[ssh.prxy] failed to initialize SSH proxy"))
 					continue
 				}
 				rule.Target = handler
@@ -181,7 +177,7 @@ func (g *Glutton) registerHandlers() {
 				handler = rule.Name
 				err := g.NewTelnetProxy(rule.Target)
 				if err != nil {
-					g.logger.Error(fmt.Sprint("[telnet.prxy] failed to initialize TELNET proxy"))
+					g.Logger.Error(fmt.Sprint("[telnet.prxy] failed to initialize TELNET proxy"))
 					continue
 				}
 				rule.Target = handler
@@ -192,21 +188,21 @@ func (g *Glutton) registerHandlers() {
 			}
 
 			if g.protocolHandlers[handler] == nil {
-				g.logger.Warn(fmt.Sprintf("[glutton ] no handler found for %v protocol", handler))
+				g.Logger.Warn(fmt.Sprintf("[glutton ] no handler found for %v protocol", handler))
 				continue
 			}
 
-			g.processor.RegisterConnHandler(handler, func(conn net.Conn, md *freki.Metadata) error {
+			g.Processor.RegisterConnHandler(handler, func(conn net.Conn, md *freki.Metadata) error {
 				host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 				if err != nil {
 					return err
 				}
 
 				if md == nil {
-					g.logger.Debug(fmt.Sprintf("[glutton ] connection not tracked: %s:%s", host, port))
+					g.Logger.Debug(fmt.Sprintf("[glutton ] connection not tracked: %s:%s", host, port))
 					return nil
 				}
-				g.logger.Debug(
+				g.Logger.Debug(
 					fmt.Sprintf("[glutton ] new connection: %s:%s -> %d", host, port, md.TargetPort),
 					zap.String("host", host),
 					zap.String("src_port", port),
@@ -214,9 +210,9 @@ func (g *Glutton) registerHandlers() {
 					zap.String("handler", handler),
 				)
 
-				if g.producer != nil {
-					if err := g.producer.Log(conn, md, nil); err != nil {
-						g.logger.Error(fmt.Sprintf("[glutton ] error: %v", err))
+				if g.Producer != nil {
+					if err := g.Producer.Log(conn, md, nil); err != nil {
+						g.Logger.Error(fmt.Sprintf("[glutton ] error: %v", err))
 						return err
 					}
 				}
@@ -235,9 +231,18 @@ func (g *Glutton) registerHandlers() {
 	}
 }
 
+// ConnectionByFlow returns connection metadata by connection key
+func (g *Glutton) ConnectionByFlow(ckey [2]uint64) *freki.Metadata {
+	return g.Processor.Connections.GetByFlow(ckey)
+}
+
+func (g *Glutton) Produce(conn net.Conn, md *freki.Metadata, payload []byte) error {
+	return g.Producer.Log(conn, md, payload)
+}
+
 // Shutdown the packet processor
 func (g *Glutton) Shutdown() error {
-	defer g.logger.Sync()
+	defer g.Logger.Sync()
 	g.cancel() // close all connection
 
 	/** TODO:
@@ -251,16 +256,16 @@ func (g *Glutton) Shutdown() error {
 	 */
 
 	time.Sleep(2 * time.Second)
-	return g.processor.Shutdown()
+	return g.Processor.Shutdown()
 }
 
 // OnErrorClose prints the error, closes the connection and exits
 func (g *Glutton) onErrorClose(err error, conn net.Conn) {
 	if err != nil {
-		g.logger.Error(fmt.Sprintf("[glutton ] error: %v", err))
+		g.Logger.Error(fmt.Sprintf("[glutton ] error: %v", err))
 		err = conn.Close()
 		if err != nil {
-			g.logger.Error(fmt.Sprintf("[glutton ] error: %v", err))
+			g.Logger.Error(fmt.Sprintf("[glutton ] error: %v", err))
 		}
 	}
 }

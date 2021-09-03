@@ -1,4 +1,4 @@
-package glutton
+package protocols
 
 import (
 	"bytes"
@@ -23,17 +23,17 @@ type mqttRes struct {
 }
 
 // HandleMQTT handles a MQTT connection
-func (g *Glutton) HandleMQTT(ctx context.Context, conn net.Conn) error {
+func HandleMQTT(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
 	var err error
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Error(fmt.Sprintf("[mqtt    ] error: %v", err))
+			logger.Error(fmt.Sprintf("[mqtt    ] error: %v", err))
 		}
 	}()
 	buffer := make([]byte, 1024)
 	for {
-		g.updateConnectionTimeout(ctx, conn)
+		h.UpdateConnectionTimeout(ctx, conn)
 		n, err := conn.Read(buffer)
 		if err == nil || n > 0 {
 			msg := mqttMsg{}
@@ -41,7 +41,7 @@ func (g *Glutton) HandleMQTT(ctx context.Context, conn net.Conn) error {
 			if err := binary.Read(r, binary.LittleEndian, &msg); err != nil {
 				break
 			}
-			g.logger.Info(fmt.Sprintf("new mqqt packet with header flag: %d", msg.HeaderFlag), zap.String("handler", "mqtt"))
+			logger.Info(fmt.Sprintf("new mqqt packet with header flag: %d", msg.HeaderFlag), zap.String("handler", "mqtt"))
 			var res mqttRes
 			switch msg.HeaderFlag {
 			case 0x10:

@@ -41,9 +41,9 @@ func (g *Glutton) startMonitor(quit chan struct{}) {
 					fmt.Printf("Failed :%s", err)
 				}
 				runningRoutines := countRunningRoutines()
-				g.logger.Info(fmt.Sprintf("[system  ] running Go routines: %d, open files: %d", openFiles, runningRoutines))
+				g.Logger.Info(fmt.Sprintf("[system  ] running Go routines: %d, open files: %d", openFiles, runningRoutines))
 			case <-quit:
-				g.logger.Info("[system  ] Monitoring stopped..")
+				g.Logger.Info("[system  ] Monitoring stopped..")
 				ticker.Stop()
 				return
 			}

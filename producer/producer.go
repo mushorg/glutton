@@ -84,20 +84,20 @@ func (p *Producer) Log(conn net.Conn, md *freki.Metadata, payload []byte) error 
 		return err
 	}
 	if viper.GetBool("producers.hpfeeds.enabled") {
-		if err := p.LogHPFeeds(event); err != nil {
+		if err := p.logHPFeeds(event); err != nil {
 			return err
 		}
 	}
 	if viper.GetBool("producers.gollum.enabled") {
-		if err := p.LogHTTP(event); err != nil {
+		if err := p.logHTTP(event); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// LogHPFeeds logs an event to a hpfeeds broker
-func (p *Producer) LogHPFeeds(event *Event) (err error) {
+// logHPFeeds logs an event to a hpfeeds broker
+func (p *Producer) logHPFeeds(event *Event) (err error) {
 	var buf bytes.Buffer
 	if err := gob.NewEncoder(&buf).Encode(event); err != nil {
 		return err
@@ -106,8 +106,8 @@ func (p *Producer) LogHPFeeds(event *Event) (err error) {
 	return nil
 }
 
-// LogHTTP send logs to HTTP endpoint
-func (p *Producer) LogHTTP(event *Event) (err error) {
+// logHTTP send logs to HTTP endpoint
+func (p *Producer) logHTTP(event *Event) (err error) {
 	url, err := url.Parse(viper.GetString("producers.gollum.remote"))
 	if err != nil {
 		return err

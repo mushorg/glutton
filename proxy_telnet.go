@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/mushorg/glutton/protocols"
 	"github.com/reiver/go-telnet"
 	log "go.uber.org/zap"
 )
@@ -26,7 +27,7 @@ type telnetProxy struct {
 func (g *Glutton) NewTelnetProxy(destinationURL string) (err error) {
 
 	t := &telnetProxy{
-		logger:  g.logger,
+		logger:  g.Logger,
 		glutton: g,
 	}
 
@@ -62,7 +63,7 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 			hconn.Close()
 		}()
 		for {
-			g.updateConnectionTimeout(ctx, conn)
+			g.UpdateConnectionTimeout(ctx, conn)
 			if ended == true || hconn == nil || conn == nil {
 				break
 			}
@@ -77,7 +78,7 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 			}
 
 			t.logger.Info(fmt.Sprintf("[telnet proxy  ]   Info: Recieved: %d bytes(s) from Server. Bytes: %s", len(string(reply)), string(reply)))
-			err = writeMsg(conn, string(reply), g)
+			err = protocols.WriteTelnetMsg(conn, string(reply), g.Logger, g)
 			if err != nil {
 				t.logger.Error(fmt.Sprintf("[telnet proxy] Error: %v", err))
 				break
@@ -95,7 +96,7 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 			if ended == true || hconn == nil || conn == nil {
 				return
 			}
-			msg, err := readMsg(conn, g)
+			msg, err := protocols.ReadTelnetMsg(conn, g.Logger, g)
 			if err != nil {
 				t.logger.Error(fmt.Sprintf("[telnet proxy] Error: %v", err))
 				break

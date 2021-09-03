@@ -1,4 +1,4 @@
-package glutton
+package protocols
 
 import (
 	"bufio"
@@ -25,13 +25,8 @@ func (c *Client) w(s string) {
 	c.bufout.WriteString(s + "\r\n")
 	c.bufout.Flush()
 }
-func (c *Client) r(g *Glutton) (string, error) {
-	reply, err := c.bufin.ReadString('\n')
-	if err != nil {
-		g.logger.Error(fmt.Sprintf("[smtp    ] error: %v", err))
-		return "", err
-	}
-	return reply, nil
+func (c *Client) read() (string, error) {
+	return c.bufin.ReadString('\n')
 }
 
 func rwait() {
@@ -58,11 +53,11 @@ func validateRCPT(query string) bool {
 }
 
 // HandleSMTP takes a net.Conn and does basic SMTP communication
-func (g *Glutton) HandleSMTP(ctx context.Context, conn net.Conn) (err error) {
+func HandleSMTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.logger.Error(fmt.Sprintf("[smtp    ]  error: %v", err))
+			logger.Error(fmt.Sprintf("[smtp    ]  error: %v", err))
 		}
 	}()
 
@@ -76,13 +71,13 @@ func (g *Glutton) HandleSMTP(ctx context.Context, conn net.Conn) (err error) {
 
 	var data string
 	for {
-		g.updateConnectionTimeout(ctx, conn)
-		data, err = client.r(g)
+		h.UpdateConnectionTimeout(ctx, conn)
+		data, err = client.read()
 		if err != nil {
 			break
 		}
 		query := strings.Trim(data, "\r\n")
-		g.logger.Info(fmt.Sprintf("[smtp    ] Payload : %q", query))
+		logger.Info(fmt.Sprintf("[smtp    ] Payload : %q", query))
 		if strings.HasPrefix(query, "HELO ") {
 			rwait()
 			client.w("250 Hello! Pleased to meet you.")
@@ -95,11 +90,11 @@ func (g *Glutton) HandleSMTP(ctx context.Context, conn net.Conn) (err error) {
 		} else if strings.Compare(query, "DATA") == 0 {
 			client.w("354 End data with <CRLF>.<CRLF>")
 			for readctr := maxDataRead; readctr >= 0; readctr-- {
-				data, err = client.r(g)
+				data, err = client.read()
 				if err != nil {
 					break
 				}
-				g.logger.Info(fmt.Sprintf("[smtp    ] Data : %q", data))
+				logger.Info(fmt.Sprintf("[smtp    ] Data : %q", data))
 				// exit condition
 				if strings.Compare(data, ".\r\n") == 0 {
 					break
