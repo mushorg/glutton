@@ -16,9 +16,7 @@ require (
 	github.com/kung-foo/freki v1.1.1-0.20170403115215-37bf522904e2
 	github.com/lunixbochs/vtclean v0.0.0-20180621232353-2d01aacdc34a
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
-	github.com/pkg/errors v0.8.1 // indirect
-	github.com/reiver/go-oi v0.0.0-20160325061615-431c83978379 // indirect
-	github.com/reiver/go-telnet v0.0.0-20180421082511-9ff0b2ab096e
+	github.com/pkg/errors v0.8.1
 	github.com/satori/go.uuid v1.2.0
 	github.com/smartystreets/assertions v0.0.0-20180927180507-b2de0cb4f26d // indirect
 	github.com/smartystreets/goconvey v0.0.0-20181108003508-044398e4856c // indirect

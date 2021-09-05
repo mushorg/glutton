@@ -9,23 +9,19 @@ import (
 	"strings"
 
 	"github.com/mushorg/glutton/protocols"
-	"github.com/reiver/go-telnet"
-	log "go.uber.org/zap"
+	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 //telnetProxy Struct
 type telnetProxy struct {
-	logger      *log.Logger
-	curConn     net.Conn
-	proxyclient *telnet.Client
-	hostconn    *telnet.Conn
-	glutton     *Glutton
-	host        string
+	logger  *zap.Logger
+	glutton *Glutton
+	host    string
 }
 
 //NewTelnetProxy Create a new Telnet Proxy Session
-func (g *Glutton) NewTelnetProxy(destinationURL string) (err error) {
-
+func (g *Glutton) NewTelnetProxy(destinationURL string) error {
 	t := &telnetProxy{
 		logger:  g.Logger,
 		glutton: g,
@@ -33,28 +29,25 @@ func (g *Glutton) NewTelnetProxy(destinationURL string) (err error) {
 
 	dest, err := url.Parse(destinationURL)
 	if err != nil {
-		t.logger.Error("[telnet.prxy] failed to parse destination address, check config.yaml")
-		return err
+		return errors.Wrap(err, "failed to parse destination address, check config.yaml")
 	}
 	t.logger.Info(fmt.Sprintf("[telnet proxy] %v", dest.Host))
 	t.host = dest.Host
 	g.telnetProxy = t
-	return
+	return nil
 }
 
 //handle Telnet Proxy handler
-func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
+func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) error {
 	ended := false
 	g := t.glutton
 	tcpAddr, err := net.ResolveTCPAddr("tcp", t.host)
 	if err != nil {
-		t.logger.Error(fmt.Sprintf("ResolveTCPAddr failed: %v", err.Error()))
-		return
+		return errors.Wrap(err, "ResolveTCPAddr failed")
 	}
 	hconn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
-		t.logger.Error(fmt.Sprintf("[telnet proxy  ]  Connection error: %v", err))
-		return
+		return errors.Wrap(err, "connection error")
 	}
 	go func() {
 		defer func() {
@@ -64,27 +57,26 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 		}()
 		for {
 			g.UpdateConnectionTimeout(ctx, conn)
-			if ended == true || hconn == nil || conn == nil {
+			if ended || hconn == nil || conn == nil {
 				break
 			}
 			reply := make([]byte, 8*1024)
 			if _, err = hconn.Read(reply); err != nil {
 				if err == io.EOF {
-					t.logger.Error(fmt.Sprintf("[telnet proxy  ]   Connection closed by Server"))
+					t.logger.Error("[telnet proxy  ] Connection closed by Server", zap.Error(err))
 					break
 				}
-				t.logger.Error(fmt.Sprintf("[telnet proxy  ]   error: %v", err))
+				t.logger.Error("[telnet proxy  ] failed to read telnet message", zap.Error(err))
 				break
 			}
 
-			t.logger.Info(fmt.Sprintf("[telnet proxy  ]   Info: Recieved: %d bytes(s) from Server. Bytes: %s", len(string(reply)), string(reply)))
+			t.logger.Info(fmt.Sprintf("[telnet proxy  ] Recieved: %d bytes(s) from Server. Bytes: %s", len(string(reply)), string(reply)))
 			err = protocols.WriteTelnetMsg(conn, string(reply), g.Logger, g)
 			if err != nil {
-				t.logger.Error(fmt.Sprintf("[telnet proxy] Error: %v", err))
+				t.logger.Error("[telnet proxy  ] failed to write telnet message", zap.Error(err))
 				break
 			}
 		}
-		return
 	}()
 	go func() {
 		defer func() {
@@ -93,32 +85,31 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 			hconn.Close()
 		}()
 		for {
-			if ended == true || hconn == nil || conn == nil {
+			if ended || hconn == nil || conn == nil {
 				return
 			}
 			msg, err := protocols.ReadTelnetMsg(conn, g.Logger, g)
 			if err != nil {
-				t.logger.Error(fmt.Sprintf("[telnet proxy] Error: %v", err))
+				t.logger.Error("[telnet proxy  ] failed to read telnet message", zap.Error(err))
 				break
 			}
 			_, err = hconn.Write([]byte(msg))
 			if err != nil {
 				if err == io.EOF {
-					t.logger.Error(fmt.Sprintf("[telnet proxy  ]   Connection closed by Server"))
+					t.logger.Error("[telnet proxy  ] connection closed by server", zap.Error(err))
 					break
 				}
-				t.logger.Error(fmt.Sprintf("[telnet proxy  ]   Error: %v", err))
+				t.logger.Error("[telnet proxy  ] failed to write telnet message", zap.Error(err))
 				break
 			}
 			if msg == "^C" {
 				break
 			}
 			if len(strings.Trim(msg, " ")) > 0 {
-				t.logger.Info(fmt.Sprintf("[telnet proxy  ]   Info: Sending: %d bytes(s) to Server, Bytes:\n %s", len(string(msg)), string(msg)))
+				t.logger.Info(fmt.Sprintf("[telnet proxy  ] Sending: %d bytes(s) to Server, Bytes:\n %s", len(string(msg)), string(msg)))
 			}
 		}
-		return
 	}()
 
-	return
+	return nil
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/kung-foo/freki"
 	"github.com/mushorg/glutton/producer"
+	"github.com/pkg/errors"
 	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -50,7 +51,7 @@ func (g *Glutton) initConfig() error {
 // New creates a new Glutton instance
 func New() (*Glutton, error) {
 	g := &Glutton{}
-	g.protocolHandlers = make(map[string]protocolHandlerFunc, 0)
+	g.protocolHandlers = make(map[string]protocolHandlerFunc)
 	if err := g.makeID(); err != nil {
 		return nil, err
 	}
@@ -64,10 +65,10 @@ func New() (*Glutton, error) {
 
 	rulesPath := viper.GetString("rules_path")
 	rulesFile, err := os.Open(rulesPath)
-	defer rulesFile.Close()
 	if err != nil {
 		return nil, err
 	}
+	defer rulesFile.Close()
 
 	g.rules, err = freki.ReadRulesFromFile(rulesFile)
 	if err != nil {
@@ -122,28 +123,28 @@ func (g *Glutton) makeID() error {
 	fileName := "glutton.id"
 	filePath := filepath.Join(viper.GetString("var-dir"), fileName)
 	if err := os.MkdirAll(viper.GetString("var-dir"), 0744); err != nil {
-		return err
+		return errors.Wrap(err, "failed to create var-dir")
 	}
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		g.id = uuid.NewV4()
 		if err := ioutil.WriteFile(filePath, g.id.Bytes(), 0744); err != nil {
-			return err
+			return errors.Wrap(err, "failed to create new PID filed")
 		}
 	} else {
 		if err != nil {
-			return err
+			return errors.Wrap(err, "failed to access PID file")
 		}
 		f, err := os.Open(filePath)
 		if err != nil {
-			return err
+			return errors.Wrap(err, "failed to open PID file")
 		}
 		buff, err := ioutil.ReadAll(f)
 		if err != nil {
-			return err
+			return errors.Wrap(err, "failed to read PID file")
 		}
 		g.id, err = uuid.FromBytes(buff)
 		if err != nil {
-			return err
+			return errors.Wrap(err, "failed to create UUID from PID filed content")
 		}
 	}
 	return nil
@@ -163,39 +164,33 @@ func (g *Glutton) registerHandlers() {
 				g.protocolHandlers[rule.Target] = g.protocolHandlers[handler]
 				delete(g.protocolHandlers, handler)
 				handler = rule.Target
-				break
 			case "proxy_ssh":
 				handler = rule.Name
-				err := g.NewSSHProxy(rule.Target)
-				if err != nil {
-					g.Logger.Error(fmt.Sprintf("[ssh.prxy] failed to initialize SSH proxy"))
+				if err := g.NewSSHProxy(rule.Target); err != nil {
+					g.Logger.Error("[ssh.prxy] failed to initialize SSH proxy", zap.Error(err))
 					continue
 				}
 				rule.Target = handler
-				break
 			case "proxy_telnet":
 				handler = rule.Name
-				err := g.NewTelnetProxy(rule.Target)
-				if err != nil {
-					g.Logger.Error(fmt.Sprint("[telnet.prxy] failed to initialize TELNET proxy"))
+				if err := g.NewTelnetProxy(rule.Target); err != nil {
+					g.Logger.Error("[telnet.prxy] failed to initialize TELNET proxy", zap.Error(err))
 					continue
 				}
 				rule.Target = handler
-				break
 			default:
 				handler = rule.Target
-				break
 			}
 
 			if g.protocolHandlers[handler] == nil {
-				g.Logger.Warn(fmt.Sprintf("[glutton ] no handler found for %v protocol", handler))
+				g.Logger.Warn(fmt.Sprintf("[glutton ] no handler found for %s protocol", handler))
 				continue
 			}
 
 			g.Processor.RegisterConnHandler(handler, func(conn net.Conn, md *freki.Metadata) error {
 				host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 				if err != nil {
-					return err
+					return errors.Wrap(err, "failed to split remote address")
 				}
 
 				if md == nil {
@@ -212,7 +207,7 @@ func (g *Glutton) registerHandlers() {
 
 				if g.Producer != nil {
 					if err := g.Producer.Log(conn, md, nil); err != nil {
-						g.Logger.Error(fmt.Sprintf("[glutton ] error: %v", err))
+						g.Logger.Error("[glutton ] producer log error", zap.Error(err))
 						return err
 					}
 				}
@@ -220,12 +215,12 @@ func (g *Glutton) registerHandlers() {
 				done := make(chan struct{})
 				go g.closeOnShutdown(conn, done)
 				if err = conn.SetDeadline(time.Now().Add(time.Duration(viper.GetInt("conn_timeout")) * time.Second)); err != nil {
-					return err
+					return errors.Wrap(err, "failed to set connection deadline")
 				}
 				ctx := g.contextWithTimeout(72)
 				err = g.protocolHandlers[handler](ctx, conn)
 				done <- struct{}{}
-				return err
+				return errors.Wrap(err, "protocol handler error")
 			})
 		}
 	}
@@ -237,7 +232,10 @@ func (g *Glutton) ConnectionByFlow(ckey [2]uint64) *freki.Metadata {
 }
 
 func (g *Glutton) Produce(conn net.Conn, md *freki.Metadata, payload []byte) error {
-	return g.Producer.Log(conn, md, payload)
+	if g.Producer != nil {
+		return g.Producer.Log(conn, md, payload)
+	}
+	return nil
 }
 
 // Shutdown the packet processor
@@ -262,10 +260,9 @@ func (g *Glutton) Shutdown() error {
 // OnErrorClose prints the error, closes the connection and exits
 func (g *Glutton) onErrorClose(err error, conn net.Conn) {
 	if err != nil {
-		g.Logger.Error(fmt.Sprintf("[glutton ] error: %v", err))
-		err = conn.Close()
-		if err != nil {
-			g.Logger.Error(fmt.Sprintf("[glutton ] error: %v", err))
+		g.Logger.Error("[glutton ] connection error, attempting close", zap.Error(err))
+		if err := conn.Close(); err != nil {
+			g.Logger.Error("[glutton ] failed closing the connection", zap.Error(err))
 		}
 	}
 }

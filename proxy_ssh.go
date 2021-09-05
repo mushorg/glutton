@@ -14,12 +14,11 @@ import (
 
 	"github.com/lunixbochs/vtclean"
 	"go.uber.org/zap"
-	log "go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
 
 type sshProxy struct {
-	logger     *log.Logger
+	logger     *zap.Logger
 	config     *ssh.ServerConfig
 	callbackFn func(c ssh.ConnMetadata) (*ssh.Client, error)
 	wrapFn     func(c ssh.ConnMetadata, r io.ReadCloser) (io.ReadCloser, error)
@@ -29,7 +28,7 @@ type sshProxy struct {
 
 type readSession struct {
 	io.ReadCloser
-	logger    *log.Logger
+	logger    *zap.Logger
 	buffer    bytes.Buffer
 	delimiter []byte
 	n         int // Number of bytes written to buffer
@@ -112,10 +111,10 @@ func (s *sshProxy) initConf(dest string) error {
 	s.config = conf
 
 	s.callbackFn = func(c ssh.ConnMetadata) (*ssh.Client, error) {
-		meta, _ := sessions[c.RemoteAddr()]
+		meta := sessions[c.RemoteAddr()]
 		s.logger.Debug(fmt.Sprintf("[prxy.ssh] %v", meta))
 		client := meta["client"].(*ssh.Client)
-		s.logger.Info(fmt.Sprintf("[prxy.ssh] connection accepted from: %s\n", c.RemoteAddr()))
+		s.logger.Info(fmt.Sprintf("[prxy.ssh] connection accepted from: %s", c.RemoteAddr()))
 		return client, nil
 	}
 	s.wrapFn = func(c ssh.ConnMetadata, r io.ReadCloser) (io.ReadCloser, error) {
@@ -127,7 +126,7 @@ func (s *sshProxy) initConf(dest string) error {
 		return s.reader, nil
 	}
 	s.closeFn = func(c ssh.ConnMetadata) error {
-		s.logger.Info(fmt.Sprintf("[prxy.ssh] connection closed."))
+		s.logger.Info("[prxy.ssh] connection closed")
 		return nil
 	}
 
@@ -136,45 +135,41 @@ func (s *sshProxy) initConf(dest string) error {
 
 func (s *sshProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 	defer func() {
-		err = conn.Close()
-		if err != nil {
-			s.logger.Error(fmt.Sprintf("[ssh.prxy]  error: %v", err))
+		if err := conn.Close(); err != nil {
+			s.logger.Error("[ssh.prxy] failed to close connection", zap.Error(err))
 		}
 	}()
 
 	serverConn, chans, reqs, err := ssh.NewServerConn(conn, s.config)
-
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("[ssh.prxy] failed to handshake, error: %v", err))
+		s.logger.Error("[ssh.prxy] failed to handshake", zap.Error(err))
 		return err
 	}
 
 	clientConn, err := s.callbackFn(serverConn)
 	defer func() {
-		err = clientConn.Close()
-		if err != nil {
-			s.logger.Error(fmt.Sprintf("[ssh.prxy]  error: %v", err))
+		if err := clientConn.Close(); err != nil {
+			s.logger.Error("[ssh.prxy] failed to close connection", zap.Error(err))
 		}
 	}()
 
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("[ssh.prxy] error: %v", err))
+		s.logger.Error("[ssh.prxy] callback error", zap.Error(err))
 		return err
 	}
 
 	go ssh.DiscardRequests(reqs)
 
 	for ch := range chans {
-
 		sshClientChan, clientReq, err := clientConn.OpenChannel(ch.ChannelType(), ch.ExtraData())
 		if err != nil {
-			s.logger.Error(fmt.Sprintf("[ssh.prxy] could not accept client channel, error: %v", err))
+			s.logger.Error("[ssh.prxy] could not accept client channel", zap.Error(err))
 			return err
 		}
 
 		sshServerChan, serverReq, err := ch.Accept()
 		if err != nil {
-			s.logger.Error(fmt.Sprintf("[ssh.prxy] could not accept server channel, error: %+v", err))
+			s.logger.Error("[ssh.prxy] could not accept server channel", zap.Error(err))
 			return err
 		}
 
@@ -203,7 +198,7 @@ func (s *sshProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 				s.logger.Debug(fmt.Sprintf("[ssh.prxy] request: \n\n%s %s %v %s\n\n", dst, req.Type, req.WantReply, req.Payload))
 				b, sendErr := dst.SendRequest(req.Type, req.WantReply, req.Payload)
 				if sendErr != nil {
-					s.logger.Error(fmt.Sprintf("[ssh.prxy] error: %v", sendErr))
+					s.logger.Error("[ssh.prxy] failed to send request", zap.Error(sendErr))
 				}
 
 				if req.WantReply {
@@ -227,13 +222,14 @@ func (s *sshProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 		var wrappedServerChan io.ReadCloser = sshServerChan
 		var wrappedClientChan io.ReadCloser = sshClientChan
 
+		// TODO: cleanup the channels once not required anymore
 		defer wrappedServerChan.Close()
 		defer wrappedClientChan.Close()
 
 		if s.wrapFn != nil {
 			wrappedClientChan, err = s.wrapFn(serverConn, sshClientChan)
 			if err != nil {
-				s.logger.Error(fmt.Sprintf("[ssh.prxy] error: %v", err))
+				s.logger.Error("[ssh.prxy] failed to wrap connections", zap.Error(err))
 			}
 		}
 

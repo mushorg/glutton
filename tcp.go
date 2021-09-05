@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -78,7 +77,7 @@ func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
 			return err
 		}
 		g.Logger.Info(
-			fmt.Sprintf("Packet got handled by TCP handler"),
+			"Packet got handled by TCP handler",
 			zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
 			zap.String("src_ip", host),
 			zap.String("src_port", port),

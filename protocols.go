@@ -53,7 +53,7 @@ func (g *Glutton) mapProtocolHandlers() {
 		g.onErrorClose(err, conn)
 		// poor mans check for HTTP request
 		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true}
-		if _, ok := httpMap[strings.ToUpper(string(snip))]; ok == true {
+		if _, ok := httpMap[strings.ToUpper(string(snip))]; ok {
 			return protocols.HandleHTTP(ctx, bufConn, g.Logger, g)
 		}
 		return g.HandleTCP(ctx, bufConn)
@@ -79,14 +79,13 @@ func (g *Glutton) closeOnShutdown(conn net.Conn, done <-chan struct{}) {
 type contextKey string
 
 // Drive child context from parent context with additional value required for sepcific handler
-func (g *Glutton) contextWithTimeout(timeInSeconds uint8) context.Context {
-	limit := time.Duration(timeInSeconds) * time.Second
-	return context.WithValue(g.ctx, contextKey("timeout"), time.Now().Add(limit))
+func (g *Glutton) contextWithTimeout(timeInSeconds int) context.Context {
+	return context.WithValue(g.ctx, contextKey("timeout"), time.Duration(timeInSeconds)*time.Second)
 }
 
 // UpdateConnectionTimeout increase connection timeout limit on connection I/O operation
 func (g *Glutton) UpdateConnectionTimeout(ctx context.Context, conn net.Conn) {
-	if timeout, ok := ctx.Value("timeout").(time.Time); ok {
-		conn.SetDeadline(timeout)
+	if timeout, ok := ctx.Value("timeout").(time.Duration); ok {
+		conn.SetDeadline(time.Now().Add(timeout))
 	}
 }

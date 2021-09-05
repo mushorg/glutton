@@ -15,10 +15,6 @@ func newBufferedConn(c net.Conn) BufferedConn {
 	return BufferedConn{bufio.NewReader(c), c}
 }
 
-func newBufferedConnSize(c net.Conn, n int) BufferedConn {
-	return BufferedConn{bufio.NewReaderSize(c, n), c}
-}
-
 func (b BufferedConn) peek(n int) ([]byte, error) {
 	return b.r.Peek(n)
 }

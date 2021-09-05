@@ -23,7 +23,7 @@ func countOpenFiles() (int, error) {
 		}
 		return 0, errors.New("lsof command does not exist. Kindly run sudo apt install lsof")
 	}
-	return 0, errors.New("Operating system type not supported for this command")
+	return 0, errors.New("operating system type not supported for this command")
 }
 
 func countRunningRoutines() int {
