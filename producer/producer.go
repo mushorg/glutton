@@ -15,6 +15,11 @@ import (
 	"github.com/spf13/viper"
 )
 
+const (
+	httpTimeout = 10 * time.Second
+	tlsTimeout  = 5 * time.Second
+)
+
 // Producer for the producer
 type Producer struct {
 	sensorID   string
@@ -58,8 +63,13 @@ func makeEvent(conn net.Conn, md *freki.Metadata, payload []byte, sensorID strin
 // New initializes the producers
 func New(sensorID string) (*Producer, error) {
 	producer := &Producer{
-		sensorID:   sensorID,
-		httpClient: &http.Client{},
+		sensorID: sensorID,
+		httpClient: &http.Client{
+			Transport: &http.Transport{
+				TLSHandshakeTimeout: tlsTimeout,
+			},
+			Timeout: httpTimeout,
+		},
 	}
 	if viper.GetBool("producers.hpfeeds.enabled") {
 		producer.hpfClient = hpfeeds.NewHpfeeds(
@@ -97,7 +107,7 @@ func (p *Producer) Log(conn net.Conn, md *freki.Metadata, payload []byte) error 
 }
 
 // logHPFeeds logs an event to a hpfeeds broker
-func (p *Producer) logHPFeeds(event *Event) (err error) {
+func (p *Producer) logHPFeeds(event *Event) error {
 	var buf bytes.Buffer
 	if err := gob.NewEncoder(&buf).Encode(event); err != nil {
 		return err
@@ -107,28 +117,28 @@ func (p *Producer) logHPFeeds(event *Event) (err error) {
 }
 
 // logHTTP send logs to HTTP endpoint
-func (p *Producer) logHTTP(event *Event) (err error) {
+func (p *Producer) logHTTP(event *Event) error {
 	url, err := url.Parse(viper.GetString("producers.gollum.remote"))
 	if err != nil {
 		return err
 	}
 	data, err := json.Marshal(event)
 	if err != nil {
-		return
+		return err
 	}
 	req, err := http.NewRequest("POST", url.Scheme+"://"+url.Host, bytes.NewBuffer(data))
 	if err != nil {
-		return
+		return err
 	}
 	password, _ := url.User.Password()
 	req.SetBasicAuth(url.User.Username(), password)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return
+		return err
 	}
 	if err = resp.Body.Close(); err != nil {
-		return
+		return err
 	}
-	return
+	return nil
 }
