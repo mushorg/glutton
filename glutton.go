@@ -12,6 +12,7 @@ import (
 
 	"github.com/kung-foo/freki"
 	"github.com/mushorg/glutton/producer"
+	"github.com/mushorg/glutton/protocols"
 	"github.com/pkg/errors"
 	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/viper"
@@ -25,14 +26,12 @@ type Glutton struct {
 	Processor        *freki.Processor
 	rules            []*freki.Rule
 	Producer         *producer.Producer
-	protocolHandlers map[string]protocolHandlerFunc
+	protocolHandlers map[string]protocols.HandlerFunc
 	telnetProxy      *telnetProxy
 	sshProxy         *sshProxy
 	ctx              context.Context
 	cancel           context.CancelFunc
 }
-
-type protocolHandlerFunc func(ctx context.Context, conn net.Conn) error
 
 func (g *Glutton) initConfig() error {
 	viper.SetConfigName("conf")
@@ -51,7 +50,7 @@ func (g *Glutton) initConfig() error {
 // New creates a new Glutton instance
 func New() (*Glutton, error) {
 	g := &Glutton{}
-	g.protocolHandlers = make(map[string]protocolHandlerFunc)
+	g.protocolHandlers = make(map[string]protocols.HandlerFunc)
 	if err := g.makeID(); err != nil {
 		return nil, err
 	}
@@ -101,7 +100,16 @@ func (g *Glutton) Init() error {
 		}
 	}
 	// Initiating protocol handlers
-	g.mapProtocolHandlers()
+	g.protocolHandlers = protocols.MapProtocolHandlers(g.Logger, g)
+	g.protocolHandlers["proxy_tcp"] = func(ctx context.Context, conn net.Conn) error {
+		return g.tcpProxy(ctx, conn)
+	}
+	g.protocolHandlers["proxy_ssh"] = func(ctx context.Context, conn net.Conn) error {
+		return g.sshProxy.handle(ctx, conn)
+	}
+	g.protocolHandlers["proxy_telnet"] = func(ctx context.Context, conn net.Conn) error {
+		return g.telnetProxy.handle(ctx, conn)
+	}
 	g.registerHandlers()
 
 	return g.Processor.Init()
@@ -153,9 +161,7 @@ func (g *Glutton) makeID() error {
 // registerHandlers register protocol handlers to glutton_server
 func (g *Glutton) registerHandlers() {
 	for _, rule := range g.rules {
-
 		if rule.Type == "conn_handler" && rule.Target != "" {
-
 			var handler string
 
 			switch rule.Name {
@@ -255,14 +261,4 @@ func (g *Glutton) Shutdown() error {
 
 	time.Sleep(2 * time.Second)
 	return g.Processor.Shutdown()
-}
-
-// OnErrorClose prints the error, closes the connection and exits
-func (g *Glutton) onErrorClose(err error, conn net.Conn) {
-	if err != nil {
-		g.Logger.Error("[glutton ] connection error, attempting close", zap.Error(err))
-		if err := conn.Close(); err != nil {
-			g.Logger.Error("[glutton ] failed closing the connection", zap.Error(err))
-		}
-	}
 }

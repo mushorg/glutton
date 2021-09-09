@@ -1,4 +1,4 @@
-package glutton
+package protocols
 
 import (
 	"context"
@@ -10,11 +10,12 @@ import (
 	"strconv"
 
 	"github.com/kung-foo/freki"
+	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
 
-func storePayload(data []byte, g *Glutton) (string, error) {
+func storePayload(data []byte) (string, error) {
 	sum := sha256.Sum256(data)
 	if err := os.MkdirAll("payloads", os.ModePerm); err != nil {
 		return "", err
@@ -37,19 +38,19 @@ func storePayload(data []byte, g *Glutton) (string, error) {
 }
 
 // HandleTCP takes a net.Conn and peeks at the data send
-func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
+func HandleTCP(ctx context.Context, conn net.Conn, log Logger, h Honeypot) (err error) {
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			g.Logger.Error("failed to close connection", zap.String("handler", "tcp"), zap.Error(err))
+			log.Error("failed to close TCP connection", zap.String("handler", "tcp"), zap.Error(err))
 		}
 	}()
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
-		g.Logger.Error("faild to split remote address", zap.String("handler", "tcp"), zap.Error(err))
+		return errors.Wrap(err, "faild to split remote address")
 	}
 	ck := freki.NewConnKeyByString(host, port)
-	md := g.Processor.Connections.GetByFlow(ck)
+	md := h.ConnectionByFlow(ck)
 
 	msgLength := 0
 	data := []byte{}
@@ -57,7 +58,7 @@ func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
 		buffer := make([]byte, 1024)
 		n, err := conn.Read(buffer)
 		if err != nil {
-			g.Logger.Error("read error", zap.String("handler", "tcp"), zap.Error(err))
+			log.Error("read error", zap.String("handler", "tcp"), zap.Error(err))
 			break
 		}
 		msgLength += n
@@ -66,17 +67,17 @@ func (g *Glutton) HandleTCP(ctx context.Context, conn net.Conn) (err error) {
 			break
 		}
 		if msgLength > viper.GetInt("max_tcp_payload") {
-			g.Logger.Debug("max message length reached", zap.String("handler", "tcp"))
+			log.Debug("max message length reached", zap.String("handler", "tcp"))
 			break
 		}
 	}
 
 	if msgLength > 0 {
-		payloadHash, err := storePayload(data, g)
+		payloadHash, err := storePayload(data)
 		if err != nil {
 			return err
 		}
-		g.Logger.Info(
+		log.Info(
 			"Packet got handled by TCP handler",
 			zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
 			zap.String("src_ip", host),

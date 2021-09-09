@@ -1,4 +1,4 @@
-package glutton
+package protocols
 
 import (
 	"bufio"
@@ -24,11 +24,8 @@ func (b BufferedConn) Read(p []byte) (int, error) {
 }
 
 // Peek reads `length` amount of data from the connection
-func (g *Glutton) Peek(conn net.Conn, length int) (snip []byte, bufConn BufferedConn, err error) {
-	bufConn = newBufferedConn(conn)
-	snip, err = bufConn.peek(length)
-	if err != nil {
-		return
-	}
-	return
+func Peek(conn net.Conn, length int) ([]byte, BufferedConn, error) {
+	bufConn := newBufferedConn(conn)
+	snip, err := bufConn.peek(length)
+	return snip, bufConn, err
 }
