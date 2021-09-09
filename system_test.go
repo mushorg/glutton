@@ -2,21 +2,17 @@ package glutton
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestCountOpenFiles(t *testing.T) {
 	openFiles, err := countOpenFiles()
-	if err != nil {
-		t.Fatalf("Tests failed: %s", err)
-	}
-	if openFiles < 0 {
-		t.Fatalf("countOpenFiles returned %d, expected > 0", openFiles)
-	}
+	require.NoError(t, err, "failed to count open files")
+	require.NotEmpty(t, openFiles, "unexpected number of open files")
 }
 
 func TestCountRunningRoutines(t *testing.T) {
 	runningRoutines := countRunningRoutines()
-	if runningRoutines <= 0 {
-		t.Fatalf("runningRoutines returned %d, expected > 0", runningRoutines)
-	}
+	require.NotEmpty(t, runningRoutines, "expected running routines")
 }
