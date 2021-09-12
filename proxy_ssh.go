@@ -13,6 +13,7 @@ import (
 	"net/url"
 
 	"github.com/lunixbochs/vtclean"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
@@ -42,14 +43,12 @@ func (g *Glutton) NewSSHProxy(destinationURL string) (err error) {
 
 	dest, err := url.Parse(destinationURL)
 	if err != nil {
-		g.Logger.Error("[ssh.prxy] failed to parse destination address, check config.yaml")
-		return err
+		return errors.Wrap(err, "failed to parse destination address, check config.yaml")
 	}
 
 	err = sshProxy.initConf(dest.Host)
 	if err != nil {
-		g.Logger.Error(fmt.Sprintf("[ssh.prxy] connection failed at SSH proxy, error: %v", err))
-		return err
+		return errors.Wrap(err, "connection failed at SSH proxy")
 	}
 	g.sshProxy = sshProxy
 	return
@@ -58,7 +57,6 @@ func (g *Glutton) NewSSHProxy(destinationURL string) (err error) {
 func (s *sshProxy) initConf(dest string) error {
 	rsaKey, err := s.sshKeyGen()
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("[ssh.prxy] %v", err))
 		return err
 	}
 
@@ -67,14 +65,13 @@ func (s *sshProxy) initConf(dest string) error {
 	var sessions = make(map[net.Addr]map[string]interface{})
 	conf := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-
 			host, port, err := net.SplitHostPort(c.RemoteAddr().String())
 			if err != nil {
-				s.logger.Error(fmt.Sprintf("[jabber  ] error: %v", err))
+				return nil, errors.Wrap(err, "failed to split remote address")
 			}
 
 			s.logger.Info(
-				fmt.Sprintf("[prxy.ssh] login attempt: %s, user %s password: %s", c.RemoteAddr(), c.User(), string(pass)),
+				fmt.Sprintf("login attempt: %s, user %s password: %s", c.RemoteAddr(), c.User(), string(pass)),
 				zap.String("handler", "ssh proxy"),
 				zap.String("src_ip", host),
 				zap.String("src_port", port),
@@ -112,9 +109,9 @@ func (s *sshProxy) initConf(dest string) error {
 
 	s.callbackFn = func(c ssh.ConnMetadata) (*ssh.Client, error) {
 		meta := sessions[c.RemoteAddr()]
-		s.logger.Debug(fmt.Sprintf("[prxy.ssh] %v", meta))
+		s.logger.Debug(fmt.Sprintf("session: %v", meta))
 		client := meta["client"].(*ssh.Client)
-		s.logger.Info(fmt.Sprintf("[prxy.ssh] connection accepted from: %s", c.RemoteAddr()))
+		s.logger.Info(fmt.Sprintf("ssh proxy connection accepted from: %s", c.RemoteAddr()))
 		return client, nil
 	}
 	s.wrapFn = func(c ssh.ConnMetadata, r io.ReadCloser) (io.ReadCloser, error) {
@@ -126,36 +123,34 @@ func (s *sshProxy) initConf(dest string) error {
 		return s.reader, nil
 	}
 	s.closeFn = func(c ssh.ConnMetadata) error {
-		s.logger.Info("[prxy.ssh] connection closed")
+		s.logger.Info("ssh proxy connection closed")
 		return nil
 	}
 
 	return nil
 }
 
-func (s *sshProxy) handle(ctx context.Context, conn net.Conn) (err error) {
+func (s *sshProxy) handle(ctx context.Context, conn net.Conn) error {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			s.logger.Error("[ssh.prxy] failed to close connection", zap.Error(err))
+			s.logger.Error("failed to close ssh proxy connection", zap.Error(err))
 		}
 	}()
 
 	serverConn, chans, reqs, err := ssh.NewServerConn(conn, s.config)
 	if err != nil {
-		s.logger.Error("[ssh.prxy] failed to handshake", zap.Error(err))
-		return err
+		return errors.Wrap(err, "failed to ssh proxy handshake")
 	}
 
 	clientConn, err := s.callbackFn(serverConn)
 	defer func() {
 		if err := clientConn.Close(); err != nil {
-			s.logger.Error("[ssh.prxy] failed to close connection", zap.Error(err))
+			s.logger.Error("failed to close ssh proxy client connection", zap.Error(err))
 		}
 	}()
 
 	if err != nil {
-		s.logger.Error("[ssh.prxy] callback error", zap.Error(err))
-		return err
+		return errors.Wrap(err, "ssh proxy callback error")
 	}
 
 	go ssh.DiscardRequests(reqs)
@@ -163,19 +158,17 @@ func (s *sshProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 	for ch := range chans {
 		sshClientChan, clientReq, err := clientConn.OpenChannel(ch.ChannelType(), ch.ExtraData())
 		if err != nil {
-			s.logger.Error("[ssh.prxy] could not accept client channel", zap.Error(err))
-			return err
+			return errors.Wrap(err, "could not accept ssh proxy client channel")
 		}
 
 		sshServerChan, serverReq, err := ch.Accept()
 		if err != nil {
-			s.logger.Error("[ssh.prxy] could not accept server channel", zap.Error(err))
-			return err
+			return errors.Wrap(err, "could not accept ssh proxy server channel")
 		}
 
 		// Connect requests of ssh server and client
 		go func() {
-			s.logger.Debug("[prxy.ssh] waiting for request")
+			s.logger.Debug("waiting for request")
 
 		r:
 			for {
@@ -191,14 +184,14 @@ func (s *sshProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 
 				// Check if connection is closed
 				if req == nil {
-					s.logger.Debug("[prxy.ssh] SSH request is nil")
+					s.logger.Debug("SSH request is nil")
 					return
 				}
 
-				s.logger.Debug(fmt.Sprintf("[ssh.prxy] request: \n\n%s %s %v %s\n\n", dst, req.Type, req.WantReply, req.Payload))
+				s.logger.Debug(fmt.Sprintf("request: \n\n%s %s %v %s\n\n", dst, req.Type, req.WantReply, req.Payload))
 				b, sendErr := dst.SendRequest(req.Type, req.WantReply, req.Payload)
 				if sendErr != nil {
-					s.logger.Error("[ssh.prxy] failed to send request", zap.Error(sendErr))
+					s.logger.Error("failed to send request", zap.Error(sendErr))
 				}
 
 				if req.WantReply {
@@ -209,9 +202,9 @@ func (s *sshProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 				case "exit-status":
 					break r
 				case "exec":
-					s.logger.Debug("[prxy.ssh] SSH request 'EXEC' is not supported")
+					s.logger.Debug("SSH request 'EXEC' is not supported")
 				default:
-					s.logger.Debug(fmt.Sprintf("[ssh.prxy]  %s", req.Type))
+					s.logger.Debug(fmt.Sprintf(" %s", req.Type))
 				}
 			}
 
@@ -229,7 +222,7 @@ func (s *sshProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 		if s.wrapFn != nil {
 			wrappedClientChan, err = s.wrapFn(serverConn, sshClientChan)
 			if err != nil {
-				s.logger.Error("[ssh.prxy] failed to wrap connections", zap.Error(err))
+				s.logger.Error("failed to wrap connections", zap.Error(err))
 			}
 		}
 
@@ -248,13 +241,11 @@ func (s *sshProxy) handle(ctx context.Context, conn net.Conn) (err error) {
 func (s *sshProxy) sshKeyGen() ([]byte, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2014)
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("[ssh.prxy] error: %v", err))
 		return nil, err
 	}
 	err = priv.Validate()
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("[ssh.prxy] validation failed, error: %v", err))
-		return nil, err
+		return nil, errors.Wrap(err, "validation failed")
 	}
 
 	privDer := x509.MarshalPKCS1PrivateKey(priv)
@@ -270,7 +261,6 @@ func (s *sshProxy) sshKeyGen() ([]byte, error) {
 	// Shot to validating private bytes
 	_, err = ssh.ParsePrivateKey(RSAKey)
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("[ssh.prxy] error: %v", err))
 		return nil, err
 	}
 	return RSAKey, nil
@@ -301,11 +291,11 @@ func (rs *readSession) Close() error {
 func (rs *readSession) collector(n int) {
 	b := rs.buffer.Next(n)
 	if len(b) != n {
-		rs.logger.Error("[ssh.prxy] collector is unable to collect logs properly")
+		rs.logger.Error("collector is unable to collect logs properly")
 	}
 	if n > 0 {
 		// Clean up raw terminal output by stripping escape sequences
 		line := vtclean.Clean(string(b[:]), false)
-		rs.logger.Info(fmt.Sprintf("[ssh.prxy] %s", line))
+		rs.logger.Info(line)
 	}
 }

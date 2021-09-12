@@ -173,14 +173,14 @@ func (g *Glutton) registerHandlers() {
 			case "proxy_ssh":
 				handler = rule.Name
 				if err := g.NewSSHProxy(rule.Target); err != nil {
-					g.Logger.Error("[ssh.prxy] failed to initialize SSH proxy", zap.Error(err))
+					g.Logger.Error("failed to initialize SSH proxy", zap.Error(err))
 					continue
 				}
 				rule.Target = handler
 			case "proxy_telnet":
 				handler = rule.Name
 				if err := g.NewTelnetProxy(rule.Target); err != nil {
-					g.Logger.Error("[telnet.prxy] failed to initialize TELNET proxy", zap.Error(err))
+					g.Logger.Error("failed to initialize TELNET proxy", zap.Error(err))
 					continue
 				}
 				rule.Target = handler
@@ -189,7 +189,7 @@ func (g *Glutton) registerHandlers() {
 			}
 
 			if g.protocolHandlers[handler] == nil {
-				g.Logger.Warn(fmt.Sprintf("[glutton ] no handler found for %s protocol", handler))
+				g.Logger.Warn(fmt.Sprintf("no handler found for '%s' protocol", handler))
 				continue
 			}
 
@@ -200,11 +200,11 @@ func (g *Glutton) registerHandlers() {
 				}
 
 				if md == nil {
-					g.Logger.Debug(fmt.Sprintf("[glutton ] connection not tracked: %s:%s", host, port))
+					g.Logger.Debug(fmt.Sprintf("connection not tracked: %s:%s", host, port))
 					return nil
 				}
 				g.Logger.Debug(
-					fmt.Sprintf("[glutton ] new connection: %s:%s -> %d", host, port, md.TargetPort),
+					fmt.Sprintf("new connection: %s:%s -> %d", host, port, md.TargetPort),
 					zap.String("host", host),
 					zap.String("src_port", port),
 					zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
@@ -213,8 +213,7 @@ func (g *Glutton) registerHandlers() {
 
 				if g.Producer != nil {
 					if err := g.Producer.Log(conn, md, nil); err != nil {
-						g.Logger.Error("[glutton ] producer log error", zap.Error(err))
-						return err
+						return errors.Wrap(err, "producer log error")
 					}
 				}
 

@@ -21,7 +21,7 @@ var (
 
 func onErrorExit(err error) {
 	if err != nil {
-		fmt.Printf("[glutton ] %+v\n", err)
+		fmt.Printf("%+v\n", err)
 		os.Exit(0)
 	}
 }
@@ -76,7 +76,7 @@ func main() {
 		}
 		exitMtx.Lock()
 		println() // make it look nice after the ^C
-		fmt.Println("[glutton ] shutting down...")
+		fmt.Println("shutting down...")
 		onErrorExit(gtn.Shutdown())
 	}
 	defer exit()

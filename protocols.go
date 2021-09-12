@@ -2,9 +2,10 @@ package glutton
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // closeOnShutdown close all connections before system shutdown
@@ -12,12 +13,12 @@ func (g *Glutton) closeOnShutdown(conn net.Conn, done <-chan struct{}) {
 	select {
 	case <-g.ctx.Done():
 		if err := conn.Close(); err != nil {
-			g.Logger.Error(fmt.Sprintf("[glutton  ]  error on ctx close: %v", err))
+			g.Logger.Error("error on ctx close", zap.Error(err))
 		}
 		return
 	case <-done:
 		if err := conn.Close(); err != nil {
-			g.Logger.Debug(fmt.Sprintf("[glutton  ]  error on handler close: %v", err))
+			g.Logger.Debug("error on handler close", zap.Error(err))
 		}
 		return
 	}
