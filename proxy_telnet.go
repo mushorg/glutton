@@ -31,7 +31,6 @@ func (g *Glutton) NewTelnetProxy(destinationURL string) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to parse destination address, check config.yaml")
 	}
-	t.logger.Info(fmt.Sprintf("[telnet proxy] %v", dest.Host))
 	t.host = dest.Host
 	g.telnetProxy = t
 	return nil
@@ -63,17 +62,17 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) error {
 			reply := make([]byte, 8*1024)
 			if _, err = hconn.Read(reply); err != nil {
 				if err == io.EOF {
-					t.logger.Error("[telnet proxy  ] Connection closed by Server", zap.Error(err))
+					t.logger.Error("connection closed by Server", zap.Error(err))
 					break
 				}
-				t.logger.Error("[telnet proxy  ] failed to read telnet message", zap.Error(err))
+				t.logger.Error("failed to read telnet message", zap.Error(err))
 				break
 			}
 
-			t.logger.Info(fmt.Sprintf("[telnet proxy  ] Recieved: %d bytes(s) from Server. Bytes: %s", len(string(reply)), string(reply)))
+			t.logger.Info(fmt.Sprintf("Recieved: %d bytes(s) from Server. Bytes: %s", len(string(reply)), string(reply)))
 			err = protocols.WriteTelnetMsg(conn, string(reply), g.Logger, g)
 			if err != nil {
-				t.logger.Error("[telnet proxy  ] failed to write telnet message", zap.Error(err))
+				t.logger.Error("failed to write telnet message", zap.Error(err))
 				break
 			}
 		}
@@ -90,23 +89,23 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) error {
 			}
 			msg, err := protocols.ReadTelnetMsg(conn, g.Logger, g)
 			if err != nil {
-				t.logger.Error("[telnet proxy  ] failed to read telnet message", zap.Error(err))
+				t.logger.Error("failed to read telnet message", zap.Error(err))
 				break
 			}
 			_, err = hconn.Write([]byte(msg))
 			if err != nil {
 				if err == io.EOF {
-					t.logger.Error("[telnet proxy  ] connection closed by server", zap.Error(err))
+					t.logger.Error("connection closed by server", zap.Error(err))
 					break
 				}
-				t.logger.Error("[telnet proxy  ] failed to write telnet message", zap.Error(err))
+				t.logger.Error("failed to write telnet message", zap.Error(err))
 				break
 			}
 			if msg == "^C" {
 				break
 			}
 			if len(strings.Trim(msg, " ")) > 0 {
-				t.logger.Info(fmt.Sprintf("[telnet proxy  ] Sending: %d bytes(s) to Server, Bytes:\n %s", len(string(msg)), string(msg)))
+				t.logger.Info(fmt.Sprintf("Sending: %d bytes(s) to Server, Bytes:\n %s", len(string(msg)), string(msg)))
 			}
 		}
 	}()

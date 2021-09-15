@@ -12,14 +12,14 @@ import (
 	"go.uber.org/zap"
 )
 
-func readFTP(conn net.Conn, logger Logger, h Honeypot) (msg string, err error) {
-	msg, err = bufio.NewReader(conn).ReadString('\n')
+func readFTP(conn net.Conn, logger Logger, h Honeypot) (string, error) {
+	msg, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		logger.Error(fmt.Sprintf("[ftp     ] error: %v", err))
+		return msg, err
 	}
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
-		logger.Error(fmt.Sprintf("[ftp     ] error: %v", err))
+		return msg, err
 	}
 	ck := freki.NewConnKeyByString(host, port)
 	md := h.ConnectionByFlow(ck)
@@ -32,15 +32,14 @@ func readFTP(conn net.Conn, logger Logger, h Honeypot) (msg string, err error) {
 		zap.String("msg", fmt.Sprintf("%q", msg)),
 		zap.String("handler", "ftp"),
 	)
-	return
+	return msg, err
 }
 
 // HandleFTP takes a net.Conn and does basic FTP communication
-func HandleFTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (err error) {
+func HandleFTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
 	defer func() {
-		err = conn.Close()
-		if err != nil {
-			logger.Error(fmt.Sprintf("[ftp     ]  error: %v", err))
+		if err := conn.Close(); err != nil {
+			logger.Error("failed to close FTP connection", zap.Error(err))
 		}
 	}()
 
