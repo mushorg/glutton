@@ -39,17 +39,11 @@ func rwait() {
 }
 func validateMail(query string) bool {
 	email := regexp.MustCompile("^MAIL FROM:<.+@.+>$") // naive regex
-	if email.MatchString(query) {
-		return true
-	}
-	return false
+	return email.MatchString(query)
 }
 func validateRCPT(query string) bool {
 	rcpt := regexp.MustCompile("^RCPT TO:<.+@.+>$")
-	if rcpt.MatchString(query) {
-		return true
-	}
-	return false
+	return rcpt.MatchString(query)
 }
 
 // HandleSMTP takes a net.Conn and does basic SMTP communication

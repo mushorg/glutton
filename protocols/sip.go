@@ -11,11 +11,10 @@ import (
 )
 
 // HandleSIP takes a net.Conn and does basic SIP communication
-func HandleSIP(ctx context.Context, netConn net.Conn, logger Logger, h Honeypot) (err error) {
+func HandleSIP(ctx context.Context, netConn net.Conn, logger Logger, h Honeypot) error {
 	defer func() {
-		err = netConn.Close()
-		if err != nil {
-			logger.Error(fmt.Sprintf("[sip     ]  error: %v", err))
+		if err := netConn.Close(); err != nil {
+			logger.Error(fmt.Errorf("failed to close SIP connection: %w", err).Error())
 		}
 	}()
 
@@ -26,22 +25,22 @@ func HandleSIP(ctx context.Context, netConn net.Conn, logger Logger, h Honeypot)
 	rd := bytes.NewReader(buf)
 	req, err := sipnet.ReadRequest(rd)
 	if err != nil {
-		logger.Error(fmt.Sprintf("[sip     ] error: %v", err))
+		return err
 	}
 	if req == nil {
-		logger.Info(fmt.Sprintf("[sip     ] failed to parse SIP req"))
+		logger.Info("failed to parse SIP req")
 		return nil
 	}
-	logger.Info(fmt.Sprintf("[sip     ] SIP method: %s", req.Method))
+	logger.Info(fmt.Sprintf(" SIP method: %s", req.Method))
 	switch req.Method {
 	case sipnet.MethodRegister:
-		logger.Info(fmt.Sprintf("[sip     ] handling SIP register"))
+		logger.Info("handling SIP register")
 		server.HandleRegister(req, sipConn)
 	case sipnet.MethodInvite:
-		logger.Info(fmt.Sprintf("[sip     ] handling SIP invite"))
+		logger.Info("handling SIP invite")
 		server.HandleInvite(req, sipConn)
 	case sipnet.MethodOptions:
-		logger.Info(fmt.Sprintf("[sip     ] handling SIP options"))
+		logger.Info("handling SIP options")
 		resp := sipnet.NewResponse()
 		resp.StatusCode = sipnet.StatusOK
 		resp.Header.Set("Allow", "INVITE, ACK, CANCEL, OPTIONS, BYE")
@@ -51,7 +50,6 @@ func HandleSIP(ctx context.Context, netConn net.Conn, logger Logger, h Honeypot)
 		resp.Header.Set("Content-Type", "application/sdp")
 		resp.Body = req.Body
 		resp.WriteTo(sipConn, req)
-		break
 	}
 	return nil
 }
