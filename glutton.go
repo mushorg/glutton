@@ -13,7 +13,6 @@ import (
 	"github.com/kung-foo/freki"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
-	"github.com/pkg/errors"
 	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -131,28 +130,28 @@ func (g *Glutton) makeID() error {
 	fileName := "glutton.id"
 	filePath := filepath.Join(viper.GetString("var-dir"), fileName)
 	if err := os.MkdirAll(viper.GetString("var-dir"), 0744); err != nil {
-		return errors.Wrap(err, "failed to create var-dir")
+		return fmt.Errorf("failed to create var-dir: %w", err)
 	}
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		g.id = uuid.NewV4()
 		if err := ioutil.WriteFile(filePath, g.id.Bytes(), 0744); err != nil {
-			return errors.Wrap(err, "failed to create new PID filed")
+			return fmt.Errorf("failed to create new PID file: %w", err)
 		}
 	} else {
 		if err != nil {
-			return errors.Wrap(err, "failed to access PID file")
+			return fmt.Errorf("failed to access PID file: %w", err)
 		}
 		f, err := os.Open(filePath)
 		if err != nil {
-			return errors.Wrap(err, "failed to open PID file")
+			return fmt.Errorf("failed to open PID file: %w", err)
 		}
 		buff, err := ioutil.ReadAll(f)
 		if err != nil {
-			return errors.Wrap(err, "failed to read PID file")
+			return fmt.Errorf("failed to read PID file: %w", err)
 		}
 		g.id, err = uuid.FromBytes(buff)
 		if err != nil {
-			return errors.Wrap(err, "failed to create UUID from PID filed content")
+			return fmt.Errorf("failed to create UUID from PID filed content: %w", err)
 		}
 	}
 	return nil
@@ -196,7 +195,7 @@ func (g *Glutton) registerHandlers() {
 			g.Processor.RegisterConnHandler(handler, func(conn net.Conn, md *freki.Metadata) error {
 				host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 				if err != nil {
-					return errors.Wrap(err, "failed to split remote address")
+					return fmt.Errorf("failed to split remote address: %w", err)
 				}
 
 				if md == nil {
@@ -213,19 +212,19 @@ func (g *Glutton) registerHandlers() {
 
 				if g.Producer != nil {
 					if err := g.Producer.Log(conn, md, nil); err != nil {
-						return errors.Wrap(err, "producer log error")
+						return fmt.Errorf("producer log error: %w", err)
 					}
 				}
 
 				done := make(chan struct{})
 				go g.closeOnShutdown(conn, done)
 				if err = conn.SetDeadline(time.Now().Add(time.Duration(viper.GetInt("conn_timeout")) * time.Second)); err != nil {
-					return errors.Wrap(err, "failed to set connection deadline")
+					return fmt.Errorf("failed to set connection deadline: %w", err)
 				}
 				ctx := g.contextWithTimeout(72)
 				err = g.protocolHandlers[handler](ctx, conn)
 				done <- struct{}{}
-				return errors.Wrap(err, "protocol handler error")
+				return fmt.Errorf("protocol handler error: %w", err)
 			})
 		}
 	}

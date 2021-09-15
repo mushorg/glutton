@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/kung-foo/freki"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -36,18 +35,18 @@ func (g *Glutton) tcpProxy(ctx context.Context, conn net.Conn) error {
 	target := md.Rule.Target
 	dest, err := url.Parse(target)
 	if err != nil {
-		return errors.Wrap(err, "failed to parse destination address, check rules file")
+		return fmt.Errorf("failed to parse destination address, check rules file: %w", err)
 	}
 
 	if dest.Scheme != "tcp" && dest.Scheme != "docker" {
-		return errors.Wrapf(err, "unsuppported tcp proxy rule scheme: %s", dest.Scheme)
+		return fmt.Errorf("unsuppported tcp proxy rule scheme: %s", dest.Scheme)
 	}
 
 	g.Logger.Info(fmt.Sprintf("proxy tcp: %s -> %v to %s", host, md.TargetPort, dest.String()))
 
 	proxyConn, err := net.DialTimeout("tcp", dest.Host, dialTimeout)
 	if err != nil {
-		return errors.Wrap(err, "failed to dial tcp proxy destination")
+		return fmt.Errorf("failed to dial tcp proxy destination: %w", err)
 	}
 
 	// TODO: Log traffic by wrapping connection with io.ReadClose

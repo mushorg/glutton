@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/mushorg/glutton/protocols"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -29,7 +28,7 @@ func (g *Glutton) NewTelnetProxy(destinationURL string) error {
 
 	dest, err := url.Parse(destinationURL)
 	if err != nil {
-		return errors.Wrap(err, "failed to parse destination address, check config.yaml")
+		return fmt.Errorf("failed to parse destination address, check config.yaml: %w", err)
 	}
 	t.host = dest.Host
 	g.telnetProxy = t
@@ -42,11 +41,11 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) error {
 	g := t.glutton
 	tcpAddr, err := net.ResolveTCPAddr("tcp", t.host)
 	if err != nil {
-		return errors.Wrap(err, "ResolveTCPAddr failed")
+		return fmt.Errorf("ResolveTCPAddr failed: %w", err)
 	}
 	hconn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
-		return errors.Wrap(err, "connection error")
+		return fmt.Errorf("connection error: %w", err)
 	}
 	go func() {
 		defer func() {

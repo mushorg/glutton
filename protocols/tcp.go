@@ -4,13 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 
 	"github.com/kung-foo/freki"
-	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
@@ -47,7 +47,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, log Logger, h Honeypot) (err 
 	}()
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
-		return errors.Wrap(err, "faild to split remote address")
+		return fmt.Errorf("faild to split remote address: %w", err)
 	}
 	ck := freki.NewConnKeyByString(host, port)
 	md := h.ConnectionByFlow(ck)

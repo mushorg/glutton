@@ -13,7 +13,6 @@ import (
 	"net/url"
 
 	"github.com/lunixbochs/vtclean"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
@@ -43,12 +42,12 @@ func (g *Glutton) NewSSHProxy(destinationURL string) (err error) {
 
 	dest, err := url.Parse(destinationURL)
 	if err != nil {
-		return errors.Wrap(err, "failed to parse destination address, check config.yaml")
+		return fmt.Errorf("failed to parse destination address, check config.yaml: %w", err)
 	}
 
 	err = sshProxy.initConf(dest.Host)
 	if err != nil {
-		return errors.Wrap(err, "connection failed at SSH proxy")
+		return fmt.Errorf("connection failed at SSH proxy: %w", err)
 	}
 	g.sshProxy = sshProxy
 	return
@@ -67,7 +66,7 @@ func (s *sshProxy) initConf(dest string) error {
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 			host, port, err := net.SplitHostPort(c.RemoteAddr().String())
 			if err != nil {
-				return nil, errors.Wrap(err, "failed to split remote address")
+				return nil, fmt.Errorf("failed to split remote address: %w", err)
 			}
 
 			s.logger.Info(
@@ -139,7 +138,7 @@ func (s *sshProxy) handle(ctx context.Context, conn net.Conn) error {
 
 	serverConn, chans, reqs, err := ssh.NewServerConn(conn, s.config)
 	if err != nil {
-		return errors.Wrap(err, "failed to ssh proxy handshake")
+		return fmt.Errorf("failed to ssh proxy handshake: %w", err)
 	}
 
 	clientConn, err := s.callbackFn(serverConn)
@@ -150,7 +149,7 @@ func (s *sshProxy) handle(ctx context.Context, conn net.Conn) error {
 	}()
 
 	if err != nil {
-		return errors.Wrap(err, "ssh proxy callback error")
+		return fmt.Errorf("ssh proxy callback error: %w", err)
 	}
 
 	go ssh.DiscardRequests(reqs)
@@ -158,12 +157,12 @@ func (s *sshProxy) handle(ctx context.Context, conn net.Conn) error {
 	for ch := range chans {
 		sshClientChan, clientReq, err := clientConn.OpenChannel(ch.ChannelType(), ch.ExtraData())
 		if err != nil {
-			return errors.Wrap(err, "could not accept ssh proxy client channel")
+			return fmt.Errorf("could not accept ssh proxy client channel: %w", err)
 		}
 
 		sshServerChan, serverReq, err := ch.Accept()
 		if err != nil {
-			return errors.Wrap(err, "could not accept ssh proxy server channel")
+			return fmt.Errorf("could not accept ssh proxy server channel: %w", err)
 		}
 
 		// Connect requests of ssh server and client
@@ -245,7 +244,7 @@ func (s *sshProxy) sshKeyGen() ([]byte, error) {
 	}
 	err = priv.Validate()
 	if err != nil {
-		return nil, errors.Wrap(err, "validation failed")
+		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
 	privDer := x509.MarshalPKCS1PrivateKey(priv)
