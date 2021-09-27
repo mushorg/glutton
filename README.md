@@ -1,11 +1,10 @@
 # Glutton
-[![Build Status](https://travis-ci.org/mushorg/glutton.svg?branch=master)](https://travis-ci.org/mushorg/glutton)
+![Tests](https://github.com/mushorg/glutton/actions/workflows/workflow.yml/badge.svg)
 [![GoDoc](https://godoc.org/github.com/mushorg/glutton?status.svg)](https://godoc.org/github.com/mushorg/glutton)
-[![Coverage Status](https://coveralls.io/repos/github/mushorg/glutton/badge.svg?branch=master)](https://coveralls.io/github/mushorg/glutton?branch=master)
 
-Setup `go 1.11+`. Install required system packages:
+Setup `go 1.17`. Install required system packages:
 ```
-apt-get install libnetfilter-queue-dev libpcap-dev iptables-dev lsof
+apt-get install libnetfilter-queue-dev libpcap-dev iptables lsof
 ```
 
 Arch:

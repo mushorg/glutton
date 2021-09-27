@@ -1,8 +1,8 @@
 on: push
-name: Test
+name: Tests
 jobs:
   checks:
-    name: run
+    name: Tests
     runs-on: ubuntu-latest
     steps:
       - run: sudo apt install libnetfilter-queue-dev libpcap-dev iptables lsof
