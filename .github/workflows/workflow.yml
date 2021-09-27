@@ -5,7 +5,7 @@ jobs:
     name: run
     runs-on: ubuntu-latest
     steps:
-      - run: sudo apt install libnetfilter-queue-dev libpcap-dev iptables-dev lsof
+      - run: sudo apt install libnetfilter-queue-dev libpcap-dev iptables lsof
       - uses: actions/checkout@master
       - uses: actions/setup-go@v2
         with:
