@@ -14,6 +14,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
 	uuid "github.com/satori/go.uuid"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
@@ -84,7 +85,7 @@ func (g *Glutton) Init() error {
 
 	// Initiate the freki processor
 	var err error
-	g.Processor, err = freki.New(viper.GetString("interface"), g.rules, nil)
+	g.Processor, err = freki.New(viper.GetString("interface"), g.rules, logrus.New())
 	if err != nil {
 		return err
 	}
@@ -224,7 +225,10 @@ func (g *Glutton) registerHandlers() {
 				ctx := g.contextWithTimeout(72)
 				err = g.protocolHandlers[handler](ctx, conn)
 				done <- struct{}{}
-				return fmt.Errorf("protocol handler error: %w", err)
+				if err != nil {
+					return fmt.Errorf("protocol handler error: %w", err)
+				}
+				return nil
 			})
 		}
 	}

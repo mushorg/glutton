@@ -60,6 +60,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
 		logger.Error(fmt.Sprintf("[http    ] error: %v", err))
+		return err
 	}
 	ck := freki.NewConnKeyByString(host, port)
 	md := h.ConnectionByFlow(ck)
@@ -97,5 +98,8 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (
 		return err
 	}
 	_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to send HTTP response: %w", err)
+	}
+	return nil
 }
