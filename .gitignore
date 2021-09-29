@@ -30,3 +30,9 @@ _testmain.go
 # Artifacts
 glutton.log*
 payloads/
+
+# PoCs
+poc/
+
+# Dev
+.vscode

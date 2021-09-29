@@ -87,7 +87,6 @@ func HandleTCP(ctx context.Context, conn net.Conn, log Logger, h Honeypot) (err 
 			zap.String("src_ip", host),
 			zap.String("src_port", port),
 			zap.String("handler", "tcp"),
-			zap.String("payload_hex", hex.EncodeToString(data)),
 			zap.String("payload_hash", payloadHash),
 		)
 		log.Info(fmt.Sprintf("TCP payload:\n%s", hex.Dump(data[:msgLength%1024])))
