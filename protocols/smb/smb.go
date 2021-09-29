@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/satori/go.uuid"
+	uuid "github.com/satori/go.uuid"
 )
 
 type SMBHeader struct {
@@ -69,8 +69,7 @@ type Filetime struct {
 func ValidateData(data []byte) (*bytes.Buffer, error) {
 	// HACK: Not sure what the data in front is supposed to be...
 	if !bytes.Contains(data, []byte("\xff")) {
-		err := errors.New("Packet is unrecognizable")
-		return nil, err
+		return nil, errors.New("packet is unrecognizable")
 	}
 
 	start := bytes.Index(data, []byte("\xff"))
@@ -254,36 +253,25 @@ func MakeNegotiateProtocolResponse(header SMBHeader) ([]byte, error) {
 }
 
 func ParseHeader(buffer *bytes.Buffer, header *SMBHeader) error {
-	err := binary.Read(buffer, binary.LittleEndian, header)
-	if err != nil {
-		return err
-	}
-	return nil
+	return binary.Read(buffer, binary.LittleEndian, header)
 }
 
 func ParseParam(buffer *bytes.Buffer, param *SMBParameters) error {
-	err := binary.Read(buffer, binary.LittleEndian, param)
-	if err != nil {
-		return err
-	}
-	return nil
+	return binary.Read(buffer, binary.LittleEndian, param)
 }
 
-func ParseNegotiateProtocolRequest(buffer *bytes.Buffer, header SMBHeader) (smb NegotiateProtocolRequest, err error) {
-	smb = NegotiateProtocolRequest{}
+func ParseNegotiateProtocolRequest(buffer *bytes.Buffer, header SMBHeader) (NegotiateProtocolRequest, error) {
+	smb := NegotiateProtocolRequest{}
 	smb.Header = header
-	err = ParseParam(buffer, &smb.Param)
+	err := ParseParam(buffer, &smb.Param)
 	if err != nil {
-		return
+		return smb, err
 	}
 	err = binary.Read(buffer, binary.LittleEndian, &smb.Data.ByteCount)
 	if err != nil {
-		return
+		return smb, err
 	}
 	smb.Data.DialectString = make([]byte, buffer.Len())
 	err = binary.Read(buffer, binary.LittleEndian, &smb.Data.DialectString)
-	if err != nil {
-		return
-	}
-	return
+	return smb, err
 }

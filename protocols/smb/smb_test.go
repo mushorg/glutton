@@ -40,7 +40,7 @@ func TestParseSMB(t *testing.T) {
 		t.Errorf("Protocol doesn't match 'SMB': %+v\n", parsed.Header.Protocol)
 	}
 	dialectString := bytes.Split(parsed.Data.DialectString, []byte("\x00"))
-	if string(dialectString[0][:]) != "PC NETWORK PROGRAM 1.0" {
+	if string(dialectString[0][:]) != " PC NETWORK PROGRAM 1.0" {
 		t.Errorf("Dialect String mismatch: %s", string(dialectString[0][:]))
 	}
 	_, err = MakeNegotiateProtocolResponse(header)

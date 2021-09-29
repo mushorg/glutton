@@ -77,15 +77,20 @@ func HandleTCP(ctx context.Context, conn net.Conn, log Logger, h Honeypot) (err 
 		if err != nil {
 			return err
 		}
+		dstPort := "0"
+		if md != nil {
+			dstPort = strconv.Itoa(int(md.TargetPort))
+		}
 		log.Info(
 			"Packet got handled by TCP handler",
-			zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+			zap.String("dest_port", dstPort),
 			zap.String("src_ip", host),
 			zap.String("src_port", port),
 			zap.String("handler", "tcp"),
 			zap.String("payload_hex", hex.EncodeToString(data)),
 			zap.String("payload_hash", payloadHash),
 		)
+		log.Info(fmt.Sprintf("TCP payload:\n%s", hex.Dump(data[:msgLength%1024])))
 	}
 	return nil
 }

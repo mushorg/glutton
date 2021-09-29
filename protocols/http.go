@@ -47,20 +47,18 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			logger.Error(fmt.Sprintf("[http    ] error: %v", err))
+			logger.Error("failed to close the HTTP connection", zap.Error(err))
 		}
 	}()
 
 	req, err := http.ReadRequest(bufio.NewReader(conn))
 	if err != nil {
-		logger.Error(fmt.Sprintf("[http    ] error: %v", err))
-		return err
+		return fmt.Errorf("failed to read the HTTP request: %w", err)
 	}
 
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
-		logger.Error(fmt.Sprintf("[http    ] error: %v", err))
-		return err
+		return fmt.Errorf("failed to split the host: %w", err)
 	}
 	ck := freki.NewConnKeyByString(host, port)
 	md := h.ConnectionByFlow(ck)
@@ -78,16 +76,11 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (
 	if req.ContentLength > 0 {
 		defer req.Body.Close()
 		buf := bytes.NewBuffer(make([]byte, 0, req.ContentLength))
-		if _, err = buf.ReadFrom(req.Body); err != nil {
-			logger.Error(fmt.Sprintf("[http    ] error: %v", err))
-			return err
+		length, err := buf.ReadFrom(req.Body)
+		if err != nil {
+			return fmt.Errorf("failed to read the HTTP body: %w", err)
 		}
-		body := buf.Bytes()
-		logger.Info(
-			"HTTP body payload",
-			zap.String("handler", "http"),
-			zap.String("payload_hex", hex.EncodeToString(body[:])),
-		)
+		logger.Info(fmt.Sprintf("HTTP payload:\n%s", hex.Dump(buf.Bytes()[:length%1024])))
 	}
 	if strings.Contains(req.RequestURI, "wallet") {
 		logger.Info(

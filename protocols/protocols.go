@@ -67,6 +67,7 @@ func MapProtocolHandlers(log Logger, h Honeypot) map[string]HandlerFunc {
 		if _, ok := httpMap[strings.ToUpper(string(snip))]; ok {
 			return HandleHTTP(ctx, bufConn, log, h)
 		}
+		// fallback TCP handler
 		return HandleTCP(ctx, bufConn, log, h)
 	}
 	return protocolHandlers
