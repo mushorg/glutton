@@ -4,14 +4,14 @@ import (
 	"encoding/hex"
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func processRawCR(raw string, t *testing.T) ConnectionRequestPDU {
 	data, _ := hex.DecodeString(raw)
 	pdu, err := ParseCRPDU(data)
-	if err != nil {
-		t.Error(err)
-	}
+	require.NoError(t, err)
 	return pdu
 }
 
