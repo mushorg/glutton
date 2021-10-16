@@ -38,10 +38,9 @@ func storePayload(data []byte) (string, error) {
 }
 
 // HandleTCP takes a net.Conn and peeks at the data send
-func HandleTCP(ctx context.Context, conn net.Conn, log Logger, h Honeypot) (err error) {
+func HandleTCP(ctx context.Context, conn net.Conn, log Logger, h Honeypot) error {
 	defer func() {
-		err = conn.Close()
-		if err != nil {
+		if err := conn.Close(); err != nil {
 			log.Error("failed to close TCP connection", zap.String("handler", "tcp"), zap.Error(err))
 		}
 	}()

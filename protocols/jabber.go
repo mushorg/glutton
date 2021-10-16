@@ -61,10 +61,9 @@ func parseJabberClient(conn net.Conn, dataClient []byte, logger Logger, h Honeyp
 }
 
 // read client msg
-func readMsgJabber(conn net.Conn, logger Logger, h Honeypot) (err error) {
-	var line []byte
+func readMsgJabber(conn net.Conn, logger Logger, h Honeypot) error {
 	r := bufio.NewReader(conn)
-	line, _, err = r.ReadLine()
+	line, _, err := r.ReadLine()
 	if err != nil {
 		logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
 		return err
@@ -73,9 +72,9 @@ func readMsgJabber(conn net.Conn, logger Logger, h Honeypot) (err error) {
 }
 
 // HandleJabber main handler
-func HandleJabber(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (err error) {
+func HandleJabber(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
 	defer func() {
-		if err = conn.Close(); err != nil {
+		if err := conn.Close(); err != nil {
 			logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
 		}
 	}()

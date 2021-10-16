@@ -43,9 +43,9 @@ func formatRequest(r *http.Request) string {
 }
 
 // HandleHTTP takes a net.Conn and does basic HTTP communication
-func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (err error) {
+func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
 	defer func() {
-		err = conn.Close()
+		err := conn.Close()
 		if err != nil {
 			logger.Error("failed to close the HTTP connection", zap.Error(err))
 		}

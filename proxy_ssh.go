@@ -35,7 +35,7 @@ type readSession struct {
 }
 
 // NewSSHProxy creates a new SSH proxy instance
-func (g *Glutton) NewSSHProxy(destinationURL string) (err error) {
+func (g *Glutton) NewSSHProxy(destinationURL string) error {
 	sshProxy := &sshProxy{
 		logger: g.Logger,
 	}
@@ -50,7 +50,7 @@ func (g *Glutton) NewSSHProxy(destinationURL string) (err error) {
 		return fmt.Errorf("connection failed at SSH proxy: %w", err)
 	}
 	g.sshProxy = sshProxy
-	return
+	return nil
 }
 
 func (s *sshProxy) initConf(dest string) error {

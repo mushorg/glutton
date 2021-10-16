@@ -10,10 +10,9 @@ import (
 )
 
 // HandleRDP takes a net.Conn and does basic RDP communication
-func HandleRDP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (err error) {
+func HandleRDP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
 	defer func() {
-		err = conn.Close()
-		if err != nil {
+		if err := conn.Close(); err != nil {
 			logger.Error(fmt.Sprintf("[rdp     ]  error: %v", err))
 		}
 	}()

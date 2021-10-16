@@ -47,10 +47,9 @@ func validateRCPT(query string) bool {
 }
 
 // HandleSMTP takes a net.Conn and does basic SMTP communication
-func HandleSMTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (err error) {
+func HandleSMTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
 	defer func() {
-		err = conn.Close()
-		if err != nil {
+		if err := conn.Close(); err != nil {
 			logger.Error(fmt.Sprintf("[smtp    ]  error: %v", err))
 		}
 	}()
@@ -63,10 +62,9 @@ func HandleSMTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (
 	rwait()
 	client.w("220 Welcome!")
 
-	var data string
 	for {
 		h.UpdateConnectionTimeout(ctx, conn)
-		data, err = client.read()
+		data, err := client.read()
 		if err != nil {
 			break
 		}
@@ -103,5 +101,5 @@ func HandleSMTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (
 			client.w("Recheck the command you entered.")
 		}
 	}
-	return err
+	return nil
 }

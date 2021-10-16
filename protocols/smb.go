@@ -11,10 +11,9 @@ import (
 )
 
 // HandleSMB takes a net.Conn and does basic SMB communication
-func HandleSMB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (err error) {
+func HandleSMB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
 	defer func() {
-		err = conn.Close()
-		if err != nil {
+		if err := conn.Close(); err != nil {
 			logger.Error("failed to close SMB connection", zap.Error(err))
 		}
 	}()

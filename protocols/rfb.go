@@ -31,10 +31,9 @@ type PixelFormat struct {
 }
 
 // HandleRFB takes a net.Conn and does basic RFB/VNC communication
-func HandleRFB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (err error) {
+func HandleRFB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
 	defer func() {
-		err = conn.Close()
-		if err != nil {
+		if err := conn.Close(); err != nil {
 			logger.Error(fmt.Sprintf("[rfb     ] error: %v", err))
 		}
 	}()
@@ -71,9 +70,7 @@ func HandleRFB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) (e
 		BlueShift:        0,
 		ServerNameLength: lenName,
 	}
-	err = binary.Write(buf, binary.LittleEndian, f)
-	if err != nil {
-		logger.Warn(fmt.Sprintf("[rfb     ] binary.Write failed, error: %+v", err))
+	if err := binary.Write(buf, binary.LittleEndian, f); err != nil {
 		return err
 	}
 	if _, err := conn.Write(buf.Bytes()); err != nil {

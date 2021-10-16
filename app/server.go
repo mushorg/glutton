@@ -2,6 +2,7 @@ package main // import "github.com/mushorg/glutton/app"
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"sync"
@@ -18,13 +19,6 @@ var (
 	// BUILDDATE is set by the makefile
 	BUILDDATE = ""
 )
-
-func onErrorExit(err error) {
-	if err != nil {
-		fmt.Printf("%+v\n", err)
-		os.Exit(0)
-	}
-}
 
 func onInterruptSignal(fn func()) {
 	sig := make(chan os.Signal, 1)
@@ -63,10 +57,14 @@ func main() {
 	}
 
 	gtn, err := glutton.New()
-	onErrorExit(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	err = gtn.Init()
-	onErrorExit(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	exitMtx := sync.RWMutex{}
 	exit := func() {
@@ -77,7 +75,10 @@ func main() {
 		exitMtx.Lock()
 		println() // make it look nice after the ^C
 		fmt.Println("shutting down...")
-		onErrorExit(gtn.Shutdown())
+		err = gtn.Shutdown()
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 	defer exit()
 
@@ -86,5 +87,8 @@ func main() {
 		os.Exit(0)
 	})
 
-	onErrorExit(gtn.Start())
+	err = gtn.Start()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
