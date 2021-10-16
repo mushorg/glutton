@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/hex"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 /*
@@ -24,27 +26,15 @@ func TestParseSMB(t *testing.T) {
 		"0024c4d312e325830303200024c414e4d414e322e3100024e54204c4d20302e313200"
 	data, _ := hex.DecodeString(raw)
 	buffer, err := ValidateData(data)
-	if err != nil {
-		t.Error(err)
-	}
+	require.NoError(t, err)
 	header := SMBHeader{}
 	err = ParseHeader(buffer, &header)
-	if err != nil {
-		t.Error(err)
-	}
+	require.NoError(t, err)
 	parsed, err := ParseNegotiateProtocolRequest(buffer, header)
-	if string(parsed.Header.Protocol[1:]) != "SMB" {
-		if err != nil {
-			t.Error(err)
-		}
-		t.Errorf("Protocol doesn't match 'SMB': %+v\n", parsed.Header.Protocol)
-	}
+	require.NoError(t, err)
+	require.Equal(t, string(parsed.Header.Protocol[1:]), "SMB")
 	dialectString := bytes.Split(parsed.Data.DialectString, []byte("\x00"))
-	if string(dialectString[0][:]) != " PC NETWORK PROGRAM 1.0" {
-		t.Errorf("Dialect String mismatch: %s", string(dialectString[0][:]))
-	}
+	require.Equal(t, string(dialectString[0][:]), "\x02PC NETWORK PROGRAM 1.0", "dialect string mismatch")
 	_, err = MakeNegotiateProtocolResponse(header)
-	if err != nil {
-		t.Error(err)
-	}
+	require.NoError(t, err)
 }
