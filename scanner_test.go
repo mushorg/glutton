@@ -8,5 +8,6 @@ import (
 )
 
 func TestIsScanner(t *testing.T) {
-	require.True(t, isScanner(net.ParseIP("162.142.125.1")), "IP should be a scanner")
+	matched, _ := isScanner(net.ParseIP("162.142.125.1"))
+	require.True(t, matched, "IP should be a scanner")
 }

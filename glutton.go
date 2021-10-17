@@ -217,8 +217,8 @@ func (g *Glutton) registerHandlers() {
 					}
 				}
 
-				if isScanner(net.ParseIP(host)) {
-					g.Logger.Info("IP from a known scanner", zap.String("host", host))
+				if matched, name := isScanner(net.ParseIP(host)); matched {
+					g.Logger.Info("IP from a known scanner", zap.String("host", host), zap.String("scanner", name))
 					return nil
 				}
 

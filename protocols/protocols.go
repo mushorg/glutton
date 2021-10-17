@@ -63,7 +63,7 @@ func MapProtocolHandlers(log Logger, h Honeypot) map[string]HandlerFunc {
 			return err
 		}
 		// poor mans check for HTTP request
-		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true}
+		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true, "CONN": true}
 		if _, ok := httpMap[strings.ToUpper(string(snip))]; ok {
 			return HandleHTTP(ctx, bufConn, log, h)
 		}
