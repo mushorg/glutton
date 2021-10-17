@@ -90,6 +90,14 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 		_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length:20\r\n\r\n[[\"\"]]\r\n\r\n"))
 		return err
 	}
+	if strings.Contains(req.RequestURI, "/v1.16/version") {
+		data, err := res.ReadFile("resources/docker_api.json")
+		if err != nil {
+			return fmt.Errorf("failed to read embedded file: %w", err)
+		}
+		_, err = conn.Write(append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(data))), data...))
+		return err
+	}
 	_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 	if err != nil {
 		return fmt.Errorf("failed to send HTTP response: %w", err)

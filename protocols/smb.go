@@ -26,7 +26,7 @@ func HandleSMB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 			return err
 		}
 		if n > 0 && n < 1024 {
-			logger.Info(fmt.Sprintf("SMB payload:\n%s", hex.Dump(buffer[0:n])))
+			logger.Debug(fmt.Sprintf("SMB payload:\n%s", hex.Dump(buffer[0:n])))
 			buffer, err := smb.ValidateData(buffer[0:n])
 			if err != nil {
 				return err
@@ -36,7 +36,7 @@ func HandleSMB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 			if err != nil {
 				return err
 			}
-			logger.Info(fmt.Sprintf("SMB header: %+v", header))
+			logger.Debug(fmt.Sprintf("SMB header: %+v", header))
 			switch header.Command {
 			case 0x72, 0x73, 0x75:
 				resp, err := smb.MakeNegotiateProtocolResponse(header)

@@ -217,6 +217,11 @@ func (g *Glutton) registerHandlers() {
 					}
 				}
 
+				if isScanner(net.ParseIP(host)) {
+					g.Logger.Info("IP from a known scanner", zap.String("host", host))
+					return nil
+				}
+
 				done := make(chan struct{})
 				go g.closeOnShutdown(conn, done)
 				if err = conn.SetDeadline(time.Now().Add(time.Duration(viper.GetInt("conn_timeout")) * time.Second)); err != nil {

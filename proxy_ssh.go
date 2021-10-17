@@ -59,7 +59,10 @@ func (s *sshProxy) initConf(dest string) error {
 		return err
 	}
 
-	private, _ := ssh.ParsePrivateKey(rsaKey)
+	private, err := ssh.ParsePrivateKey(rsaKey)
+	if err != nil {
+		return err
+	}
 
 	var sessions = make(map[net.Addr]map[string]interface{})
 	conf := &ssh.ServerConfig{
