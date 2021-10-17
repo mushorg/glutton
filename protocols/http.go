@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -42,6 +43,40 @@ func formatRequest(r *http.Request) string {
 	return strings.Join(request, "\n")
 }
 
+func handlePOST(req *http.Request, conn net.Conn, buf *bytes.Buffer) error {
+	body := buf.String()
+	// Ethereum RPC call
+	if strings.Contains(body, "eth_blockNumber") {
+		// {"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":83}
+		rpcReq := struct {
+			JSONRPC string        `json:"jsonrpc"`
+			Method  string        `json:"method"`
+			Params  []interface{} `json:"params"`
+			ID      int           `json:"id"`
+		}{}
+		if err := json.Unmarshal([]byte(body), &rpcReq); err != nil {
+			return err
+		}
+		// {"id":83,"jsonrpc": "2.0","result": "0x4b7" // 1207}
+		rpcResp := struct {
+			ID      int    `json:"id"`
+			JSONRPC string `json:"jsonrpc"`
+			Result  string `json:"result"`
+		}{
+			rpcReq.ID,
+			rpcReq.JSONRPC,
+			"0x4b7",
+		}
+		data, err := json.Marshal(rpcResp)
+		if err != nil {
+			return err
+		}
+		_, err = conn.Write(append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(data))), data...))
+		return err
+	}
+	return nil
+}
+
 // HandleHTTP takes a net.Conn and does basic HTTP communication
 func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
 	defer func() {
@@ -73,15 +108,23 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 		zap.String("method", req.Method),
 		zap.String("query", req.URL.Query().Encode()),
 	)
+
+	var buf = &bytes.Buffer{}
 	if req.ContentLength > 0 {
 		defer req.Body.Close()
-		buf := bytes.NewBuffer(make([]byte, 0, req.ContentLength))
+		buf = bytes.NewBuffer(make([]byte, 0, req.ContentLength))
 		length, err := buf.ReadFrom(req.Body)
 		if err != nil {
 			return fmt.Errorf("failed to read the HTTP body: %w", err)
 		}
 		logger.Info(fmt.Sprintf("HTTP payload:\n%s", hex.Dump(buf.Bytes()[:length%1024])))
 	}
+
+	switch req.Method {
+	case http.MethodPost:
+		return handlePOST(req, conn, buf)
+	}
+
 	if strings.Contains(req.RequestURI, "wallet") {
 		logger.Info(
 			"HTTP wallet request",
