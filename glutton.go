@@ -222,7 +222,7 @@ func (g *Glutton) registerHandlers() {
 					return err
 				}
 				if matched {
-					g.Logger.Info("IP from a known scanner", zap.String("host", host), zap.String("scanner", name))
+					g.Logger.Info("IP from a known scanner", zap.String("host", host), zap.String("scanner", name), zap.Uint16("dest_port", uint16(md.TargetPort)))
 					return nil
 				}
 

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -47,7 +48,7 @@ func sendJSON(data []byte, conn net.Conn) error {
 	return err
 }
 
-func handlePOST(req *http.Request, conn net.Conn, buf *bytes.Buffer) error {
+func handlePOST(req *http.Request, conn net.Conn, buf *bytes.Buffer, logger Logger) error {
 	body := buf.Bytes()
 	// Ethereum RPC call
 	if strings.Contains(string(body), "eth_blockNumber") {
@@ -56,6 +57,29 @@ func handlePOST(req *http.Request, conn net.Conn, buf *bytes.Buffer) error {
 			return err
 		}
 		return sendJSON(data, conn)
+	}
+	// Hadoop YARN hack
+	if strings.Contains(req.RequestURI, "cluster/apps/new-application") {
+		resp, err := json.Marshal(
+			&struct {
+				ApplicationID             string      `json:"application-id"`
+				MaximumResourceCapability interface{} `json:"maximum-resource-capability"`
+			}{
+				ApplicationID: "application_1527144634877_20465",
+				MaximumResourceCapability: struct {
+					Memory int `json:"memory"`
+					VCores int `json:"vCores"`
+				}{
+					Memory: 16384,
+					VCores: 8,
+				},
+			},
+		)
+		if err != nil {
+			return err
+		}
+		logger.Info("sending hadoop yarn hack response")
+		return sendJSON(resp, conn)
 	}
 	return nil
 }
@@ -105,7 +129,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 
 	switch req.Method {
 	case http.MethodPost:
-		return handlePOST(req, conn, buf)
+		return handlePOST(req, conn, buf, logger)
 	}
 
 	if strings.Contains(req.RequestURI, "wallet") {
