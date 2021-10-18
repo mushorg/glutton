@@ -1,8 +1,8 @@
 package glutton
 
 import (
-	"log"
 	"net"
+	"strings"
 )
 
 var (
@@ -29,18 +29,34 @@ var (
 	}
 )
 
-func isScanner(ip net.IP) (bool, string) {
+func isShodan(ip net.IP) (bool, error) {
+	names, err := net.LookupAddr(ip.String())
+	if err != nil {
+		return false, err
+	}
+	for _, name := range names {
+		if strings.HasSuffix(name, "shodan.io.") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func isScanner(ip net.IP) (bool, string, error) {
 	for scanner, subnets := range scannerSubnet {
 		for _, subnet := range subnets {
 			_, net, err := net.ParseCIDR(subnet)
 			if err != nil {
-				log.Fatalf("invalid subnet: %v", err)
-				continue
+				return false, "", err
 			}
 			if net.Contains(ip) {
-				return true, scanner
+				return true, scanner, nil
 			}
 		}
 	}
-	return false, ""
+	ok, err := isShodan(ip)
+	if ok && err == nil {
+		return true, "shodan", nil
+	}
+	return false, "", err
 }

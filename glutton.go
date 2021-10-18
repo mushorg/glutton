@@ -217,7 +217,11 @@ func (g *Glutton) registerHandlers() {
 					}
 				}
 
-				if matched, name := isScanner(net.ParseIP(host)); matched {
+				matched, name, err := isScanner(net.ParseIP(host))
+				if err != nil {
+					return err
+				}
+				if matched {
 					g.Logger.Info("IP from a known scanner", zap.String("host", host), zap.String("scanner", name))
 					return nil
 				}
