@@ -54,6 +54,9 @@ func MapProtocolHandlers(log Logger, h Honeypot) map[string]HandlerFunc {
 	protocolHandlers["jabber"] = func(ctx context.Context, conn net.Conn) error {
 		return HandleJabber(ctx, conn, log, h)
 	}
+	protocolHandlers["adb"] = func(ctx context.Context, conn net.Conn) error {
+		return HandleADB(ctx, conn, log, h)
+	}
 	protocolHandlers["default"] = func(ctx context.Context, conn net.Conn) error {
 		snip, bufConn, err := Peek(conn, 4)
 		if err != nil {
