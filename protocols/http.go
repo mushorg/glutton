@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -43,36 +42,20 @@ func formatRequest(r *http.Request) string {
 	return strings.Join(request, "\n")
 }
 
+func sendJSON(data []byte, conn net.Conn) error {
+	_, err := conn.Write(append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(data))), data...))
+	return err
+}
+
 func handlePOST(req *http.Request, conn net.Conn, buf *bytes.Buffer) error {
-	body := buf.String()
+	body := buf.Bytes()
 	// Ethereum RPC call
-	if strings.Contains(body, "eth_blockNumber") {
-		// {"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":83}
-		rpcReq := struct {
-			JSONRPC string        `json:"jsonrpc"`
-			Method  string        `json:"method"`
-			Params  []interface{} `json:"params"`
-			ID      int           `json:"id"`
-		}{}
-		if err := json.Unmarshal([]byte(body), &rpcReq); err != nil {
-			return err
-		}
-		// {"id":83,"jsonrpc": "2.0","result": "0x4b7" // 1207}
-		rpcResp := struct {
-			ID      int    `json:"id"`
-			JSONRPC string `json:"jsonrpc"`
-			Result  string `json:"result"`
-		}{
-			rpcReq.ID,
-			rpcReq.JSONRPC,
-			"0x4b7",
-		}
-		data, err := json.Marshal(rpcResp)
+	if strings.Contains(string(body), "eth_blockNumber") {
+		data, err := handleEthereumRPC(body)
 		if err != nil {
 			return err
 		}
-		_, err = conn.Write(append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(data))), data...))
-		return err
+		return sendJSON(data, conn)
 	}
 	return nil
 }
