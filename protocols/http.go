@@ -84,6 +84,28 @@ func handlePOST(req *http.Request, conn net.Conn, buf *bytes.Buffer, logger Logg
 	return nil
 }
 
+// scanning attempts for CVE-2019-19781
+// based on https://github.com/x1sec/citrix-honeypot/
+func smbHandler(conn net.Conn, r *http.Request) error {
+	// if strings.ContainsRune(r.URL.RawPath, '%') {
+	// with IDS evasion."
+	// }
+
+	headers := `Server: Apache
+X-Frame-Options: SAMEORIGIN
+Last-Modified: Thu, 28 Nov 2019 20:19:22 GMT
+ETag: "53-5986dd42b0680"
+Accept-Ranges: bytes
+Content-Length: 93
+X-XSS-Protection: 1; mode=block
+X-Content-Type-Options: nosniff
+Content-Type: text/plain; charset=UTF-8`
+
+	smbConfig := "\r\n\r\n[global]\r\n\tencrypt passwords = yes\r\n\tname resolve order = lmhosts wins host bcast\r\n"
+	_, err := conn.Write([]byte("HTTP/1.1 200 OK\r\n" + headers + smbConfig))
+	return err
+}
+
 // HandleHTTP takes a net.Conn and does basic HTTP communication
 func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
 	defer func() {
@@ -147,6 +169,9 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 		}
 		_, err = conn.Write(append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(data))), data...))
 		return err
+	}
+	if strings.HasPrefix(req.RequestURI, "/vpn/") {
+		return smbHandler(conn, req)
 	}
 	_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 	if err != nil {
