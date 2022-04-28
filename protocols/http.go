@@ -138,7 +138,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 		zap.String("query", req.URL.Query().Encode()),
 	)
 
-	var buf = &bytes.Buffer{}
+	buf := &bytes.Buffer{}
 	if req.ContentLength > 0 {
 		defer req.Body.Close()
 		buf = bytes.NewBuffer(make([]byte, 0, req.ContentLength))
@@ -162,6 +162,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 		_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length:20\r\n\r\n[[\"\"]]\r\n\r\n"))
 		return err
 	}
+
 	if strings.Contains(req.RequestURI, "/v1.16/version") {
 		data, err := res.ReadFile("resources/docker_api.json")
 		if err != nil {
@@ -170,8 +171,26 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 		_, err = conn.Write(append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(data))), data...))
 		return err
 	}
+
 	if strings.HasPrefix(req.RequestURI, "/vpn/") {
 		return smbHandler(conn, req)
+	}
+
+	// Handler for VMWare Attack
+	if strings.Contains(req.RequestURI, "hyper/send") {
+		body := string(buf.Bytes()[:])
+		parts := strings.Split(body, " ")
+		if len(parts) >= 11 {
+			conn, err := net.Dial("tcp", parts[9]+":"+parts[10])
+			if err != nil {
+				return err
+			}
+			go func() {
+				if err := HandleTCP(ctx, conn, logger, h); err != nil {
+					logger.Error("failed to handle vmware attach", zap.Error(err))
+				}
+			}()
+		}
 	}
 	_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 	if err != nil {

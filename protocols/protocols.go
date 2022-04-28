@@ -51,6 +51,9 @@ func MapProtocolHandlers(log Logger, h Honeypot) map[string]HandlerFunc {
 	protocolHandlers["mqtt"] = func(ctx context.Context, conn net.Conn) error {
 		return HandleMQTT(ctx, conn, log, h)
 	}
+	protocolHandlers["memcache"] = func(ctx context.Context, conn net.Conn) error {
+		return HandleMemcache(ctx, conn, log, h)
+	}
 	protocolHandlers["jabber"] = func(ctx context.Context, conn net.Conn) error {
 		return HandleJabber(ctx, conn, log, h)
 	}

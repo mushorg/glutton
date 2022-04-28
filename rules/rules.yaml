@@ -37,6 +37,9 @@ rules:
     type: conn_handler
     name: proxy_tcp
     target: tcp://172.17.0.2:22
+  - match: tcp dst port 11211
+    type: conn_handler
+    target: memcache
   - match: tcp
     type: conn_handler
     target: default

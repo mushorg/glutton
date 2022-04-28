@@ -1,6 +1,7 @@
 package glutton
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -13,6 +14,6 @@ func TestCountOpenFiles(t *testing.T) {
 }
 
 func TestCountRunningRoutines(t *testing.T) {
-	runningRoutines := countRunningRoutines()
+	runningRoutines := runtime.NumGoroutine()
 	require.NotEmpty(t, runningRoutines, "expected running routines")
 }
