@@ -5,9 +5,9 @@ rules_path: rules/rules.yaml
 
 producers:
   enabled: false
-  gollum:
+  http:
     enabled: false
-    remote: http://gollum:gollum@localhost:9000
+    remote: https://localhost:9000
   hpfeeds:
     enabled: false
     host: 172.26.0.2

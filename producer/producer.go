@@ -98,7 +98,7 @@ func (p *Producer) Log(conn net.Conn, md *freki.Metadata, payload []byte) error 
 			return err
 		}
 	}
-	if viper.GetBool("producers.gollum.enabled") {
+	if viper.GetBool("producers.http.enabled") {
 		if err := p.logHTTP(event); err != nil {
 			return err
 		}
@@ -118,7 +118,7 @@ func (p *Producer) logHPFeeds(event *Event) error {
 
 // logHTTP send logs to HTTP endpoint
 func (p *Producer) logHTTP(event *Event) error {
-	url, err := url.Parse(viper.GetString("producers.gollum.remote"))
+	url, err := url.Parse(viper.GetString("producers.http.remote"))
 	if err != nil {
 		return err
 	}
@@ -130,15 +130,14 @@ func (p *Producer) logHTTP(event *Event) error {
 	if err != nil {
 		return err
 	}
-	password, _ := url.User.Password()
-	req.SetBasicAuth(url.User.Username(), password)
+	req.URL.RawQuery = url.RawQuery
+	if password, ok := url.User.Password(); ok {
+		req.SetBasicAuth(url.User.Username(), password)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
-	if err = resp.Body.Close(); err != nil {
-		return err
-	}
-	return nil
+	return resp.Body.Close()
 }
