@@ -127,16 +127,18 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 	ck := freki.NewConnKeyByString(host, port)
 	md := h.ConnectionByFlow(ck)
 
-	logger.Info(
-		fmt.Sprintf("HTTP %s request handled: %s", req.Method, req.URL.EscapedPath()),
-		zap.String("handler", "http"),
-		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-		zap.String("src_ip", host),
-		zap.String("src_port", port),
-		zap.String("path", req.URL.EscapedPath()),
-		zap.String("method", req.Method),
-		zap.String("query", req.URL.Query().Encode()),
-	)
+	if md != nil {
+		logger.Info(
+			fmt.Sprintf("HTTP %s request handled: %s", req.Method, req.URL.EscapedPath()),
+			zap.String("handler", "http"),
+			zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+			zap.String("src_ip", host),
+			zap.String("src_port", port),
+			zap.String("path", req.URL.EscapedPath()),
+			zap.String("method", req.Method),
+			zap.String("query", req.URL.Query().Encode()),
+		)
+	}
 
 	buf := &bytes.Buffer{}
 	if req.ContentLength > 0 {
