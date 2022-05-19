@@ -1,4 +1,4 @@
-package glutton
+package scanner
 
 import (
 	"net"
@@ -43,7 +43,7 @@ func isShodan(ip net.IP) bool {
 	return false
 }
 
-func isScanner(ip net.IP) (bool, string, error) {
+func IsScanner(ip net.IP) (bool, string, error) {
 	for scanner, subnets := range scannerSubnet {
 		for _, subnet := range subnets {
 			_, net, err := net.ParseCIDR(subnet)

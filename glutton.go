@@ -13,6 +13,7 @@ import (
 	"github.com/kung-foo/freki"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
+	"github.com/mushorg/glutton/scanner"
 	uuid "github.com/satori/go.uuid"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
@@ -217,7 +218,7 @@ func (g *Glutton) registerHandlers() {
 					}
 				}
 
-				matched, name, err := isScanner(net.ParseIP(host))
+				matched, name, err := scanner.IsScanner(net.ParseIP(host))
 				if err != nil {
 					return err
 				}

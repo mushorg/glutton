@@ -12,6 +12,7 @@ import (
 
 	"github.com/fw42/go-hpfeeds"
 	"github.com/kung-foo/freki"
+	"github.com/mushorg/glutton/scanner"
 	"github.com/spf13/viper"
 )
 
@@ -39,6 +40,7 @@ type Event struct {
 	ConnKey   [2]uint64 `json:"connKey"`
 	Payload   string    `json:"payload"`
 	Action    string    `json:"action"`
+	Scanner   string    `json:"scanner"`
 }
 
 func makeEvent(conn net.Conn, md *freki.Metadata, payload []byte, sensorID string) (*Event, error) {
@@ -46,6 +48,12 @@ func makeEvent(conn net.Conn, md *freki.Metadata, payload []byte, sensorID strin
 	if err != nil {
 		return nil, err
 	}
+
+	_, scannerName, err := scanner.IsScanner(net.ParseIP(host))
+	if err != nil {
+		return nil, err
+	}
+
 	ck := freki.NewConnKeyByString(host, port)
 	event := Event{
 		Timestamp: time.Now().UTC(),
@@ -56,6 +64,7 @@ func makeEvent(conn net.Conn, md *freki.Metadata, payload []byte, sensorID strin
 		Rule:      md.Rule.String(),
 		ConnKey:   ck,
 		Payload:   base64.StdEncoding.EncodeToString(payload),
+		Scanner:   scannerName,
 	}
 	return &event, nil
 }
