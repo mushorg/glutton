@@ -126,7 +126,7 @@ func (p *Producer) logHTTP(event *Event) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest("POST", url.Scheme+"://"+url.Host, bytes.NewBuffer(data))
+	req, err := http.NewRequest("POST", url.Scheme+"://"+url.Host+url.Path, bytes.NewBuffer(data))
 	if err != nil {
 		return err
 	}
