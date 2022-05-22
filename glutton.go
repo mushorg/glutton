@@ -282,5 +282,6 @@ func (g *Glutton) Shutdown() error {
 	 */
 
 	time.Sleep(2 * time.Second)
+	g.Logger.Info("Shutting down processor")
 	return g.Processor.Shutdown()
 }
