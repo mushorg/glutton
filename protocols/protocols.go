@@ -20,6 +20,7 @@ type Honeypot interface {
 	Produce(conn net.Conn, md *freki.Metadata, payload []byte) error
 	ConnectionByFlow([2]uint64) *freki.Metadata
 	UpdateConnectionTimeout(ctx context.Context, conn net.Conn)
+	MetadataByConnection(net.Conn) (*freki.Metadata, error)
 }
 
 type HandlerFunc func(ctx context.Context, conn net.Conn) error

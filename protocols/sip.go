@@ -7,21 +7,22 @@ import (
 
 	"github.com/jart/gosip/dialog"
 	"github.com/jart/gosip/sip"
+	"go.uber.org/zap"
 )
 
 const maxBufferSize = 1024
 
 // HandleSIP takes a net.Conn and does basic SIP communication
-func HandleSIP(ctx context.Context, netConn net.Conn, logger Logger, h Honeypot) error {
+func HandleSIP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
 	defer func() {
-		if err := netConn.Close(); err != nil {
+		if err := conn.Close(); err != nil {
 			logger.Error(fmt.Errorf("failed to close SIP connection: %w", err).Error())
 		}
 	}()
 
 	buffer := make([]byte, maxBufferSize)
 
-	_, err := netConn.Read(buffer)
+	_, err := conn.Read(buffer)
 	if err != nil {
 		return err
 	}
@@ -49,6 +50,14 @@ func HandleSIP(ctx context.Context, netConn net.Conn, logger Logger, h Honeypot)
 		//resp.Header.Set("Content-Type", "application/sdp")
 		//resp.Body = req.Body
 		//resp.WriteTo(sipConn, req)
+	}
+
+	md, err := h.MetadataByConnection(conn)
+	if err != nil {
+		return err
+	}
+	if err := h.Produce(conn, md, buffer); err != nil {
+		logger.Error("failed to produce message", zap.String("protocol", "sip"), zap.Error(err))
 	}
 	return nil
 }

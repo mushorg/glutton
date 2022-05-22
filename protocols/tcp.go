@@ -38,10 +38,10 @@ func storePayload(data []byte) (string, error) {
 }
 
 // HandleTCP takes a net.Conn and peeks at the data send
-func HandleTCP(ctx context.Context, conn net.Conn, log Logger, h Honeypot) error {
+func HandleTCP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			log.Error("failed to close TCP connection", zap.String("handler", "tcp"), zap.Error(err))
+			logger.Error("failed to close TCP connection", zap.String("handler", "tcp"), zap.Error(err))
 		}
 	}()
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
@@ -57,7 +57,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, log Logger, h Honeypot) error
 		buffer := make([]byte, 1024)
 		n, err := conn.Read(buffer)
 		if err != nil {
-			log.Error("read error", zap.String("handler", "tcp"), zap.Error(err))
+			logger.Error("read error", zap.String("handler", "tcp"), zap.Error(err))
 			break
 		}
 		msgLength += n
@@ -66,7 +66,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, log Logger, h Honeypot) error
 			break
 		}
 		if msgLength > viper.GetInt("max_tcp_payload") {
-			log.Debug("max message length reached", zap.String("handler", "tcp"))
+			logger.Debug("max message length reached", zap.String("handler", "tcp"))
 			break
 		}
 	}
@@ -80,7 +80,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, log Logger, h Honeypot) error
 		if md != nil {
 			dstPort = strconv.Itoa(int(md.TargetPort))
 		}
-		log.Info(
+		logger.Info(
 			"Packet got handled by TCP handler",
 			zap.String("dest_port", dstPort),
 			zap.String("src_ip", host),
@@ -88,7 +88,10 @@ func HandleTCP(ctx context.Context, conn net.Conn, log Logger, h Honeypot) error
 			zap.String("handler", "tcp"),
 			zap.String("payload_hash", payloadHash),
 		)
-		log.Info(fmt.Sprintf("TCP payload:\n%s", hex.Dump(data[:msgLength%1024])))
+		if err := h.Produce(conn, md, data); err != nil {
+			logger.Error("failed to produce message", zap.String("protocol", "tcp"), zap.Error(err))
+		}
+		logger.Info(fmt.Sprintf("TCP payload:\n%s", hex.Dump(data[:msgLength%1024])))
 	}
 	return nil
 }

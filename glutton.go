@@ -249,6 +249,16 @@ func (g *Glutton) ConnectionByFlow(ckey [2]uint64) *freki.Metadata {
 	return g.Processor.Connections.GetByFlow(ckey)
 }
 
+// MetadataByConnection returns connection metadata by connection
+func (g *Glutton) MetadataByConnection(conn net.Conn) (*freki.Metadata, error) {
+	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
+	if err != nil {
+		return nil, fmt.Errorf("faild to split remote address: %w", err)
+	}
+	ckey := freki.NewConnKeyByString(host, port)
+	return g.Processor.Connections.GetByFlow(ckey), nil
+}
+
 func (g *Glutton) Produce(conn net.Conn, md *freki.Metadata, payload []byte) error {
 	if g.Producer != nil {
 		return g.Producer.Log(conn, md, payload)

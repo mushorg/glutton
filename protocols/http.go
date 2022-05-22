@@ -151,6 +151,10 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 		logger.Info(fmt.Sprintf("HTTP payload:\n%s", hex.Dump(buf.Bytes()[:length%1024])))
 	}
 
+	if err := h.Produce(conn, md, buf.Bytes()); err != nil {
+		logger.Error("failed to produce message", zap.String("protocol", "http"), zap.Error(err))
+	}
+
 	switch req.Method {
 	case http.MethodPost:
 		return handlePOST(req, conn, buf, logger)

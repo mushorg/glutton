@@ -31,6 +31,15 @@ func HandleSMB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 			if err != nil {
 				return err
 			}
+
+			md, err := h.MetadataByConnection(conn)
+			if err != nil {
+				return err
+			}
+			if err := h.Produce(conn, md, buffer.Bytes()); err != nil {
+				logger.Error("failed to produce message", zap.String("protocol", "smb"), zap.Error(err))
+			}
+
 			header := smb.SMBHeader{}
 			err = smb.ParseHeader(buffer, &header)
 			if err != nil {

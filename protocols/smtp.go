@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // maximum lines that can be read after the "DATA" command
@@ -54,6 +56,11 @@ func HandleSMTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 		}
 	}()
 
+	md, err := h.MetadataByConnection(conn)
+	if err != nil {
+		return err
+	}
+
 	client := &Client{
 		conn:   conn,
 		bufin:  bufio.NewReader(conn),
@@ -85,6 +92,9 @@ func HandleSMTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 				data, err = client.read()
 				if err != nil {
 					break
+				}
+				if err := h.Produce(conn, md, []byte(data)); err != nil {
+					logger.Error("failed to produce message", zap.String("protocol", "smpt"), zap.Error(err))
 				}
 				logger.Info(fmt.Sprintf("[smtp    ] Data : %q", data))
 				// exit condition

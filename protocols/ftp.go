@@ -24,6 +24,10 @@ func readFTP(conn net.Conn, logger Logger, h Honeypot) (string, error) {
 	ck := freki.NewConnKeyByString(host, port)
 	md := h.ConnectionByFlow(ck)
 
+	if err := h.Produce(conn, md, []byte(msg)); err != nil {
+		logger.Error("failed to produce message", zap.String("protocol", "ftp"), zap.Error(err))
+	}
+
 	logger.Info(
 		"ftp payload received",
 		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
