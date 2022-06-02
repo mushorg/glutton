@@ -30,19 +30,6 @@ var (
 	}
 )
 
-func isShodan(ip net.IP) bool {
-	names, err := net.LookupAddr(ip.String())
-	if err != nil {
-		return false
-	}
-	for _, name := range names {
-		if strings.HasSuffix(name, "shodan.io.") {
-			return true
-		}
-	}
-	return false
-}
-
 func IsScanner(ip net.IP) (bool, string, error) {
 	for scanner, subnets := range scannerSubnet {
 		for _, subnet := range subnets {
@@ -55,8 +42,17 @@ func IsScanner(ip net.IP) (bool, string, error) {
 			}
 		}
 	}
-	if isShodan(ip) {
-		return true, "shodan", nil
+	names, err := net.LookupAddr(ip.String())
+	if err != nil {
+		return false, "", nil
+	}
+	for _, name := range names {
+		if strings.HasSuffix(name, "shodan.io.") {
+			return true, "shodan", nil
+		}
+		if strings.HasSuffix(name, "binaryedge.ninja.") {
+			return true, "binaryedge", nil
+		}
 	}
 	return false, "", nil
 }
