@@ -36,7 +36,7 @@ type Glutton struct {
 }
 
 func (g *Glutton) initConfig() error {
-	viper.SetConfigName("conf")
+	viper.SetConfigName("config")
 	viper.AddConfigPath(viper.GetString("confpath"))
 	if err := viper.ReadInConfig(); err != nil {
 		return err
@@ -59,7 +59,7 @@ func New() (*Glutton, error) {
 	g.Logger = NewLogger(g.id.String())
 
 	// Loading the configuration
-	g.Logger.Info("Loading configurations from: config/conf.yaml", zap.String("reporter", "glutton"))
+	g.Logger.Info("Loading configurations from: config/config.yaml", zap.String("reporter", "glutton"))
 	if err := g.initConfig(); err != nil {
 		return nil, err
 	}
@@ -95,6 +95,12 @@ func (g *Glutton) Init() error {
 	g.publicAddrs, err = getNonLoopbackIPs(viper.GetString("interface"))
 	if err != nil {
 		return err
+	}
+
+	for _, sIP := range viper.GetStringSlice("addresses") {
+		if ip := net.ParseIP(sIP); ip != nil {
+			g.publicAddrs = append(g.publicAddrs, ip)
+		}
 	}
 
 	// Initiating glutton server
@@ -265,11 +271,16 @@ func (g *Glutton) MetadataByConnection(conn net.Conn) (*freki.Metadata, error) {
 	return g.Processor.Connections.GetByFlow(ckey), nil
 }
 
+func (g *Glutton) sanitizePayload(payload []byte) []byte {
+	for _, ip := range g.publicAddrs {
+		payload = []byte(strings.ReplaceAll(string(payload), ip.String(), "1.2.3.4"))
+	}
+	return payload
+}
+
 func (g *Glutton) Produce(conn net.Conn, md *freki.Metadata, payload []byte) error {
 	if g.Producer != nil {
-		for _, ip := range g.publicAddrs {
-			payload = []byte(strings.ReplaceAll(string(payload), ip.String(), "1.2.3.4"))
-		}
+		payload = g.sanitizePayload(payload)
 		return g.Producer.Log(conn, md, payload)
 	}
 	return nil

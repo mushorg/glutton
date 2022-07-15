@@ -3,6 +3,8 @@ ports:
 
 rules_path: rules/rules.yaml
 
+addresses: ["1.2.3.4", "5.4.3.2"]
+
 producers:
   enabled: false
   http:
