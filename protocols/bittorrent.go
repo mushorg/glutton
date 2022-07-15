@@ -1,6 +1,7 @@
 package protocols
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"net"
@@ -25,30 +26,36 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, logger Logger, h Honey
 			return
 		}
 	}()
+	buffer := make([]byte, 1024)
+	var r *bytes.Reader
+	msg := bittorrentMsg{}
+	md, err := h.MetadataByConnection(conn)
+	if err != nil {
+		return err
+	}
 	for {
-		msg := bittorrentMsg{}
-		if err := binary.Read(conn, binary.BigEndian, &msg); err != nil {
-			logger.Error("failed to read message", zap.Error(err), zap.String("handler", "bittorrent"))
-			break
-		}
-		md, err := h.MetadataByConnection(conn)
-		if err != nil {
-			return err
-		}
-		if err = h.Produce(conn, md, []byte{}); err != nil {
-			logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "bittorrent"))
-		}
+		n, err := conn.Read(buffer)
+		if err == nil || n > 0 {
+			r = bytes.NewReader(buffer)
+			if err := binary.Read(r, binary.BigEndian, &msg); err != nil {
+				logger.Error("failed to read message", zap.Error(err), zap.String("handler", "bittorrent"))
+				break
+			}
+			if err = h.Produce(conn, md, buffer); err != nil {
+				logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "bittorrent"))
+			}
 
-		logger.Info(
-			"telnet send",
-			zap.String("handler", "bittorrent"),
-			zap.Uint8s("peer_id", msg.PeerID[:]),
-			zap.Uint8s("inf_hash", msg.InfoHash[:]),
-		)
+			logger.Info(
+				"telnet send",
+				zap.String("handler", "bittorrent"),
+				zap.Uint8s("peer_id", msg.PeerID[:]),
+				zap.Uint8s("inf_hash", msg.InfoHash[:]),
+			)
 
-		if err = binary.Write(conn, binary.BigEndian, msg); err != nil {
-			logger.Error("failed to write message", zap.Error(err), zap.String("handler", "bittorrent"))
-			break
+			if err = binary.Write(conn, binary.BigEndian, msg); err != nil {
+				logger.Error("failed to write message", zap.Error(err), zap.String("handler", "bittorrent"))
+				break
+			}
 		}
 	}
 	return nil
