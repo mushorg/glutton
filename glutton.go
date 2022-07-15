@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kung-foo/freki"
@@ -31,6 +32,7 @@ type Glutton struct {
 	sshProxy         *sshProxy
 	ctx              context.Context
 	cancel           context.CancelFunc
+	publicAddrs      []net.IP
 }
 
 func (g *Glutton) initConfig() error {
@@ -86,6 +88,11 @@ func (g *Glutton) Init() error {
 	// Initiate the freki processor
 	var err error
 	g.Processor, err = freki.New(viper.GetString("interface"), g.rules, DummyLogger{})
+	if err != nil {
+		return err
+	}
+
+	g.publicAddrs, err = getNonLoopbackIPs(viper.GetString("interface"))
 	if err != nil {
 		return err
 	}
@@ -260,6 +267,9 @@ func (g *Glutton) MetadataByConnection(conn net.Conn) (*freki.Metadata, error) {
 
 func (g *Glutton) Produce(conn net.Conn, md *freki.Metadata, payload []byte) error {
 	if g.Producer != nil {
+		for _, ip := range g.publicAddrs {
+			payload = []byte(strings.ReplaceAll(string(payload), ip.String(), "1.2.3.4"))
+		}
 		return g.Producer.Log(conn, md, payload)
 	}
 	return nil

@@ -2,6 +2,7 @@ module github.com/mushorg/glutton
 
 require (
 	github.com/fw42/go-hpfeeds v0.0.0-20130602172243-651ce0355974
+	github.com/google/gopacket v1.1.19
 	github.com/jart/gosip v0.0.0-20200629215808-4e7924e19438
 	github.com/kung-foo/freki v1.1.0
 	github.com/lunixbochs/vtclean v1.0.0
@@ -23,7 +24,6 @@ require (
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.4.0 // indirect
 	github.com/fsnotify/fsnotify v1.5.1 // indirect
-	github.com/google/gopacket v1.1.19 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/magiconair/properties v1.8.5 // indirect
 	github.com/mitchellh/mapstructure v1.4.2 // indirect
