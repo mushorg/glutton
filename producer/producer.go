@@ -59,12 +59,14 @@ func makeEvent(conn net.Conn, md *freki.Metadata, payload []byte, sensorID strin
 		Timestamp: time.Now().UTC(),
 		SrcHost:   host,
 		SrcPort:   port,
-		DstPort:   uint16(md.TargetPort),
 		SensorID:  sensorID,
-		Rule:      md.Rule.String(),
 		ConnKey:   ck,
 		Payload:   base64.StdEncoding.EncodeToString(payload),
 		Scanner:   scannerName,
+	}
+	if md != nil {
+		event.DstPort = uint16(md.TargetPort)
+		event.Rule = md.Rule.String()
 	}
 	return &event, nil
 }
