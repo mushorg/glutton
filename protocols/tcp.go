@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"path/filepath"
@@ -94,5 +95,15 @@ func HandleTCP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 		}
 		logger.Info(fmt.Sprintf("TCP payload:\n%s", hex.Dump(data[:msgLength%1024])))
 	}
+
+	// sending some randome data
+	randomBytes := make([]byte, 12+rand.Intn(500))
+	if _, err = rand.Read(randomBytes); err != nil {
+		return err
+	}
+	if _, err = conn.Write(randomBytes); err != nil {
+		return err
+	}
+
 	return nil
 }
