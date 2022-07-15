@@ -46,7 +46,7 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, logger Logger, h Honey
 			}
 
 			logger.Info(
-				"telnet send",
+				"bittorrent received",
 				zap.String("handler", "bittorrent"),
 				zap.Uint8s("peer_id", msg.PeerID[:]),
 				zap.Uint8s("inf_hash", msg.InfoHash[:]),

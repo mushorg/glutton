@@ -77,12 +77,17 @@ func WriteTelnetMsg(conn net.Conn, msg string, logger Logger, h Honeypot) error 
 		return err
 	}
 
+	dstPort := "0"
+	if md != nil {
+		dstPort = strconv.Itoa(int(md.TargetPort))
+	}
+
 	logger.Info(
 		"telnet send",
 		zap.String("handler", "telnet"),
 		zap.String("msg", fmt.Sprintf("%q", msg)),
 		zap.String("direction", "send"),
-		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+		zap.String("dest_port", dstPort),
 		zap.String("src_ip", host),
 		zap.String("src_port", port),
 	)
