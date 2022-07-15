@@ -12,6 +12,9 @@ rules:
   - match: tcp dst port 1883
     type: conn_handler
     target: mqtt
+  - match: tcp dst port 6969
+    type: conn_handler
+    target: bittorrent
   - match: tcp dst port 25
     type: conn_handler
     target: smtp

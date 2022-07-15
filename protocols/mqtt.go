@@ -61,8 +61,14 @@ func HandleMQTT(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 				}
 			}
 			var buf bytes.Buffer
-			binary.Write(&buf, binary.LittleEndian, res)
-			conn.Write(buf.Bytes())
+			if err = binary.Write(&buf, binary.LittleEndian, res); err != nil {
+				logger.Error("failed to write buffer", zap.Error(err), zap.String("handler", "bittorrent"))
+				break
+			}
+			if _, err = conn.Write(buf.Bytes()); err != nil {
+				logger.Error("failed to write message", zap.Error(err), zap.String("handler", "bittorrent"))
+				break
+			}
 		} else {
 			break
 		}

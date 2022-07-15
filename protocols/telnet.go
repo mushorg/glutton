@@ -71,8 +71,11 @@ func WriteTelnetMsg(conn net.Conn, msg string, logger Logger, h Honeypot) error 
 	if err != nil {
 		return err
 	}
-	ck := freki.NewConnKeyByString(host, port)
-	md := h.ConnectionByFlow(ck)
+
+	md, err := h.MetadataByConnection(conn)
+	if err != nil {
+		return err
+	}
 
 	logger.Info(
 		"telnet send",
