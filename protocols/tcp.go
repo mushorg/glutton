@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/kung-foo/freki"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
@@ -48,8 +47,10 @@ func HandleTCP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 	if err != nil {
 		return fmt.Errorf("faild to split remote address: %w", err)
 	}
-	ck := freki.NewConnKeyByString(host, port)
-	md := h.ConnectionByFlow(ck)
+	md, err := h.MetadataByConnection(conn)
+	if err != nil {
+		return fmt.Errorf("failed to get metadata: %w", err)
+	}
 
 	msgLength := 0
 	data := []byte{}

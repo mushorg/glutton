@@ -27,13 +27,15 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, logger Logger, h Honey
 		}
 	}()
 
-	buffer := make([]byte, 1024)
+	logger.Info("new bittorrent connection")
+
 	md, err := h.MetadataByConnection(conn)
 	if err != nil {
 		return err
 	}
 
 	for {
+		buffer := make([]byte, 1024)
 		n, err := conn.Read(buffer)
 		if err == nil || n > 0 {
 			msg := bittorrentMsg{}
