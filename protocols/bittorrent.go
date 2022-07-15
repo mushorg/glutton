@@ -26,18 +26,18 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, logger Logger, h Honey
 			return
 		}
 	}()
+
 	buffer := make([]byte, 1024)
-	var r *bytes.Reader
-	msg := bittorrentMsg{}
 	md, err := h.MetadataByConnection(conn)
 	if err != nil {
 		return err
 	}
+
 	for {
 		n, err := conn.Read(buffer)
 		if err == nil || n > 0 {
-			r = bytes.NewReader(buffer)
-			if err := binary.Read(r, binary.BigEndian, &msg); err != nil {
+			msg := bittorrentMsg{}
+			if err := binary.Read(bytes.NewReader(buffer), binary.BigEndian, &msg); err != nil {
 				logger.Error("failed to read message", zap.Error(err), zap.String("handler", "bittorrent"))
 				break
 			}
@@ -54,6 +54,12 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, logger Logger, h Honey
 
 			if err = binary.Write(conn, binary.BigEndian, msg); err != nil {
 				logger.Error("failed to write message", zap.Error(err), zap.String("handler", "bittorrent"))
+				break
+			}
+		} else {
+			logger.Info("failed to read from connection", zap.String("handler", "bittorrent"))
+			if err != nil {
+				logger.Error("failed to read data", zap.Error(err), zap.String("handler", "bittorrent"))
 				break
 			}
 		}
