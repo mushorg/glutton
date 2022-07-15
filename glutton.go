@@ -15,7 +15,6 @@ import (
 	"github.com/mushorg/glutton/protocols"
 	"github.com/mushorg/glutton/scanner"
 	uuid "github.com/satori/go.uuid"
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
@@ -86,7 +85,7 @@ func (g *Glutton) Init() error {
 
 	// Initiate the freki processor
 	var err error
-	g.Processor, err = freki.New(viper.GetString("interface"), g.rules, logrus.New())
+	g.Processor, err = freki.New(viper.GetString("interface"), g.rules, DummyLogger{})
 	if err != nil {
 		return err
 	}

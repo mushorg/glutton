@@ -39,11 +39,11 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, logger Logger, h Honey
 		n, err := conn.Read(buffer)
 		if err == nil || n > 0 {
 			msg := bittorrentMsg{}
-			if err := binary.Read(bytes.NewReader(buffer), binary.BigEndian, &msg); err != nil {
+			if err := binary.Read(bytes.NewReader(buffer[:n]), binary.BigEndian, &msg); err != nil {
 				logger.Error("failed to read message", zap.Error(err), zap.String("handler", "bittorrent"))
 				break
 			}
-			if err = h.Produce(conn, md, buffer); err != nil {
+			if err = h.Produce(conn, md, buffer[:n]); err != nil {
 				logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "bittorrent"))
 			}
 
