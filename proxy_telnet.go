@@ -68,7 +68,7 @@ func (t *telnetProxy) handle(ctx context.Context, conn net.Conn) error {
 				break
 			}
 
-			t.logger.Info(fmt.Sprintf("Recieved: %d bytes(s) from Server. Bytes: %s", len(string(reply)), string(reply)))
+			t.logger.Info(fmt.Sprintf("Received: %d bytes(s) from Server. Bytes: %s", len(string(reply)), string(reply)))
 			err = protocols.WriteTelnetMsg(conn, string(reply), g.Logger, g)
 			if err != nil {
 				t.logger.Error("failed to write telnet message", zap.Error(err))
