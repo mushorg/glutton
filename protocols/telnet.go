@@ -85,7 +85,7 @@ func WriteTelnetMsg(conn net.Conn, msg string, logger Logger, h Honeypot) error 
 	logger.Info(
 		"telnet send",
 		zap.String("handler", "telnet"),
-		zap.String("msg", fmt.Sprintf("%q", msg)),
+		zap.String("message", fmt.Sprintf("%q", msg)),
 		zap.String("direction", "send"),
 		zap.String("dest_port", dstPort),
 		zap.String("src_ip", host),
@@ -111,7 +111,7 @@ func ReadTelnetMsg(conn net.Conn, logger Logger, h Honeypot) (string, error) {
 	logger.Info(
 		"telnet recv",
 		zap.String("handler", "telnet"),
-		zap.String("msg", fmt.Sprintf("%q", msg)),
+		zap.String("message", fmt.Sprintf("%q", msg)),
 		zap.String("direction", "recv"),
 		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
 		zap.String("src_ip", host),

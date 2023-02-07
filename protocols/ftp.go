@@ -33,7 +33,7 @@ func readFTP(conn net.Conn, logger Logger, h Honeypot) (string, error) {
 		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
 		zap.String("src_ip", host),
 		zap.String("src_port", port),
-		zap.String("msg", fmt.Sprintf("%q", msg)),
+		zap.String("message", fmt.Sprintf("%q", msg)),
 		zap.String("handler", "ftp"),
 	)
 	return msg, err
