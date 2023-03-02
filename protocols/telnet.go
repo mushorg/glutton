@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"math/rand"
 	"net"
 	"net/http"
@@ -18,7 +18,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kung-foo/freki"
 	"go.uber.org/zap"
 )
 
@@ -105,8 +104,11 @@ func ReadTelnetMsg(conn net.Conn, logger Logger, h Honeypot) (string, error) {
 	if err != nil {
 		logger.Error(fmt.Sprintf("error: %v", err))
 	}
-	ck := freki.NewConnKeyByString(host, port)
-	md := h.ConnectionByFlow(ck)
+
+	md, err := h.MetadataByConnection(conn)
+	if err != nil {
+		return "", err
+	}
 
 	logger.Info(
 		"telnet recv",
@@ -138,7 +140,7 @@ func getSample(cmd string, logger Logger, h Honeypot) error {
 	if resp.ContentLength <= 0 {
 		return errors.New("getSample read http: error: Empty response body")
 	}
-	bodyBuffer, err := ioutil.ReadAll(resp.Body)
+	bodyBuffer, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}

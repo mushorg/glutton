@@ -3,7 +3,7 @@ package glutton
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -148,7 +148,7 @@ func (g *Glutton) makeID() error {
 	}
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		g.id = uuid.NewV4()
-		if err := ioutil.WriteFile(filePath, g.id.Bytes(), 0744); err != nil {
+		if err := os.WriteFile(filePath, g.id.Bytes(), 0744); err != nil {
 			return fmt.Errorf("failed to create new PID file: %w", err)
 		}
 	} else {
@@ -159,7 +159,7 @@ func (g *Glutton) makeID() error {
 		if err != nil {
 			return fmt.Errorf("failed to open PID file: %w", err)
 		}
-		buff, err := ioutil.ReadAll(f)
+		buff, err := io.ReadAll(f)
 		if err != nil {
 			return fmt.Errorf("failed to read PID file: %w", err)
 		}

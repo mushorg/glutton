@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kung-foo/freki"
 	"go.uber.org/zap"
 )
 
@@ -124,8 +123,11 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 	if err != nil {
 		return fmt.Errorf("failed to split the host: %w", err)
 	}
-	ck := freki.NewConnKeyByString(host, port)
-	md := h.ConnectionByFlow(ck)
+
+	md, err := h.MetadataByConnection(conn)
+	if err != nil {
+		return err
+	}
 
 	if md != nil {
 		logger.Info(
