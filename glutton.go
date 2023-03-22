@@ -42,7 +42,7 @@ func (g *Glutton) initConfig() error {
 		return err
 	}
 	// If no config is found, use the defaults
-	viper.SetDefault("glutton_server", 5000)
+	viper.SetDefault("ports.glutton_server", 5000)
 	viper.SetDefault("max_tcp_payload", 4096)
 	viper.SetDefault("rules_path", "rules/rules.yaml")
 	g.Logger.Debug("configuration loaded successfully", zap.String("reporter", "glutton"))
@@ -83,7 +83,7 @@ func (g *Glutton) Init() error {
 	ctx := context.Background()
 	g.ctx, g.cancel = context.WithCancel(ctx)
 
-	gluttonServerPort := uint(viper.GetInt("glutton_server"))
+	gluttonServerPort := uint(viper.GetInt("ports.glutton_server"))
 
 	// Initiate the freki processor
 	var err error
