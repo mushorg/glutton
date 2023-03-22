@@ -51,7 +51,7 @@ type ConnectionConfirmPDU struct {
 	TPDU   CCTPDU
 }
 
-func ConnectionConfirm() []byte {
+func ConnectionConfirm() ([]byte, error) {
 	cc := ConnectionConfirmPDU{
 		Header: TKIPHeader{
 			Version:  3,
@@ -66,50 +66,49 @@ func ConnectionConfirm() []byte {
 	if err != nil {
 		fmt.Println("binary.Write failed:", err)
 	}
-	return buf.Bytes()
+	return buf.Bytes(), nil
 }
 
 // ParsePDU takes raw data and parses into struct
-func ParseCRPDU(data []byte) (pdu ConnectionRequestPDU, err error) {
-	pdu = ConnectionRequestPDU{}
+func ParseCRPDU(data []byte) (ConnectionRequestPDU, error) {
+	pdu := ConnectionRequestPDU{}
 	buffer := bytes.NewBuffer(data)
-	err = binary.Read(buffer, binary.LittleEndian, &pdu.Header)
-	if err != nil {
-		return
+	if err := binary.Read(buffer, binary.LittleEndian, &pdu.Header); err != nil {
+		return pdu, err
 	}
+
+	// I wonder if we should be more lenient here
 	if len(data) != int(pdu.Header.LSLength) {
-		return
+		return pdu, nil
 	}
-	err = binary.Read(buffer, binary.LittleEndian, &pdu.TPDU)
-	if err != nil {
-		return
+	if err := binary.Read(buffer, binary.LittleEndian, &pdu.TPDU); err != nil {
+		return pdu, err
 	}
+
 	// Not sure if this is the best way to get the offset...
 	offset := bytes.Index(data, []byte("\r\n"))
 	switch {
 	case offset < 4:
-		return
+		return pdu, nil
 	case offset < 4+7:
 		if offset-4 == 0 {
-			return
+			return pdu, nil
 		}
 		pdu.Data = make([]byte, offset-4)
 	default:
 		if offset-4-7 <= 0 {
-			return
+			return pdu, nil
 		}
 		pdu.Data = make([]byte, offset-4-7)
 	}
 
-	err = binary.Read(buffer, binary.LittleEndian, &pdu.Data)
-	if err != nil {
-		return
+	if err := binary.Read(buffer, binary.LittleEndian, &pdu.Data); err != nil {
+		return pdu, err
 	}
 	if buffer.Len() >= 8 {
-		err = binary.Read(buffer, binary.LittleEndian, &pdu.RDPNegReq)
-		if err != nil {
-			return
+		if err := binary.Read(buffer, binary.LittleEndian, &pdu.RDPNegReq); err != nil {
+			return pdu, err
 		}
 	}
-	return
+	return pdu, nil
 }

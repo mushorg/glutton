@@ -35,7 +35,10 @@ func HandleRDP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 			if len(pdu.Data) > 0 {
 				logger.Info(fmt.Sprintf("[rdp     ] data: %s", string(pdu.Data)))
 			}
-			resp := rdp.ConnectionConfirm()
+			resp, err := rdp.ConnectionConfirm()
+			if err != nil {
+				return err
+			}
 			logger.Info(fmt.Sprintf("[rdp     ]resp pdu: %+v", resp))
 			if _, err = conn.Write(resp); err != nil {
 				return err

@@ -9,7 +9,9 @@ import (
 )
 
 func processRawCR(raw string, t *testing.T) ConnectionRequestPDU {
-	data, _ := hex.DecodeString(raw)
+	data, err := hex.DecodeString(raw)
+	require.NoError(t, err)
+
 	pdu, err := ParseCRPDU(data)
 	require.NoError(t, err)
 	return pdu
@@ -36,7 +38,8 @@ func TestRDPParseHeader2(t *testing.T) {
 }
 
 func TestConnectionConfirm(t *testing.T) {
-	cc := ConnectionConfirm()
+	cc, err := ConnectionConfirm()
+	require.NoError(t, err)
 	fmt.Printf("Parsed data: %+v\n", cc)
 }
 

@@ -195,7 +195,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 			}
 			go func() {
 				if err := HandleTCP(ctx, conn, logger, h); err != nil {
-					logger.Error("failed to handle vmware attach", zap.Error(err))
+					logger.Error("failed to handle vmware attack", zap.Error(err))
 				}
 			}()
 		}

@@ -25,16 +25,21 @@ func TestParseSMB(t *testing.T) {
 		"2050524f4752414d20312e3000024c414e4d414e312e30000257696e646f777320666f7220576f726b67726f75707320332e31610" +
 		"0024c4d312e325830303200024c414e4d414e322e3100024e54204c4d20302e313200"
 	data, _ := hex.DecodeString(raw)
+
 	buffer, err := ValidateData(data)
 	require.NoError(t, err)
+
 	header := SMBHeader{}
 	err = ParseHeader(buffer, &header)
 	require.NoError(t, err)
+
 	parsed, err := ParseNegotiateProtocolRequest(buffer, header)
 	require.NoError(t, err)
 	require.Equal(t, string(parsed.Header.Protocol[1:]), "SMB")
+
 	dialectString := bytes.Split(parsed.Data.DialectString, []byte("\x00"))
 	require.Equal(t, string(dialectString[0][:]), "\x02PC NETWORK PROGRAM 1.0", "dialect string mismatch")
+
 	_, err = MakeNegotiateProtocolResponse(header)
 	require.NoError(t, err)
 }
