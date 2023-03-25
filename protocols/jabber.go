@@ -8,7 +8,6 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/kung-foo/freki"
 	"go.uber.org/zap"
 )
 
@@ -47,8 +46,11 @@ func parseJabberClient(conn net.Conn, dataClient []byte, logger Logger, h Honeyp
 	if err != nil {
 		logger.Error(fmt.Sprintf("[jabber  ] error: %v", err))
 	}
-	ck := freki.NewConnKeyByString(host, port)
-	md := h.ConnectionByFlow(ck)
+
+	md, err := h.MetadataByConnection(conn)
+	if err != nil {
+		return err
+	}
 
 	logger.Info(
 		fmt.Sprintf("STo : %v Version: %v XMLns: %v XMLName: %v", v.STo, v.Version, v.XMLns, v.XMLName),

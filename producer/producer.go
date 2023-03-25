@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/fw42/go-hpfeeds"
-	"github.com/kung-foo/freki"
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/scanner"
 	"github.com/spf13/viper"
 )
@@ -37,13 +37,12 @@ type Event struct {
 	DstPort   uint16    `json:"dstPort"`
 	SensorID  string    `json:"sensorID"`
 	Rule      string    `json:"rule"`
-	ConnKey   [2]uint64 `json:"connKey"`
 	Payload   string    `json:"payload"`
 	Action    string    `json:"action"`
 	Scanner   string    `json:"scanner"`
 }
 
-func makeEvent(conn net.Conn, md *freki.Metadata, payload []byte, sensorID string) (*Event, error) {
+func makeEvent(conn net.Conn, md *connection.Metadata, payload []byte, sensorID string) (*Event, error) {
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
 		return nil, err
@@ -54,13 +53,11 @@ func makeEvent(conn net.Conn, md *freki.Metadata, payload []byte, sensorID strin
 		return nil, err
 	}
 
-	ck := freki.NewConnKeyByString(host, port)
 	event := Event{
 		Timestamp: time.Now().UTC(),
 		SrcHost:   host,
 		SrcPort:   port,
 		SensorID:  sensorID,
-		ConnKey:   ck,
 		Payload:   base64.StdEncoding.EncodeToString(payload),
 		Scanner:   scannerName,
 	}
@@ -99,7 +96,7 @@ func New(sensorID string) (*Producer, error) {
 }
 
 // Log is a meta caller for all producers
-func (p *Producer) Log(conn net.Conn, md *freki.Metadata, payload []byte) error {
+func (p *Producer) Log(conn net.Conn, md *connection.Metadata, payload []byte) error {
 	event, err := makeEvent(conn, md, payload, p.sensorID)
 	if err != nil {
 		return err

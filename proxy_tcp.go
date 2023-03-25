@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/kung-foo/freki"
+	"github.com/mushorg/glutton/connection"
 	"go.uber.org/zap"
 )
 
@@ -25,8 +25,8 @@ func (g *Glutton) tcpProxy(ctx context.Context, conn net.Conn) error {
 	if err != nil {
 		return err
 	}
-	ck := freki.NewConnKeyByString(host, port)
-	md := g.Processor.Connections.GetByFlow(ck)
+	ck := connection.NewConnKeyByString(host, port)
+	md := g.conntable.GetByFlow(ck)
 	if md == nil {
 		g.Logger.Warn("untracked tcp proxy connection", zap.String("remote_address", conn.RemoteAddr().String()))
 		return nil

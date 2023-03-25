@@ -11,10 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kung-foo/freki"
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
+	"github.com/mushorg/glutton/rules"
 	"github.com/mushorg/glutton/scanner"
+
 	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -24,15 +26,17 @@ import (
 type Glutton struct {
 	id               uuid.UUID
 	Logger           *zap.Logger
-	Processor        *freki.Processor
-	rules            []*freki.Rule
+	Server           *Server
+	rules            []*rules.Rule
 	Producer         *producer.Producer
+	conntable        *connection.ConnTable
 	protocolHandlers map[string]protocols.HandlerFunc
 	telnetProxy      *telnetProxy
 	sshProxy         *sshProxy
 	ctx              context.Context
 	cancel           context.CancelFunc
 	publicAddrs      []net.IP
+	connHandlers     map[string]ConnHandlerFunc
 }
 
 func (g *Glutton) initConfig() error {
@@ -71,27 +75,21 @@ func New() (*Glutton, error) {
 	}
 	defer rulesFile.Close()
 
-	g.rules, err = freki.ReadRulesFromFile(rulesFile)
+	g.conntable = connection.NewConnTable()
+	g.connHandlers = map[string]ConnHandlerFunc{}
+
+	g.rules, err = rules.ReadRulesFromFile(rulesFile)
 	if err != nil {
 		return nil, err
 	}
 	return g, nil
 }
 
-// Init initializes freki and handles
-func (g *Glutton) Init() error {
-	ctx := context.Background()
+// Init initializes server and handles
+func (g *Glutton) Init(ctx context.Context) error {
 	g.ctx, g.cancel = context.WithCancel(ctx)
 
-	gluttonServerPort := uint(viper.GetInt("ports.glutton_server"))
-
-	// Initiate the freki processor
 	var err error
-	g.Processor, err = freki.New(viper.GetString("interface"), g.rules, DummyLogger{})
-	if err != nil {
-		return err
-	}
-
 	g.publicAddrs, err = getNonLoopbackIPs(viper.GetString("interface"))
 	if err != nil {
 		return err
@@ -104,7 +102,9 @@ func (g *Glutton) Init() error {
 	}
 
 	// Initiating glutton server
-	g.Processor.AddServer(freki.NewUserConnServer(gluttonServerPort))
+	gluttonServerPort := uint(viper.GetInt("ports.glutton_server"))
+	g.Server = InitServer(gluttonServerPort)
+
 	// Initiating log producers
 	if viper.GetBool("producers.enabled") {
 		g.Producer, err = producer.New(g.id.String())
@@ -125,10 +125,10 @@ func (g *Glutton) Init() error {
 	}
 	g.registerHandlers()
 
-	return g.Processor.Init()
+	return nil
 }
 
-// Start the packet processor
+// Start the listener, this blocks for new connections
 func (g *Glutton) Start() error {
 	quit := make(chan struct{}) // stop monitor on shutdown
 	defer func() {
@@ -137,12 +137,19 @@ func (g *Glutton) Start() error {
 	}()
 
 	g.startMonitor(quit)
-	return g.Processor.Start()
+	if err := g.Server.Start(g.ctx); err != nil {
+		return err
+	}
+	for {
+		_, err := g.Server.ln.Accept()
+		if err != nil {
+			return err
+		}
+	}
 }
 
 func (g *Glutton) makeID() error {
-	fileName := "glutton.id"
-	filePath := filepath.Join(viper.GetString("var-dir"), fileName)
+	filePath := filepath.Join(viper.GetString("var-dir"), "glutton.id")
 	if err := os.MkdirAll(viper.GetString("var-dir"), 0744); err != nil {
 		return fmt.Errorf("failed to create var-dir: %w", err)
 	}
@@ -168,6 +175,16 @@ func (g *Glutton) makeID() error {
 			return fmt.Errorf("failed to create UUID from PID filed content: %w", err)
 		}
 	}
+	return nil
+}
+
+type ConnHandlerFunc func(conn net.Conn, md *connection.Metadata) error
+
+func (g *Glutton) RegisterConnHandler(target string, handler ConnHandlerFunc) error {
+	if _, ok := g.connHandlers[target]; ok {
+		return fmt.Errorf("conn handler already registered for %s", target)
+	}
+	g.connHandlers[target] = handler
 	return nil
 }
 
@@ -206,7 +223,7 @@ func (g *Glutton) registerHandlers() {
 				continue
 			}
 
-			g.Processor.RegisterConnHandler(handler, func(conn net.Conn, md *freki.Metadata) error {
+			g.RegisterConnHandler(handler, func(conn net.Conn, md *connection.Metadata) error {
 				host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 				if err != nil {
 					return fmt.Errorf("failed to split remote address: %w", err)
@@ -257,18 +274,18 @@ func (g *Glutton) registerHandlers() {
 }
 
 // ConnectionByFlow returns connection metadata by connection key
-func (g *Glutton) ConnectionByFlow(ckey [2]uint64) *freki.Metadata {
-	return g.Processor.Connections.GetByFlow(ckey)
+func (g *Glutton) ConnectionByFlow(ckey [2]uint64) *connection.Metadata {
+	return g.conntable.GetByFlow(ckey)
 }
 
 // MetadataByConnection returns connection metadata by connection
-func (g *Glutton) MetadataByConnection(conn net.Conn) (*freki.Metadata, error) {
+func (g *Glutton) MetadataByConnection(conn net.Conn) (*connection.Metadata, error) {
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
 		return nil, fmt.Errorf("faild to split remote address: %w", err)
 	}
-	ckey := freki.NewConnKeyByString(host, port)
-	return g.Processor.Connections.GetByFlow(ckey), nil
+	ckey := connection.NewConnKeyByString(host, port)
+	return g.ConnectionByFlow(ckey), nil
 }
 
 func (g *Glutton) sanitizePayload(payload []byte) []byte {
@@ -278,7 +295,7 @@ func (g *Glutton) sanitizePayload(payload []byte) []byte {
 	return payload
 }
 
-func (g *Glutton) Produce(conn net.Conn, md *freki.Metadata, payload []byte) error {
+func (g *Glutton) Produce(conn net.Conn, md *connection.Metadata, payload []byte) error {
 	if g.Producer != nil {
 		payload = g.sanitizePayload(payload)
 		return g.Producer.Log(conn, md, payload)
@@ -303,5 +320,5 @@ func (g *Glutton) Shutdown() error {
 
 	time.Sleep(2 * time.Second)
 	g.Logger.Info("Shutting down processor")
-	return g.Processor.Shutdown()
+	return g.Server.Shutdown()
 }

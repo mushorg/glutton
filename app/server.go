@@ -1,6 +1,7 @@
 package main // import "github.com/mushorg/glutton/app"
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -61,8 +62,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	err = gtn.Init()
-	if err != nil {
+	ctx := context.Background()
+
+	if err := gtn.Init(ctx); err != nil {
 		log.Fatal(err)
 	}
 
@@ -75,8 +77,7 @@ func main() {
 		exitMtx.Lock()
 		println() // make it look nice after the ^C
 		fmt.Println("shutting down...")
-		err = gtn.Shutdown()
-		if err != nil {
+		if err := gtn.Shutdown(); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -87,8 +88,7 @@ func main() {
 		os.Exit(0)
 	})
 
-	err = gtn.Start()
-	if err != nil {
+	if err := gtn.Start(); err != nil {
 		log.Fatal(err)
 	}
 }

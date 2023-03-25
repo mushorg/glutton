@@ -5,7 +5,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/kung-foo/freki"
+	"github.com/mushorg/glutton/connection"
 	"go.uber.org/zap"
 )
 
@@ -17,10 +17,10 @@ type Logger interface {
 }
 
 type Honeypot interface {
-	Produce(conn net.Conn, md *freki.Metadata, payload []byte) error
-	ConnectionByFlow([2]uint64) *freki.Metadata
+	Produce(conn net.Conn, md *connection.Metadata, payload []byte) error
+	ConnectionByFlow([2]uint64) *connection.Metadata
 	UpdateConnectionTimeout(ctx context.Context, conn net.Conn)
-	MetadataByConnection(net.Conn) (*freki.Metadata, error)
+	MetadataByConnection(net.Conn) (*connection.Metadata, error)
 }
 
 type HandlerFunc func(ctx context.Context, conn net.Conn) error
