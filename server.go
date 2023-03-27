@@ -31,7 +31,7 @@ func InitServer(port uint) *Server {
 				return operr
 			}
 			if err := conn.Control(func(fd uintptr) {
-				operr = syscall.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.IP_TRANSPARENT, 1)
+				operr = syscall.SetsockoptInt(int(fd), unix.SOL_IP, unix.IP_TRANSPARENT, 1)
 			}); err != nil {
 				return err
 			}
