@@ -137,9 +137,15 @@ func (g *Glutton) Start() error {
 	}()
 
 	g.startMonitor(quit)
+
+	if err := setTProxy(uint32(g.Server.port)); err != nil {
+		return err
+	}
+
 	if err := g.Server.Start(g.ctx); err != nil {
 		return err
 	}
+
 	for {
 		_, err := g.Server.ln.Accept()
 		if err != nil {
