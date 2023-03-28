@@ -3,16 +3,14 @@ package glutton
 import (
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
-	"github.com/google/nftables/xt"
 )
 
-// iptables -t mangle -I PREROUTING -d 192.0.2.0/24 -p tcp -j TPROXY --on-port=1234 --on-ip=127.0.0.1
 // nft add rule filter divert tcp dport 80 tproxy to :50080 meta mark set 1 accept
 func setTProxy(port uint32) error {
 	c := &nftables.Conn{}
 
 	table := &nftables.Table{
-		Family: nftables.TableFamilyIPv4,
+		Family: nftables.TableFamilyINet,
 		Name:   "filter",
 	}
 
@@ -27,39 +25,44 @@ func setTProxy(port uint32) error {
 	})
 
 	// -tcp --dport 0:65534 --sport 0:65534
-	tcpMatch := &expr.Match{
-		Name: "tcp",
-		Info: &xt.Tcp{
-			//SrcPorts: [2]uint16{0, 65534},
-			//DstPorts: [2]uint16{0, 65534},
-			DstPorts: [2]uint16{80, 80},
-		},
+	//tcpMatch := &expr.Match{
+	//	Name: "tcp",
+	//	Info: &xt.Tcp{
+	//		SrcPorts: [2]uint16{0, 65534},
+	//		DstPorts: [2]uint16{0, 65534},
+	//		//DstPorts: [2]uint16{80, 80},
+	//	},
+	//}
+
+	//tproxy := &expr.TProxy{
+	//	Family:      byte(nftables.TableFamilyIPv4),
+	//	TableFamily: byte(nftables.TableFamilyIPv4),
+	//	RegPort:     1,
+	//}
+
+	metaMark := &expr.Meta{
+		Key:            expr.MetaKeyMARK,
+		SourceRegister: true,
+		Register:       1,
 	}
 
-	// tproxy := &expr.TProxy{
-	// 	Family:      byte(nftables.TableFamilyIPv4),
-	// 	TableFamily: byte(nftables.TableFamilyIPv4),
-	// 	RegPort:     port,
-	// }
-
-	// metaMark := &expr.Meta{
-	// 	Key:            expr.MetaKeyMARK,
-	// 	SourceRegister: true,
-	// 	Register:       1,
-	// }
-
-	// accept := &expr.Verdict{
-	// 	Kind: expr.VerdictAccept,
-	// }
+	accept := &expr.Verdict{
+		Kind: expr.VerdictAccept,
+	}
 
 	r := &nftables.Rule{
 		Table: table,
 		Chain: chain,
 		Exprs: []expr.Any{
-			tcpMatch,
+			//tcpMatch,
 			//tproxy,
-			//metaMark,
-			//accept,
+			&expr.TProxy{
+				Family:      byte(nftables.TableFamilyIPv4),
+				TableFamily: byte(nftables.TableFamilyIPv4),
+				RegPort:     1,
+			},
+			metaMark,
+			accept,
 		},
 	}
 	c.AddRule(r)

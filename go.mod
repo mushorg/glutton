@@ -3,6 +3,7 @@ module github.com/mushorg/glutton
 go 1.17
 
 require (
+	github.com/coreos/go-iptables v0.6.0
 	github.com/fw42/go-hpfeeds v0.0.0-20130602172243-651ce0355974
 	github.com/google/gopacket v1.1.19
 	github.com/google/nftables v0.1.0

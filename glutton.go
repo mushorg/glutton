@@ -138,7 +138,7 @@ func (g *Glutton) Start() error {
 
 	g.startMonitor(quit)
 
-	if err := setTProxy(uint32(g.Server.port)); err != nil {
+	if err := setTProxyIPTables(uint32(g.Server.port)); err != nil {
 		return err
 	}
 
@@ -147,7 +147,9 @@ func (g *Glutton) Start() error {
 	}
 
 	for {
-		_, err := g.Server.ln.Accept()
+		println("loop")
+		conn, err := g.Server.ln.Accept()
+		println(conn.LocalAddr().String())
 		if err != nil {
 			return err
 		}
@@ -314,17 +316,6 @@ func (g *Glutton) Shutdown() error {
 	defer g.Logger.Sync()
 	g.cancel() // close all connection
 
-	/** TODO:
-	 ** May be there exist a better way to wait for all connections to be closed but I am unable
-	 ** to find. The only link we have between program and goroutines is context.
-	 ** context.cancel() signal routines to abandon their work and does not wait
-	 ** for the work to stop. And in any case if fails then there will be definitely a
-	 ** goroutine leak. May be it is possible in future when we have connection counter so we can keep
-	 ** that counter synchronized with number of goroutines (connections) with help of context and on
-	 ** shutdown we wait until counter goes to zero.
-	 */
-
-	time.Sleep(2 * time.Second)
 	g.Logger.Info("Shutting down processor")
 	return g.Server.Shutdown()
 }
