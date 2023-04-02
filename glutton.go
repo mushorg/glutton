@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
@@ -82,6 +84,13 @@ func New() (*Glutton, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	for idx, rule := range g.rules {
+		if err := rules.InitRule(idx, rule); err != nil {
+			return nil, fmt.Errorf("failed to initialize rule: %w", err)
+		}
+	}
+
 	return g, nil
 }
 
@@ -128,6 +137,48 @@ func (g *Glutton) Init(ctx context.Context) error {
 	return nil
 }
 
+func splitAddr(addr string) (net.IP, layers.TCPPort, error) {
+	ip, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, 0, err
+	}
+	sIP := net.ParseIP(ip)
+
+	dPort, err := strconv.Atoi(port)
+	if err != nil {
+		return nil, 0, err
+	}
+	return sIP, layers.TCPPort(dPort), nil
+}
+
+func fakePacketBytes(conn net.Conn) ([]byte, error) {
+	buf := gopacket.NewSerializeBuffer()
+	opts := gopacket.SerializeOptions{}
+
+	sIP, sPort, err := splitAddr(conn.RemoteAddr().String())
+	if err != nil {
+		return nil, err
+	}
+	dIP, dPort, err := splitAddr(conn.LocalAddr().String())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := gopacket.SerializeLayers(buf, opts,
+		&layers.IPv4{
+			SrcIP: sIP,
+			DstIP: dIP,
+		},
+		&layers.TCP{
+			SrcPort: sPort,
+			DstPort: dPort,
+		},
+		gopacket.Payload([]byte{})); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 // Start the listener, this blocks for new connections
 func (g *Glutton) Start() error {
 	quit := make(chan struct{}) // stop monitor on shutdown
@@ -138,7 +189,7 @@ func (g *Glutton) Start() error {
 
 	g.startMonitor(quit)
 
-	if err := setTProxyIPTables(uint32(g.Server.port)); err != nil {
+	if err := setTProxyIPTables("", uint32(g.Server.port)); err != nil {
 		return err
 	}
 
@@ -147,11 +198,31 @@ func (g *Glutton) Start() error {
 	}
 
 	for {
-		println("loop")
 		conn, err := g.Server.ln.Accept()
-		println(conn.LocalAddr().String())
 		if err != nil {
 			return err
+		}
+		println("remote", conn.RemoteAddr().String())
+		data, err := fakePacketBytes(conn)
+		if err != nil {
+			return fmt.Errorf("failed to fake packet: %w", err)
+		}
+
+		rule, err := g.applyRules(data)
+		if err != nil {
+			return fmt.Errorf("failed to apply rules: %w", err)
+		}
+		if rule == nil {
+			rule = &rules.Rule{Target: "default"}
+		}
+		println("rule", rule.Target)
+
+		if hfunc, ok := g.protocolHandlers[rule.Target]; ok {
+			go func() {
+				if err := hfunc(g.ctx, conn); err != nil {
+					fmt.Printf("failed to handle connection: %s\n", err)
+				}
+			}()
 		}
 	}
 }
@@ -318,4 +389,17 @@ func (g *Glutton) Shutdown() error {
 
 	g.Logger.Info("Shutting down processor")
 	return g.Server.Shutdown()
+}
+
+func (g *Glutton) applyRules(d []byte) (*rules.Rule, error) {
+	for _, rule := range g.rules {
+		match, err := rule.RunMatch(d)
+		if err != nil {
+			return nil, err
+		}
+		if match != nil {
+			return match, err
+		}
+	}
+	return nil, nil
 }

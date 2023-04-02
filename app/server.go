@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"sync"
 	"syscall"
 
@@ -72,11 +73,11 @@ func main() {
 	exit := func() {
 		// See if there was a panic...
 		if r := recover(); r != nil {
-			fmt.Fprintln(os.Stderr, recover())
+			fmt.Fprintln(os.Stderr, r)
+			fmt.Println("stacktrace from panic: \n" + string(debug.Stack()))
 		}
 		exitMtx.Lock()
-		println() // make it look nice after the ^C
-		fmt.Println("shutting down...")
+		fmt.Println("\nshutting down...")
 		if err := gtn.Shutdown(); err != nil {
 			log.Fatal(err)
 		}
@@ -89,6 +90,6 @@ func main() {
 	})
 
 	if err := gtn.Start(); err != nil {
-		log.Fatal(err)
+		log.Fatal("server error", err)
 	}
 }

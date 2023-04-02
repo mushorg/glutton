@@ -2,17 +2,17 @@ package rules
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/url"
 	"os"
 	"strconv"
 
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 
 	yaml "gopkg.in/yaml.v2"
-
-	"golang.org/x/net/bpf"
 )
 
 type RuleType int
@@ -41,7 +41,7 @@ type Rule struct {
 	isInit    bool
 	ruleType  RuleType
 	index     int
-	matcher   *bpf.VM
+	matcher   *pcap.BPF
 	targetURL *url.URL
 
 	host string
@@ -53,7 +53,7 @@ func (r *Rule) String() string {
 }
 
 func ReadRulesFromFile(file *os.File) ([]*Rule, error) {
-	data, err := ioutil.ReadAll(file)
+	data, err := io.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func ParseRuleSpec(spec []byte) ([]*Rule, error) {
 	return config.Rules, err
 }
 
-func initRule(idx int, rule *Rule, iface *pcap.Handle) error {
+func InitRule(idx int, rule *Rule) error {
 	if rule.isInit {
 		return nil
 	}
@@ -105,13 +105,12 @@ func initRule(idx int, rule *Rule, iface *pcap.Handle) error {
 		return fmt.Errorf("unknown rule type: %s", rule.Type)
 	}
 
+	var err error
 	if len(rule.Match) > 0 {
-		instuctions, err := iface.CompileBPFFilter(rule.Match)
+		rule.matcher, err = pcap.NewBPF(layers.LinkTypeEthernet, 65535, rule.Match)
 		if err != nil {
 			return err
 		}
-
-		rule.matcher = pcapBPFToXNetBPF(instuctions)
 	}
 
 	if rule.Target != "" {
@@ -154,27 +153,12 @@ func initRule(idx int, rule *Rule, iface *pcap.Handle) error {
 	return nil
 }
 
-func pcapBPFToXNetBPF(pcapbpf []pcap.BPFInstruction) *bpf.VM {
-	raw := make([]bpf.RawInstruction, len(pcapbpf))
-
-	for i, ins := range pcapbpf {
-		raw[i] = bpf.RawInstruction{
-			Op: ins.Code,
-			Jt: ins.Jt,
-			Jf: ins.Jf,
-			K:  ins.K,
+func (r *Rule) RunMatch(d []byte) (*Rule, error) {
+	if r.matcher != nil {
+		n := len(d)
+		if r.matcher.Matches(gopacket.CaptureInfo{CaptureLength: n, Length: n}, d) {
+			return r, nil
 		}
 	}
-
-	filter, _ := bpf.Disassemble(raw)
-
-	vm, err := bpf.NewVM(filter)
-
-	if err != nil {
-		// TODO: return error
-		println(err)
-		// p.log.Error(err)
-	}
-
-	return vm
+	return nil, nil
 }
