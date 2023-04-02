@@ -91,6 +91,7 @@ func (s *sshProxy) initConf(dest string) error {
 				Auth: []ssh.AuthMethod{
 					ssh.Password(string(pass)),
 				},
+				HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 			}
 
 			n := 0
