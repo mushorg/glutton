@@ -48,14 +48,12 @@ func main() {
 		return
 	}
 
-	gtn, err := glutton.New()
+	gtn, err := glutton.New(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
-
-	if err := gtn.Init(ctx); err != nil {
+	if err := gtn.Init(); err != nil {
 		log.Fatal(err)
 	}
 

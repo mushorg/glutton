@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
@@ -56,8 +54,10 @@ func (g *Glutton) initConfig() error {
 }
 
 // New creates a new Glutton instance
-func New() (*Glutton, error) {
+func New(ctx context.Context) (*Glutton, error) {
 	g := &Glutton{}
+	g.ctx, g.cancel = context.WithCancel(ctx)
+
 	g.protocolHandlers = make(map[string]protocols.HandlerFunc)
 	if err := g.makeID(); err != nil {
 		return nil, err
@@ -80,7 +80,7 @@ func New() (*Glutton, error) {
 	g.conntable = connection.NewConnTable()
 	g.connHandlers = map[string]ConnHandlerFunc{}
 
-	g.rules, err = rules.ReadRulesFromFile(rulesFile)
+	g.rules, err = rules.ParseRuleSpec(rulesFile)
 	if err != nil {
 		return nil, err
 	}
@@ -95,9 +95,7 @@ func New() (*Glutton, error) {
 }
 
 // Init initializes server and handles
-func (g *Glutton) Init(ctx context.Context) error {
-	g.ctx, g.cancel = context.WithCancel(ctx)
-
+func (g *Glutton) Init() error {
 	var err error
 	g.publicAddrs, err = getNonLoopbackIPs(viper.GetString("interface"))
 	if err != nil {
@@ -137,48 +135,6 @@ func (g *Glutton) Init(ctx context.Context) error {
 	return nil
 }
 
-func splitAddr(addr string) (net.IP, layers.TCPPort, error) {
-	ip, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, 0, err
-	}
-	sIP := net.ParseIP(ip)
-
-	dPort, err := strconv.Atoi(port)
-	if err != nil {
-		return nil, 0, err
-	}
-	return sIP, layers.TCPPort(dPort), nil
-}
-
-func fakePacketBytes(conn net.Conn) ([]byte, error) {
-	buf := gopacket.NewSerializeBuffer()
-	opts := gopacket.SerializeOptions{}
-
-	sIP, sPort, err := splitAddr(conn.RemoteAddr().String())
-	if err != nil {
-		return nil, err
-	}
-	dIP, dPort, err := splitAddr(conn.LocalAddr().String())
-	if err != nil {
-		return nil, err
-	}
-
-	if err := gopacket.SerializeLayers(buf, opts,
-		&layers.IPv4{
-			SrcIP: sIP,
-			DstIP: dIP,
-		},
-		&layers.TCP{
-			SrcPort: sPort,
-			DstPort: dPort,
-		},
-		gopacket.Payload([]byte{})); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
 // Start the listener, this blocks for new connections
 func (g *Glutton) Start() error {
 	quit := make(chan struct{}) // stop monitor on shutdown
@@ -203,12 +159,8 @@ func (g *Glutton) Start() error {
 			return err
 		}
 		println("remote", conn.RemoteAddr().String())
-		data, err := fakePacketBytes(conn)
-		if err != nil {
-			return fmt.Errorf("failed to fake packet: %w", err)
-		}
 
-		rule, err := g.applyRules(data)
+		rule, err := g.applyRules(conn)
 		if err != nil {
 			return fmt.Errorf("failed to apply rules: %w", err)
 		}
@@ -395,9 +347,9 @@ func (g *Glutton) Shutdown() error {
 	return g.Server.Shutdown()
 }
 
-func (g *Glutton) applyRules(d []byte) (*rules.Rule, error) {
+func (g *Glutton) applyRules(conn net.Conn) (*rules.Rule, error) {
 	for _, rule := range g.rules {
-		match, err := rule.RunMatch(d)
+		match, err := rule.RunMatch(conn)
 		if err != nil {
 			return nil, err
 		}

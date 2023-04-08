@@ -1,0 +1,16 @@
+rules:
+  - match: tcp dst port 5001
+    type: passthrough
+    name: ssh
+  - match: tcp dst port 22 or port 2222
+    type: conn_handler
+    name: proxy_ssh
+    target: tcp://172.17.0.2:22
+  - match: tcp dst port 23 or port 2323 or port 23231
+    type: conn_handler
+    target: telnet
+  - match: tcp
+    type: conn_handler
+    target: default
+  - match: udp
+    type: drop

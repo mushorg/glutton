@@ -2,7 +2,6 @@ package rules
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"net/url"
 	"os"
@@ -52,20 +51,9 @@ func (r *Rule) String() string {
 	return fmt.Sprintf("Rule: %s", r.Match)
 }
 
-func ReadRulesFromFile(file *os.File) ([]*Rule, error) {
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return nil, err
-	}
-
-	return ParseRuleSpec(data)
-}
-
-func ParseRuleSpec(spec []byte) ([]*Rule, error) {
+func ParseRuleSpec(file *os.File) ([]*Rule, error) {
 	config := &Config{}
-	err := yaml.Unmarshal(spec, config)
-
-	if err != nil {
+	if err := yaml.NewDecoder(file).Decode(config); err != nil {
 		return nil, err
 	}
 
@@ -78,7 +66,7 @@ func ParseRuleSpec(spec []byte) ([]*Rule, error) {
 		return nil, fmt.Errorf("unsupported rules version: %v", config.Version)
 	}
 
-	return config.Rules, err
+	return config.Rules, nil
 }
 
 func InitRule(idx int, rule *Rule) error {
@@ -117,20 +105,17 @@ func InitRule(idx int, rule *Rule) error {
 		var err error
 		if rule.ruleType == ProxyTCP {
 			rule.targetURL, err = url.Parse(rule.Target)
-
 			if err != nil {
 				return err
 			}
 
 			var sport string
 			rule.host, sport, err = net.SplitHostPort(rule.targetURL.Host)
-
 			if err != nil {
 				return err
 			}
 
 			rule.port, err = strconv.Atoi(sport)
-
 			if err != nil {
 				return err
 			}
@@ -140,7 +125,6 @@ func InitRule(idx int, rule *Rule) error {
 
 		if rule.ruleType == Rewrite {
 			rule.port, err = strconv.Atoi(rule.Target)
-
 			if err != nil {
 				return err
 			}
@@ -153,7 +137,54 @@ func InitRule(idx int, rule *Rule) error {
 	return nil
 }
 
-func (r *Rule) RunMatch(d []byte) (*Rule, error) {
+func splitAddr(addr string) (net.IP, layers.TCPPort, error) {
+	ip, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, 0, err
+	}
+	sIP := net.ParseIP(ip)
+
+	dPort, err := strconv.Atoi(port)
+	if err != nil {
+		return nil, 0, err
+	}
+	return sIP, layers.TCPPort(dPort), nil
+}
+
+func fakePacketBytes(conn net.Conn) ([]byte, error) {
+	buf := gopacket.NewSerializeBuffer()
+	opts := gopacket.SerializeOptions{}
+
+	sIP, sPort, err := splitAddr(conn.RemoteAddr().String())
+	if err != nil {
+		return nil, err
+	}
+	dIP, dPort, err := splitAddr(conn.LocalAddr().String())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := gopacket.SerializeLayers(buf, opts,
+		&layers.IPv4{
+			SrcIP: sIP,
+			DstIP: dIP,
+		},
+		&layers.TCP{
+			SrcPort: sPort,
+			DstPort: dPort,
+		},
+		gopacket.Payload([]byte{})); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (r *Rule) RunMatch(conn net.Conn) (*Rule, error) {
+	d, err := fakePacketBytes(conn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fake packet: %w", err)
+	}
+
 	if r.matcher != nil {
 		n := len(d)
 		if r.matcher.Matches(gopacket.CaptureInfo{CaptureLength: n, Length: n}, d) {
