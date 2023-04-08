@@ -22,16 +22,6 @@ var (
 	BUILDDATE = ""
 )
 
-func onInterruptSignal(fn func()) {
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		<-sig
-		fn()
-	}()
-}
-
 func main() {
 	fmt.Println(`
   _____ _       _   _
@@ -84,12 +74,16 @@ func main() {
 	}
 	defer exit()
 
-	onInterruptSignal(func() {
+	// capture and handle signals
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sig
 		exit()
 		os.Exit(0)
-	})
+	}()
 
 	if err := gtn.Start(); err != nil {
-		log.Fatal("server error", err)
+		log.Fatalf("server start error: %s", err)
 	}
 }
