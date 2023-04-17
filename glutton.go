@@ -77,7 +77,7 @@ func New(ctx context.Context) (*Glutton, error) {
 	}
 	defer rulesFile.Close()
 
-	g.conntable = connection.NewConnTable()
+	g.conntable = connection.New()
 	g.connHandlers = map[string]ConnHandlerFunc{}
 
 	g.rules, err = rules.ParseRuleSpec(rulesFile)
@@ -306,7 +306,7 @@ func (g *Glutton) registerHandlers() {
 
 // ConnectionByFlow returns connection metadata by connection key
 func (g *Glutton) ConnectionByFlow(ckey [2]uint64) *connection.Metadata {
-	return g.conntable.GetByFlow(ckey)
+	return g.conntable.Get(ckey)
 }
 
 // MetadataByConnection returns connection metadata by connection
@@ -315,7 +315,10 @@ func (g *Glutton) MetadataByConnection(conn net.Conn) (*connection.Metadata, err
 	if err != nil {
 		return nil, fmt.Errorf("faild to split remote address: %w", err)
 	}
-	ckey := connection.NewConnKeyByString(host, port)
+	ckey, err := connection.NewConnKeyByString(host, port)
+	if err != nil {
+		return nil, err
+	}
 	return g.ConnectionByFlow(ckey), nil
 }
 
