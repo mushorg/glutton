@@ -27,7 +27,7 @@ type Glutton struct {
 	id               uuid.UUID
 	Logger           *zap.Logger
 	Server           *Server
-	rules            []*rules.Rule
+	rules            rules.Rules
 	Producer         *producer.Producer
 	conntable        *connection.ConnTable
 	protocolHandlers map[string]protocols.HandlerFunc
@@ -351,14 +351,12 @@ func (g *Glutton) Shutdown() error {
 }
 
 func (g *Glutton) applyRules(conn net.Conn) (*rules.Rule, error) {
-	for _, rule := range g.rules {
-		match, err := rule.RunMatch(conn)
-		if err != nil {
-			return nil, err
-		}
-		if match != nil {
-			return match, err
-		}
+	match, err := g.rules.Match(conn)
+	if err != nil {
+		return nil, err
+	}
+	if match != nil {
+		return match, err
 	}
 	return nil, nil
 }

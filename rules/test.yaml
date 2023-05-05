@@ -6,9 +6,9 @@ rules:
     type: conn_handler
     name: proxy_ssh
     target: tcp://172.17.0.2:22
-  - match: tcp dst port 23 or port 2323 or port 23231
+  - match: tcp dst port 1234
     type: conn_handler
-    target: telnet
+    target: test
   - match: tcp
     type: conn_handler
     target: default

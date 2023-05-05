@@ -51,7 +51,7 @@ func (r *Rule) String() string {
 	return fmt.Sprintf("Rule: %s", r.Match)
 }
 
-func ParseRuleSpec(file *os.File) ([]*Rule, error) {
+func ParseRuleSpec(file *os.File) (Rules, error) {
 	config := &Config{}
 	if err := yaml.NewDecoder(file).Decode(config); err != nil {
 		return nil, err
@@ -153,43 +153,62 @@ func splitAddr(addr string) (net.IP, layers.TCPPort, error) {
 
 func fakePacketBytes(conn net.Conn) ([]byte, error) {
 	buf := gopacket.NewSerializeBuffer()
-	opts := gopacket.SerializeOptions{}
+	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
 
-	sIP, sPort, err := splitAddr(conn.RemoteAddr().String())
+	sIP, sPort, err := splitAddr(conn.LocalAddr().String())
 	if err != nil {
 		return nil, err
 	}
-	dIP, dPort, err := splitAddr(conn.LocalAddr().String())
+	dIP, dPort, err := splitAddr(conn.RemoteAddr().String())
 	if err != nil {
+		return nil, err
+	}
+	eth := &layers.Ethernet{
+		SrcMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+		DstMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+		EthernetType: layers.EthernetTypeIPv4,
+	}
+	ipv4 := &layers.IPv4{
+		SrcIP: sIP,
+		DstIP: dIP,
+	}
+	tcp := &layers.TCP{
+		SrcPort: sPort,
+		DstPort: dPort,
+	}
+	if err := tcp.SetNetworkLayerForChecksum(ipv4); err != nil {
 		return nil, err
 	}
 
 	if err := gopacket.SerializeLayers(buf, opts,
-		&layers.IPv4{
-			SrcIP: sIP,
-			DstIP: dIP,
-		},
-		&layers.TCP{
-			SrcPort: sPort,
-			DstPort: dPort,
-		},
+		eth,
+		ipv4,
+		tcp,
 		gopacket.Payload([]byte{})); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
 }
 
-func (r *Rule) RunMatch(conn net.Conn) (*Rule, error) {
+type Rules []*Rule
+
+func (rs Rules) Match(conn net.Conn) (*Rule, error) {
 	d, err := fakePacketBytes(conn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fake packet: %w", err)
 	}
 
-	if r.matcher != nil {
-		n := len(d)
-		if r.matcher.Matches(gopacket.CaptureInfo{CaptureLength: n, Length: n}, d) {
-			return r, nil
+	println(len(d))
+
+	for _, rule := range rs {
+		if rule.matcher != nil {
+			n := len(d)
+
+			if rule.matcher.Matches(gopacket.CaptureInfo{CaptureLength: n, Length: n}, d) {
+				return rule, nil
+			}
 		}
 	}
+
 	return nil, nil
 }
