@@ -7,6 +7,7 @@ import (
 	"net"
 
 	"github.com/mushorg/glutton/protocols/rdp"
+	"go.uber.org/zap"
 )
 
 // HandleRDP takes a net.Conn and does basic RDP communication
@@ -16,6 +17,11 @@ func HandleRDP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 			logger.Error(fmt.Sprintf("[rdp     ]  error: %v", err))
 		}
 	}()
+
+	md, err := h.MetadataByConnection(conn)
+	if err != nil {
+		return fmt.Errorf("failed to get metadata: %w", err)
+	}
 
 	buffer := make([]byte, 1024)
 	for {
@@ -31,6 +37,9 @@ func HandleRDP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 			if err != nil {
 				return err
 			}
+			if err := h.Produce(conn, md, buffer[0:n]); err != nil {
+				logger.Error("failed to produce message", zap.String("protocol", "rdp"), zap.Error(err))
+			}
 			logger.Info(fmt.Sprintf("[rdp     ] req pdu: %+v", pdu))
 			if len(pdu.Data) > 0 {
 				logger.Info(fmt.Sprintf("[rdp     ] data: %s", string(pdu.Data)))
@@ -39,7 +48,7 @@ func HandleRDP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 			if err != nil {
 				return err
 			}
-			logger.Info(fmt.Sprintf("[rdp     ]resp pdu: %+v", resp))
+			logger.Info(fmt.Sprintf("[rdp     ] resp pdu: %+v", resp))
 			if _, err = conn.Write(resp); err != nil {
 				return err
 			}
