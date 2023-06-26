@@ -5,6 +5,8 @@ import (
 	"net"
 	"strconv"
 	"strings"
+
+	"go.uber.org/zap"
 )
 
 func HandleMemcache(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
@@ -19,6 +21,15 @@ func HandleMemcache(ctx context.Context, conn net.Conn, logger Logger, h Honeypo
 		if n == 0 {
 			break
 		}
+
+		md, err := h.MetadataByConnection(conn)
+		if err != nil {
+			return err
+		}
+		if err = h.Produce("memcache", conn, md, buffer, nil); err != nil {
+			logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "memcache"))
+		}
+
 		parts := strings.Split(string(buffer[:]), " ")
 		switch parts[0] {
 		case "set":

@@ -41,6 +41,15 @@ func HandleMQTT(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 			if err := binary.Read(r, binary.LittleEndian, &msg); err != nil {
 				break
 			}
+
+			md, err := h.MetadataByConnection(conn)
+			if err != nil {
+				return err
+			}
+			if err = h.Produce("mqtt", conn, md, buffer, msg); err != nil {
+				logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "mqtt"))
+			}
+
 			logger.Info(fmt.Sprintf("new mqqt packet with header flag: %d", msg.HeaderFlag), zap.String("handler", "mqtt"))
 			var res mqttRes
 			switch msg.HeaderFlag {

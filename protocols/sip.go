@@ -56,7 +56,7 @@ func HandleSIP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 	if err != nil {
 		return err
 	}
-	if err := h.Produce(conn, md, buffer); err != nil {
+	if err := h.Produce("sip", conn, md, buffer, req); err != nil {
 		logger.Error("failed to produce message", zap.String("protocol", "sip"), zap.Error(err))
 	}
 	return nil

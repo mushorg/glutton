@@ -105,6 +105,13 @@ Content-Type: text/plain; charset=UTF-8`
 	return err
 }
 
+type decodedHTTP struct {
+	Method string `json:"method,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Path   string `json:"path,omitempty"`
+	Query  string `json:"query,omitempty"`
+}
+
 // HandleHTTP takes a net.Conn and does basic HTTP communication
 func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
 	defer func() {
@@ -153,7 +160,12 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 		logger.Info(fmt.Sprintf("HTTP payload:\n%s", hex.Dump(buf.Bytes()[:length%1024])))
 	}
 
-	if err := h.Produce(conn, md, buf.Bytes()); err != nil {
+	if err := h.Produce("http", conn, md, buf.Bytes(), decodedHTTP{
+		Method: req.Method,
+		URL:    req.URL.EscapedPath(),
+		Path:   req.URL.EscapedPath(),
+		Query:  req.URL.Query().Encode(),
+	}); err != nil {
 		logger.Error("failed to produce message", zap.String("protocol", "http"), zap.Error(err))
 	}
 

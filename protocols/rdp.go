@@ -37,14 +37,14 @@ func HandleRDP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 			if err != nil {
 				return err
 			}
-			if err := h.Produce(conn, md, buffer[0:n]); err != nil {
+			if err := h.Produce("rdp", conn, md, buffer[0:n], pdu); err != nil {
 				logger.Error("failed to produce message", zap.String("protocol", "rdp"), zap.Error(err))
 			}
 			logger.Info(fmt.Sprintf("[rdp     ] req pdu: %+v", pdu))
 			if len(pdu.Data) > 0 {
 				logger.Info(fmt.Sprintf("[rdp     ] data: %s", string(pdu.Data)))
 			}
-			resp, err := rdp.ConnectionConfirm()
+			resp, err := rdp.ConnectionConfirm(pdu.TPDU)
 			if err != nil {
 				return err
 			}

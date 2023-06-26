@@ -90,7 +90,9 @@ func HandleTCP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 			zap.String("handler", "tcp"),
 			zap.String("payload_hash", payloadHash),
 		)
-		if err := h.Produce(conn, md, data); err != nil {
+		if err := h.Produce("tcp", conn, md, data, struct {
+			PayloadHash string `json:"payload_hash,omitempty"`
+		}{PayloadHash: payloadHash}); err != nil {
 			logger.Error("failed to produce message", zap.String("protocol", "tcp"), zap.Error(err))
 		}
 		logger.Info(fmt.Sprintf("TCP payload:\n%s", hex.Dump(data[:msgLength%1024])))

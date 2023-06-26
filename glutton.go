@@ -224,12 +224,6 @@ func (g *Glutton) registerHandlers() {
 					zap.String("handler", handler),
 				)
 
-				if g.Producer != nil {
-					if err := g.Producer.Log(conn, md, nil); err != nil {
-						return fmt.Errorf("producer log error: %w", err)
-					}
-				}
-
 				matched, name, err := scanner.IsScanner(net.ParseIP(host))
 				if err != nil {
 					return err
@@ -278,10 +272,10 @@ func (g *Glutton) sanitizePayload(payload []byte) []byte {
 	return payload
 }
 
-func (g *Glutton) Produce(conn net.Conn, md *freki.Metadata, payload []byte) error {
+func (g *Glutton) Produce(handler string, conn net.Conn, md *freki.Metadata, payload []byte, decoded interface{}) error {
 	if g.Producer != nil {
 		payload = g.sanitizePayload(payload)
-		return g.Producer.Log(conn, md, payload)
+		return g.Producer.Log(handler, conn, md, payload, decoded)
 	}
 	return nil
 }

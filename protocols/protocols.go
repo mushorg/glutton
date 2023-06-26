@@ -17,7 +17,7 @@ type Logger interface {
 }
 
 type Honeypot interface {
-	Produce(conn net.Conn, md *freki.Metadata, payload []byte) error
+	Produce(protocol string, conn net.Conn, md *freki.Metadata, payload []byte, decoded interface{}) error
 	ConnectionByFlow([2]uint64) *freki.Metadata
 	UpdateConnectionTimeout(ctx context.Context, conn net.Conn)
 	MetadataByConnection(net.Conn) (*freki.Metadata, error)
