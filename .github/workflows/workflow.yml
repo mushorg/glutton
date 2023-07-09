@@ -10,6 +10,9 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
+      - name: Dependencies
+        run: sudo apt install libpcap-dev iptables lsof
+
       - name: Checkout
         uses: actions/checkout@v3
 
