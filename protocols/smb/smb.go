@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"time"
 
-	uuid "github.com/satori/go.uuid"
+	"github.com/google/uuid"
 )
 
 type SMBHeader struct {
@@ -232,7 +232,7 @@ func MakeComTransaction2Error(header SMBHeader) ([]byte, error) {
 }
 
 func MakeNegotiateProtocolResponse(header SMBHeader) ([]byte, error) {
-	id := uuid.NewV4()
+	id := uuid.New()
 	smb := NegotiateProtocolResponse{}
 	smb.Header.Protocol = header.Protocol
 	smb.Header.Command = header.Command
@@ -242,7 +242,11 @@ func MakeNegotiateProtocolResponse(header SMBHeader) ([]byte, error) {
 	smb.StructureSize = [2]byte{65}
 	smb.SecurityMode = [2]byte{0x0003}
 	smb.DialectRevision = [2]byte{0x03, 0x00}
-	copy(smb.ServerGUID[:], id.Bytes())
+	b, err := id.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	copy(smb.ServerGUID[:], b)
 	smb.Capabilities = [4]byte{0x80, 0x01, 0xe3, 0xfc}
 	smb.MaxTransactSize = [4]byte{0x04, 0x11}
 	smb.MaxReadSize = [4]byte{0x00, 0x00, 0x01}

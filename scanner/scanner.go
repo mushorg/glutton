@@ -27,6 +27,9 @@ var (
 		"PAN Expanse": {
 			"144.86.173.0/24",
 		},
+		"rwth": {
+			"137.226.113.56/26",
+		},
 	}
 )
 
@@ -52,6 +55,9 @@ func IsScanner(ip net.IP) (bool, string, error) {
 		}
 		if strings.HasSuffix(name, "binaryedge.ninja.") {
 			return true, "binaryedge", nil
+		}
+		if strings.HasSuffix(name, "rwth-aachen.de.") {
+			return true, "rwth", nil
 		}
 	}
 	return false, "", nil

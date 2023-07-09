@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/kung-foo/freki"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
 	"github.com/mushorg/glutton/scanner"
-	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
@@ -147,8 +147,12 @@ func (g *Glutton) makeID() error {
 		return fmt.Errorf("failed to create var-dir: %w", err)
 	}
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		g.id = uuid.NewV4()
-		if err := os.WriteFile(filePath, g.id.Bytes(), 0744); err != nil {
+		g.id = uuid.New()
+		data, err := g.id.MarshalBinary()
+		if err != nil {
+			return fmt.Errorf("failed to marshal UUID: %w", err)
+		}
+		if err := os.WriteFile(filePath, data, 0744); err != nil {
 			return fmt.Errorf("failed to create new PID file: %w", err)
 		}
 	} else {
