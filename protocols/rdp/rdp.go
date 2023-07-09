@@ -39,7 +39,7 @@ type ConnectionRequestPDU struct {
 
 // CCTPDU Connection Confirm see http://go.microsoft.com/fwlink/?LinkId=90588 section 13.3
 type CCTPDU struct {
-	Length      byte
+	Length      byte // header length including parameters
 	CCCDT       byte
 	DstRef      [2]byte
 	SrcRef      [2]byte
@@ -51,14 +51,17 @@ type ConnectionConfirmPDU struct {
 	TPDU   CCTPDU
 }
 
-func ConnectionConfirm() ([]byte, error) {
+func ConnectionConfirm(cr CRTPDU) ([]byte, error) {
 	cc := ConnectionConfirmPDU{
 		Header: TKIPHeader{
 			Version:  3,
 			LSLength: 11,
 		},
 		TPDU: CCTPDU{
-			CCCDT: 208,
+			Length: 6,
+			CCCDT:  208, // 1101-xxxx
+			DstRef: cr.DstRef,
+			SrcRef: cr.SrcRef,
 		},
 	}
 	buf := new(bytes.Buffer)

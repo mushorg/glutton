@@ -38,7 +38,8 @@ func TestRDPParseHeader2(t *testing.T) {
 }
 
 func TestConnectionConfirm(t *testing.T) {
-	cc, err := ConnectionConfirm()
+	cr := CRTPDU{}
+	cc, err := ConnectionConfirm(cr)
 	require.NoError(t, err)
 	fmt.Printf("Parsed data: %+v\n", cc)
 }

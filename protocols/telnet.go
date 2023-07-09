@@ -60,6 +60,11 @@ var miraiCom = map[string][]string{
 	"rm /dev/.human":                                               {"rm: can't remove '/.t': No such file or directory\r\nrm: can't remove '/.sh': No such file or directory\r\nrm: can't remove '/.human': No such file or directory\r\ncd /dev"},
 }
 
+type parsedTelnet struct {
+	Direction string `json:"direction,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
+
 // WriteTelnetMsg writes a telnet message to the connection
 func WriteTelnetMsg(conn net.Conn, msg string, logger Logger, h Honeypot) error {
 	if _, err := conn.Write([]byte(msg)); err != nil {
@@ -90,7 +95,7 @@ func WriteTelnetMsg(conn net.Conn, msg string, logger Logger, h Honeypot) error 
 		zap.String("src_ip", host),
 		zap.String("src_port", port),
 	)
-	return h.Produce(conn, md, []byte(msg))
+	return h.Produce("telnet", conn, md, []byte(msg), parsedTelnet{Direction: "send", Message: msg})
 }
 
 // ReadTelnetMsg reads a telnet message from a connection
@@ -119,7 +124,7 @@ func ReadTelnetMsg(conn net.Conn, logger Logger, h Honeypot) (string, error) {
 		zap.String("src_ip", host),
 		zap.String("src_port", port),
 	)
-	return msg, h.Produce(conn, md, []byte(msg))
+	return msg, h.Produce("telnet", conn, md, []byte(msg), parsedTelnet{Direction: "read", Message: msg})
 }
 
 func getSample(cmd string, logger Logger, h Honeypot) error {

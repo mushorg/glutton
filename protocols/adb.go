@@ -48,6 +48,15 @@ func HandleADB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 	} else if err == io.ErrUnexpectedEOF {
 		return fmt.Errorf("incomplete message data: got %d, want %d. Error: %w", n, length, err)
 	}
+
+	md, err := h.MetadataByConnection(conn)
+	if err != nil {
+		return err
+	}
+	if err = h.Produce("adb", conn, md, data, nil); err != nil {
+		logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "adb"))
+	}
+
 	logger.Info("handled adb request", zap.Int("data_read", n))
 	return nil
 }

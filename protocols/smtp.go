@@ -93,7 +93,9 @@ func HandleSMTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 				if err != nil {
 					break
 				}
-				if err := h.Produce(conn, md, []byte(data)); err != nil {
+				if err := h.Produce("smtp", conn, md, []byte(data), struct {
+					Message string `json:"message,omitempty"`
+				}{Message: query}); err != nil {
 					logger.Error("failed to produce message", zap.String("protocol", "smpt"), zap.Error(err))
 				}
 				logger.Info(fmt.Sprintf("[smtp    ] Data : %q", data))

@@ -10,11 +10,11 @@ import (
 )
 
 type bittorrentMsg struct {
-	Length             uint8
-	ProtocolIdentifier [19]uint8
-	Reserved           [8]uint8
-	InfoHash           [20]uint8
-	PeerID             [20]uint8
+	Length             uint8     `json:"length,omitempty"`
+	ProtocolIdentifier [19]uint8 `json:"protocol_identifier,omitempty"`
+	Reserved           [8]uint8  `json:"reserved,omitempty"`
+	InfoHash           [20]uint8 `json:"info_hash,omitempty"`
+	PeerID             [20]uint8 `json:"peer_id,omitempty"`
 }
 
 // HandleBittorrent handles a Bittorrent connection
@@ -43,7 +43,7 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, logger Logger, h Honey
 				logger.Error("failed to read message", zap.Error(err), zap.String("handler", "bittorrent"))
 				break
 			}
-			if err = h.Produce(conn, md, buffer[:n]); err != nil {
+			if err = h.Produce("bittorrent", conn, md, buffer[:n], msg); err != nil {
 				logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "bittorrent"))
 			}
 

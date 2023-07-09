@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 
-	"github.com/jart/gosip/dialog"
-	"github.com/jart/gosip/sip"
+	"github.com/ghettovoice/gosip/sip"
+	"github.com/ghettovoice/gosip/sip/parser"
 	"go.uber.org/zap"
 )
 
@@ -26,38 +27,41 @@ func HandleSIP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 	if err != nil {
 		return err
 	}
-	req, err := sip.ParseMsg(buffer)
+
+	pp := parser.NewPacketParser(nil)
+	msg, err := pp.ParseMessage(buffer)
 	if err != nil {
 		return err
-	}
-	logger.Info(fmt.Sprintf("SIP method: %s", req.Method))
-	switch req.Method {
-	case sip.MethodRegister:
-		logger.Info("handling SIP register")
-		//server.HandleRegister(req, sipConn)
-	case sip.MethodInvite:
-		logger.Info("handling SIP invite")
-		//server.HandleInvite(req, sipConn)
-	case sip.MethodOptions:
-		logger.Info("handling SIP options")
-		msg := &sip.Msg{}
-		resp := dialog.NewResponse(msg, sip.StatusOK)
-		resp.Status = sip.StatusOK
-		//resp.Header.Set("Allow", "INVITE, ACK, CANCEL, OPTIONS, BYE")
-		//resp.Header.Set("Accept", "application/sdp")
-		//resp.Header.Set("Accept-Encoding", "gzip")
-		//resp.Header.Set("Accept-Language", "en")
-		//resp.Header.Set("Content-Type", "application/sdp")
-		//resp.Body = req.Body
-		//resp.WriteTo(sipConn, req)
 	}
 
 	md, err := h.MetadataByConnection(conn)
 	if err != nil {
 		return err
 	}
-	if err := h.Produce(conn, md, buffer); err != nil {
+	if err := h.Produce("sip", conn, md, buffer, msg); err != nil {
 		logger.Error("failed to produce message", zap.String("protocol", "sip"), zap.Error(err))
+	}
+
+	switch msg := msg.(type) {
+	case sip.Request:
+		switch msg.Method() {
+		case sip.REGISTER:
+			logger.Info("handling SIP register")
+		case sip.INVITE:
+			logger.Info("handling SIP invite")
+		case sip.OPTIONS:
+			logger.Info("handling SIP options")
+			resp := sip.NewResponseFromRequest(
+				msg.MessageID(),
+				msg,
+				http.StatusOK,
+				"",
+				"",
+			)
+			if _, err := conn.Write([]byte(resp.String())); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

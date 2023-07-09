@@ -11,13 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
 	"github.com/mushorg/glutton/rules"
 	"github.com/mushorg/glutton/scanner"
-
-	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
@@ -185,8 +184,12 @@ func (g *Glutton) makeID() error {
 		return fmt.Errorf("failed to create var-dir: %w", err)
 	}
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		g.id = uuid.NewV4()
-		if err := os.WriteFile(filePath, g.id.Bytes(), 0744); err != nil {
+		g.id = uuid.New()
+		data, err := g.id.MarshalBinary()
+		if err != nil {
+			return fmt.Errorf("failed to marshal UUID: %w", err)
+		}
+		if err := os.WriteFile(filePath, data, 0744); err != nil {
 			return fmt.Errorf("failed to create new PID file: %w", err)
 		}
 	} else {
@@ -272,12 +275,6 @@ func (g *Glutton) registerHandlers() {
 					zap.String("handler", handler),
 				)
 
-				if g.Producer != nil {
-					if err := g.Producer.Log(conn, md, nil); err != nil {
-						return fmt.Errorf("producer log error: %w", err)
-					}
-				}
-
 				matched, name, err := scanner.IsScanner(net.ParseIP(host))
 				if err != nil {
 					return err
@@ -329,10 +326,10 @@ func (g *Glutton) sanitizePayload(payload []byte) []byte {
 	return payload
 }
 
-func (g *Glutton) Produce(conn net.Conn, md *connection.Metadata, payload []byte) error {
+func (g *Glutton) Produce(handler string, conn net.Conn, md *connection.Metadata, payload []byte, decoded interface{}) error {
 	if g.Producer != nil {
 		payload = g.sanitizePayload(payload)
-		return g.Producer.Log(conn, md, payload)
+		return g.Producer.Log(handler, conn, md, payload, decoded)
 	}
 	return nil
 }

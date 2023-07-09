@@ -31,18 +31,19 @@ type Producer struct {
 
 // Event is a struct for glutton events
 type Event struct {
-	Timestamp time.Time `json:"timestamp"`
-	SrcHost   string    `json:"srcHost"`
-	SrcPort   string    `json:"srcPort"`
-	DstPort   uint16    `json:"dstPort"`
-	SensorID  string    `json:"sensorID"`
-	Rule      string    `json:"rule"`
-	Payload   string    `json:"payload"`
-	Action    string    `json:"action"`
-	Scanner   string    `json:"scanner"`
+	Timestamp time.Time   `json:"timestamp,omitempty"`
+	SrcHost   string      `json:"srcHost,omitempty"`
+	SrcPort   string      `json:"srcPort,omitempty"`
+	DstPort   uint16      `json:"dstPort,omitempty"`
+	SensorID  string      `json:"sensorID,omitempty"`
+	Rule      string      `json:"rule,omitempty"`
+	Handler   string      `json:"handler,omitempty"`
+	Payload   string      `json:"payload,omitempty"`
+	Scanner   string      `json:"scanner,omitempty"`
+	Decoded   interface{} `json:"decoded,omitempty"`
 }
 
-func makeEvent(conn net.Conn, md *connection.Metadata, payload []byte, sensorID string) (*Event, error) {
+func makeEvent(handler string, conn net.Conn, md *connection.Metadata, payload []byte, decoded interface{}, sensorID string) (*Event, error) {
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
 		return nil, err
@@ -58,8 +59,10 @@ func makeEvent(conn net.Conn, md *connection.Metadata, payload []byte, sensorID 
 		SrcHost:   host,
 		SrcPort:   port,
 		SensorID:  sensorID,
+		Handler:   handler,
 		Payload:   base64.StdEncoding.EncodeToString(payload),
 		Scanner:   scannerName,
+		Decoded:   decoded,
 	}
 	if md != nil {
 		event.DstPort = uint16(md.TargetPort)
@@ -96,8 +99,8 @@ func New(sensorID string) (*Producer, error) {
 }
 
 // Log is a meta caller for all producers
-func (p *Producer) Log(conn net.Conn, md *connection.Metadata, payload []byte) error {
-	event, err := makeEvent(conn, md, payload, p.sensorID)
+func (p *Producer) Log(handler string, conn net.Conn, md *connection.Metadata, payload []byte, decoded interface{}) error {
+	event, err := makeEvent(handler, conn, md, payload, decoded, p.sensorID)
 	if err != nil {
 		return err
 	}

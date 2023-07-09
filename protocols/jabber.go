@@ -18,7 +18,7 @@ type ServersJabber struct {
 	Svs     []serverJabber `xml:"server"`
 }
 
-//define server structure in Jabber protocol
+// define server structure in Jabber protocol
 type serverJabber struct {
 	ServerName string `xml:"serverName"`
 	ServerIP   string `xml:"serverIP"`
@@ -50,6 +50,10 @@ func parseJabberClient(conn net.Conn, dataClient []byte, logger Logger, h Honeyp
 	md, err := h.MetadataByConnection(conn)
 	if err != nil {
 		return err
+	}
+
+	if err = h.Produce("jabber", conn, md, dataClient, v); err != nil {
+		logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "jabber"))
 	}
 
 	logger.Info(

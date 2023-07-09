@@ -4,12 +4,12 @@
 
 Setup `go 1.17`. Install required system packages:
 ```
-apt-get install libnetfilter-queue-dev libpcap-dev iptables lsof
+apt-get install gcc libnetfilter-queue-dev libpcap-dev iptables lsof
 ```
 
 Arch:
 ```
-pacman -S libnetfilter_queue libpcap iptables lsof
+pacman -S gcc libnetfilter_queue libpcap iptables lsof
 ```
 
 To change your SSH server default port (i.e. 5001, see `rules.yaml`) and restart sshd:
