@@ -144,7 +144,7 @@ func (g *Glutton) Start() error {
 
 	g.startMonitor(quit)
 
-	if err := setTProxyIPTables(viper.GetString("interface"), uint32(g.Server.port)); err != nil {
+	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), uint32(g.Server.port)); err != nil {
 		return err
 	}
 
@@ -339,7 +339,7 @@ func (g *Glutton) Shutdown() error {
 	defer g.Logger.Sync()
 	g.cancel() // close all connection
 
-	if err := flushTProxyIPTables(viper.GetString("interface"), uint32(g.Server.port)); err != nil {
+	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), uint32(g.Server.port)); err != nil {
 		return err
 	}
 
