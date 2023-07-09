@@ -29,4 +29,4 @@ bin/server
 
 # Use as Proxy
 
-Glutton provide SSH and a TCP proxy. SSH proxy works as a MITM between attacker and server to log everything in plain text. TCP proxy does not provide facility for logging yet. Examples can be found [here](https://github.com/mushorg/glutton/tree/master/examples).
+Glutton provide SSH and a TCP proxy. SSH proxy works as a MITM between attacker and server to log everything in plain text. TCP proxy does not provide facility for logging yet. Examples can be found [here](https://github.com/mushorg/glutton/tree/main/examples).

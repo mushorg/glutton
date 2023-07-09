@@ -1,5 +1,11 @@
-on: push
-name: Tests
+name: Go
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
 jobs:
   checks:
     name: Tests
