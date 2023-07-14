@@ -18,7 +18,7 @@ func genRuleSpec(chain, iface, protocol, srcIP string, sshPort, dport uint32) []
 	return strings.Split(fmt.Sprintf(spec, iface, protocol, srcIP, sshPort, dport), ",")
 }
 
-// iptables -t mangle -I PREROUTING -i eth0 -p tcp -j TPROXY --on-port 5000 --on-ip 127.0.0.1
+// iptables -t mangle -I PREROUTING -p tcp !-s eth0 !--dport 22 -j TPROXY --on-port 5000 --on-ip 127.0.0.1
 // echo "10 tproxy" >> /etc/iproute2/rt_tables
 // ip rule add from 10.64.70.81 table tproxy
 func setTProxyIPTables(iface, srcIP string, port uint32) error {
