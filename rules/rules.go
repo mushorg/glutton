@@ -164,8 +164,6 @@ func fakePacketBytes(conn net.Conn) ([]byte, error) {
 		return nil, err
 	}
 
-	println(sIP.String(), sPort, dIP.String(), dPort)
-
 	eth := &layers.Ethernet{
 		SrcMAC:       net.HardwareAddr{0x0, 0x11, 0x22, 0x33, 0x44, 0x55},
 		DstMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
@@ -205,8 +203,6 @@ func (rs Rules) Match(conn net.Conn) (*Rule, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fake packet: %w", err)
 	}
-
-	println("packet bytes len:", len(b))
 
 	for _, rule := range rs {
 		if rule.matcher != nil {

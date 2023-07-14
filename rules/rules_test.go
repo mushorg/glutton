@@ -80,7 +80,6 @@ func TestRunMatch(t *testing.T) {
 		conn.Close()
 		ln.Close()
 	}()
-	println(conn.RemoteAddr().String())
 	var (
 		match *Rule
 		err   error
