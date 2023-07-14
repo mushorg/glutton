@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -193,18 +194,21 @@ func fakePacketBytes(conn net.Conn) ([]byte, error) {
 type Rules []*Rule
 
 func (rs Rules) Match(conn net.Conn) (*Rule, error) {
-	d, err := fakePacketBytes(conn)
+	b, err := fakePacketBytes(conn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fake packet: %w", err)
 	}
 
-	println(len(d))
+	println("packet bytes len:", len(b))
 
 	for _, rule := range rs {
 		if rule.matcher != nil {
-			n := len(d)
-
-			if rule.matcher.Matches(gopacket.CaptureInfo{CaptureLength: n, Length: n}, d) {
+			n := len(b)
+			if rule.matcher.Matches(gopacket.CaptureInfo{
+				CaptureLength: n,
+				Length:        n,
+				Timestamp:     time.Now(),
+			}, b) {
 				return rule, nil
 			}
 		}
