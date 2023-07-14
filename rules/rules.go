@@ -154,7 +154,6 @@ func splitAddr(addr string) (net.IP, layers.TCPPort, error) {
 
 func fakePacketBytes(conn net.Conn) ([]byte, error) {
 	buf := gopacket.NewSerializeBuffer()
-	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
 
 	sIP, sPort, err := splitAddr(conn.LocalAddr().String())
 	if err != nil {
@@ -164,14 +163,19 @@ func fakePacketBytes(conn net.Conn) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	println(sIP.String(), sPort, dIP.String(), dPort)
+
 	eth := &layers.Ethernet{
-		SrcMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+		SrcMAC:       net.HardwareAddr{0x0, 0x11, 0x22, 0x33, 0x44, 0x55},
 		DstMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
 		EthernetType: layers.EthernetTypeIPv4,
 	}
 	ipv4 := &layers.IPv4{
-		SrcIP: sIP,
-		DstIP: dIP,
+		SrcIP:    sIP,
+		DstIP:    dIP,
+		Version:  4,
+		Protocol: layers.IPProtocolTCP,
 	}
 	tcp := &layers.TCP{
 		SrcPort: sPort,
@@ -181,7 +185,10 @@ func fakePacketBytes(conn net.Conn) ([]byte, error) {
 		return nil, err
 	}
 
-	if err := gopacket.SerializeLayers(buf, opts,
+	if err := gopacket.SerializeLayers(buf, gopacket.SerializeOptions{
+		FixLengths:       true,
+		ComputeChecksums: true,
+	},
 		eth,
 		ipv4,
 		tcp,
@@ -205,9 +212,10 @@ func (rs Rules) Match(conn net.Conn) (*Rule, error) {
 		if rule.matcher != nil {
 			n := len(b)
 			if rule.matcher.Matches(gopacket.CaptureInfo{
-				CaptureLength: n,
-				Length:        n,
-				Timestamp:     time.Now(),
+				InterfaceIndex: 0,
+				CaptureLength:  n,
+				Length:         n,
+				Timestamp:      time.Now(),
 			}, b) {
 				return rule, nil
 			}

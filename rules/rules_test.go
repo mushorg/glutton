@@ -82,14 +82,14 @@ func TestRunMatch(t *testing.T) {
 	}()
 	println(conn.RemoteAddr().String())
 	var (
-		// match *Rule
-		err error
+		match *Rule
+		err   error
 	)
 
-	_, err = rules.Match(conn)
+	match, err = rules.Match(conn)
 	require.NoError(t, err)
-	// require.Nil(t, match)
-	// require.Equal(t, "test", match.Target)
+	require.NotNil(t, match)
+	require.Equal(t, "test", match.Target)
 }
 
 func TestBPF(t *testing.T) {
@@ -102,6 +102,31 @@ func TestBPF(t *testing.T) {
 	require.NoError(t, err)
 	ci := gopacket.CaptureInfo{CaptureLength: n, Length: n, Timestamp: time.Now()}
 	if bpfi.Matches(ci, buf) {
-		t.Error("foo")
+		t.Error("shouldn't match")
+	}
+}
+
+func TestWorkingMatch(t *testing.T) {
+	snaplen := 65535
+	packet := [...]byte{
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // dst mac
+		0x0, 0x11, 0x22, 0x33, 0x44, 0x55, // src mac
+		0x08, 0x0, // ether type
+		0x45, 0x0, 0x0, 0x3c, 0xa6, 0xc3, 0x40, 0x0, 0x40, 0x06, 0x3d, 0xd8, // ip header
+		0xc0, 0xa8, 0x50, 0x2f, // src ip
+		0xc0, 0xa8, 0x50, 0x2c, // dst ip
+		0xaf, 0x14, // src port
+		0x0, 0x50, // dst port
+	}
+
+	bpfi, _ := pcap.NewBPF(layers.LinkTypeEthernet, snaplen, "ip and tcp and port 80")
+	ci := gopacket.CaptureInfo{
+		InterfaceIndex: 0,
+		CaptureLength:  len(packet),
+		Length:         len(packet),
+		Timestamp:      time.Now(),
+	}
+	if !bpfi.Matches(ci, packet[:]) {
+		t.Fatal("didn't match")
 	}
 }
