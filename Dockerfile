@@ -1,6 +1,6 @@
 FROM golang:1.17-alpine AS build-env
 RUN apk update
-RUN apk add libnetfilter_queue-dev iptables-dev libpcap-dev
+RUN apk add iptables-dev libpcap-dev
 
 RUN mkdir -p /opt/glutton
 WORKDIR /opt/glutton
@@ -21,7 +21,7 @@ RUN make build
 # run container
 FROM alpine
 
-RUN apk add libnetfilter_queue-dev iptables-dev libpcap-dev
+RUN apk add iptables-dev libpcap-dev
 WORKDIR /opt/glutton
 
 COPY --from=build-env /opt/glutton/bin/server /opt/glutton/bin/server
