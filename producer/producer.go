@@ -66,7 +66,9 @@ func makeEvent(handler string, conn net.Conn, md *connection.Metadata, payload [
 	}
 	if md != nil {
 		event.DstPort = uint16(md.TargetPort)
-		event.Rule = md.Rule.String()
+		if md.Rule != nil {
+			event.Rule = md.Rule.String()
+		}
 	}
 	return &event, nil
 }

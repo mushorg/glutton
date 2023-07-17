@@ -2,6 +2,7 @@ package connection
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"strconv"
 	"sync"
@@ -60,8 +61,29 @@ func New() *ConnTable {
 	return ct
 }
 
+// RegisterConn a connection in the table
+func (t *ConnTable) RegisterConn(conn net.Conn, rule *rules.Rule) error {
+	srcIP, srcPort, err := net.SplitHostPort(conn.RemoteAddr().String())
+	if err != nil {
+		return fmt.Errorf("failed to split remote address: %w", err)
+	}
+
+	_, dstPort, err := net.SplitHostPort(conn.LocalAddr().String())
+	if err != nil {
+		return fmt.Errorf("failed to split local address: %w", err)
+	}
+
+	println(fmt.Sprintf("%s:%s->%s, %s", srcIP, srcPort, dstPort, rule.Target))
+
+	port, err := strconv.Atoi(dstPort)
+	if err != nil {
+		return fmt.Errorf("failed to parse dstPort: %w", err)
+	}
+	return t.Register(srcIP, srcPort, uint16(port), rule)
+}
+
 // Register a connection in the table
-func (t *ConnTable) Register(srcIP, srcPort string, targetPort uint16) error {
+func (t *ConnTable) Register(srcIP, srcPort string, targetPort uint16, rule *rules.Rule) error {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
@@ -75,6 +97,7 @@ func (t *ConnTable) Register(srcIP, srcPort string, targetPort uint16) error {
 	t.table[ck] = &Metadata{
 		Added:      time.Now(),
 		TargetPort: targetPort,
+		Rule:       rule,
 	}
 	return nil
 }

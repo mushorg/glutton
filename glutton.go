@@ -2,6 +2,7 @@ package glutton
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -157,7 +158,6 @@ func (g *Glutton) Start() error {
 		if err != nil {
 			return err
 		}
-		println("remote", conn.RemoteAddr().String())
 
 		rule, err := g.applyRules(conn)
 		if err != nil {
@@ -166,7 +166,10 @@ func (g *Glutton) Start() error {
 		if rule == nil {
 			rule = &rules.Rule{Target: "default"}
 		}
-		println("rule", rule.Target)
+
+		if err := g.conntable.RegisterConn(conn, rule); err != nil {
+			return err
+		}
 
 		if hfunc, ok := g.protocolHandlers[rule.Target]; ok {
 			go func() {
@@ -316,7 +319,11 @@ func (g *Glutton) MetadataByConnection(conn net.Conn) (*connection.Metadata, err
 	if err != nil {
 		return nil, err
 	}
-	return g.ConnectionByFlow(ckey), nil
+	md := g.ConnectionByFlow(ckey)
+	if md == nil {
+		return nil, errors.New("not found")
+	}
+	return md, nil
 }
 
 func (g *Glutton) sanitizePayload(payload []byte) []byte {
