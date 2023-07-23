@@ -21,7 +21,7 @@ clean:
 	rm -rf bin/
 
 run: build
-	sudo bin/server -i wlan0
+	sudo bin/server -i eth0
 
 docker:
 	docker build -t glutton .

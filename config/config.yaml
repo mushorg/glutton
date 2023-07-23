@@ -1,7 +1,8 @@
 ports:
-  glutton_server: 5000
+  tcp: 5000
+  udp: 5001
 
-rules_path: rules/rules.yaml
+rules_path: config/rules.yaml
 
 addresses: ["1.2.3.4", "5.4.3.2"]
 

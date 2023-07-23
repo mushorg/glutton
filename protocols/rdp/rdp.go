@@ -3,7 +3,6 @@ package rdp
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 )
 
 // TKIPHeader see http://go.microsoft.com/fwlink/?LinkId=90541 section 8
@@ -66,10 +65,7 @@ func ConnectionConfirm(cr CRTPDU) ([]byte, error) {
 	}
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.LittleEndian, cc)
-	if err != nil {
-		fmt.Println("binary.Write failed:", err)
-	}
-	return buf.Bytes(), nil
+	return buf.Bytes(), err
 }
 
 // ParsePDU takes raw data and parses into struct

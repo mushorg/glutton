@@ -6,7 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kung-foo/freki"
+	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/rules"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
@@ -29,8 +30,8 @@ func TestProducerLog(t *testing.T) {
 	conn, err := net.Dial("tcp", ":1234")
 	require.NoError(t, err)
 	require.NoError(t, conn.Close())
-	md := freki.Metadata{
-		Rule: &freki.Rule{},
+	md := connection.Metadata{
+		Rule: &rules.Rule{},
 	}
 
 	viper.Set("producers.http.enabled", true)
@@ -40,6 +41,6 @@ func TestProducerLog(t *testing.T) {
 
 	viper.Set("producers.http.remote", svr.URL)
 
-	err = p.Log("test", conn, &md, nil, []byte{123})
+	err = p.LogTCP("test", conn, &md, nil, []byte{123})
 	require.NoError(t, err)
 }

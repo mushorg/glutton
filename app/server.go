@@ -1,10 +1,12 @@
 package main // import "github.com/mushorg/glutton/app"
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"sync"
 	"syscall"
 
@@ -19,16 +21,6 @@ var (
 	// BUILDDATE is set by the makefile
 	BUILDDATE = ""
 )
-
-func onInterruptSignal(fn func()) {
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		<-sig
-		fn()
-	}()
-}
 
 func main() {
 	fmt.Println(`
@@ -56,13 +48,12 @@ func main() {
 		return
 	}
 
-	gtn, err := glutton.New()
+	gtn, err := glutton.New(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = gtn.Init()
-	if err != nil {
+	if err := gtn.Init(); err != nil {
 		log.Fatal(err)
 	}
 
@@ -70,25 +61,27 @@ func main() {
 	exit := func() {
 		// See if there was a panic...
 		if r := recover(); r != nil {
-			fmt.Fprintln(os.Stderr, recover())
+			fmt.Fprintln(os.Stderr, r)
+			fmt.Println("stacktrace from panic: \n" + string(debug.Stack()))
 		}
 		exitMtx.Lock()
-		println() // make it look nice after the ^C
-		fmt.Println("shutting down...")
-		err = gtn.Shutdown()
-		if err != nil {
+		fmt.Println("\nshutting down...")
+		if err := gtn.Shutdown(); err != nil {
 			log.Fatal(err)
 		}
 	}
 	defer exit()
 
-	onInterruptSignal(func() {
+	// capture and handle signals
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sig
 		exit()
 		os.Exit(0)
-	})
+	}()
 
-	err = gtn.Start()
-	if err != nil {
-		log.Fatal(err)
+	if err := gtn.Start(); err != nil {
+		log.Fatalf("server start error: %s", err)
 	}
 }

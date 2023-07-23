@@ -8,10 +8,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/fw42/go-hpfeeds"
-	"github.com/kung-foo/freki"
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/scanner"
 	"github.com/spf13/viper"
 )
@@ -38,13 +39,12 @@ type Event struct {
 	SensorID  string      `json:"sensorID,omitempty"`
 	Rule      string      `json:"rule,omitempty"`
 	Handler   string      `json:"handler,omitempty"`
-	ConnKey   [2]uint64   `json:"connKey,omitempty"`
 	Payload   string      `json:"payload,omitempty"`
 	Scanner   string      `json:"scanner,omitempty"`
 	Decoded   interface{} `json:"decoded,omitempty"`
 }
 
-func makeEvent(handler string, conn net.Conn, md *freki.Metadata, payload []byte, decoded interface{}, sensorID string) (*Event, error) {
+func makeEventTCP(handler string, conn net.Conn, md *connection.Metadata, payload []byte, decoded interface{}, sensorID string) (*Event, error) {
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
 		return nil, err
@@ -55,21 +55,48 @@ func makeEvent(handler string, conn net.Conn, md *freki.Metadata, payload []byte
 		return nil, err
 	}
 
-	ck := freki.NewConnKeyByString(host, port)
 	event := Event{
 		Timestamp: time.Now().UTC(),
 		SrcHost:   host,
 		SrcPort:   port,
 		SensorID:  sensorID,
 		Handler:   handler,
-		ConnKey:   ck,
 		Payload:   base64.StdEncoding.EncodeToString(payload),
 		Scanner:   scannerName,
 		Decoded:   decoded,
 	}
 	if md != nil {
 		event.DstPort = uint16(md.TargetPort)
-		event.Rule = md.Rule.String()
+		if md.Rule != nil {
+			event.Rule = md.Rule.String()
+		}
+	}
+	return &event, nil
+}
+
+func makeEventUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md *connection.Metadata, payload []byte, decoded interface{}, sensorID string) (*Event, error) {
+	_, scannerName, err := scanner.IsScanner(net.ParseIP(srcAddr.IP.String()))
+	if err != nil {
+		return nil, err
+	}
+
+	event := Event{
+		Timestamp: time.Now().UTC(),
+		SrcHost:   srcAddr.IP.String(),
+		SrcPort:   strconv.Itoa(int(srcAddr.AddrPort().Port())),
+		DstPort:   dstAddr.AddrPort().Port(),
+		SensorID:  sensorID,
+		Handler:   handler,
+		Payload:   base64.StdEncoding.EncodeToString(payload),
+		Scanner:   scannerName,
+		Decoded:   decoded,
+		Rule:      "Rule: udp",
+	}
+	if md != nil {
+		event.DstPort = uint16(md.TargetPort)
+		if md.Rule != nil {
+			event.Rule = md.Rule.String()
+		}
 	}
 	return &event, nil
 }
@@ -101,9 +128,28 @@ func New(sensorID string) (*Producer, error) {
 	return producer, nil
 }
 
-// Log is a meta caller for all producers
-func (p *Producer) Log(handler string, conn net.Conn, md *freki.Metadata, payload []byte, decoded interface{}) error {
-	event, err := makeEvent(handler, conn, md, payload, decoded, p.sensorID)
+// LogTCP is a meta caller for all producers
+func (p *Producer) LogTCP(handler string, conn net.Conn, md *connection.Metadata, payload []byte, decoded interface{}) error {
+	event, err := makeEventTCP(handler, conn, md, payload, decoded, p.sensorID)
+	if err != nil {
+		return err
+	}
+	if viper.GetBool("producers.hpfeeds.enabled") {
+		if err := p.logHPFeeds(event); err != nil {
+			return err
+		}
+	}
+	if viper.GetBool("producers.http.enabled") {
+		if err := p.logHTTP(event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// LogUDP is a meta caller for all producers
+func (p *Producer) LogUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md *connection.Metadata, payload []byte, decoded interface{}) error {
+	event, err := makeEventUDP(handler, srcAddr, dstAddr, md, payload, decoded, p.sensorID)
 	if err != nil {
 		return err
 	}
