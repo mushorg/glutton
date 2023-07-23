@@ -138,49 +138,54 @@ func InitRule(idx int, rule *Rule) error {
 	return nil
 }
 
-func splitAddr(addr string) (net.IP, layers.TCPPort, error) {
+func splitAddr(addr string) (string, uint16, error) {
 	ip, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return nil, 0, err
+		return "", 0, err
 	}
-	sIP := net.ParseIP(ip)
-
 	dPort, err := strconv.Atoi(port)
 	if err != nil {
-		return nil, 0, err
+		return "", 0, err
 	}
-	return sIP, layers.TCPPort(dPort), nil
+	return ip, uint16(dPort), nil
 }
 
-func fakePacketBytes(conn net.Conn) ([]byte, error) {
+func fakePacketBytes(network, srcIP, dstIP string, srcPort, dstPort uint16) ([]byte, error) {
 	buf := gopacket.NewSerializeBuffer()
-
-	sIP, sPort, err := splitAddr(conn.LocalAddr().String())
-	if err != nil {
-		return nil, err
-	}
-	dIP, dPort, err := splitAddr(conn.RemoteAddr().String())
-	if err != nil {
-		return nil, err
-	}
-
 	eth := &layers.Ethernet{
 		SrcMAC:       net.HardwareAddr{0x0, 0x11, 0x22, 0x33, 0x44, 0x55},
 		DstMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
 		EthernetType: layers.EthernetTypeIPv4,
 	}
 	ipv4 := &layers.IPv4{
-		SrcIP:    sIP,
-		DstIP:    dIP,
-		Version:  4,
-		Protocol: layers.IPProtocolTCP,
+		SrcIP:   net.ParseIP(srcIP),
+		DstIP:   net.ParseIP(dstIP),
+		Version: 4,
 	}
-	tcp := &layers.TCP{
-		SrcPort: sPort,
-		DstPort: dPort,
-	}
-	if err := tcp.SetNetworkLayerForChecksum(ipv4); err != nil {
-		return nil, err
+
+	var transport gopacket.SerializableLayer
+	switch network {
+	case "tcp":
+		ipv4.Protocol = layers.IPProtocolTCP
+		tcp := &layers.TCP{
+			SrcPort: layers.TCPPort(srcPort),
+			DstPort: layers.TCPPort(dstPort),
+		}
+		if err := tcp.SetNetworkLayerForChecksum(ipv4); err != nil {
+			return nil, err
+		}
+		transport = tcp
+
+	case "udp":
+		ipv4.Protocol = layers.IPProtocolUDP
+		udp := &layers.UDP{
+			SrcPort: layers.UDPPort(srcPort),
+			DstPort: layers.UDPPort(dstPort),
+		}
+		if err := udp.SetNetworkLayerForChecksum(ipv4); err != nil {
+			return nil, err
+		}
+		transport = udp
 	}
 
 	if err := gopacket.SerializeLayers(buf, gopacket.SerializeOptions{
@@ -189,7 +194,7 @@ func fakePacketBytes(conn net.Conn) ([]byte, error) {
 	},
 		eth,
 		ipv4,
-		tcp,
+		transport,
 		gopacket.Payload([]byte{})); err != nil {
 		return nil, err
 	}
@@ -198,8 +203,16 @@ func fakePacketBytes(conn net.Conn) ([]byte, error) {
 
 type Rules []*Rule
 
-func (rs Rules) Match(conn net.Conn) (*Rule, error) {
-	b, err := fakePacketBytes(conn)
+func (rs Rules) Match(network string, srcAddr, dstAddr net.Addr) (*Rule, error) {
+	srcIP, srcPort, err := splitAddr(srcAddr.String())
+	if err != nil {
+		return nil, err
+	}
+	dstIP, dstPort, err := splitAddr(dstAddr.String())
+	if err != nil {
+		return nil, err
+	}
+	b, err := fakePacketBytes(network, srcIP, dstIP, srcPort, dstPort)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fake packet: %w", err)
 	}

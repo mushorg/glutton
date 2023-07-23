@@ -39,11 +39,13 @@ func TestNewConnTable(t *testing.T) {
 func TestRegister(t *testing.T) {
 	table := New()
 	targetPort := 4321
-	err := table.Register("127.0.0.1", "1234", uint16(targetPort), &rules.Rule{})
+	m1, err := table.Register("127.0.0.1", "1234", uint16(targetPort), &rules.Rule{})
 	require.NoError(t, err)
-	m := table.Get(testck)
-	require.NotNil(t, m)
-	require.Equal(t, targetPort, int(m.TargetPort))
+	require.NotNil(t, m1)
+	m2 := table.Get(testck)
+	require.NotNil(t, m1)
+	require.Equal(t, targetPort, int(m2.TargetPort))
+	require.Equal(t, m1, m2)
 }
 
 func TestRegisterConn(t *testing.T) {
@@ -56,8 +58,9 @@ func TestRegisterConn(t *testing.T) {
 	require.NotNil(t, conn)
 	defer conn.Close()
 	table := New()
-	err = table.RegisterConn(conn, &rules.Rule{Target: "default"})
+	md, err := table.RegisterConn(conn, &rules.Rule{Target: "default"})
 	require.NoError(t, err)
+	require.NotNil(t, md)
 	m := table.Get(testck)
 	require.NotNil(t, m)
 	require.Equal(t, "default", m.Rule.Target)
@@ -66,8 +69,9 @@ func TestRegisterConn(t *testing.T) {
 func TestFlushOlderThan(t *testing.T) {
 	table := New()
 	targetPort := 4321
-	err := table.Register("127.0.0.1", "1234", uint16(targetPort), &rules.Rule{})
+	md, err := table.Register("127.0.0.1", "1234", uint16(targetPort), &rules.Rule{})
 	require.NoError(t, err)
+	require.NotNil(t, md)
 	table.FlushOlderThan(time.Duration(0))
 	m := table.Get(testck)
 	require.Nil(t, m)

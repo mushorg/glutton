@@ -43,8 +43,8 @@ func TestInitRule(t *testing.T) {
 func TestSplitAddr(t *testing.T) {
 	ip, port, err := splitAddr("192.168.1.1:8080")
 	require.NoError(t, err)
-	require.True(t, net.ParseIP("192.168.1.1").Equal(ip))
-	require.Equal(t, layers.TCPPort(8080), port)
+	require.Equal(t, "192.168.1.1", ip)
+	require.Equal(t, uint16(8080), port)
 }
 
 func testConn(t *testing.T) (net.Conn, net.Listener) {
@@ -63,7 +63,7 @@ func TestFakePacketBytes(t *testing.T) {
 		conn.Close()
 		ln.Close()
 	}()
-	b, err := fakePacketBytes(conn)
+	b, err := fakePacketBytes("tcp", "1.1.1.1", "2.2.2.2", 12, 21)
 	require.NoError(t, err)
 	require.NotEmpty(t, b)
 }
@@ -85,7 +85,7 @@ func TestRunMatch(t *testing.T) {
 		err   error
 	)
 
-	match, err = rules.Match(conn)
+	match, err = rules.Match("tcp", conn.LocalAddr(), conn.RemoteAddr())
 	require.NoError(t, err)
 	require.NotNil(t, match)
 	require.Equal(t, "test", match.Target)

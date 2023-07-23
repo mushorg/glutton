@@ -149,9 +149,17 @@ func (g *Glutton) udpListen() {
 		if err != nil {
 			g.Logger.Error("failed to read UDP packet", zap.Error(err))
 		}
+
+		rule, err := g.applyRules("udp", srcAddr, dstAddr)
+		if err != nil {
+			g.Logger.Error("failed to apply rules", zap.Error(err))
+		}
+		md, err := g.conntable.Register(srcAddr.IP.String(), strconv.Itoa(int(srcAddr.AddrPort().Port())), dstAddr.AddrPort().Port(), rule)
+		if err != nil {
+			g.Logger.Error("failed to register UDP packet", zap.Error(err))
+		}
 		g.Logger.Info(fmt.Sprintf("UDP payload:\n%s", hex.Dump(buffer[:n%1024])))
-		println(srcAddr.String(), dstAddr.String())
-		if err := g.ProduceUDP("udp", srcAddr, dstAddr, nil, buffer[:n%1024], nil); err != nil {
+		if err := g.ProduceUDP("udp", srcAddr, dstAddr, md, buffer[:n%1024], nil); err != nil {
 			g.Logger.Error("failed to produce UDP payload", zap.Error(err))
 		}
 	}
@@ -183,7 +191,7 @@ func (g *Glutton) Start() error {
 			return err
 		}
 
-		rule, err := g.applyRules(conn)
+		rule, err := g.applyRulesOnConn(conn)
 		if err != nil {
 			return fmt.Errorf("failed to apply rules: %w", err)
 		}
@@ -191,7 +199,7 @@ func (g *Glutton) Start() error {
 			rule = &rules.Rule{Target: "default"}
 		}
 
-		if err := g.conntable.RegisterConn(conn, rule); err != nil {
+		if _, err := g.conntable.RegisterConn(conn, rule); err != nil {
 			return err
 		}
 
@@ -389,8 +397,19 @@ func (g *Glutton) Shutdown() error {
 	return g.Server.Shutdown()
 }
 
-func (g *Glutton) applyRules(conn net.Conn) (*rules.Rule, error) {
-	match, err := g.rules.Match(conn)
+func (g *Glutton) applyRulesOnConn(conn net.Conn) (*rules.Rule, error) {
+	match, err := g.rules.Match("tcp", conn.RemoteAddr(), conn.LocalAddr())
+	if err != nil {
+		return nil, err
+	}
+	if match != nil {
+		return match, err
+	}
+	return nil, nil
+}
+
+func (g *Glutton) applyRules(network string, srcAddr, dstAddr net.Addr) (*rules.Rule, error) {
+	match, err := g.rules.Match(network, srcAddr, dstAddr)
 	if err != nil {
 		return nil, err
 	}

@@ -84,13 +84,11 @@ func makeEventUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md *connection.
 		Timestamp: time.Now().UTC(),
 		SrcHost:   srcAddr.IP.String(),
 		SrcPort:   strconv.Itoa(int(srcAddr.AddrPort().Port())),
-		DstPort:   dstAddr.AddrPort().Port(),
 		SensorID:  sensorID,
 		Handler:   handler,
 		Payload:   base64.StdEncoding.EncodeToString(payload),
 		Scanner:   scannerName,
 		Decoded:   decoded,
-		Rule:      "Rule: udp",
 	}
 	if md != nil {
 		event.DstPort = uint16(md.TargetPort)
