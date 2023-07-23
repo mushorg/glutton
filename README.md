@@ -4,12 +4,12 @@
 
 Setup `go 1.17`. Install required system packages:
 ```
-apt-get install gcc libpcap-dev iptables lsof
+apt-get install gcc libpcap-dev iptables
 ```
 
 Arch:
 ```
-pacman -S gcc libpcap iptables lsof
+pacman -S gcc libpcap iptables
 ```
 
 To change your SSH server default port (i.e. 5001, see `rules.yaml`) and restart SSHD:

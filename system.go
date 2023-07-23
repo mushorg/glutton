@@ -3,28 +3,20 @@ package glutton
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/glaslos/lsof"
 	"github.com/google/gopacket/pcap"
 )
 
 func countOpenFiles() (int, error) {
 	if runtime.GOOS == "linux" {
-		if isCommandAvailable("lsof") {
-			out, err := exec.Command("/bin/sh", "-c", fmt.Sprintf("lsof -p %d", os.Getpid())).Output()
-			if err != nil {
-				log.Fatal(err)
-			}
-			lines := strings.Split(string(out), "\n")
-			return len(lines) - 1, nil
-		}
-		return 0, errors.New("lsof command does not exist. Kindly run sudo apt install lsof")
+		lines, err := lsof.ReadPID(os.Getpid())
+		return len(lines) - 1, err
 	}
 	return 0, errors.New("operating system type not supported for this command")
 }
@@ -48,14 +40,6 @@ func (g *Glutton) startMonitor(quit chan struct{}) {
 			}
 		}
 	}()
-}
-
-func isCommandAvailable(name string) bool {
-	cmd := exec.Command("/bin/sh", "-c", "command -v "+name)
-	if err := cmd.Run(); err != nil {
-		return false
-	}
-	return true
 }
 
 func getNonLoopbackIPs(ifaceName string) ([]net.IP, error) {
