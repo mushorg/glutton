@@ -2,6 +2,7 @@ package glutton
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -12,12 +13,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
 	"github.com/mushorg/glutton/rules"
 	"github.com/mushorg/glutton/scanner"
+
+	"github.com/google/uuid"
+	"github.com/seud0nym/tproxy-go/tproxy"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
@@ -36,7 +39,7 @@ type Glutton struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	publicAddrs      []net.IP
-	connHandlers     map[string]ConnHandlerFunc
+	connHandlers     map[string]connHandlerFunc
 }
 
 func (g *Glutton) initConfig() error {
@@ -78,7 +81,7 @@ func New(ctx context.Context) (*Glutton, error) {
 	defer rulesFile.Close()
 
 	g.conntable = connection.New()
-	g.connHandlers = map[string]ConnHandlerFunc{}
+	g.connHandlers = map[string]connHandlerFunc{}
 
 	g.rules, err = rules.ParseRuleSpec(rulesFile)
 	if err != nil {
@@ -108,9 +111,13 @@ func (g *Glutton) Init() error {
 		}
 	}
 
-	// Initiating glutton server
-	gluttonServerPort := uint(viper.GetInt("ports.glutton_server"))
-	g.Server = InitServer(gluttonServerPort)
+	// Start the Glutton server
+	tcpServerPort := uint(viper.GetInt("ports.tcp"))
+	udpServerPort := uint(viper.GetInt("ports.udp"))
+	g.Server = NewServer(tcpServerPort, udpServerPort)
+	if err := g.Server.Start(); err != nil {
+		return err
+	}
 
 	// Initiating log producers
 	if viper.GetBool("producers.enabled") {
@@ -135,6 +142,21 @@ func (g *Glutton) Init() error {
 	return nil
 }
 
+func (g *Glutton) udpListen() {
+	buffer := make([]byte, 1024)
+	for {
+		n, srcAddr, dstAddr, err := tproxy.ReadFromUDP(g.Server.udpListener, buffer)
+		if err != nil {
+			g.Logger.Error("failed to read UDP packet", zap.Error(err))
+		}
+		g.Logger.Info(fmt.Sprintf("UDP payload:\n%s", hex.Dump(buffer[:n%1024])))
+		println(srcAddr.String(), dstAddr.String())
+		if err := g.ProduceUDP("udp", srcAddr, dstAddr, nil, buffer[:n%1024], nil); err != nil {
+			g.Logger.Error("failed to produce UDP payload", zap.Error(err))
+		}
+	}
+}
+
 // Start the listener, this blocks for new connections
 func (g *Glutton) Start() error {
 	quit := make(chan struct{}) // stop monitor on shutdown
@@ -145,16 +167,18 @@ func (g *Glutton) Start() error {
 
 	g.startMonitor(quit)
 
-	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), uint32(g.Server.port)); err != nil {
+	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort)); err != nil {
 		return err
 	}
 
-	if err := g.Server.Start(g.ctx); err != nil {
+	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort)); err != nil {
 		return err
 	}
+
+	go g.udpListen()
 
 	for {
-		conn, err := g.Server.ln.Accept()
+		conn, err := g.Server.tcpListener.Accept()
 		if err != nil {
 			return err
 		}
@@ -215,9 +239,9 @@ func (g *Glutton) makeID() error {
 	return nil
 }
 
-type ConnHandlerFunc func(conn net.Conn, md *connection.Metadata) error
+type connHandlerFunc func(conn net.Conn, md *connection.Metadata) error
 
-func (g *Glutton) RegisterConnHandler(target string, handler ConnHandlerFunc) error {
+func (g *Glutton) registerConnHandler(target string, handler connHandlerFunc) error {
 	if _, ok := g.connHandlers[target]; ok {
 		return fmt.Errorf("conn handler already registered for %s", target)
 	}
@@ -260,7 +284,7 @@ func (g *Glutton) registerHandlers() {
 				continue
 			}
 
-			g.RegisterConnHandler(handler, func(conn net.Conn, md *connection.Metadata) error {
+			g.registerConnHandler(handler, func(conn net.Conn, md *connection.Metadata) error {
 				host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 				if err != nil {
 					return fmt.Errorf("failed to split remote address: %w", err)
@@ -336,7 +360,15 @@ func (g *Glutton) sanitizePayload(payload []byte) []byte {
 func (g *Glutton) Produce(handler string, conn net.Conn, md *connection.Metadata, payload []byte, decoded interface{}) error {
 	if g.Producer != nil {
 		payload = g.sanitizePayload(payload)
-		return g.Producer.Log(handler, conn, md, payload, decoded)
+		return g.Producer.LogTCP(handler, conn, md, payload, decoded)
+	}
+	return nil
+}
+
+func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md *connection.Metadata, payload []byte, decoded interface{}) error {
+	if g.Producer != nil {
+		payload = g.sanitizePayload(payload)
+		return g.Producer.LogUDP("udp", srcAddr, dstAddr, md, payload, decoded)
 	}
 	return nil
 }
@@ -346,7 +378,10 @@ func (g *Glutton) Shutdown() error {
 	defer g.Logger.Sync()
 	g.cancel() // close all connection
 
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), uint32(g.Server.port)); err != nil {
+	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort)); err != nil {
+		return err
+	}
+	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort)); err != nil {
 		return err
 	}
 

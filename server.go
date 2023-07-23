@@ -1,55 +1,55 @@
 package glutton
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"net"
-	"syscall"
 
-	"golang.org/x/sys/unix"
+	"github.com/seud0nym/tproxy-go/tproxy"
 )
 
 type Server struct {
-	lc   net.ListenConfig
-	ln   net.Listener
-	port uint
+	tcpListener net.Listener
+	udpListener *net.UDPConn
+	tcpPort     uint
+	udpPort     uint
 }
 
-func InitServer(port uint) *Server {
+func NewServer(tcpPort, udpPort uint) *Server {
 	s := &Server{
-		port: port,
-	}
-	s.lc = net.ListenConfig{
-		Control: func(network, address string, conn syscall.RawConn) error {
-			var operr error
-			if err := conn.Control(func(fd uintptr) {
-				operr = syscall.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1)
-			}); err != nil {
-				return err
-			}
-			if operr != nil {
-				return operr
-			}
-			if err := conn.Control(func(fd uintptr) {
-				operr = syscall.SetsockoptInt(int(fd), unix.SOL_IP, unix.IP_TRANSPARENT, 1)
-			}); err != nil {
-				return err
-			}
-			return operr
-		},
+		tcpPort: tcpPort,
+		udpPort: udpPort,
 	}
 	return s
 }
 
-func (s *Server) Start(ctx context.Context) error {
-	var err error
-	s.ln, err = s.lc.Listen(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", s.port))
-	return err
+func (s *Server) Start() error {
+	tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("127.0.0.1:%d", s.tcpPort))
+	if err != nil {
+		return err
+	}
+	if s.tcpListener, err = tproxy.ListenTCP("tcp4", tcpAddr); err != nil {
+		return err
+	}
+	udpAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("127.0.0.1:%d", s.udpPort))
+	if err != nil {
+		return err
+	}
+	if s.udpListener, err = tproxy.ListenUDP("udp4", udpAddr); err != nil {
+		return err
+	}
+	if s.udpListener == nil {
+		return errors.New("nil udp listener")
+	}
+	return nil
 }
 
 func (s *Server) Shutdown() error {
-	if s.ln != nil {
-		return s.ln.Close()
+	if s.tcpListener != nil {
+		return s.tcpListener.Close()
+	}
+	if s.udpListener != nil {
+		return s.udpListener.Close()
 	}
 	return nil
 }
