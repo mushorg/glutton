@@ -7,7 +7,6 @@ require (
 	github.com/fw42/go-hpfeeds v0.0.0-20130602172243-651ce0355974
 	github.com/ghettovoice/gosip v0.0.0-20230322091832-d77de1c97f89
 	github.com/google/gopacket v1.1.19
-	github.com/google/nftables v0.1.0
 	github.com/google/uuid v1.3.0
 	github.com/lunixbochs/vtclean v1.0.0
 	github.com/seud0nym/tproxy-go v0.0.0-20221207055502-b3ecf444161a
@@ -23,14 +22,10 @@ require (
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
-	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
-	github.com/josharian/native v1.0.0 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/mattn/go-isatty v0.0.14 // indirect
-	github.com/mdlayher/netlink v1.7.1 // indirect
-	github.com/mdlayher/socket v0.4.0 // indirect
 	github.com/mgutz/ansi v0.0.0-20170206155736-9520e82c474b // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.8 // indirect
@@ -46,7 +41,6 @@ require (
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.8.0 // indirect
 	golang.org/x/net v0.12.0 // indirect
-	golang.org/x/sync v0.1.0 // indirect
 	golang.org/x/sys v0.10.0 // indirect
 	golang.org/x/term v0.10.0 // indirect
 	golang.org/x/text v0.11.0 // indirect
