@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/ghettovoice/gosip/log"
 	"github.com/ghettovoice/gosip/sip"
 	"github.com/ghettovoice/gosip/sip/parser"
 	"go.uber.org/zap"
@@ -28,7 +29,8 @@ func HandleSIP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 		return err
 	}
 
-	pp := parser.NewPacketParser(nil)
+	l := log.NewDefaultLogrusLogger()
+	pp := parser.NewPacketParser(l)
 	msg, err := pp.ParseMessage(buffer)
 	if err != nil {
 		return err
