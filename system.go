@@ -21,7 +21,7 @@ func countOpenFiles() (int, error) {
 	return 0, errors.New("operating system type not supported for this command")
 }
 
-func (g *Glutton) startMonitor(quit chan struct{}) {
+func (g *Glutton) startMonitor() {
 	ticker := time.NewTicker(10 * time.Second)
 	go func() {
 		for {
@@ -33,7 +33,7 @@ func (g *Glutton) startMonitor(quit chan struct{}) {
 				}
 				runningRoutines := runtime.NumGoroutine()
 				g.Logger.Info(fmt.Sprintf("running Go routines: %d, open files: %d", openFiles, runningRoutines))
-			case <-quit:
+			case <-g.ctx.Done():
 				g.Logger.Info("monitoring stopped...")
 				ticker.Stop()
 				return

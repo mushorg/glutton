@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
@@ -40,6 +41,8 @@ type Glutton struct {
 	cancel           context.CancelFunc
 	publicAddrs      []net.IP
 	connHandlers     map[string]connHandlerFunc
+	stopped          bool
+	wg               sync.WaitGroup
 }
 
 func (g *Glutton) initConfig() error {
@@ -58,7 +61,10 @@ func (g *Glutton) initConfig() error {
 
 // New creates a new Glutton instance
 func New(ctx context.Context) (*Glutton, error) {
-	g := &Glutton{}
+	g := &Glutton{
+		stopped: false,
+		wg:      sync.WaitGroup{},
+	}
 	g.ctx, g.cancel = context.WithCancel(ctx)
 
 	g.protocolHandlers = make(map[string]protocols.HandlerFunc)
@@ -144,7 +150,8 @@ func (g *Glutton) Init() error {
 
 func (g *Glutton) udpListen() {
 	buffer := make([]byte, 1024)
-	for {
+	g.wg.Add(1)
+	for !g.stopped {
 		n, srcAddr, dstAddr, err := tproxy.ReadFromUDP(g.Server.udpListener, buffer)
 		if err != nil {
 			g.Logger.Error("failed to read UDP packet", zap.Error(err))
@@ -163,17 +170,12 @@ func (g *Glutton) udpListen() {
 			g.Logger.Error("failed to produce UDP payload", zap.Error(err))
 		}
 	}
+	g.wg.Done()
 }
 
 // Start the listener, this blocks for new connections
 func (g *Glutton) Start() error {
-	quit := make(chan struct{}) // stop monitor on shutdown
-	defer func() {
-		quit <- struct{}{}
-		g.Shutdown()
-	}()
-
-	g.startMonitor(quit)
+	g.startMonitor()
 
 	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort)); err != nil {
 		return err
@@ -185,7 +187,7 @@ func (g *Glutton) Start() error {
 
 	go g.udpListen()
 
-	for {
+	for !g.stopped {
 		conn, err := g.Server.tcpListener.Accept()
 		if err != nil {
 			return err
@@ -211,6 +213,9 @@ func (g *Glutton) Start() error {
 			}()
 		}
 	}
+
+	g.wg.Wait()
+	return nil
 }
 
 func (g *Glutton) makeID() error {
@@ -385,6 +390,7 @@ func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md *
 func (g *Glutton) Shutdown() error {
 	defer g.Logger.Sync()
 	g.cancel() // close all connection
+	g.stopped = true
 
 	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort)); err != nil {
 		return err
