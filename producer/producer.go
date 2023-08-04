@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/fw42/go-hpfeeds"
+	"github.com/d1str0/hpfeeds"
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/scanner"
 	"github.com/spf13/viper"
@@ -26,7 +26,7 @@ const (
 type Producer struct {
 	sensorID   string
 	httpClient *http.Client
-	hpfClient  hpfeeds.Hpfeeds
+	hpfClient  hpfeeds.Client
 	hpfChannel chan []byte
 }
 
@@ -111,7 +111,7 @@ func New(sensorID string) (*Producer, error) {
 		},
 	}
 	if viper.GetBool("producers.hpfeeds.enabled") {
-		producer.hpfClient = hpfeeds.NewHpfeeds(
+		producer.hpfClient = hpfeeds.NewClient(
 			viper.GetString("producers.hpfeeds.host"),
 			viper.GetInt("producers.hpfeeds.port"),
 			viper.GetString("producers.hpfeeds.ident"),

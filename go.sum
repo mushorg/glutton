@@ -49,6 +49,8 @@ github.com/cncf/udpa/go v0.0.0-20200629203442-efcf912fb354/go.mod h1:WmhPx2Nbnht
 github.com/cncf/udpa/go v0.0.0-20201120205902-5459f2c99403/go.mod h1:WmhPx2Nbnhtbo57+VJT5O0JRkEi1Wbu0z5j0R8u5Hbk=
 github.com/coreos/go-iptables v0.6.0 h1:is9qnZMPYjLd8LYqmm/qlE+wwEgJIkTYdhV3rfZo4jk=
 github.com/coreos/go-iptables v0.6.0/go.mod h1:Qe8Bv2Xik5FyTXwgIbLAnv2sWSBmvWdFETJConOQ//Q=
+github.com/d1str0/hpfeeds v0.1.6 h1:zT6FTvr6sVNgDkF+QMUy5Xzt9OFmNTN7qGbLMm31ZwI=
+github.com/d1str0/hpfeeds v0.1.6/go.mod h1:q2zw8+yzZONfUm8x3U6yNBjV+2xq+dkpkujNVWIntNs=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
@@ -64,8 +66,6 @@ github.com/fsnotify/fsnotify v1.4.7/go.mod h1:jwhsz4b93w/PPRr/qN1Yymfu8t87LnFCMo
 github.com/fsnotify/fsnotify v1.4.9/go.mod h1:znqG4EE+3YCdAaPaxE2ZRY/06pZUdp0tY4IgpuI1SZQ=
 github.com/fsnotify/fsnotify v1.6.0 h1:n+5WquG0fcWoWp6xPWfHdbskMCQaFnG6PfBrh1Ky4HY=
 github.com/fsnotify/fsnotify v1.6.0/go.mod h1:sl3t1tCWJFWoRz9R8WJCbQihKKwmorjAbSClcnxKAGw=
-github.com/fw42/go-hpfeeds v0.0.0-20130602172243-651ce0355974 h1:uhCy0C/g2ZHFy6ylWj0fN4q3fhsXz9fk14HhvVwRTXM=
-github.com/fw42/go-hpfeeds v0.0.0-20130602172243-651ce0355974/go.mod h1:JMIrlQe3LV12tF9NCmZEvzxe6hW+JvB0kRhz0k6XR0U=
 github.com/ghettovoice/gosip v0.0.0-20230322091832-d77de1c97f89 h1:bUtgAwa7cfrp0bEnlfr+k6fgsfn7/OFQ0pvQvoujOAo=
 github.com/ghettovoice/gosip v0.0.0-20230322091832-d77de1c97f89/go.mod h1:rlD1yLOErWYohWTryG/2bTTpmzB79p52ntLA/uIFXeI=
 github.com/glaslos/lsof v0.0.0-20230723212405-b3baf9409e4b h1:jBsfkYu3JYFMhOx2X8BE6646Ks2GD1BCLtuJ/RpHja4=

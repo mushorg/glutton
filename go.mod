@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/coreos/go-iptables v0.6.0
-	github.com/fw42/go-hpfeeds v0.0.0-20130602172243-651ce0355974
+	github.com/d1str0/hpfeeds v0.1.6
 	github.com/ghettovoice/gosip v0.0.0-20230322091832-d77de1c97f89
 	github.com/glaslos/lsof v0.0.0-20230723212405-b3baf9409e4b
 	github.com/google/gopacket v1.1.19
