@@ -33,6 +33,7 @@ type Producer struct {
 // Event is a struct for glutton events
 type Event struct {
 	Timestamp time.Time   `json:"timestamp,omitempty"`
+	Transport string      `json:"transport,omitempty"`
 	SrcHost   string      `json:"srcHost,omitempty"`
 	SrcPort   string      `json:"srcPort,omitempty"`
 	DstPort   uint16      `json:"dstPort,omitempty"`
@@ -57,6 +58,7 @@ func makeEventTCP(handler string, conn net.Conn, md *connection.Metadata, payloa
 
 	event := Event{
 		Timestamp: time.Now().UTC(),
+		Transport: "tcp",
 		SrcHost:   host,
 		SrcPort:   port,
 		SensorID:  sensorID,
@@ -82,6 +84,7 @@ func makeEventUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md *connection.
 
 	event := Event{
 		Timestamp: time.Now().UTC(),
+		Transport: "udp",
 		SrcHost:   srcAddr.IP.String(),
 		SrcPort:   strconv.Itoa(int(srcAddr.AddrPort().Port())),
 		SensorID:  sensorID,
