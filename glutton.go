@@ -34,7 +34,6 @@ type Glutton struct {
 	Producer         *producer.Producer
 	conntable        *connection.ConnTable
 	protocolHandlers map[string]protocols.HandlerFunc
-	telnetProxy      *telnetProxy
 	sshProxy         *sshProxy
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -133,9 +132,6 @@ func (g *Glutton) Init() error {
 	}
 	g.protocolHandlers["proxy_ssh"] = func(ctx context.Context, conn net.Conn) error {
 		return g.sshProxy.handle(ctx, conn)
-	}
-	g.protocolHandlers["proxy_telnet"] = func(ctx context.Context, conn net.Conn) error {
-		return g.telnetProxy.handle(ctx, conn)
 	}
 	g.registerHandlers()
 
@@ -273,13 +269,6 @@ func (g *Glutton) registerHandlers() {
 				handler = rule.Name
 				if err := g.NewSSHProxy(rule.Target); err != nil {
 					g.Logger.Error("failed to initialize SSH proxy", zap.Error(err))
-					continue
-				}
-				rule.Target = handler
-			case "proxy_telnet":
-				handler = rule.Name
-				if err := g.NewTelnetProxy(rule.Target); err != nil {
-					g.Logger.Error("failed to initialize TELNET proxy", zap.Error(err))
 					continue
 				}
 				rule.Target = handler

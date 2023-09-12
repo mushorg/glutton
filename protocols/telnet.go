@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -65,76 +64,35 @@ type parsedTelnet struct {
 	Message   string `json:"message,omitempty"`
 }
 
-// WriteTelnetMsg writes a telnet message to the connection
-func WriteTelnetMsg(conn net.Conn, msg string, logger Logger, h Honeypot) error {
+type server struct {
+	events []parsedTelnet
+	client *http.Client
+}
+
+// write writes a telnet message to the connection
+func (s *server) write(conn net.Conn, msg string) error {
 	if _, err := conn.Write([]byte(msg)); err != nil {
 		return err
 	}
-
-	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
-	if err != nil {
-		return err
-	}
-
-	md, err := h.MetadataByConnection(conn)
-	if err != nil {
-		return err
-	}
-
-	dstPort := "0"
-	if md != nil {
-		dstPort = strconv.Itoa(int(md.TargetPort))
-	}
-
-	logger.Info(
-		"telnet send",
-		zap.String("handler", "telnet"),
-		zap.String("message", fmt.Sprintf("%q", msg)),
-		zap.String("direction", "send"),
-		zap.String("dest_port", dstPort),
-		zap.String("src_ip", host),
-		zap.String("src_port", port),
-	)
-	return h.Produce("telnet", conn, md, []byte(msg), parsedTelnet{Direction: "send", Message: msg})
+	s.events = append(s.events, parsedTelnet{Direction: "write", Message: msg})
+	return nil
 }
 
-// ReadTelnetMsg reads a telnet message from a connection
-func ReadTelnetMsg(conn net.Conn, logger Logger, h Honeypot) (string, error) {
+// read reads a telnet message from a connection
+func (s *server) read(conn net.Conn) (string, error) {
 	msg, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		return msg, err
 	}
-
-	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
-	if err != nil {
-		logger.Error(fmt.Sprintf("error: %v", err))
-	}
-
-	md, err := h.MetadataByConnection(conn)
-	if err != nil {
-		return "", err
-	}
-
-	logger.Info(
-		"telnet recv",
-		zap.String("handler", "telnet"),
-		zap.String("message", fmt.Sprintf("%q", msg)),
-		zap.String("direction", "recv"),
-		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-		zap.String("src_ip", host),
-		zap.String("src_port", port),
-	)
-	return msg, h.Produce("telnet", conn, md, []byte(msg), parsedTelnet{Direction: "read", Message: msg})
+	s.events = append(s.events, parsedTelnet{Direction: "read", Message: msg})
+	return msg, err
 }
 
-func getSample(cmd string, logger Logger, h Honeypot) error {
+func (s *server) getSample(cmd string, logger Logger) error {
 	url := cmd[strings.Index(cmd, "http"):]
 	url = strings.Split(url, " ")[0]
-	client := http.Client{
-		Timeout: time.Duration(5 * time.Second),
-	}
 	logger.Info(fmt.Sprintf("getSample target URL: %s", url))
-	resp, err := client.Get(url)
+	resp, err := s.client.Get(url)
 	if err != nil {
 		return err
 	}
@@ -180,7 +138,20 @@ func getSample(cmd string, logger Logger, h Honeypot) error {
 
 // HandleTelnet handles telnet communication on a connection
 func HandleTelnet(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+	s := &server{
+		events: []parsedTelnet{},
+		client: &http.Client{
+			Timeout: time.Duration(5 * time.Second),
+		},
+	}
 	defer func() {
+		md, err := h.MetadataByConnection(conn)
+		if err != nil {
+			logger.Error("failed to get metadata", zap.Error(err))
+		}
+		if err := h.Produce("telnet", conn, md, []byte{}, s.events); err != nil {
+			logger.Error("failed to produce message", zap.Error(err))
+		}
 		if err := conn.Close(); err != nil {
 			logger.Error("failed to close telnet connection", zap.Error(err))
 		}
@@ -189,37 +160,36 @@ func HandleTelnet(ctx context.Context, conn net.Conn, logger Logger, h Honeypot)
 	// TODO (glaslos): Add device banner
 
 	// telnet window size negotiation response
-	if err := WriteTelnetMsg(conn, "\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27", logger, h); err != nil {
+	if err := s.write(conn, "\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27"); err != nil {
 		return err
 	}
 
 	// User name prompt
-	if err := WriteTelnetMsg(conn, "Username: ", logger, h); err != nil {
+	if err := s.write(conn, "Username: "); err != nil {
 		return err
 	}
-	if _, err := ReadTelnetMsg(conn, logger, h); err != nil {
+	if _, err := s.read(conn); err != nil {
 		return err
 	}
-	if err := WriteTelnetMsg(conn, "Password: ", logger, h); err != nil {
+	if err := s.write(conn, "Password: "); err != nil {
 		return err
 	}
-	if _, err := ReadTelnetMsg(conn, logger, h); err != nil {
+	if _, err := s.read(conn); err != nil {
 		return err
 	}
-
-	if err := WriteTelnetMsg(conn, "welcome\r\n> ", logger, h); err != nil {
+	if err := s.write(conn, "welcome\r\n> "); err != nil {
 		return err
 	}
 
 	for {
 		h.UpdateConnectionTimeout(ctx, conn)
-		msg, err := ReadTelnetMsg(conn, logger, h)
+		msg, err := s.read(conn)
 		if err != nil {
 			return err
 		}
 		for _, cmd := range strings.Split(msg, ";") {
 			if strings.Contains(strings.Trim(cmd, " "), "wget http") {
-				go getSample(strings.Trim(cmd, " "), logger, h)
+				go s.getSample(strings.Trim(cmd, " "), logger)
 			}
 			if strings.TrimRight(cmd, "") == " rm /dev/.t" {
 				continue
@@ -228,17 +198,18 @@ func HandleTelnet(ctx context.Context, conn net.Conn, logger Logger, h Honeypot)
 				continue
 			}
 			if strings.TrimRight(cmd, "\r\n") == "cd /dev/" {
-				if err = WriteTelnetMsg(conn, "ECCHI: applet not found\r\n", logger, h); err != nil {
+				if err := s.write(conn, "ECCHI: applet not found\r\n"); err != nil {
 					return err
 				}
-				if err = WriteTelnetMsg(conn, "\r\nBusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-it shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n", logger, h); err != nil {
+
+				if err := s.write(conn, "\r\nBusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-it shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n"); err != nil {
 					return err
 				}
 				continue
 			}
 
 			if resp := miraiCom[strings.TrimSpace(cmd)]; len(resp) > 0 {
-				if err = WriteTelnetMsg(conn, resp[rand.Intn(len(resp))]+"\r\n", logger, h); err != nil {
+				if err := s.write(conn, resp[rand.Intn(len(resp))]+"\r\n"); err != nil {
 					return err
 				}
 			} else {
@@ -246,16 +217,17 @@ func HandleTelnet(ctx context.Context, conn net.Conn, logger Logger, h Honeypot)
 				re := regexp.MustCompile(`\/bin\/busybox (?P<applet>[A-Z]+)`)
 				match := re.FindStringSubmatch(cmd)
 				if len(match) > 1 {
-					if err = WriteTelnetMsg(conn, match[1]+": applet not found\r\n", logger, h); err != nil {
+					if err := s.write(conn, match[1]+": applet not found\r\n"); err != nil {
 						return err
 					}
-					if err = WriteTelnetMsg(conn, "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-in shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n", logger, h); err != nil {
+
+					if err := s.write(conn, "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-in shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n"); err != nil {
 						return err
 					}
 				}
 			}
 		}
-		if err := WriteTelnetMsg(conn, "> ", logger, h); err != nil {
+		if err := s.write(conn, "> "); err != nil {
 			return err
 		}
 	}
