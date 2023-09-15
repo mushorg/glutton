@@ -1,4 +1,4 @@
-package glutton
+package producer
 
 import (
 	"os"
@@ -9,8 +9,16 @@ import (
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
 
-// NewConsoleLogger creates the console logger fabric
-func NewConsoleLogger(id string) zapcore.Core {
+// NewLogger creates a logger instance
+func NewLogger(id string) *zap.Logger {
+	consoleCore := newConsoleLogger(id)
+	fileCore := newFileLogger(id)
+	teeCore := zapcore.NewTee(consoleCore, fileCore)
+	return zap.New(teeCore)
+}
+
+// newConsoleLogger creates the console logger fabric
+func newConsoleLogger(id string) zapcore.Core {
 	atom := zap.NewAtomicLevel()
 	var lvl zapcore.Level
 	lvl.UnmarshalText([]byte(viper.GetString("log-level")))
@@ -20,16 +28,8 @@ func NewConsoleLogger(id string) zapcore.Core {
 	return zapcore.NewCore(consoleEncoder, zapcore.Lock(os.Stdout), atom)
 }
 
-// NewLogger creates a logger instance
-func NewLogger(id string) *zap.Logger {
-	consoleCore := NewConsoleLogger(id)
-	fileCore := NewFileLogger(id)
-	teeCore := zapcore.NewTee(consoleCore, fileCore)
-	return zap.New(teeCore)
-}
-
-// NewFileLogger creates a logger instance
-func NewFileLogger(id string) zapcore.Core {
+// newFileLogger creates a logger instance
+func newFileLogger(id string) zapcore.Core {
 	fileEncoder := zapcore.NewJSONEncoder(
 		zap.NewProductionEncoderConfig(),
 	)
