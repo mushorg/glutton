@@ -68,7 +68,7 @@ func TestFakePacketBytes(t *testing.T) {
 	require.NotEmpty(t, b)
 }
 
-func TestRunMatch(t *testing.T) {
+func TestRunMatchTCP(t *testing.T) {
 	rules := parseRules(t)
 	require.NotEmpty(t, rules)
 	for i := range rules {
@@ -86,6 +86,29 @@ func TestRunMatch(t *testing.T) {
 	)
 
 	match, err = rules.Match("tcp", conn.LocalAddr(), conn.RemoteAddr())
+	require.NoError(t, err)
+	require.NotNil(t, match)
+	require.Equal(t, "test", match.Target)
+}
+
+func TestRunMatchUDP(t *testing.T) {
+	rules := parseRules(t)
+	require.NotEmpty(t, rules)
+	for i := range rules {
+		err := InitRule(i, rules[i])
+		require.NoError(t, err)
+	}
+	conn, ln := testConn(t)
+	defer func() {
+		conn.Close()
+		ln.Close()
+	}()
+	var (
+		match *Rule
+		err   error
+	)
+
+	match, err = rules.Match("udp", conn.LocalAddr(), conn.RemoteAddr())
 	require.NoError(t, err)
 	require.NotNil(t, match)
 	require.Equal(t, "test", match.Target)

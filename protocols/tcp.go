@@ -98,7 +98,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 		logger.Info(fmt.Sprintf("TCP payload:\n%s", hex.Dump(data[:msgLength%1024])))
 	}
 
-	// sending some randome data
+	// sending some random data
 	randomBytes := make([]byte, 12+rand.Intn(500))
 	if _, err = rand.Read(randomBytes); err != nil {
 		return err

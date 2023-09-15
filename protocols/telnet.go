@@ -64,13 +64,13 @@ type parsedTelnet struct {
 	Message   string `json:"message,omitempty"`
 }
 
-type server struct {
+type telnetServer struct {
 	events []parsedTelnet
 	client *http.Client
 }
 
 // write writes a telnet message to the connection
-func (s *server) write(conn net.Conn, msg string) error {
+func (s *telnetServer) write(conn net.Conn, msg string) error {
 	if _, err := conn.Write([]byte(msg)); err != nil {
 		return err
 	}
@@ -79,7 +79,7 @@ func (s *server) write(conn net.Conn, msg string) error {
 }
 
 // read reads a telnet message from a connection
-func (s *server) read(conn net.Conn) (string, error) {
+func (s *telnetServer) read(conn net.Conn) (string, error) {
 	msg, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		return msg, err
@@ -88,7 +88,7 @@ func (s *server) read(conn net.Conn) (string, error) {
 	return msg, err
 }
 
-func (s *server) getSample(cmd string, logger Logger) error {
+func (s *telnetServer) getSample(cmd string, logger Logger) error {
 	url := cmd[strings.Index(cmd, "http"):]
 	url = strings.Split(url, " ")[0]
 	logger.Info(fmt.Sprintf("getSample target URL: %s", url))
@@ -138,7 +138,7 @@ func (s *server) getSample(cmd string, logger Logger) error {
 
 // HandleTelnet handles telnet communication on a connection
 func HandleTelnet(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
-	s := &server{
+	s := &telnetServer{
 		events: []parsedTelnet{},
 		client: &http.Client{
 			Timeout: time.Duration(5 * time.Second),

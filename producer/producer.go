@@ -11,9 +11,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/d1str0/hpfeeds"
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/scanner"
+
+	"github.com/d1str0/hpfeeds"
 	"github.com/spf13/viper"
 )
 

@@ -92,8 +92,6 @@ func (t *ConnTable) Register(srcIP, srcPort string, dstPort uint16, rule *rules.
 		return md, nil
 	}
 
-	println(fmt.Sprintf("%s:%s->%d, %s", srcIP, srcPort, dstPort, rule.Target))
-
 	md := &Metadata{
 		Added:      time.Now(),
 		TargetPort: dstPort,

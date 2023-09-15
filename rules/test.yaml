@@ -9,6 +9,9 @@ rules:
   - match: tcp dst port 1234
     type: conn_handler
     target: test
+  - match: udp dst port 1234
+    type: conn_handler
+    target: test
   - match: tcp
     type: conn_handler
     target: default
