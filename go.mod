@@ -9,13 +9,11 @@ require (
 	github.com/glaslos/lsof v0.0.0-20230723212405-b3baf9409e4b
 	github.com/google/gopacket v1.1.19
 	github.com/google/uuid v1.3.0
-	github.com/lunixbochs/vtclean v1.0.0
 	github.com/seud0nym/tproxy-go v0.0.0-20221207055502-b3ecf444161a
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.16.0
 	github.com/stretchr/testify v1.8.4
 	go.uber.org/zap v1.24.0
-	golang.org/x/crypto v0.11.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v2 v2.4.0
 )
@@ -44,6 +42,7 @@ require (
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.8.0 // indirect
+	golang.org/x/crypto v0.11.0 // indirect
 	golang.org/x/net v0.12.0 // indirect
 	golang.org/x/sys v0.10.0 // indirect
 	golang.org/x/term v0.10.0 // indirect

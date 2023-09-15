@@ -34,7 +34,6 @@ type Glutton struct {
 	Producer         *producer.Producer
 	conntable        *connection.ConnTable
 	protocolHandlers map[string]protocols.HandlerFunc
-	sshProxy         *sshProxy
 	ctx              context.Context
 	cancel           context.CancelFunc
 	publicAddrs      []net.IP
@@ -127,12 +126,6 @@ func (g *Glutton) Init() error {
 	}
 	// Initiating protocol handlers
 	g.protocolHandlers = protocols.MapProtocolHandlers(g.Logger, g)
-	g.protocolHandlers["proxy_tcp"] = func(ctx context.Context, conn net.Conn) error {
-		return g.tcpProxy(ctx, conn)
-	}
-	g.protocolHandlers["proxy_ssh"] = func(ctx context.Context, conn net.Conn) error {
-		return g.sshProxy.handle(ctx, conn)
-	}
 	g.registerHandlers()
 
 	return nil
@@ -287,31 +280,13 @@ func (g *Glutton) registerConnHandler(target string, handler connHandlerFunc) er
 func (g *Glutton) registerHandlers() {
 	for _, rule := range g.rules {
 		if rule.Type == "conn_handler" && rule.Target != "" {
-			var handler string
 
-			switch rule.Name {
-			case "proxy_tcp":
-				handler = rule.Name
-				g.protocolHandlers[rule.Target] = g.protocolHandlers[handler]
-				delete(g.protocolHandlers, handler)
-				handler = rule.Target
-			case "proxy_ssh":
-				handler = rule.Name
-				if err := g.NewSSHProxy(rule.Target); err != nil {
-					g.Logger.Error("failed to initialize SSH proxy", zap.Error(err))
-					continue
-				}
-				rule.Target = handler
-			default:
-				handler = rule.Target
-			}
-
-			if g.protocolHandlers[handler] == nil {
-				g.Logger.Warn(fmt.Sprintf("no handler found for '%s' protocol", handler))
+			if g.protocolHandlers[rule.Target] == nil {
+				g.Logger.Warn(fmt.Sprintf("no handler found for '%s' protocol", rule.Target))
 				continue
 			}
 
-			g.registerConnHandler(handler, func(conn net.Conn, md *connection.Metadata) error {
+			g.registerConnHandler(rule.Target, func(conn net.Conn, md *connection.Metadata) error {
 				host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 				if err != nil {
 					return fmt.Errorf("failed to split remote address: %w", err)
@@ -326,7 +301,7 @@ func (g *Glutton) registerHandlers() {
 					zap.String("host", host),
 					zap.String("src_port", port),
 					zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-					zap.String("handler", handler),
+					zap.String("handler", rule.Target),
 				)
 
 				matched, name, err := scanner.IsScanner(net.ParseIP(host))
@@ -344,7 +319,7 @@ func (g *Glutton) registerHandlers() {
 					return fmt.Errorf("failed to set connection deadline: %w", err)
 				}
 				ctx := g.contextWithTimeout(72)
-				err = g.protocolHandlers[handler](ctx, conn)
+				err = g.protocolHandlers[rule.Target](ctx, conn)
 				done <- struct{}{}
 				if err != nil {
 					return fmt.Errorf("protocol handler error: %w", err)
