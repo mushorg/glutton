@@ -1,0 +1,53 @@
+{
+    "$schema": "http://json-schema.org/draft-06/schema#",
+    "$ref": "#/definitions/Glutton",
+    "definitions": {
+        "Glutton": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/Rule"
+                    }
+                }
+            },
+            "required": [
+                "rules"
+            ],
+            "title": "Glutton"
+        },
+        "Rule": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "match": {
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/Type"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "target": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "match",
+                "type"
+            ],
+            "title": "Rule"
+        },
+        "Type": {
+            "type": "string",
+            "enum": [
+                "passthrough",
+                "conn_handler"
+            ],
+            "title": "Type"
+        }
+    }
+}

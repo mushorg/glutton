@@ -3,7 +3,6 @@ package rules
 import (
 	"fmt"
 	"net"
-	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -19,9 +18,6 @@ type RuleType int
 
 const (
 	Rewrite RuleType = iota
-	ProxyTCP
-	LogTCP
-	LogHTTP
 	UserConnHandler
 	Drop
 	PassThrough
@@ -38,14 +34,11 @@ type Rule struct {
 	Target string `yaml:"target,omitempty"`
 	Name   string `yaml:"name,omitempty"`
 
-	isInit    bool
-	ruleType  RuleType
-	index     int
-	matcher   *pcap.BPF
-	targetURL *url.URL
-
-	host string
-	port int
+	isInit   bool
+	ruleType RuleType
+	index    int
+	matcher  *pcap.BPF
+	port     int
 }
 
 func (r *Rule) String() string {
@@ -78,12 +71,6 @@ func InitRule(idx int, rule *Rule) error {
 	switch rule.Type {
 	case "rewrite":
 		rule.ruleType = Rewrite
-	case "proxy":
-		rule.ruleType = ProxyTCP
-	case "log_tcp":
-		rule.ruleType = LogTCP
-	case "log_http":
-		rule.ruleType = LogHTTP
 	case "conn_handler":
 		rule.ruleType = UserConnHandler
 	case "drop":
@@ -104,25 +91,6 @@ func InitRule(idx int, rule *Rule) error {
 
 	if rule.Target != "" {
 		var err error
-		if rule.ruleType == ProxyTCP {
-			rule.targetURL, err = url.Parse(rule.Target)
-			if err != nil {
-				return err
-			}
-
-			var sport string
-			rule.host, sport, err = net.SplitHostPort(rule.targetURL.Host)
-			if err != nil {
-				return err
-			}
-
-			rule.port, err = strconv.Atoi(sport)
-			if err != nil {
-				return err
-			}
-
-			// TODO: handle scheme specific validation/parsing
-		}
 
 		if rule.ruleType == Rewrite {
 			rule.port, err = strconv.Atoi(rule.Target)
