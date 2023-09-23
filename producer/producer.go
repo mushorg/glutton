@@ -178,8 +178,17 @@ func (p *Producer) logHPFeeds(event *Event) error {
 	return nil
 }
 
+// Check if a ip is private.
+func isPrivateIP(ip string) bool {
+	ipAddress := net.ParseIP(ip)
+	return ipAddress.IsPrivate()
+}
+
 // logHTTP send logs to HTTP endpoint
 func (p *Producer) logHTTP(event *Event) error {
+	if isPrivateIP(event.SrcHost) {
+		return nil
+	}
 	url, err := url.Parse(viper.GetString("producers.http.remote"))
 	if err != nil {
 		return err
