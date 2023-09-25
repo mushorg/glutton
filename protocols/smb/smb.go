@@ -101,7 +101,7 @@ func toBytes(smb interface{}) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func MakeHeaderResponse(header SMBHeader) ([]byte, error) {
+func MakeHeaderResponse(header SMBHeader) (SMBHeader, []byte, error) {
 	smb := NegotiateProtocolResponse{}
 	smb.Header.Protocol = header.Protocol
 	smb.Header.Command = header.Command
@@ -109,7 +109,8 @@ func MakeHeaderResponse(header SMBHeader) ([]byte, error) {
 	smb.Header.Flags = 0x98
 	smb.Header.Flags2 = [2]byte{28, 1}
 
-	return toBytes(smb)
+	data, err := toBytes(smb)
+	return smb.Header, data, err
 }
 
 type ComTransaction2Response struct {
@@ -149,7 +150,7 @@ type ComTransaction2Response struct {
 	Data12                [4]byte
 }
 
-func MakeComTransaction2Response(header SMBHeader) ([]byte, error) {
+func MakeComTransaction2Response(header SMBHeader) (SMBHeader, []byte, error) {
 	smb := ComTransaction2Response{}
 	smb.Header = header
 	smb.WordCount = 0x0A
@@ -186,7 +187,8 @@ func MakeComTransaction2Response(header SMBHeader) ([]byte, error) {
 	smb.Data11 = [16]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2e, 0x2e}
 	smb.Data12 = [4]byte{0x00, 0x00, 0x00, 0x00}
 
-	return toBytes(smb)
+	data, err := toBytes(smb)
+	return smb.Header, data, err
 }
 
 type ComTransaction2Error struct {
@@ -211,27 +213,29 @@ type ComTransactionResponse struct {
 	Reserved2             byte
 }
 
-func MakeComTransactionResponse(header SMBHeader) ([]byte, error) {
+func MakeComTransactionResponse(header SMBHeader) (SMBHeader, []byte, error) {
 	smb := ComTransactionResponse{}
 	smb.Header = header
 	smb.WordCount = 10
 	smb.ParameterOffset = [2]byte{56}
 	smb.DataOffset = [2]byte{56}
 
-	return toBytes(smb)
+	data, err := toBytes(smb)
+	return smb.Header, data, err
 }
 
-func MakeComTransaction2Error(header SMBHeader) ([]byte, error) {
+func MakeComTransaction2Error(header SMBHeader) (SMBHeader, []byte, error) {
 	smb := ComTransaction2Error{}
 	smb.Header = header
 	smb.Header.Status = [4]byte{0x02, 0x00, 0x00, 0xc0}
 	smb.WordCount = 0x00
 	smb.ByteCount = [2]byte{}
 
-	return toBytes(smb)
+	data, err := toBytes(smb)
+	return smb.Header, data, err
 }
 
-func MakeNegotiateProtocolResponse(header SMBHeader) ([]byte, error) {
+func MakeNegotiateProtocolResponse(header SMBHeader) (SMBHeader, []byte, error) {
 	id := uuid.New()
 	smb := NegotiateProtocolResponse{}
 	smb.Header.Protocol = header.Protocol
@@ -244,7 +248,7 @@ func MakeNegotiateProtocolResponse(header SMBHeader) ([]byte, error) {
 	smb.DialectRevision = [2]byte{0x03, 0x00}
 	b, err := id.MarshalBinary()
 	if err != nil {
-		return nil, err
+		return SMBHeader{}, nil, err
 	}
 	copy(smb.ServerGUID[:], b)
 	smb.Capabilities = [4]byte{0x80, 0x01, 0xe3, 0xfc}
@@ -253,7 +257,8 @@ func MakeNegotiateProtocolResponse(header SMBHeader) ([]byte, error) {
 	smb.SystemTime = filetime(0)
 	smb.ServerStartTime = filetime(time.Duration(random(1000, 2000)) * time.Hour)
 
-	return toBytes(smb)
+	data, err := toBytes(smb)
+	return smb.Header, data, err
 }
 
 func ParseHeader(buffer *bytes.Buffer, header *SMBHeader) error {

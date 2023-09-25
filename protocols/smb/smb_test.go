@@ -40,6 +40,7 @@ func TestParseSMB(t *testing.T) {
 	dialectString := bytes.Split(parsed.Data.DialectString, []byte("\x00"))
 	require.Equal(t, string(dialectString[0][:]), "\x02PC NETWORK PROGRAM 1.0", "dialect string mismatch")
 
-	_, err = MakeNegotiateProtocolResponse(header)
+	responseHeader, _, err := MakeNegotiateProtocolResponse(header)
 	require.NoError(t, err)
+	require.NotEmpty(t, responseHeader, "invalid response header")
 }

@@ -10,9 +10,45 @@ import (
 	"go.uber.org/zap"
 )
 
+type parsedSMB struct {
+	Direction string        `json:"direction,omitempty"`
+	Header    smb.SMBHeader `json:"header,omitempty"`
+	Payload   []byte        `json:"payload,omitempty"`
+}
+
+type smbServer struct {
+	events []parsedSMB
+	conn   net.Conn
+}
+
+func (ss *smbServer) write(header smb.SMBHeader, data []byte) error {
+	_, err := ss.conn.Write(data)
+	if err != nil {
+		return err
+	}
+	ss.events = append(ss.events, parsedSMB{
+		Direction: "write",
+		Header:    header,
+		Payload:   data,
+	})
+	return nil
+}
+
 // HandleSMB takes a net.Conn and does basic SMB communication
 func HandleSMB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+	server := &smbServer{
+		events: []parsedSMB{},
+		conn:   conn,
+	}
 	defer func() {
+		md, err := h.MetadataByConnection(conn)
+		if err != nil {
+			logger.Error("failed to get metadata", zap.Error(err))
+		}
+		if err := h.Produce("smb", conn, md, nil, server.events); err != nil {
+			logger.Error("failed to produce message", zap.String("protocol", "smb"), zap.Error(err))
+		}
+
 		if err := conn.Close(); err != nil {
 			logger.Error("failed to close SMB connection", zap.Error(err))
 		}
@@ -38,38 +74,36 @@ func HandleSMB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 				return err
 			}
 
-			md, err := h.MetadataByConnection(conn)
-			if err != nil {
-				return err
-			}
-			if err := h.Produce("smb", conn, md, buffer.Bytes(), header); err != nil {
-				logger.Error("failed to produce message", zap.String("protocol", "smb"), zap.Error(err))
-			}
+			server.events = append(server.events, parsedSMB{
+				Direction: "read",
+				Header:    header,
+				Payload:   buffer.Bytes(),
+			})
 
 			logger.Debug(fmt.Sprintf("SMB header: %+v", header))
 			switch header.Command {
 			case 0x72, 0x73, 0x75:
-				resp, err := smb.MakeNegotiateProtocolResponse(header)
+				responseHeader, resp, err := smb.MakeNegotiateProtocolResponse(header)
 				if err != nil {
 					return err
 				}
-				if _, err := conn.Write(resp); err != nil {
+				if err := server.write(responseHeader, resp); err != nil {
 					return err
 				}
 			case 0x32:
-				resp, err := smb.MakeComTransaction2Response(header)
+				responseHeader, resp, err := smb.MakeComTransaction2Response(header)
 				if err != nil {
 					return err
 				}
-				if _, err := conn.Write(resp); err != nil {
+				if err := server.write(responseHeader, resp); err != nil {
 					return err
 				}
 			case 0x25:
-				resp, err := smb.MakeComTransactionResponse(header)
+				responseHeader, resp, err := smb.MakeComTransactionResponse(header)
 				if err != nil {
 					return err
 				}
-				if _, err := conn.Write(resp); err != nil {
+				if err := server.write(responseHeader, resp); err != nil {
 					return err
 				}
 			}
