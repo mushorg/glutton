@@ -39,8 +39,26 @@ func TestParseSMB(t *testing.T) {
 
 	dialectString := bytes.Split(parsed.Data.DialectString, []byte("\x00"))
 	require.Equal(t, string(dialectString[0][:]), "\x02PC NETWORK PROGRAM 1.0", "dialect string mismatch")
+}
 
-	responseHeader, _, err := MakeNegotiateProtocolResponse(header)
-	require.NoError(t, err)
-	require.NotEmpty(t, responseHeader, "invalid response header")
+func TestMakeResponses(t *testing.T) {
+	tests := []struct {
+		name   string
+		header SMBHeader
+		f      func(SMBHeader) (SMBHeader, []byte, error)
+	}{
+		{name: "MakeHeaderResponse", header: SMBHeader{}, f: MakeHeaderResponse},
+		{name: "MakeComTransaction2Response", header: SMBHeader{Command: 0x32}, f: MakeComTransaction2Response},
+		{name: "MakeComTransactionResponse", header: SMBHeader{Command: 0x25}, f: MakeComTransactionResponse},
+		{name: "MakeComTransaction2Error", header: SMBHeader{}, f: MakeComTransaction2Error},
+		{name: "MakeNegotiateProtocolResponse", header: SMBHeader{Command: 0x25}, f: MakeNegotiateProtocolResponse},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			responseHeader, data, err := test.f(test.header)
+			require.NoError(t, err)
+			require.NotEmpty(t, data)
+			require.NotEmpty(t, responseHeader, "invalid response header")
+		})
+	}
 }
