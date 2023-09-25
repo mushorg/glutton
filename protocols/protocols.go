@@ -1,6 +1,7 @@
 package protocols
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"strings"
@@ -76,6 +77,10 @@ func MapProtocolHandlers(log Logger, h Honeypot) map[string]HandlerFunc {
 		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true, "CONN": true}
 		if _, ok := httpMap[strings.ToUpper(string(snip))]; ok {
 			return HandleHTTP(ctx, bufConn, log, h)
+		}
+		// poor mans check for RDP header
+		if bytes.Equal(snip, []byte{0x03, 0x00, 0x00, 0x2b}) {
+			return HandleRDP(ctx, bufConn, log, h)
 		}
 		// fallback TCP handler
 		return HandleTCP(ctx, bufConn, log, h)

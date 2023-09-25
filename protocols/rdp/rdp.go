@@ -9,8 +9,7 @@ import (
 type TKIPHeader struct {
 	Version  byte
 	Reserved byte
-	MSLength byte
-	LSLength byte
+	Length   [2]byte
 }
 
 // CRTPDU see http://go.microsoft.com/fwlink/?LinkId=90588 section 13.3
@@ -45,27 +44,40 @@ type CCTPDU struct {
 	ClassOption byte
 }
 
-type ConnectionConfirmPDU struct {
-	Header TKIPHeader
-	TPDU   CCTPDU
+type NegotiationResponse struct {
+	Type             byte
+	Flags            byte
+	Length           [2]byte
+	SelectedProtocol [4]byte
 }
 
-func ConnectionConfirm(cr CRTPDU) ([]byte, error) {
+type ConnectionConfirmPDU struct {
+	Header   TKIPHeader
+	TPDU     CCTPDU
+	Response NegotiationResponse
+}
+
+func ConnectionConfirm(cr CRTPDU) (TKIPHeader, []byte, error) {
 	cc := ConnectionConfirmPDU{
 		Header: TKIPHeader{
-			Version:  3,
-			LSLength: 11,
+			Version: 3,
 		},
 		TPDU: CCTPDU{
 			Length: 6,
-			CCCDT:  208, // 1101-xxxx
+			CCCDT:  0xd, // 1101-xxxx
 			DstRef: cr.DstRef,
 			SrcRef: cr.SrcRef,
 		},
+		Response: NegotiationResponse{
+			Type:             0x02,
+			SelectedProtocol: [4]byte{0x3},
+		},
 	}
+	binary.BigEndian.PutUint16(cc.Header.Length[:], 19)
+	binary.LittleEndian.PutUint16(cc.Response.Length[:], 8)
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.LittleEndian, cc)
-	return buf.Bytes(), err
+	return cc.Header, buf.Bytes(), err
 }
 
 // ParsePDU takes raw data and parses into struct
@@ -77,7 +89,7 @@ func ParseCRPDU(data []byte) (ConnectionRequestPDU, error) {
 	}
 
 	// I wonder if we should be more lenient here
-	if len(data) != int(pdu.Header.LSLength) {
+	if len(data) != int(binary.BigEndian.Uint16(pdu.Header.Length[:])) {
 		return pdu, nil
 	}
 	if err := binary.Read(buffer, binary.LittleEndian, &pdu.TPDU); err != nil {
