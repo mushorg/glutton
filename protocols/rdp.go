@@ -42,12 +42,7 @@ func HandleRDP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 		if err != nil {
 			logger.Error("failed to get metadata", zap.Error(err))
 		}
-		var payload []byte
-		if len(server.events) > 0 {
-			payload = server.events[0].Payload
-		}
-
-		if err := h.Produce("rdp", conn, md, payload, server.events); err != nil {
+		if err := h.Produce("rdp", conn, md, firstOrEmpty[parsedRDP](server.events).Payload, server.events); err != nil {
 			logger.Error("failed to produce message", zap.String("protocol", "rdp"), zap.Error(err))
 		}
 		if err := conn.Close(); err != nil {

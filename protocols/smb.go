@@ -45,7 +45,7 @@ func HandleSMB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 		if err != nil {
 			logger.Error("failed to get metadata", zap.Error(err))
 		}
-		if err := h.Produce("smb", conn, md, nil, server.events); err != nil {
+		if err := h.Produce("smb", conn, md, firstOrEmpty[parsedSMB](server.events).Payload, server.events); err != nil {
 			logger.Error("failed to produce message", zap.String("protocol", "smb"), zap.Error(err))
 		}
 

@@ -15,6 +15,16 @@ import (
 	"go.uber.org/zap"
 )
 
+type parsedTCP struct {
+	Direction   string `json:"direction,omitempty"`
+	Payload     []byte `json:"payload,omitempty"`
+	PayloadHash string `json:"payload_hash,omitempty"`
+}
+
+type tcpServer struct {
+	events []parsedTCP
+}
+
 func storePayload(data []byte) (string, error) {
 	sum := sha256.Sum256(data)
 	if err := os.MkdirAll("payloads", os.ModePerm); err != nil {
@@ -37,20 +47,44 @@ func storePayload(data []byte) (string, error) {
 	return sha256Hash, nil
 }
 
+func (s *tcpServer) sendRandom(conn net.Conn) error {
+	randomBytes := make([]byte, 12+rand.Intn(500))
+	if _, err := rand.Read(randomBytes); err != nil {
+		return err
+	}
+	s.events = append(s.events, parsedTCP{
+		Direction:   "write",
+		PayloadHash: hex.EncodeToString(randomBytes),
+		Payload:     randomBytes,
+	})
+	if _, err := conn.Write(randomBytes); err != nil {
+		return err
+	}
+	return nil
+}
+
 // HandleTCP takes a net.Conn and peeks at the data send
 func HandleTCP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+	server := tcpServer{
+		events: []parsedTCP{},
+	}
+	md, err := h.MetadataByConnection(conn)
+	if err != nil {
+		logger.Error("failed to get metadata", zap.Error(err))
+	}
+
 	defer func() {
+		if err := h.Produce("tcp", conn, md, firstOrEmpty[parsedTCP](server.events).Payload, server.events); err != nil {
+			logger.Error("failed to produce message", zap.String("protocol", "tcp"), zap.Error(err))
+		}
 		if err := conn.Close(); err != nil {
 			logger.Error("failed to close TCP connection", zap.String("handler", "tcp"), zap.Error(err))
 		}
 	}()
+
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
 		return fmt.Errorf("faild to split remote address: %w", err)
-	}
-	md, err := h.MetadataByConnection(conn)
-	if err != nil {
-		return fmt.Errorf("failed to get metadata: %w", err)
 	}
 
 	msgLength := 0
@@ -90,21 +124,18 @@ func HandleTCP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 			zap.String("handler", "tcp"),
 			zap.String("payload_hash", payloadHash),
 		)
-		if err := h.Produce("tcp", conn, md, data, struct {
-			PayloadHash string `json:"payload_hash,omitempty"`
-		}{PayloadHash: payloadHash}); err != nil {
-			logger.Error("failed to produce message", zap.String("protocol", "tcp"), zap.Error(err))
-		}
 		logger.Info(fmt.Sprintf("TCP payload:\n%s", hex.Dump(data[:msgLength%1024])))
+
+		server.events = append(server.events, parsedTCP{
+			Direction:   "read",
+			PayloadHash: payloadHash,
+			Payload:     data[:msgLength%1024],
+		})
 	}
 
 	// sending some random data
-	randomBytes := make([]byte, 12+rand.Intn(500))
-	if _, err = rand.Read(randomBytes); err != nil {
-		return err
-	}
-	if _, err = conn.Write(randomBytes); err != nil {
-		return err
+	if err := server.sendRandom(conn); err != nil {
+		logger.Error("write error", zap.String("handler", "tcp"), zap.Error(err))
 	}
 
 	return nil

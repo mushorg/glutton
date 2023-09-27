@@ -17,22 +17,36 @@ type bittorrentMsg struct {
 	PeerID             [20]uint8 `json:"peer_id,omitempty"`
 }
 
+type parsedBittorrent struct {
+	Direction string        `json:"direction,omitempty"`
+	Message   bittorrentMsg `json:"message,omitempty"`
+	Payload   []byte        `json:"payload,omitempty"`
+}
+
+type bittorrentServer struct {
+	events []parsedBittorrent
+}
+
 // HandleBittorrent handles a Bittorrent connection
 func HandleBittorrent(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
-	var err error
+	server := bittorrentServer{
+		events: []parsedBittorrent{},
+	}
 	defer func() {
-		if err = conn.Close(); err != nil {
+		md, err := h.MetadataByConnection(conn)
+		if err != nil {
+			logger.Error("failed to fetch meta data", zap.Error(err), zap.String("handler", "bittorrent"))
+		}
+		if err = h.Produce("bittorrent", conn, md, firstOrEmpty[parsedBittorrent](server.events).Payload, server.events); err != nil {
+			logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "bittorrent"))
+		}
+		if err := conn.Close(); err != nil {
 			logger.Error("failed to close connection", zap.Error(err), zap.String("handler", "bittorrent"))
 			return
 		}
 	}()
 
 	logger.Info("new bittorrent connection")
-
-	md, err := h.MetadataByConnection(conn)
-	if err != nil {
-		return err
-	}
 
 	for {
 		buffer := make([]byte, 1024)
@@ -43,9 +57,12 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, logger Logger, h Honey
 				logger.Error("failed to read message", zap.Error(err), zap.String("handler", "bittorrent"))
 				break
 			}
-			if err = h.Produce("bittorrent", conn, md, buffer[:n], msg); err != nil {
-				logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "bittorrent"))
-			}
+
+			server.events = append(server.events, parsedBittorrent{
+				Direction: "read",
+				Message:   msg,
+				Payload:   buffer[:n],
+			})
 
 			logger.Info(
 				"bittorrent received",
@@ -54,6 +71,11 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, logger Logger, h Honey
 				zap.Uint8s("inf_hash", msg.InfoHash[:]),
 			)
 
+			server.events = append(server.events, parsedBittorrent{
+				Direction: "write",
+				Message:   msg,
+				Payload:   buffer[:n],
+			})
 			if err = binary.Write(conn, binary.BigEndian, msg); err != nil {
 				logger.Error("failed to write message", zap.Error(err), zap.String("handler", "bittorrent"))
 				break
