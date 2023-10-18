@@ -11,17 +11,56 @@ import (
 	"go.uber.org/zap"
 )
 
-func readFTP(conn net.Conn, logger Logger, h Honeypot) (string, error) {
-	msg, err := bufio.NewReader(conn).ReadString('\n')
+type parsedFTP struct {
+	Direction string `json:"direction,omitempty"`
+	Payload   []byte `json:"payload,omitempty"`
+}
+
+type ftpServer struct {
+	events []parsedFTP
+	conn   net.Conn
+}
+
+func (s *ftpServer) read(logger Logger, h Honeypot) (string, error) {
+	msg, err := bufio.NewReader(s.conn).ReadString('\n')
 	if err != nil {
 		return msg, err
 	}
-	return msg, err
+	s.events = append(s.events, parsedFTP{
+		Direction: "read",
+		Payload:   []byte(msg),
+	})
+	return msg, nil
+}
+
+func (s *ftpServer) write(msg string) error {
+	_, err := s.conn.Write([]byte(msg))
+	if err != nil {
+		return err
+	}
+	s.events = append(s.events, parsedFTP{
+		Direction: "write",
+		Payload:   []byte(msg),
+	})
+	return nil
+
 }
 
 // HandleFTP takes a net.Conn and does basic FTP communication
 func HandleFTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+	server := ftpServer{
+		conn: conn,
+	}
+
+	md, err := h.MetadataByConnection(conn)
+	if err != nil {
+		return err
+	}
+
 	defer func() {
+		if err := h.Produce("ftp", conn, md, firstOrEmpty[parsedFTP](server.events).Payload, server.events); err != nil {
+			logger.Error("failed to produce events", zap.Error(err))
+		}
 		if err := conn.Close(); err != nil {
 			logger.Error("failed to close FTP connection", zap.Error(err))
 		}
@@ -32,17 +71,12 @@ func HandleFTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 		return err
 	}
 
-	md, err := h.MetadataByConnection(conn)
-	if err != nil {
-		return err
-	}
-
 	if _, err := conn.Write([]byte("220 Welcome!\r\n")); err != nil {
 		return err
 	}
 	for {
 		h.UpdateConnectionTimeout(ctx, conn)
-		msg, err := readFTP(conn, logger, h)
+		msg, err := server.read(logger, h)
 		if len(msg) < 4 || err != nil {
 			return err
 		}
@@ -56,18 +90,18 @@ func HandleFTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 			zap.String("message", fmt.Sprintf("%q", msg)),
 			zap.String("handler", "ftp"),
 		)
-		if err := h.Produce("ftp", conn, md, []byte(msg), struct {
-			Message string `json:"message,omitempty"`
-		}{Message: msg}); err != nil {
-			return err
-		}
 
-		if cmd == "USER" {
-			conn.Write([]byte("331 OK.\r\n"))
-		} else if cmd == "PASS" {
-			conn.Write([]byte("230 OK.\r\n"))
-		} else {
-			conn.Write([]byte("200 OK.\r\n"))
+		var resp string
+		switch cmd {
+		case "USER":
+			resp = "331 OK.\r\n"
+		case "PASS":
+			resp = "230 OK.\r\n"
+		default:
+			resp = "200 OK.\r\n"
+		}
+		if err := server.write(resp); err != nil {
+			return err
 		}
 	}
 }
