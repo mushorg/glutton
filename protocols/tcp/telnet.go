@@ -1,4 +1,4 @@
-package protocols
+package tcp
 
 import (
 	"bufio"
@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mushorg/glutton/protocols/helpers"
+	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
 )
 
@@ -88,7 +90,7 @@ func (s *telnetServer) read(conn net.Conn) (string, error) {
 	return msg, err
 }
 
-func (s *telnetServer) getSample(cmd string, logger Logger) error {
+func (s *telnetServer) getSample(cmd string, logger interfaces.Logger) error {
 	url := cmd[strings.Index(cmd, "http"):]
 	url = strings.Split(url, " ")[0]
 	logger.Info(fmt.Sprintf("getSample target URL: %s", url))
@@ -137,7 +139,7 @@ func (s *telnetServer) getSample(cmd string, logger Logger) error {
 }
 
 // HandleTelnet handles telnet communication on a connection
-func HandleTelnet(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+func HandleTelnet(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
 	s := &telnetServer{
 		events: []parsedTelnet{},
 		client: &http.Client{
@@ -149,7 +151,7 @@ func HandleTelnet(ctx context.Context, conn net.Conn, logger Logger, h Honeypot)
 		if err != nil {
 			logger.Error("failed to get metadata", zap.Error(err))
 		}
-		if err := h.Produce("telnet", conn, md, []byte(firstOrEmpty[parsedTelnet](s.events).Message), s.events); err != nil {
+		if err := h.ProduceTCP("telnet", conn, md, []byte(helpers.FirstOrEmpty[parsedTelnet](s.events).Message), s.events); err != nil {
 			logger.Error("failed to produce message", zap.Error(err))
 		}
 		if err := conn.Close(); err != nil {

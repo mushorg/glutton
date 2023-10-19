@@ -1,4 +1,4 @@
-package protocols
+package tcp
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"github.com/ghettovoice/gosip/log"
 	"github.com/ghettovoice/gosip/sip"
 	"github.com/ghettovoice/gosip/sip/parser"
+	"github.com/mushorg/glutton/protocols/helpers"
+	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
 )
 
@@ -25,7 +27,7 @@ type sipServer struct {
 }
 
 // HandleSIP takes a net.Conn and does basic SIP communication
-func HandleSIP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+func HandleSIP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := sipServer{
 		events: []parsedSIP{},
 	}
@@ -34,7 +36,7 @@ func HandleSIP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 		if err != nil {
 			logger.Error("failed to fetch meta data", zap.String("protocol", "sip"), zap.Error(err))
 		}
-		if err := h.Produce("sip", conn, md, firstOrEmpty[parsedSIP](server.events).Payload, server.events); err != nil {
+		if err := h.ProduceTCP("sip", conn, md, helpers.FirstOrEmpty[parsedSIP](server.events).Payload, server.events); err != nil {
 			logger.Error("failed to produce message", zap.String("protocol", "sip"), zap.Error(err))
 		}
 		if err := conn.Close(); err != nil {

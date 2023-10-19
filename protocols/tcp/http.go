@@ -1,4 +1,4 @@
-package protocols
+package tcp
 
 import (
 	"bufio"
@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
 )
 
@@ -47,7 +48,7 @@ func sendJSON(data []byte, conn net.Conn) error {
 	return err
 }
 
-func handlePOST(req *http.Request, conn net.Conn, buf *bytes.Buffer, logger Logger) error {
+func handlePOST(req *http.Request, conn net.Conn, buf *bytes.Buffer, logger interfaces.Logger) error {
 	body := buf.Bytes()
 	// Ethereum RPC call
 	if strings.Contains(string(body), "eth_blockNumber") {
@@ -113,7 +114,7 @@ type decodedHTTP struct {
 }
 
 // HandleHTTP takes a net.Conn and does basic HTTP communication
-func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+func HandleHTTP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
 		err := conn.Close()
 		if err != nil {
@@ -160,7 +161,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 		logger.Info(fmt.Sprintf("HTTP payload:\n%s", hex.Dump(buf.Bytes()[:length%1024])))
 	}
 
-	if err := h.Produce("http", conn, md, buf.Bytes(), decodedHTTP{
+	if err := h.ProduceTCP("http", conn, md, buf.Bytes(), decodedHTTP{
 		Method: req.Method,
 		URL:    req.URL.EscapedPath(),
 		Path:   req.URL.EscapedPath(),

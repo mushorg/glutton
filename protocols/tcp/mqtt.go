@@ -1,4 +1,4 @@
-package protocols
+package tcp
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
 )
 
@@ -23,7 +24,7 @@ type mqttRes struct {
 }
 
 // HandleMQTT handles a MQTT connection
-func HandleMQTT(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+func HandleMQTT(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
 	var err error
 	defer func() {
 		err = conn.Close()
@@ -46,7 +47,7 @@ func HandleMQTT(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 			if err != nil {
 				return err
 			}
-			if err = h.Produce("mqtt", conn, md, buffer, msg); err != nil {
+			if err = h.ProduceTCP("mqtt", conn, md, buffer, msg); err != nil {
 				logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "mqtt"))
 			}
 

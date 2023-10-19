@@ -1,4 +1,4 @@
-package protocols
+package tcp
 
 import (
 	"bufio"
@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mushorg/glutton/protocols/helpers"
+	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
 )
 
@@ -21,7 +23,7 @@ type ftpServer struct {
 	conn   net.Conn
 }
 
-func (s *ftpServer) read(logger Logger, h Honeypot) (string, error) {
+func (s *ftpServer) read(logger interfaces.Logger, h interfaces.Honeypot) (string, error) {
 	msg, err := bufio.NewReader(s.conn).ReadString('\n')
 	if err != nil {
 		return msg, err
@@ -47,7 +49,7 @@ func (s *ftpServer) write(msg string) error {
 }
 
 // HandleFTP takes a net.Conn and does basic FTP communication
-func HandleFTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+func HandleFTP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := ftpServer{
 		conn: conn,
 	}
@@ -58,7 +60,7 @@ func HandleFTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 	}
 
 	defer func() {
-		if err := h.Produce("ftp", conn, md, firstOrEmpty[parsedFTP](server.events).Payload, server.events); err != nil {
+		if err := h.ProduceTCP("ftp", conn, md, helpers.FirstOrEmpty[parsedFTP](server.events).Payload, server.events); err != nil {
 			logger.Error("failed to produce events", zap.Error(err))
 		}
 		if err := conn.Close(); err != nil {

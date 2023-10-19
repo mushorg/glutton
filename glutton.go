@@ -2,7 +2,6 @@ package glutton
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -27,17 +26,18 @@ import (
 
 // Glutton struct
 type Glutton struct {
-	id               uuid.UUID
-	Logger           *zap.Logger
-	Server           *Server
-	rules            rules.Rules
-	Producer         *producer.Producer
-	conntable        *connection.ConnTable
-	protocolHandlers map[string]protocols.HandlerFunc
-	ctx              context.Context
-	cancel           context.CancelFunc
-	publicAddrs      []net.IP
-	connHandlers     map[string]connHandlerFunc
+	id                  uuid.UUID
+	Logger              *zap.Logger
+	Server              *Server
+	rules               rules.Rules
+	Producer            *producer.Producer
+	connTable           *connection.ConnTable
+	tcpProtocolHandlers map[string]protocols.TCPHandlerFunc
+	udpProtocolHandlers map[string]protocols.UDPHandlerFunc
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	publicAddrs         []net.IP
+	connHandlers        map[string]connHandlerFunc
 }
 
 func (g *Glutton) initConfig() error {
@@ -56,10 +56,14 @@ func (g *Glutton) initConfig() error {
 
 // New creates a new Glutton instance
 func New(ctx context.Context) (*Glutton, error) {
-	g := &Glutton{}
+	g := &Glutton{
+		tcpProtocolHandlers: make(map[string]protocols.TCPHandlerFunc),
+		udpProtocolHandlers: make(map[string]protocols.UDPHandlerFunc),
+		connTable:           connection.New(),
+		connHandlers:        map[string]connHandlerFunc{},
+	}
 	g.ctx, g.cancel = context.WithCancel(ctx)
 
-	g.protocolHandlers = make(map[string]protocols.HandlerFunc)
 	if err := g.makeID(); err != nil {
 		return nil, err
 	}
@@ -77,9 +81,6 @@ func New(ctx context.Context) (*Glutton, error) {
 		return nil, err
 	}
 	defer rulesFile.Close()
-
-	g.conntable = connection.New()
-	g.connHandlers = map[string]connHandlerFunc{}
 
 	g.rules, err = rules.ParseRuleSpec(rulesFile)
 	if err != nil {
@@ -125,7 +126,8 @@ func (g *Glutton) Init() error {
 		}
 	}
 	// Initiating protocol handlers
-	g.protocolHandlers = protocols.MapProtocolHandlers(g.Logger, g)
+	g.tcpProtocolHandlers = protocols.MapTCPProtocolHandlers(g.Logger, g)
+	g.udpProtocolHandlers = protocols.MapUDPProtocolHandlers(g.Logger, g)
 	g.registerHandlers()
 
 	return nil
@@ -143,13 +145,21 @@ func (g *Glutton) udpListen() {
 		if err != nil {
 			g.Logger.Error("failed to apply rules", zap.Error(err))
 		}
-		md, err := g.conntable.Register(srcAddr.IP.String(), strconv.Itoa(int(srcAddr.AddrPort().Port())), dstAddr.AddrPort().Port(), rule)
+		if rule == nil {
+			rule = &rules.Rule{Target: "udp"}
+		}
+		md, err := g.connTable.Register(srcAddr.IP.String(), strconv.Itoa(int(srcAddr.AddrPort().Port())), dstAddr.AddrPort().Port(), rule)
 		if err != nil {
 			g.Logger.Error("failed to register UDP packet", zap.Error(err))
 		}
-		g.Logger.Info(fmt.Sprintf("UDP payload:\n%s", hex.Dump(buffer[:n%1024])))
-		if err := g.ProduceUDP("udp", srcAddr, dstAddr, md, buffer[:n%1024], nil); err != nil {
-			g.Logger.Error("failed to produce UDP payload", zap.Error(err))
+
+		if hfunc, ok := g.udpProtocolHandlers[rule.Target]; ok {
+			data := buffer[:n]
+			go func() {
+				if err := hfunc(g.ctx, srcAddr, dstAddr, data, md); err != nil {
+					g.Logger.Error("failed to handle UDP payload", zap.Error(err))
+				}
+			}()
 		}
 	}
 }
@@ -188,14 +198,14 @@ func (g *Glutton) Start() error {
 			rule = &rules.Rule{Target: "default"}
 		}
 
-		if _, err := g.conntable.RegisterConn(conn, rule); err != nil {
+		if _, err := g.connTable.RegisterConn(conn, rule); err != nil {
 			return err
 		}
 
-		if hfunc, ok := g.protocolHandlers[rule.Target]; ok {
+		if hfunc, ok := g.tcpProtocolHandlers[rule.Target]; ok {
 			go func() {
 				if err := hfunc(g.ctx, conn); err != nil {
-					fmt.Printf("failed to handle connection: %s\n", err)
+					g.Logger.Error("failed to handle TCP connection", zap.Error(err))
 				}
 			}()
 		}
@@ -281,7 +291,7 @@ func (g *Glutton) registerHandlers() {
 	for _, rule := range g.rules {
 		if rule.Type == "conn_handler" && rule.Target != "" {
 
-			if g.protocolHandlers[rule.Target] == nil {
+			if g.tcpProtocolHandlers[rule.Target] == nil {
 				g.Logger.Warn(fmt.Sprintf("no handler found for '%s' protocol", rule.Target))
 				continue
 			}
@@ -319,7 +329,7 @@ func (g *Glutton) registerHandlers() {
 					return fmt.Errorf("failed to set connection deadline: %w", err)
 				}
 				ctx := g.contextWithTimeout(72)
-				err = g.protocolHandlers[rule.Target](ctx, conn)
+				err = g.tcpProtocolHandlers[rule.Target](ctx, conn)
 				done <- struct{}{}
 				if err != nil {
 					return fmt.Errorf("protocol handler error: %w", err)
@@ -332,7 +342,7 @@ func (g *Glutton) registerHandlers() {
 
 // ConnectionByFlow returns connection metadata by connection key
 func (g *Glutton) ConnectionByFlow(ckey [2]uint64) *connection.Metadata {
-	return g.conntable.Get(ckey)
+	return g.connTable.Get(ckey)
 }
 
 // MetadataByConnection returns connection metadata by connection
@@ -359,7 +369,7 @@ func (g *Glutton) sanitizePayload(payload []byte) []byte {
 	return payload
 }
 
-func (g *Glutton) Produce(handler string, conn net.Conn, md *connection.Metadata, payload []byte, decoded interface{}) error {
+func (g *Glutton) ProduceTCP(handler string, conn net.Conn, md *connection.Metadata, payload []byte, decoded interface{}) error {
 	if g.Producer != nil {
 		payload = g.sanitizePayload(payload)
 		return g.Producer.LogTCP(handler, conn, md, payload, decoded)

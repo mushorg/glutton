@@ -1,4 +1,4 @@
-package protocols
+package tcp
 
 import (
 	"context"
@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/mushorg/glutton/protocols/smb"
+	"github.com/mushorg/glutton/protocols/helpers"
+	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/mushorg/glutton/protocols/tcp/smb"
 	"go.uber.org/zap"
 )
 
@@ -35,7 +37,7 @@ func (ss *smbServer) write(header smb.SMBHeader, data []byte) error {
 }
 
 // HandleSMB takes a net.Conn and does basic SMB communication
-func HandleSMB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+func HandleSMB(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := &smbServer{
 		events: []parsedSMB{},
 		conn:   conn,
@@ -45,7 +47,7 @@ func HandleSMB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 		if err != nil {
 			logger.Error("failed to get metadata", zap.Error(err))
 		}
-		if err := h.Produce("smb", conn, md, firstOrEmpty[parsedSMB](server.events).Payload, server.events); err != nil {
+		if err := h.ProduceTCP("smb", conn, md, helpers.FirstOrEmpty[parsedSMB](server.events).Payload, server.events); err != nil {
 			logger.Error("failed to produce message", zap.String("protocol", "smb"), zap.Error(err))
 		}
 

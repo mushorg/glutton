@@ -1,4 +1,4 @@
-package protocols
+package tcp
 
 import (
 	"bufio"
@@ -7,9 +7,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+
+	"github.com/mushorg/glutton/protocols/interfaces"
 )
 
-func readRFB(conn net.Conn, logger Logger) error {
+func readRFB(conn net.Conn, logger interfaces.Logger) error {
 	msg, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		logger.Error(fmt.Sprintf("[rfb     ] error: %v", err))
@@ -31,7 +33,7 @@ type PixelFormat struct {
 }
 
 // HandleRFB takes a net.Conn and does basic RFB/VNC communication
-func HandleRFB(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+func HandleRFB(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			logger.Error(fmt.Sprintf("[rfb     ] error: %v", err))

@@ -1,4 +1,4 @@
-package protocols
+package tcp
 
 import (
 	"bufio"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
 )
 
@@ -49,7 +50,7 @@ func validateRCPT(query string) bool {
 }
 
 // HandleSMTP takes a net.Conn and does basic SMTP communication
-func HandleSMTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+func HandleSMTP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			logger.Error(fmt.Sprintf("[smtp    ]  error: %v", err))
@@ -93,7 +94,7 @@ func HandleSMTP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) e
 				if err != nil {
 					break
 				}
-				if err := h.Produce("smtp", conn, md, []byte(data), struct {
+				if err := h.ProduceTCP("smtp", conn, md, []byte(data), struct {
 					Message string `json:"message,omitempty"`
 				}{Message: query}); err != nil {
 					logger.Error("failed to produce message", zap.String("protocol", "smpt"), zap.Error(err))

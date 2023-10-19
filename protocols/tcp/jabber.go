@@ -1,4 +1,4 @@
-package protocols
+package tcp
 
 import (
 	"bufio"
@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
 )
 
@@ -35,7 +36,7 @@ type JabberClient struct {
 }
 
 // parse Jabber client
-func parseJabberClient(conn net.Conn, dataClient []byte, logger Logger, h Honeypot) error {
+func parseJabberClient(conn net.Conn, dataClient []byte, logger interfaces.Logger, h interfaces.Honeypot) error {
 	v := JabberClient{STo: "none", Version: "none"}
 	if err := xml.Unmarshal(dataClient, &v); err != nil {
 		logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
@@ -52,7 +53,7 @@ func parseJabberClient(conn net.Conn, dataClient []byte, logger Logger, h Honeyp
 		return err
 	}
 
-	if err = h.Produce("jabber", conn, md, dataClient, v); err != nil {
+	if err = h.ProduceTCP("jabber", conn, md, dataClient, v); err != nil {
 		logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "jabber"))
 	}
 
@@ -67,7 +68,7 @@ func parseJabberClient(conn net.Conn, dataClient []byte, logger Logger, h Honeyp
 }
 
 // read client msg
-func readMsgJabber(conn net.Conn, logger Logger, h Honeypot) error {
+func readMsgJabber(conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
 	r := bufio.NewReader(conn)
 	line, _, err := r.ReadLine()
 	if err != nil {
@@ -78,7 +79,7 @@ func readMsgJabber(conn net.Conn, logger Logger, h Honeypot) error {
 }
 
 // HandleJabber main handler
-func HandleJabber(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+func HandleJabber(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))

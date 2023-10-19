@@ -1,4 +1,4 @@
-package protocols
+package tcp
 
 import (
 	"testing"

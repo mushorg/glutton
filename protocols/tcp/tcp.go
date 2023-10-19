@@ -1,4 +1,4 @@
-package protocols
+package tcp
 
 import (
 	"context"
@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/mushorg/glutton/protocols/helpers"
+	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
@@ -64,7 +66,7 @@ func (s *tcpServer) sendRandom(conn net.Conn) error {
 }
 
 // HandleTCP takes a net.Conn and peeks at the data send
-func HandleTCP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) error {
+func HandleTCP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := tcpServer{
 		events: []parsedTCP{},
 	}
@@ -74,7 +76,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, logger Logger, h Honeypot) er
 	}
 
 	defer func() {
-		if err := h.Produce("tcp", conn, md, firstOrEmpty[parsedTCP](server.events).Payload, server.events); err != nil {
+		if err := h.ProduceTCP("tcp", conn, md, helpers.FirstOrEmpty[parsedTCP](server.events).Payload, server.events); err != nil {
 			logger.Error("failed to produce message", zap.String("protocol", "tcp"), zap.Error(err))
 		}
 		if err := conn.Close(); err != nil {
