@@ -17,5 +17,4 @@ func TestNewGlutton(t *testing.T) {
 	g, err := New(context.Background())
 	require.NoError(t, err, "error initializing glutton")
 	require.NotNil(t, g, "nil instance but no error")
-	g.registerHandlers()
 }

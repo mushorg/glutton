@@ -16,7 +16,6 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
 	"github.com/mushorg/glutton/rules"
-	"github.com/mushorg/glutton/scanner"
 
 	"github.com/google/uuid"
 	"github.com/seud0nym/tproxy-go/tproxy"
@@ -37,7 +36,6 @@ type Glutton struct {
 	ctx                 context.Context
 	cancel              context.CancelFunc
 	publicAddrs         []net.IP
-	connHandlers        map[string]connHandlerFunc
 }
 
 func (g *Glutton) initConfig() error {
@@ -60,7 +58,6 @@ func New(ctx context.Context) (*Glutton, error) {
 		tcpProtocolHandlers: make(map[string]protocols.TCPHandlerFunc),
 		udpProtocolHandlers: make(map[string]protocols.UDPHandlerFunc),
 		connTable:           connection.New(),
-		connHandlers:        map[string]connHandlerFunc{},
 	}
 	g.ctx, g.cancel = context.WithCancel(ctx)
 
@@ -128,7 +125,6 @@ func (g *Glutton) Init() error {
 	// Initiating protocol handlers
 	g.tcpProtocolHandlers = protocols.MapTCPProtocolHandlers(g.Logger, g)
 	g.udpProtocolHandlers = protocols.MapUDPProtocolHandlers(g.Logger, g)
-	g.registerHandlers()
 
 	return nil
 }
@@ -246,97 +242,10 @@ func (g *Glutton) makeID() error {
 	return nil
 }
 
-// closeOnShutdown close all connections before system shutdown
-func (g *Glutton) closeOnShutdown(conn net.Conn, done <-chan struct{}) {
-	select {
-	case <-g.ctx.Done():
-		if err := conn.Close(); err != nil {
-			g.Logger.Error("error on ctx close", zap.Error(err))
-		}
-		return
-	case <-done:
-		if err := conn.Close(); err != nil {
-			g.Logger.Debug("error on handler close", zap.Error(err))
-		}
-		return
-	}
-}
-
-type contextKey string
-
-// Drive child context from parent context with additional value required for sepcific handler
-func (g *Glutton) contextWithTimeout(timeInSeconds int) context.Context {
-	return context.WithValue(g.ctx, contextKey("timeout"), time.Duration(timeInSeconds)*time.Second)
-}
-
 // UpdateConnectionTimeout increase connection timeout limit on connection I/O operation
 func (g *Glutton) UpdateConnectionTimeout(ctx context.Context, conn net.Conn) {
 	if timeout, ok := ctx.Value("timeout").(time.Duration); ok {
 		conn.SetDeadline(time.Now().Add(timeout))
-	}
-}
-
-type connHandlerFunc func(conn net.Conn, md *connection.Metadata) error
-
-func (g *Glutton) registerConnHandler(target string, handler connHandlerFunc) error {
-	if _, ok := g.connHandlers[target]; ok {
-		return fmt.Errorf("conn handler already registered for %s", target)
-	}
-	g.connHandlers[target] = handler
-	return nil
-}
-
-// registerHandlers register protocol handlers to glutton_server
-func (g *Glutton) registerHandlers() {
-	for _, rule := range g.rules {
-		if rule.Type == "conn_handler" && rule.Target != "" {
-
-			if g.tcpProtocolHandlers[rule.Target] == nil {
-				g.Logger.Warn(fmt.Sprintf("no handler found for '%s' protocol", rule.Target))
-				continue
-			}
-
-			g.registerConnHandler(rule.Target, func(conn net.Conn, md *connection.Metadata) error {
-				host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
-				if err != nil {
-					return fmt.Errorf("failed to split remote address: %w", err)
-				}
-
-				if md == nil {
-					g.Logger.Debug(fmt.Sprintf("connection not tracked: %s:%s", host, port))
-					return nil
-				}
-				g.Logger.Debug(
-					fmt.Sprintf("new connection: %s:%s -> %d", host, port, md.TargetPort),
-					zap.String("host", host),
-					zap.String("src_port", port),
-					zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-					zap.String("handler", rule.Target),
-				)
-
-				matched, name, err := scanner.IsScanner(net.ParseIP(host))
-				if err != nil {
-					return err
-				}
-				if matched {
-					g.Logger.Info("IP from a known scanner", zap.String("host", host), zap.String("scanner", name), zap.String("dest_port", strconv.Itoa(int(md.TargetPort))))
-					return nil
-				}
-
-				done := make(chan struct{})
-				go g.closeOnShutdown(conn, done)
-				if err = conn.SetDeadline(time.Now().Add(time.Duration(viper.GetInt("conn_timeout")) * time.Second)); err != nil {
-					return fmt.Errorf("failed to set connection deadline: %w", err)
-				}
-				ctx := g.contextWithTimeout(72)
-				err = g.tcpProtocolHandlers[rule.Target](ctx, conn)
-				done <- struct{}{}
-				if err != nil {
-					return fmt.Errorf("protocol handler error: %w", err)
-				}
-				return nil
-			})
-		}
 	}
 }
 
@@ -401,17 +310,6 @@ func (g *Glutton) Shutdown() error {
 	return g.Server.Shutdown()
 }
 
-func (g *Glutton) applyRulesOnConn(conn net.Conn) (*rules.Rule, error) {
-	match, err := g.rules.Match("tcp", conn.RemoteAddr(), conn.LocalAddr())
-	if err != nil {
-		return nil, err
-	}
-	if match != nil {
-		return match, err
-	}
-	return nil, nil
-}
-
 func (g *Glutton) applyRules(network string, srcAddr, dstAddr net.Addr) (*rules.Rule, error) {
 	match, err := g.rules.Match(network, srcAddr, dstAddr)
 	if err != nil {
@@ -421,4 +319,8 @@ func (g *Glutton) applyRules(network string, srcAddr, dstAddr net.Addr) (*rules.
 		return match, err
 	}
 	return nil, nil
+}
+
+func (g *Glutton) applyRulesOnConn(conn net.Conn) (*rules.Rule, error) {
+	return g.applyRules("tcp", conn.RemoteAddr(), conn.LocalAddr())
 }
