@@ -49,6 +49,9 @@ func HandleSIP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h i
 	pp := parser.NewPacketParser(l)
 
 	for {
+		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			return err
+		}
 		n, err := conn.Read(buffer)
 		if err != nil {
 			return err

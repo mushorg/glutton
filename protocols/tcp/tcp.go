@@ -91,8 +91,11 @@ func HandleTCP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h i
 
 	msgLength := 0
 	data := []byte{}
+	buffer := make([]byte, 1024)
 	for {
-		buffer := make([]byte, 1024)
+		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			return err
+		}
 		n, err := conn.Read(buffer)
 		if err != nil {
 			logger.Error("read error", zap.String("handler", "tcp"), zap.Error(err))

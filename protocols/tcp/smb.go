@@ -58,7 +58,9 @@ func HandleSMB(ctx context.Context, conn net.Conn, logger interfaces.Logger, h i
 
 	buffer := make([]byte, 1024)
 	for {
-		h.UpdateConnectionTimeout(ctx, conn)
+		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			return err
+		}
 		n, err := conn.Read(buffer)
 		if err != nil && n <= 0 {
 			return err

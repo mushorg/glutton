@@ -184,7 +184,9 @@ func HandleTelnet(ctx context.Context, conn net.Conn, logger interfaces.Logger, 
 	}
 
 	for {
-		h.UpdateConnectionTimeout(ctx, conn)
+		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			return err
+		}
 		msg, err := s.read(conn)
 		if err != nil {
 			return err

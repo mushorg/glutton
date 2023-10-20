@@ -77,7 +77,9 @@ func HandleFTP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h i
 		return err
 	}
 	for {
-		h.UpdateConnectionTimeout(ctx, conn)
+		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			return err
+		}
 		msg, err := server.read(logger, h)
 		if len(msg) < 4 || err != nil {
 			return err

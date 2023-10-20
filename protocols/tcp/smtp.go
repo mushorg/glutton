@@ -71,7 +71,9 @@ func HandleSMTP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h 
 	client.w("220 Welcome!")
 
 	for {
-		h.UpdateConnectionTimeout(ctx, conn)
+		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			return err
+		}
 		data, err := client.read()
 		if err != nil {
 			break

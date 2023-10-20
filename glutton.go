@@ -198,6 +198,10 @@ func (g *Glutton) Start() error {
 			return err
 		}
 
+		if err := g.UpdateConnectionTimeout(g.ctx, conn); err != nil {
+			g.Logger.Error("failed to set connection timeout", zap.Error(err))
+		}
+
 		if hfunc, ok := g.tcpProtocolHandlers[rule.Target]; ok {
 			go func() {
 				if err := hfunc(g.ctx, conn); err != nil {
@@ -243,10 +247,13 @@ func (g *Glutton) makeID() error {
 }
 
 // UpdateConnectionTimeout increase connection timeout limit on connection I/O operation
-func (g *Glutton) UpdateConnectionTimeout(ctx context.Context, conn net.Conn) {
+func (g *Glutton) UpdateConnectionTimeout(ctx context.Context, conn net.Conn) error {
 	if timeout, ok := ctx.Value("timeout").(time.Duration); ok {
-		conn.SetDeadline(time.Now().Add(timeout))
+		if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // ConnectionByFlow returns connection metadata by connection key
