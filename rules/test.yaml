@@ -11,4 +11,4 @@ rules:
     target: test
   - match: tcp
     type: conn_handler
-    target: default
+    target: tcp
