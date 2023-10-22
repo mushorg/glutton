@@ -74,5 +74,5 @@ func TestFlushOlderThan(t *testing.T) {
 	require.NotNil(t, md)
 	table.FlushOlderThan(time.Duration(0))
 	m := table.Get(testck)
-	require.Nil(t, m)
+	require.Empty(t, m)
 }
