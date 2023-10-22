@@ -6,11 +6,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
 )
 
-func HandleMemcache(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
+func HandleMemcache(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	var dataMap = map[string]string{}
 	buffer := make([]byte, 1024)
 	for {
@@ -25,10 +26,6 @@ func HandleMemcache(ctx context.Context, conn net.Conn, logger interfaces.Logger
 			break
 		}
 
-		md, err := h.MetadataByConnection(conn)
-		if err != nil {
-			return err
-		}
 		if err = h.ProduceTCP("memcache", conn, md, buffer, nil); err != nil {
 			logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "memcache"))
 		}

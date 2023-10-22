@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
 )
@@ -114,7 +115,7 @@ type decodedHTTP struct {
 }
 
 // HandleHTTP takes a net.Conn and does basic HTTP communication
-func HandleHTTP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
+func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
 		err := conn.Close()
 		if err != nil {
@@ -132,23 +133,16 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h 
 		return fmt.Errorf("failed to split the host: %w", err)
 	}
 
-	md, err := h.MetadataByConnection(conn)
-	if err != nil {
-		return err
-	}
-
-	if md != nil {
-		logger.Info(
-			fmt.Sprintf("HTTP %s request handled: %s", req.Method, req.URL.EscapedPath()),
-			zap.String("handler", "http"),
-			zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-			zap.String("src_ip", host),
-			zap.String("src_port", port),
-			zap.String("path", req.URL.EscapedPath()),
-			zap.String("method", req.Method),
-			zap.String("query", req.URL.Query().Encode()),
-		)
-	}
+	logger.Info(
+		fmt.Sprintf("HTTP %s request handled: %s", req.Method, req.URL.EscapedPath()),
+		zap.String("handler", "http"),
+		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+		zap.String("src_ip", host),
+		zap.String("src_port", port),
+		zap.String("path", req.URL.EscapedPath()),
+		zap.String("method", req.Method),
+		zap.String("query", req.URL.Query().Encode()),
+	)
 
 	buf := &bytes.Buffer{}
 	if req.ContentLength > 0 {
@@ -207,7 +201,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h 
 				return err
 			}
 			go func() {
-				if err := HandleTCP(ctx, conn, logger, h); err != nil {
+				if err := HandleTCP(ctx, conn, md, logger, h); err != nil {
 					logger.Error("failed to handle vmware attack", zap.Error(err))
 				}
 			}()

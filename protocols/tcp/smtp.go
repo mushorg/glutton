@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
 )
@@ -50,17 +51,12 @@ func validateRCPT(query string) bool {
 }
 
 // HandleSMTP takes a net.Conn and does basic SMTP communication
-func HandleSMTP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
+func HandleSMTP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			logger.Error(fmt.Sprintf("[smtp    ]  error: %v", err))
 		}
 	}()
-
-	md, err := h.MetadataByConnection(conn)
-	if err != nil {
-		return err
-	}
 
 	client := &Client{
 		conn:   conn,

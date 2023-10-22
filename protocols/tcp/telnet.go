@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
@@ -139,7 +140,7 @@ func (s *telnetServer) getSample(cmd string, logger interfaces.Logger) error {
 }
 
 // HandleTelnet handles telnet communication on a connection
-func HandleTelnet(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
+func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	s := &telnetServer{
 		events: []parsedTelnet{},
 		client: &http.Client{
@@ -147,10 +148,6 @@ func HandleTelnet(ctx context.Context, conn net.Conn, logger interfaces.Logger, 
 		},
 	}
 	defer func() {
-		md, err := h.MetadataByConnection(conn)
-		if err != nil {
-			logger.Error("failed to get metadata", zap.Error(err))
-		}
 		if err := h.ProduceTCP("telnet", conn, md, []byte(helpers.FirstOrEmpty[parsedTelnet](s.events).Message), s.events); err != nil {
 			logger.Error("failed to produce message", zap.Error(err))
 		}

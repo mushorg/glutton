@@ -66,9 +66,7 @@ func main() {
 		}
 		exitMtx.Lock()
 		fmt.Println("\nshutting down...")
-		if err := gtn.Shutdown(); err != nil {
-			log.Fatal(err)
-		}
+		gtn.Shutdown()
 	}
 	defer exit()
 
@@ -78,6 +76,7 @@ func main() {
 	go func() {
 		<-sig
 		exit()
+		fmt.Println("\nleaving...")
 		os.Exit(0)
 	}()
 

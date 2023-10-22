@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"net"
 
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
@@ -30,16 +31,12 @@ type bittorrentServer struct {
 }
 
 // HandleBittorrent handles a Bittorrent connection
-func HandleBittorrent(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
+func HandleBittorrent(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := bittorrentServer{
 		events: []parsedBittorrent{},
 	}
 	defer func() {
-		md, err := h.MetadataByConnection(conn)
-		if err != nil {
-			logger.Error("failed to fetch meta data", zap.Error(err), zap.String("handler", "bittorrent"))
-		}
-		if err = h.ProduceTCP("bittorrent", conn, md, helpers.FirstOrEmpty[parsedBittorrent](server.events).Payload, server.events); err != nil {
+		if err := h.ProduceTCP("bittorrent", conn, md, helpers.FirstOrEmpty[parsedBittorrent](server.events).Payload, server.events); err != nil {
 			logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "bittorrent"))
 		}
 		if err := conn.Close(); err != nil {

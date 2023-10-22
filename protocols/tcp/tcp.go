@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/spf13/viper"
@@ -66,13 +67,9 @@ func (s *tcpServer) sendRandom(conn net.Conn) error {
 }
 
 // HandleTCP takes a net.Conn and peeks at the data send
-func HandleTCP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
+func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := tcpServer{
 		events: []parsedTCP{},
-	}
-	md, err := h.MetadataByConnection(conn)
-	if err != nil {
-		logger.Error("failed to get metadata", zap.Error(err))
 	}
 
 	defer func() {
@@ -117,13 +114,9 @@ func HandleTCP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h i
 		if err != nil {
 			return err
 		}
-		dstPort := "0"
-		if md != nil {
-			dstPort = strconv.Itoa(int(md.TargetPort))
-		}
 		logger.Info(
 			"Packet got handled by TCP handler",
-			zap.String("dest_port", dstPort),
+			zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
 			zap.String("src_ip", host),
 			zap.String("src_port", port),
 			zap.String("handler", "tcp"),

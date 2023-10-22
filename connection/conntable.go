@@ -50,49 +50,49 @@ type Metadata struct {
 }
 
 type ConnTable struct {
-	table map[CKey]*Metadata
+	table map[CKey]Metadata
 	mtx   sync.RWMutex
 }
 
 func New() *ConnTable {
 	ct := &ConnTable{
-		table: make(map[CKey]*Metadata, 1024),
+		table: make(map[CKey]Metadata, 1024),
 	}
 	return ct
 }
 
 // RegisterConn a connection in the table
-func (t *ConnTable) RegisterConn(conn net.Conn, rule *rules.Rule) (*Metadata, error) {
+func (t *ConnTable) RegisterConn(conn net.Conn, rule *rules.Rule) (Metadata, error) {
 	srcIP, srcPort, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
-		return nil, fmt.Errorf("failed to split remote address: %w", err)
+		return Metadata{}, fmt.Errorf("failed to split remote address: %w", err)
 	}
 
 	_, dstPort, err := net.SplitHostPort(conn.LocalAddr().String())
 	if err != nil {
-		return nil, fmt.Errorf("failed to split local address: %w", err)
+		return Metadata{}, fmt.Errorf("failed to split local address: %w", err)
 	}
 	port, err := strconv.Atoi(dstPort)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse dstPort: %w", err)
+		return Metadata{}, fmt.Errorf("failed to parse dstPort: %w", err)
 	}
 	return t.Register(srcIP, srcPort, uint16(port), rule)
 }
 
 // Register a connection in the table
-func (t *ConnTable) Register(srcIP, srcPort string, dstPort uint16, rule *rules.Rule) (*Metadata, error) {
+func (t *ConnTable) Register(srcIP, srcPort string, dstPort uint16, rule *rules.Rule) (Metadata, error) {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
 	ck, err := NewConnKeyByString(srcIP, srcPort)
 	if err != nil {
-		return nil, err
+		return Metadata{}, err
 	}
 	if md, ok := t.table[ck]; ok {
 		return md, nil
 	}
 
-	md := &Metadata{
+	md := Metadata{
 		Added:      time.Now(),
 		TargetPort: dstPort,
 		Rule:       rule,
@@ -115,7 +115,7 @@ func (t *ConnTable) FlushOlderThan(s time.Duration) {
 }
 
 // TODO: what happens when I return a *Metadata and then FlushOlderThan() deletes it?
-func (t *ConnTable) Get(ck CKey) *Metadata {
+func (t *ConnTable) Get(ck CKey) Metadata {
 	t.mtx.RLock()
 	defer t.mtx.RUnlock()
 	return t.table[ck]

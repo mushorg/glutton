@@ -41,9 +41,9 @@ func TestProducerLog(t *testing.T) {
 
 	viper.Set("producers.http.remote", svr.URL)
 
-	err = p.LogTCP("test", conn, &md, []byte{123}, nil)
+	err = p.LogTCP("test", conn, md, []byte{123}, nil)
 	require.NoError(t, err)
 
-	err = p.LogUDP("test", &net.UDPAddr{}, &net.UDPAddr{}, &md, []byte{123}, nil)
+	err = p.LogUDP("test", &net.UDPAddr{}, &net.UDPAddr{}, md, []byte{123}, nil)
 	require.NoError(t, err)
 }

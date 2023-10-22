@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/smb"
@@ -37,16 +38,12 @@ func (ss *smbServer) write(header smb.SMBHeader, data []byte) error {
 }
 
 // HandleSMB takes a net.Conn and does basic SMB communication
-func HandleSMB(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
+func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := &smbServer{
 		events: []parsedSMB{},
 		conn:   conn,
 	}
 	defer func() {
-		md, err := h.MetadataByConnection(conn)
-		if err != nil {
-			logger.Error("failed to get metadata", zap.Error(err))
-		}
 		if err := h.ProduceTCP("smb", conn, md, helpers.FirstOrEmpty[parsedSMB](server.events).Payload, server.events); err != nil {
 			logger.Error("failed to produce message", zap.String("protocol", "smb"), zap.Error(err))
 		}
@@ -56,16 +53,16 @@ func HandleSMB(ctx context.Context, conn net.Conn, logger interfaces.Logger, h i
 		}
 	}()
 
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, 4096)
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			return err
 		}
 		n, err := conn.Read(buffer)
-		if err != nil && n <= 0 {
+		if err != nil {
 			return err
 		}
-		if n > 0 && n < 1024 {
+		if n > 0 && n < 4096 {
 			logger.Debug(fmt.Sprintf("SMB payload:\n%s", hex.Dump(buffer[0:n])))
 			buffer, err := smb.ValidateData(buffer[0:n])
 			if err != nil {

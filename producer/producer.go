@@ -46,7 +46,7 @@ type Event struct {
 	Decoded   interface{} `json:"decoded,omitempty"`
 }
 
-func makeEventTCP(handler string, conn net.Conn, md *connection.Metadata, payload []byte, decoded interface{}, sensorID string) (*Event, error) {
+func makeEventTCP(handler string, conn net.Conn, md connection.Metadata, payload []byte, decoded interface{}, sensorID string) (*Event, error) {
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
 		return nil, err
@@ -62,22 +62,20 @@ func makeEventTCP(handler string, conn net.Conn, md *connection.Metadata, payloa
 		Transport: "tcp",
 		SrcHost:   host,
 		SrcPort:   port,
+		DstPort:   uint16(md.TargetPort),
 		SensorID:  sensorID,
 		Handler:   handler,
 		Payload:   base64.StdEncoding.EncodeToString(payload),
 		Scanner:   scannerName,
 		Decoded:   decoded,
 	}
-	if md != nil {
-		event.DstPort = uint16(md.TargetPort)
-		if md.Rule != nil {
-			event.Rule = md.Rule.String()
-		}
+	if md.Rule != nil {
+		event.Rule = md.Rule.String()
 	}
 	return &event, nil
 }
 
-func makeEventUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md *connection.Metadata, payload []byte, decoded interface{}, sensorID string) (*Event, error) {
+func makeEventUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md connection.Metadata, payload []byte, decoded interface{}, sensorID string) (*Event, error) {
 	_, scannerName, err := scanner.IsScanner(net.ParseIP(srcAddr.IP.String()))
 	if err != nil {
 		return nil, err
@@ -88,17 +86,15 @@ func makeEventUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md *connection.
 		Transport: "udp",
 		SrcHost:   srcAddr.IP.String(),
 		SrcPort:   strconv.Itoa(int(srcAddr.AddrPort().Port())),
+		DstPort:   uint16(md.TargetPort),
 		SensorID:  sensorID,
 		Handler:   handler,
 		Payload:   base64.StdEncoding.EncodeToString(payload),
 		Scanner:   scannerName,
 		Decoded:   decoded,
 	}
-	if md != nil {
-		event.DstPort = uint16(md.TargetPort)
-		if md.Rule != nil {
-			event.Rule = md.Rule.String()
-		}
+	if md.Rule != nil {
+		event.Rule = md.Rule.String()
 	}
 	return &event, nil
 }
@@ -131,7 +127,7 @@ func New(sensorID string) (*Producer, error) {
 }
 
 // LogTCP is a meta caller for all producers
-func (p *Producer) LogTCP(handler string, conn net.Conn, md *connection.Metadata, payload []byte, decoded interface{}) error {
+func (p *Producer) LogTCP(handler string, conn net.Conn, md connection.Metadata, payload []byte, decoded interface{}) error {
 	event, err := makeEventTCP(handler, conn, md, payload, decoded, p.sensorID)
 	if err != nil {
 		return err
@@ -150,7 +146,7 @@ func (p *Producer) LogTCP(handler string, conn net.Conn, md *connection.Metadata
 }
 
 // LogUDP is a meta caller for all producers
-func (p *Producer) LogUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md *connection.Metadata, payload []byte, decoded interface{}) error {
+func (p *Producer) LogUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md connection.Metadata, payload []byte, decoded interface{}) error {
 	event, err := makeEventUDP(handler, srcAddr, dstAddr, md, payload, decoded, p.sensorID)
 	if err != nil {
 		return err

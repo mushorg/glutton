@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
@@ -35,16 +36,12 @@ func (rs *rdpServer) write(header rdp.TKIPHeader, data []byte) error {
 }
 
 // HandleRDP takes a net.Conn and does basic RDP communication
-func HandleRDP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
+func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := &rdpServer{
 		events: []parsedRDP{},
 		conn:   conn,
 	}
 	defer func() {
-		md, err := h.MetadataByConnection(conn)
-		if err != nil {
-			logger.Error("failed to get metadata", zap.Error(err))
-		}
 		if err := h.ProduceTCP("rdp", conn, md, helpers.FirstOrEmpty[parsedRDP](server.events).Payload, server.events); err != nil {
 			logger.Error("failed to produce message", zap.String("protocol", "rdp"), zap.Error(err))
 		}

@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/interfaces"
 
 	"go.uber.org/zap"
@@ -33,7 +34,7 @@ func readHexLength(r io.Reader) (int, error) {
 }
 
 // HandleADB Android Debug bridge handler
-func HandleADB(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
+func HandleADB(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			logger.Error("failed to close ADB connection", zap.String("handler", "adb"), zap.Error(err))
@@ -51,10 +52,6 @@ func HandleADB(ctx context.Context, conn net.Conn, logger interfaces.Logger, h i
 		return fmt.Errorf("incomplete message data: got %d, want %d. Error: %w", n, length, err)
 	}
 
-	md, err := h.MetadataByConnection(conn)
-	if err != nil {
-		return err
-	}
 	if err = h.ProduceTCP("adb", conn, md, data, nil); err != nil {
 		logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "adb"))
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/ghettovoice/gosip/log"
 	"github.com/ghettovoice/gosip/sip"
 	"github.com/ghettovoice/gosip/sip/parser"
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
@@ -27,15 +28,11 @@ type sipServer struct {
 }
 
 // HandleSIP takes a net.Conn and does basic SIP communication
-func HandleSIP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
+func HandleSIP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := sipServer{
 		events: []parsedSIP{},
 	}
 	defer func() {
-		md, err := h.MetadataByConnection(conn)
-		if err != nil {
-			logger.Error("failed to fetch meta data", zap.String("protocol", "sip"), zap.Error(err))
-		}
 		if err := h.ProduceTCP("sip", conn, md, helpers.FirstOrEmpty[parsedSIP](server.events).Payload, server.events); err != nil {
 			logger.Error("failed to produce message", zap.String("protocol", "sip"), zap.Error(err))
 		}

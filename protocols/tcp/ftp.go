@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"go.uber.org/zap"
@@ -49,16 +50,10 @@ func (s *ftpServer) write(msg string) error {
 }
 
 // HandleFTP takes a net.Conn and does basic FTP communication
-func HandleFTP(ctx context.Context, conn net.Conn, logger interfaces.Logger, h interfaces.Honeypot) error {
+func HandleFTP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := ftpServer{
 		conn: conn,
 	}
-
-	md, err := h.MetadataByConnection(conn)
-	if err != nil {
-		return err
-	}
-
 	defer func() {
 		if err := h.ProduceTCP("ftp", conn, md, helpers.FirstOrEmpty[parsedFTP](server.events).Payload, server.events); err != nil {
 			logger.Error("failed to produce events", zap.Error(err))

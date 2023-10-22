@@ -2,7 +2,6 @@ package glutton
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -181,6 +180,11 @@ func (g *Glutton) Start() error {
 	go g.udpListen()
 
 	for {
+		select {
+		case <-g.ctx.Done():
+			return nil
+		default:
+		}
 		conn, err := g.Server.tcpListener.Accept()
 		if err != nil {
 			return err
@@ -194,9 +198,12 @@ func (g *Glutton) Start() error {
 			rule = &rules.Rule{Target: "default"}
 		}
 
-		if _, err := g.connTable.RegisterConn(conn, rule); err != nil {
+		md, err := g.connTable.RegisterConn(conn, rule)
+		if err != nil {
 			return err
 		}
+
+		g.Logger.Debug("new connection", zap.String("addr", conn.LocalAddr().String()), zap.String("handler", rule.Target))
 
 		if err := g.UpdateConnectionTimeout(g.ctx, conn); err != nil {
 			g.Logger.Error("failed to set connection timeout", zap.Error(err))
@@ -204,8 +211,8 @@ func (g *Glutton) Start() error {
 
 		if hfunc, ok := g.tcpProtocolHandlers[rule.Target]; ok {
 			go func() {
-				if err := hfunc(g.ctx, conn); err != nil {
-					g.Logger.Error("failed to handle TCP connection", zap.Error(err))
+				if err := hfunc(g.ctx, conn, md); err != nil {
+					g.Logger.Error("failed to handle TCP connection", zap.Error(err), zap.String("handler", rule.Target))
 				}
 			}()
 		}
@@ -257,24 +264,21 @@ func (g *Glutton) UpdateConnectionTimeout(ctx context.Context, conn net.Conn) er
 }
 
 // ConnectionByFlow returns connection metadata by connection key
-func (g *Glutton) ConnectionByFlow(ckey [2]uint64) *connection.Metadata {
+func (g *Glutton) ConnectionByFlow(ckey [2]uint64) connection.Metadata {
 	return g.connTable.Get(ckey)
 }
 
 // MetadataByConnection returns connection metadata by connection
-func (g *Glutton) MetadataByConnection(conn net.Conn) (*connection.Metadata, error) {
+func (g *Glutton) MetadataByConnection(conn net.Conn) (connection.Metadata, error) {
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
-		return nil, fmt.Errorf("faild to split remote address: %w", err)
+		return connection.Metadata{}, fmt.Errorf("faild to split remote address: %w", err)
 	}
 	ckey, err := connection.NewConnKeyByString(host, port)
 	if err != nil {
-		return nil, err
+		return connection.Metadata{}, err
 	}
 	md := g.ConnectionByFlow(ckey)
-	if md == nil {
-		return nil, errors.New("not found")
-	}
 	return md, nil
 }
 
@@ -285,7 +289,7 @@ func (g *Glutton) sanitizePayload(payload []byte) []byte {
 	return payload
 }
 
-func (g *Glutton) ProduceTCP(handler string, conn net.Conn, md *connection.Metadata, payload []byte, decoded interface{}) error {
+func (g *Glutton) ProduceTCP(handler string, conn net.Conn, md connection.Metadata, payload []byte, decoded interface{}) error {
 	if g.Producer != nil {
 		payload = g.sanitizePayload(payload)
 		return g.Producer.LogTCP(handler, conn, md, payload, decoded)
@@ -293,7 +297,7 @@ func (g *Glutton) ProduceTCP(handler string, conn net.Conn, md *connection.Metad
 	return nil
 }
 
-func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md *connection.Metadata, payload []byte, decoded interface{}) error {
+func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md connection.Metadata, payload []byte, decoded interface{}) error {
 	if g.Producer != nil {
 		payload = g.sanitizePayload(payload)
 		return g.Producer.LogUDP("udp", srcAddr, dstAddr, md, payload, decoded)
@@ -302,19 +306,23 @@ func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md *
 }
 
 // Shutdown the packet processor
-func (g *Glutton) Shutdown() error {
+func (g *Glutton) Shutdown() {
 	defer g.Logger.Sync()
 	g.cancel() // close all connection
 
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort)); err != nil {
-		return err
-	}
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort)); err != nil {
-		return err
+	g.Logger.Info("Shutting down listeners")
+	if err := g.Server.Shutdown(); err != nil {
+		g.Logger.Error("failed to shutdown server", zap.Error(err))
 	}
 
-	g.Logger.Info("Shutting down processor")
-	return g.Server.Shutdown()
+	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort)); err != nil {
+		g.Logger.Error("failed to drop tcp iptables", zap.Error(err))
+	}
+	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort)); err != nil {
+		g.Logger.Error("failed to drop udp iptables", zap.Error(err))
+	}
+
+	g.Logger.Info("All done")
 }
 
 func (g *Glutton) applyRules(network string, srcAddr, dstAddr net.Addr) (*rules.Rule, error) {
