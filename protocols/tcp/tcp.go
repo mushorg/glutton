@@ -2,11 +2,12 @@ package tcp
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"math/rand"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
@@ -52,7 +53,11 @@ func storePayload(data []byte) (string, error) {
 }
 
 func (s *tcpServer) sendRandom(conn net.Conn) error {
-	randomBytes := make([]byte, 12+rand.Intn(500))
+	randomInt, err := rand.Int(rand.Reader, big.NewInt(500))
+	if err != nil {
+		return err
+	}
+	randomBytes := make([]byte, 12+randomInt.Int64())
 	if _, err := rand.Read(randomBytes); err != nil {
 		return err
 	}

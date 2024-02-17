@@ -3,9 +3,10 @@ package tcp
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log/slog"
-	"math/rand"
+	"math/big"
 	"net"
 	"regexp"
 	"strings"
@@ -34,13 +35,15 @@ func (c *Client) read() (string, error) {
 	return c.bufin.ReadString('\n')
 }
 
-func rwait() {
-	// makes the process sleep for random time
-	rand.Seed(time.Now().Unix())
+func randomSleep() error {
 	// between 0.5 - 1.5 seconds
-	rtime := rand.Intn(1500) + 500
-	duration := time.Duration(rtime) * time.Millisecond
+	rtime, err := rand.Int(rand.Reader, big.NewInt(1500))
+	if err != nil {
+		return err
+	}
+	duration := time.Duration(rtime.Int64()+500) * time.Millisecond
 	time.Sleep(duration)
+	return nil
 }
 func validateMail(query string) bool {
 	email := regexp.MustCompile("^MAIL FROM:<.+@.+>$") // naive regex
@@ -64,7 +67,9 @@ func HandleSMTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 		bufin:  bufio.NewReader(conn),
 		bufout: bufio.NewWriter(conn),
 	}
-	rwait()
+	if err := randomSleep(); err != nil {
+		return err
+	}
 	client.w("220 Welcome!")
 
 	for {
@@ -78,13 +83,19 @@ func HandleSMTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 		query := strings.Trim(data, "\r\n")
 		logger.Info(fmt.Sprintf("[smtp    ] Payload : %q", query))
 		if strings.HasPrefix(query, "HELO ") {
-			rwait()
+			if err := randomSleep(); err != nil {
+				return err
+			}
 			client.w("250 Hello! Pleased to meet you.")
 		} else if validateMail(query) {
-			rwait()
+			if err := randomSleep(); err != nil {
+				return err
+			}
 			client.w("250 OK")
 		} else if validateRCPT(query) {
-			rwait()
+			if err := randomSleep(); err != nil {
+				return err
+			}
 			client.w("250 OK")
 		} else if strings.Compare(query, "DATA") == 0 {
 			client.w("354 End data with <CRLF>.<CRLF>")
@@ -104,7 +115,9 @@ func HandleSMTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 					break
 				}
 			}
-			rwait()
+			if err := randomSleep(); err != nil {
+				return err
+			}
 			client.w("250 OK")
 		} else if strings.Compare(query, "QUIT") == 0 {
 			client.w("Bye")

@@ -2,9 +2,10 @@ package smb
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
-	"math/rand"
+	"math/big"
 	"time"
 
 	"github.com/google/uuid"
@@ -87,9 +88,12 @@ func filetime(offset time.Duration) Filetime {
 	}
 }
 
-func random(min, max int) int {
-	rand.Seed(time.Now().Unix())
-	return rand.Intn(max-min) + min
+func random(min, max int) (int, error) {
+	rn, err := rand.Int(rand.Reader, big.NewInt(int64(max-min)))
+	if err != nil {
+		return 0, err
+	}
+	return int(rn.Int64()) + min, nil
 }
 
 func toBytes(smb interface{}) ([]byte, error) {
@@ -255,7 +259,11 @@ func MakeNegotiateProtocolResponse(header SMBHeader) (SMBHeader, []byte, error) 
 	smb.MaxTransactSize = [4]byte{0x04, 0x11}
 	smb.MaxReadSize = [4]byte{0x00, 0x00, 0x01}
 	smb.SystemTime = filetime(0)
-	smb.ServerStartTime = filetime(time.Duration(random(1000, 2000)) * time.Hour)
+	randomTime, err := random(1000, 2000)
+	if err != nil {
+		return SMBHeader{}, nil, err
+	}
+	smb.ServerStartTime = filetime(time.Duration(randomTime) * time.Hour)
 
 	data, err := toBytes(smb)
 	return smb.Header, data, err

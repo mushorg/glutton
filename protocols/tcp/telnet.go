@@ -3,13 +3,14 @@ package tcp
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -211,7 +212,11 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 			}
 
 			if resp := miraiCom[strings.TrimSpace(cmd)]; len(resp) > 0 {
-				if err := s.write(conn, resp[rand.Intn(len(resp))]+"\r\n"); err != nil {
+				n, err := rand.Int(rand.Reader, big.NewInt(int64(len(resp))))
+				if err != nil {
+					return err
+				}
+				if err := s.write(conn, resp[n.Int64()]+"\r\n"); err != nil {
 					return err
 				}
 			} else {
