@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"net"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/interfaces"
-	"go.uber.org/zap"
 )
 
 type mqttMsg struct {
@@ -47,10 +48,10 @@ func HandleMQTT(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 			}
 
 			if err = h.ProduceTCP("mqtt", conn, md, buffer, msg); err != nil {
-				logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "mqtt"))
+				logger.Error("failed to produce message", producer.ErrAttr(err), slog.String("handler", "mqtt"))
 			}
 
-			logger.Info(fmt.Sprintf("new mqqt packet with header flag: %d", msg.HeaderFlag), zap.String("handler", "mqtt"))
+			logger.Info(fmt.Sprintf("new mqqt packet with header flag: %d", msg.HeaderFlag), slog.String("handler", "mqtt"))
 			var res mqttRes
 			switch msg.HeaderFlag {
 			case 0x10:
@@ -71,11 +72,11 @@ func HandleMQTT(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 			}
 			var buf bytes.Buffer
 			if err = binary.Write(&buf, binary.LittleEndian, res); err != nil {
-				logger.Error("failed to write buffer", zap.Error(err), zap.String("handler", "bittorrent"))
+				logger.Error("failed to write buffer", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
 				break
 			}
 			if _, err = conn.Write(buf.Bytes()); err != nil {
-				logger.Error("failed to write message", zap.Error(err), zap.String("handler", "bittorrent"))
+				logger.Error("failed to write message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
 				break
 			}
 		} else {

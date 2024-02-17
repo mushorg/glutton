@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net"
 	"regexp"
@@ -11,8 +12,8 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/interfaces"
-	"go.uber.org/zap"
 )
 
 // maximum lines that can be read after the "DATA" command
@@ -95,7 +96,7 @@ func HandleSMTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 				if err := h.ProduceTCP("smtp", conn, md, []byte(data), struct {
 					Message string `json:"message,omitempty"`
 				}{Message: query}); err != nil {
-					logger.Error("failed to produce message", zap.String("protocol", "smpt"), zap.Error(err))
+					logger.Error("failed to produce message", slog.String("protocol", "smpt"), producer.ErrAttr(err))
 				}
 				logger.Info(fmt.Sprintf("[smtp    ] Data : %q", data))
 				// exit condition

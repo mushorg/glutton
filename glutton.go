@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -19,13 +20,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/seud0nym/tproxy-go/tproxy"
 	"github.com/spf13/viper"
-	"go.uber.org/zap"
 )
 
 // Glutton struct
 type Glutton struct {
 	id                  uuid.UUID
-	Logger              *zap.Logger
+	Logger              *slog.Logger
 	Server              *Server
 	rules               rules.Rules
 	Producer            *producer.Producer
@@ -47,7 +47,7 @@ func (g *Glutton) initConfig() error {
 	viper.SetDefault("ports.glutton_server", 5000)
 	viper.SetDefault("max_tcp_payload", 4096)
 	viper.SetDefault("rules_path", "rules/rules.yaml")
-	g.Logger.Debug("configuration loaded successfully", zap.String("reporter", "glutton"))
+	g.Logger.Debug("configuration loaded successfully", slog.String("reporter", "glutton"))
 	return nil
 }
 
@@ -66,7 +66,7 @@ func New(ctx context.Context) (*Glutton, error) {
 	g.Logger = producer.NewLogger(g.id.String())
 
 	// Loading the configuration
-	g.Logger.Info("Loading configurations from: config/config.yaml", zap.String("reporter", "glutton"))
+	g.Logger.Info("Loading configurations from: config/config.yaml", slog.String("reporter", "glutton"))
 	if err := g.initConfig(); err != nil {
 		return nil, err
 	}
@@ -133,26 +133,26 @@ func (g *Glutton) udpListen() {
 	for {
 		n, srcAddr, dstAddr, err := tproxy.ReadFromUDP(g.Server.udpListener, buffer)
 		if err != nil {
-			g.Logger.Error("failed to read UDP packet", zap.Error(err))
+			g.Logger.Error("failed to read UDP packet", producer.ErrAttr(err))
 		}
 
 		rule, err := g.applyRules("udp", srcAddr, dstAddr)
 		if err != nil {
-			g.Logger.Error("failed to apply rules", zap.Error(err))
+			g.Logger.Error("failed to apply rules", producer.ErrAttr(err))
 		}
 		if rule == nil {
 			rule = &rules.Rule{Target: "udp"}
 		}
 		md, err := g.connTable.Register(srcAddr.IP.String(), strconv.Itoa(int(srcAddr.AddrPort().Port())), dstAddr.AddrPort().Port(), rule)
 		if err != nil {
-			g.Logger.Error("failed to register UDP packet", zap.Error(err))
+			g.Logger.Error("failed to register UDP packet", producer.ErrAttr(err))
 		}
 
 		if hfunc, ok := g.udpProtocolHandlers[rule.Target]; ok {
 			data := buffer[:n]
 			go func() {
 				if err := hfunc(g.ctx, srcAddr, dstAddr, data, md); err != nil {
-					g.Logger.Error("failed to handle UDP payload", zap.Error(err))
+					g.Logger.Error("failed to handle UDP payload", producer.ErrAttr(err))
 				}
 			}()
 		}
@@ -203,16 +203,16 @@ func (g *Glutton) Start() error {
 			return err
 		}
 
-		g.Logger.Debug("new connection", zap.String("addr", conn.LocalAddr().String()), zap.String("handler", rule.Target))
+		g.Logger.Debug("new connection", slog.String("addr", conn.LocalAddr().String()), slog.String("handler", rule.Target))
 
 		if err := g.UpdateConnectionTimeout(g.ctx, conn); err != nil {
-			g.Logger.Error("failed to set connection timeout", zap.Error(err))
+			g.Logger.Error("failed to set connection timeout", producer.ErrAttr(err))
 		}
 
 		if hfunc, ok := g.tcpProtocolHandlers[rule.Target]; ok {
 			go func() {
 				if err := hfunc(g.ctx, conn, md); err != nil {
-					g.Logger.Error("failed to handle TCP connection", zap.Error(err), zap.String("handler", rule.Target))
+					g.Logger.Error("failed to handle TCP connection", producer.ErrAttr(err), slog.String("handler", rule.Target))
 				}
 			}()
 		}
@@ -307,19 +307,18 @@ func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md c
 
 // Shutdown the packet processor
 func (g *Glutton) Shutdown() {
-	defer g.Logger.Sync()
 	g.cancel() // close all connection
 
 	g.Logger.Info("Shutting down listeners")
 	if err := g.Server.Shutdown(); err != nil {
-		g.Logger.Error("failed to shutdown server", zap.Error(err))
+		g.Logger.Error("failed to shutdown server", producer.ErrAttr(err))
 	}
 
 	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort)); err != nil {
-		g.Logger.Error("failed to drop tcp iptables", zap.Error(err))
+		g.Logger.Error("failed to drop tcp iptables", producer.ErrAttr(err))
 	}
 	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort)); err != nil {
-		g.Logger.Error("failed to drop udp iptables", zap.Error(err))
+		g.Logger.Error("failed to drop udp iptables", producer.ErrAttr(err))
 	}
 
 	g.Logger.Info("All done")

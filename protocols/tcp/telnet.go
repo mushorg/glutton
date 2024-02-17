@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand"
 	"net"
 	"net/http"
@@ -18,9 +19,9 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
-	"go.uber.org/zap"
 )
 
 // Mirai botnet  - https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
@@ -118,7 +119,7 @@ func (s *telnetServer) getSample(cmd string, logger interfaces.Logger) error {
 	sha256Hash := hex.EncodeToString(sum[:])
 	path := filepath.Join("samples", sha256Hash)
 	if _, err = os.Stat(path); err == nil {
-		logger.Info("getSample already known", zap.String("sha", sha256Hash))
+		logger.Info("getSample already known", slog.String("sha", sha256Hash))
 		return nil
 	}
 	out, err := os.Create(path)
@@ -132,9 +133,9 @@ func (s *telnetServer) getSample(cmd string, logger interfaces.Logger) error {
 	}
 	logger.Info(
 		"new sample fetched from telnet",
-		zap.String("handler", "telnet"),
-		zap.String("sha256", sha256Hash),
-		zap.String("source", url),
+		slog.String("handler", "telnet"),
+		slog.String("sha256", sha256Hash),
+		slog.String("source", url),
 	)
 	return nil
 }
@@ -149,10 +150,10 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 	}
 	defer func() {
 		if err := h.ProduceTCP("telnet", conn, md, []byte(helpers.FirstOrEmpty[parsedTelnet](s.events).Message), s.events); err != nil {
-			logger.Error("failed to produce message", zap.Error(err))
+			logger.Error("failed to produce message", producer.ErrAttr(err))
 		}
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close telnet connection", zap.Error(err))
+			logger.Error("failed to close telnet connection", producer.ErrAttr(err))
 		}
 	}()
 

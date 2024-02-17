@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
-
-	"go.uber.org/zap"
 )
 
 type parsedRDP struct {
@@ -43,7 +43,7 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	}
 	defer func() {
 		if err := h.ProduceTCP("rdp", conn, md, helpers.FirstOrEmpty[parsedRDP](server.events).Payload, server.events); err != nil {
-			logger.Error("failed to produce message", zap.String("protocol", "rdp"), zap.Error(err))
+			logger.Error("failed to produce message", slog.String("protocol", "rdp"), producer.ErrAttr(err))
 		}
 		if err := conn.Close(); err != nil {
 			logger.Error(fmt.Sprintf("[rdp     ]  error: %v", err))

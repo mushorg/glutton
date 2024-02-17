@@ -5,12 +5,13 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/interfaces"
-	"go.uber.org/zap"
 )
 
 // ServersJabber defines servers structure
@@ -40,7 +41,7 @@ type JabberClient struct {
 func parseJabberClient(conn net.Conn, md connection.Metadata, dataClient []byte, logger interfaces.Logger, h interfaces.Honeypot) error {
 	v := JabberClient{STo: "none", Version: "none"}
 	if err := xml.Unmarshal(dataClient, &v); err != nil {
-		logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
+		logger.Error(fmt.Sprintf("error: %s", err.Error()), slog.String("handler", "jabber"))
 		return err
 	}
 
@@ -50,15 +51,15 @@ func parseJabberClient(conn net.Conn, md connection.Metadata, dataClient []byte,
 	}
 
 	if err = h.ProduceTCP("jabber", conn, md, dataClient, v); err != nil {
-		logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "jabber"))
+		logger.Error("failed to produce message", producer.ErrAttr(err), slog.String("handler", "jabber"))
 	}
 
 	logger.Info(
 		fmt.Sprintf("STo : %v Version: %v XMLns: %v XMLName: %v", v.STo, v.Version, v.XMLns, v.XMLName),
-		zap.String("handler", "jabber"),
-		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-		zap.String("src_ip", host),
-		zap.String("src_port", port),
+		slog.String("handler", "jabber"),
+		slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+		slog.String("src_ip", host),
+		slog.String("src_port", port),
 	)
 	return nil
 }
@@ -68,7 +69,7 @@ func readMsgJabber(conn net.Conn, md connection.Metadata, logger interfaces.Logg
 	r := bufio.NewReader(conn)
 	line, _, err := r.ReadLine()
 	if err != nil {
-		logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
+		logger.Error(fmt.Sprintf("error: %s", err.Error()), slog.String("handler", "jabber"))
 		return err
 	}
 	return parseJabberClient(conn, md, line[:1024], logger, h)
@@ -78,7 +79,7 @@ func readMsgJabber(conn net.Conn, md connection.Metadata, logger interfaces.Logg
 func HandleJabber(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
+			logger.Error(fmt.Sprintf("error: %s", err.Error()), slog.String("handler", "jabber"))
 		}
 	}()
 
@@ -87,15 +88,15 @@ func HandleJabber(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 
 	output, err := xml.MarshalIndent(v, "  ", "    ")
 	if err != nil {
-		logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
+		logger.Error(fmt.Sprintf("error: %s", err.Error()), slog.String("handler", "jabber"))
 		return err
 	}
 	if _, err := conn.Write(output); err != nil {
-		logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
+		logger.Error(fmt.Sprintf("error: %s", err.Error()), slog.String("handler", "jabber"))
 		return err
 	}
 	if err := readMsgJabber(conn, md, logger, h); err != nil {
-		logger.Error(fmt.Sprintf("error: %s", err.Error()), zap.String("handler", "jabber"))
+		logger.Error(fmt.Sprintf("error: %s", err.Error()), slog.String("handler", "jabber"))
 		return err
 	}
 	return nil

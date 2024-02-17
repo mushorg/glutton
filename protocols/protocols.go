@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp"
 	"github.com/mushorg/glutton/protocols/udp"
-	"go.uber.org/zap"
 )
 
 type TCPHandlerFunc func(ctx context.Context, conn net.Conn, md connection.Metadata) error
@@ -69,7 +69,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		snip, bufConn, err := Peek(conn, 4)
 		if err != nil {
 			if err := conn.Close(); err != nil {
-				log.Error("failed to close connection", zap.Error(err))
+				log.Error("failed to close connection", producer.ErrAttr(err))
 			}
 			return err
 		}

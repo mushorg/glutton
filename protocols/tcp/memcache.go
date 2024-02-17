@@ -2,13 +2,14 @@ package tcp
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/interfaces"
-	"go.uber.org/zap"
 )
 
 func HandleMemcache(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
@@ -27,7 +28,7 @@ func HandleMemcache(ctx context.Context, conn net.Conn, md connection.Metadata, 
 		}
 
 		if err = h.ProduceTCP("memcache", conn, md, buffer, nil); err != nil {
-			logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "memcache"))
+			logger.Error("failed to produce message", producer.ErrAttr(err), slog.String("handler", "memcache"))
 		}
 
 		parts := strings.Split(string(buffer[:]), " ")

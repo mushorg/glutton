@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net"
 	"os"
@@ -12,10 +13,10 @@ import (
 	"strconv"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/spf13/viper"
-	"go.uber.org/zap"
 )
 
 type parsedTCP struct {
@@ -74,10 +75,10 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 
 	defer func() {
 		if err := h.ProduceTCP("tcp", conn, md, helpers.FirstOrEmpty[parsedTCP](server.events).Payload, server.events); err != nil {
-			logger.Error("failed to produce message", zap.String("protocol", "tcp"), zap.Error(err))
+			logger.Error("failed to produce message", slog.String("protocol", "tcp"), producer.ErrAttr(err))
 		}
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close TCP connection", zap.String("handler", "tcp"), zap.Error(err))
+			logger.Error("failed to close TCP connection", slog.String("handler", "tcp"), producer.ErrAttr(err))
 		}
 	}()
 
@@ -95,7 +96,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 		n, err := conn.Read(buffer)
 		if err != nil {
-			logger.Error("read error", zap.String("handler", "tcp"), zap.Error(err))
+			logger.Error("read error", slog.String("handler", "tcp"), producer.ErrAttr(err))
 			break
 		}
 		msgLength += n
@@ -104,7 +105,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			break
 		}
 		if msgLength > viper.GetInt("max_tcp_payload") {
-			logger.Debug("max message length reached", zap.String("handler", "tcp"))
+			logger.Debug("max message length reached", slog.String("handler", "tcp"))
 			break
 		}
 	}
@@ -116,11 +117,11 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 		logger.Info(
 			"Packet got handled by TCP handler",
-			zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-			zap.String("src_ip", host),
-			zap.String("src_port", port),
-			zap.String("handler", "tcp"),
-			zap.String("payload_hash", payloadHash),
+			slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+			slog.String("src_ip", host),
+			slog.String("src_port", port),
+			slog.String("handler", "tcp"),
+			slog.String("payload_hash", payloadHash),
 		)
 		logger.Info(fmt.Sprintf("TCP payload:\n%s", hex.Dump(data[:msgLength%1024])))
 
@@ -133,7 +134,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 
 	// sending some random data
 	if err := server.sendRandom(conn); err != nil {
-		logger.Error("write error", zap.String("handler", "tcp"), zap.Error(err))
+		logger.Error("write error", slog.String("handler", "tcp"), producer.ErrAttr(err))
 	}
 
 	return nil

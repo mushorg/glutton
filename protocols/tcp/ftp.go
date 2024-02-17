@@ -4,14 +4,15 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
-	"go.uber.org/zap"
 )
 
 type parsedFTP struct {
@@ -56,10 +57,10 @@ func HandleFTP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	}
 	defer func() {
 		if err := h.ProduceTCP("ftp", conn, md, helpers.FirstOrEmpty[parsedFTP](server.events).Payload, server.events); err != nil {
-			logger.Error("failed to produce events", zap.Error(err))
+			logger.Error("failed to produce events", producer.ErrAttr(err))
 		}
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close FTP connection", zap.Error(err))
+			logger.Error("failed to close FTP connection", producer.ErrAttr(err))
 		}
 	}()
 
@@ -83,11 +84,11 @@ func HandleFTP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 
 		logger.Info(
 			"ftp payload received",
-			zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-			zap.String("src_ip", host),
-			zap.String("src_port", port),
-			zap.String("message", fmt.Sprintf("%q", msg)),
-			zap.String("handler", "ftp"),
+			slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+			slog.String("src_ip", host),
+			slog.String("src_port", port),
+			slog.String("message", fmt.Sprintf("%q", msg)),
+			slog.String("handler", "ftp"),
 		)
 
 		var resp string

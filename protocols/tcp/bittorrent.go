@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"log/slog"
 	"net"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
-	"go.uber.org/zap"
 )
 
 type bittorrentMsg struct {
@@ -37,10 +38,10 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, md connection.Metadata
 	}
 	defer func() {
 		if err := h.ProduceTCP("bittorrent", conn, md, helpers.FirstOrEmpty[parsedBittorrent](server.events).Payload, server.events); err != nil {
-			logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "bittorrent"))
+			logger.Error("failed to produce message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
 		}
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close connection", zap.Error(err), zap.String("handler", "bittorrent"))
+			logger.Error("failed to close connection", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
 			return
 		}
 	}()
@@ -54,7 +55,7 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, md connection.Metadata
 		}
 		n, err := conn.Read(buffer)
 		if err != nil {
-			logger.Error("failed to read data", zap.Error(err), zap.String("handler", "bittorrent"))
+			logger.Error("failed to read data", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
 			break
 		}
 
@@ -64,7 +65,7 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, md connection.Metadata
 
 		msg := bittorrentMsg{}
 		if err := binary.Read(bytes.NewReader(buffer[:n]), binary.BigEndian, &msg); err != nil {
-			logger.Error("failed to read message", zap.Error(err), zap.String("handler", "bittorrent"))
+			logger.Error("failed to read message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
 			break
 		}
 
@@ -76,9 +77,9 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, md connection.Metadata
 
 		logger.Info(
 			"bittorrent received",
-			zap.String("handler", "bittorrent"),
-			zap.Uint8s("peer_id", msg.PeerID[:]),
-			zap.Uint8s("inf_hash", msg.InfoHash[:]),
+			slog.String("handler", "bittorrent"),
+			slog.Any("peer_id", msg.PeerID[:]),
+			slog.Any("inf_hash", msg.InfoHash[:]),
 		)
 
 		server.events = append(server.events, parsedBittorrent{
@@ -87,7 +88,7 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, md connection.Metadata
 			Payload:   buffer[:n],
 		})
 		if err = binary.Write(conn, binary.BigEndian, msg); err != nil {
-			logger.Error("failed to write message", zap.Error(err), zap.String("handler", "bittorrent"))
+			logger.Error("failed to write message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
 			break
 		}
 	}

@@ -64,7 +64,7 @@ func ConnectionConfirm(cr CRTPDU) (TKIPHeader, []byte, error) {
 		},
 		TPDU: CCTPDU{
 			Length: 6,
-			CCCDT:  0xd, // 1101-xxxx
+			CCCDT:  0xc, // 1101-xxxx
 			DstRef: cr.DstRef,
 			SrcRef: cr.SrcRef,
 		},

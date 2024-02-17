@@ -7,14 +7,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/interfaces"
-	"go.uber.org/zap"
 )
 
 // formatRequest generates ascii representation of a request
@@ -119,7 +120,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 	defer func() {
 		err := conn.Close()
 		if err != nil {
-			logger.Error("failed to close the HTTP connection", zap.Error(err))
+			logger.Error("failed to close the HTTP connection", producer.ErrAttr(err))
 		}
 	}()
 
@@ -135,13 +136,13 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 
 	logger.Info(
 		fmt.Sprintf("HTTP %s request handled: %s", req.Method, req.URL.EscapedPath()),
-		zap.String("handler", "http"),
-		zap.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-		zap.String("src_ip", host),
-		zap.String("src_port", port),
-		zap.String("path", req.URL.EscapedPath()),
-		zap.String("method", req.Method),
-		zap.String("query", req.URL.Query().Encode()),
+		slog.String("handler", "http"),
+		slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+		slog.String("src_ip", host),
+		slog.String("src_port", port),
+		slog.String("path", req.URL.EscapedPath()),
+		slog.String("method", req.Method),
+		slog.String("query", req.URL.Query().Encode()),
 	)
 
 	buf := &bytes.Buffer{}
@@ -161,7 +162,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 		Path:   req.URL.EscapedPath(),
 		Query:  req.URL.Query().Encode(),
 	}); err != nil {
-		logger.Error("failed to produce message", zap.String("protocol", "http"), zap.Error(err))
+		logger.Error("failed to produce message", slog.String("protocol", "http"), producer.ErrAttr(err))
 	}
 
 	switch req.Method {
@@ -172,7 +173,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 	if strings.Contains(req.RequestURI, "wallet") {
 		logger.Info(
 			"HTTP wallet request",
-			zap.String("handler", "http"),
+			slog.String("handler", "http"),
 		)
 		_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length:20\r\n\r\n[[\"\"]]\r\n\r\n"))
 		return err
@@ -202,7 +203,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 			}
 			go func() {
 				if err := HandleTCP(ctx, conn, md, logger, h); err != nil {
-					logger.Error("failed to handle vmware attack", zap.Error(err))
+					logger.Error("failed to handle vmware attack", producer.ErrAttr(err))
 				}
 			}()
 		}

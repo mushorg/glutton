@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/smb"
-	"go.uber.org/zap"
 )
 
 type parsedSMB struct {
@@ -45,11 +46,11 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	}
 	defer func() {
 		if err := h.ProduceTCP("smb", conn, md, helpers.FirstOrEmpty[parsedSMB](server.events).Payload, server.events); err != nil {
-			logger.Error("failed to produce message", zap.String("protocol", "smb"), zap.Error(err))
+			logger.Error("failed to produce message", slog.String("protocol", "smb"), producer.ErrAttr(err))
 		}
 
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close SMB connection", zap.Error(err))
+			logger.Error("failed to close SMB connection", producer.ErrAttr(err))
 		}
 	}()
 

@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"strconv"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/interfaces"
-
-	"go.uber.org/zap"
 )
 
 // readHexLength reads the next 4 bytes from r as an ASCII hex-encoded length and parses them into an int.
@@ -37,7 +37,7 @@ func readHexLength(r io.Reader) (int, error) {
 func HandleADB(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close ADB connection", zap.String("handler", "adb"), zap.Error(err))
+			logger.Error("failed to close ADB connection", slog.String("handler", "adb"), producer.ErrAttr(err))
 		}
 	}()
 	length, err := readHexLength(conn)
@@ -53,9 +53,9 @@ func HandleADB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	}
 
 	if err = h.ProduceTCP("adb", conn, md, data, nil); err != nil {
-		logger.Error("failed to produce message", zap.Error(err), zap.String("handler", "adb"))
+		logger.Error("failed to produce message", producer.ErrAttr(err), slog.String("handler", "adb"))
 	}
 
-	logger.Info("handled adb request", zap.Int("data_read", n))
+	logger.Info("handled adb request", slog.Int("data_read", n))
 	return nil
 }

@@ -3,6 +3,7 @@ package tcp
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 
@@ -10,9 +11,9 @@ import (
 	"github.com/ghettovoice/gosip/sip"
 	"github.com/ghettovoice/gosip/sip/parser"
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
-	"go.uber.org/zap"
 )
 
 const maxBufferSize = 1024
@@ -34,7 +35,7 @@ func HandleSIP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	}
 	defer func() {
 		if err := h.ProduceTCP("sip", conn, md, helpers.FirstOrEmpty[parsedSIP](server.events).Payload, server.events); err != nil {
-			logger.Error("failed to produce message", zap.String("protocol", "sip"), zap.Error(err))
+			logger.Error("failed to produce message", slog.String("protocol", "sip"), producer.ErrAttr(err))
 		}
 		if err := conn.Close(); err != nil {
 			logger.Error(fmt.Errorf("failed to close SIP connection: %w", err).Error())
