@@ -205,6 +205,7 @@ func (g *Glutton) Start() error {
 
 		g.Logger.Debug("new connection", slog.String("addr", conn.LocalAddr().String()), slog.String("handler", rule.Target))
 
+		g.ctx = context.WithValue(g.ctx, ctxTimeout("timeout"), int64(viper.GetInt("conn_timeout")))
 		if err := g.UpdateConnectionTimeout(g.ctx, conn); err != nil {
 			g.Logger.Error("failed to set connection timeout", producer.ErrAttr(err))
 		}
@@ -253,10 +254,12 @@ func (g *Glutton) makeID() error {
 	return nil
 }
 
+type ctxTimeout string
+
 // UpdateConnectionTimeout increase connection timeout limit on connection I/O operation
 func (g *Glutton) UpdateConnectionTimeout(ctx context.Context, conn net.Conn) error {
-	if timeout, ok := ctx.Value("timeout").(time.Duration); ok {
-		if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+	if timeout, ok := ctx.Value(ctxTimeout("timeout")).(int64); ok {
+		if err := conn.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second)); err != nil {
 			return err
 		}
 	}

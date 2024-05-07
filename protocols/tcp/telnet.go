@@ -90,7 +90,7 @@ func (s *telnetServer) read(conn net.Conn) (string, error) {
 		return msg, err
 	}
 	s.events = append(s.events, parsedTelnet{Direction: "read", Message: msg})
-	return msg, err
+	return msg, nil
 }
 
 func (s *telnetServer) getSample(cmd string, logger interfaces.Logger) error {
