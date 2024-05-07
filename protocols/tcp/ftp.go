@@ -25,7 +25,7 @@ type ftpServer struct {
 	conn   net.Conn
 }
 
-func (s *ftpServer) read(logger interfaces.Logger, h interfaces.Honeypot) (string, error) {
+func (s *ftpServer) read(_ interfaces.Logger, _ interfaces.Honeypot) (string, error) {
 	msg, err := bufio.NewReader(s.conn).ReadString('\n')
 	if err != nil {
 		return msg, err

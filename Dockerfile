@@ -1,18 +1,11 @@
-FROM golang:1.17-alpine AS build-env
+FROM golang:1.21-alpine AS build-env
 RUN apk update
-RUN apk add iptables-dev libpcap-dev
+RUN apk add g++ git make iptables-dev libpcap-dev
 
 RUN mkdir -p /opt/glutton
 WORKDIR /opt/glutton
 
-RUN apk add g++ git make
-
 RUN cd $WORKDIR
-ENV GO111MODULE=on
-
-# Fetch dependencies
-COPY go.mod ./
-RUN go mod download
 
 ADD . .
 

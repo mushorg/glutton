@@ -88,7 +88,7 @@ func handlePOST(req *http.Request, conn net.Conn, buf *bytes.Buffer, logger inte
 
 // scanning attempts for CVE-2019-19781
 // based on https://github.com/x1sec/citrix-honeypot/
-func smbHandler(conn net.Conn, r *http.Request) error {
+func smbHandler(conn net.Conn, _ *http.Request) error {
 	// if strings.ContainsRune(r.URL.RawPath, '%') {
 	// with IDS evasion."
 	// }
