@@ -13,7 +13,7 @@ var (
 	specUDP = "-p;%s;-m;state;!;--state;ESTABLISHED,RELATED;!;--dport;%d;-j;TPROXY;--on-port;%d;--on-ip;127.0.0.1"
 )
 
-func genRuleSpec(chain, iface, protocol, srcIP string, sshPort, dport uint32) []string {
+func genRuleSpec(chain, iface, protocol, _ string, sshPort, dport uint32) []string {
 	var spec string
 	switch protocol {
 	case "udp":
