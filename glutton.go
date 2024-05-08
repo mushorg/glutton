@@ -1,7 +1,9 @@
 package glutton
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
 	"fmt"
 	"io"
 	"log/slog"
@@ -37,17 +39,24 @@ type Glutton struct {
 	publicAddrs         []net.IP
 }
 
+//go:embed config/rules.yaml
+var defaultRules []byte
+
 func (g *Glutton) initConfig() error {
 	viper.SetConfigName("config")
 	viper.AddConfigPath(viper.GetString("confpath"))
-	if err := viper.ReadInConfig(); err != nil {
-		return err
+	if _, err := os.Stat(viper.GetString("confpath")); !os.IsNotExist(err) {
+		if err := viper.ReadInConfig(); err != nil {
+			return err
+		}
 	}
 	// If no config is found, use the defaults
-	viper.SetDefault("ports.glutton_server", 5000)
+	viper.SetDefault("ports.tcp", 5000)
+	viper.SetDefault("ports.udp", 5001)
 	viper.SetDefault("max_tcp_payload", 4096)
+	viper.SetDefault("conn_timeout", 45)
 	viper.SetDefault("rules_path", "rules/rules.yaml")
-	g.Logger.Debug("configuration loaded successfully", slog.String("reporter", "glutton"))
+	g.Logger.Debug("configuration set successfully", slog.String("reporter", "glutton"))
 	return nil
 }
 
@@ -71,13 +80,21 @@ func New(ctx context.Context) (*Glutton, error) {
 		return nil, err
 	}
 
-	rulesPath := viper.GetString("rules_path")
-	rulesFile, err := os.Open(rulesPath)
-	if err != nil {
-		return nil, err
-	}
-	defer rulesFile.Close()
+	var rulesFile io.ReadCloser
 
+	rulesPath := viper.GetString("rules_path")
+	if _, err := os.Stat(rulesPath); !os.IsNotExist(err) {
+		rulesFile, err = os.Open(rulesPath)
+		if err != nil {
+			return nil, err
+		}
+		defer rulesFile.Close()
+	} else {
+		g.Logger.Warn("No rules file found, using default rules", slog.String("reporter", "glutton"))
+		rulesFile = io.NopCloser(bytes.NewBuffer(defaultRules))
+	}
+
+	var err error
 	g.rules, err = rules.ParseRuleSpec(rulesFile)
 	if err != nil {
 		return nil, err
@@ -317,9 +334,11 @@ func (g *Glutton) Shutdown() {
 		g.Logger.Error("failed to shutdown server", producer.ErrAttr(err))
 	}
 
+	g.Logger.Info("FLushing TCP iptables")
 	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort)); err != nil {
 		g.Logger.Error("failed to drop tcp iptables", producer.ErrAttr(err))
 	}
+	g.Logger.Info("FLushing UDP iptables")
 	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort)); err != nil {
 		g.Logger.Error("failed to drop udp iptables", producer.ErrAttr(err))
 	}

@@ -2,8 +2,8 @@ package rules
 
 import (
 	"fmt"
+	"io"
 	"net"
-	"os"
 	"strconv"
 	"time"
 
@@ -20,7 +20,6 @@ const (
 	Rewrite RuleType = iota
 	UserConnHandler
 	Drop
-	PassThrough
 )
 
 type Config struct {
@@ -45,7 +44,7 @@ func (r *Rule) String() string {
 	return fmt.Sprintf("Rule: %s", r.Match)
 }
 
-func ParseRuleSpec(file *os.File) (Rules, error) {
+func ParseRuleSpec(file io.Reader) (Rules, error) {
 	config := &Config{}
 	if err := yaml.NewDecoder(file).Decode(config); err != nil {
 		return nil, err
@@ -75,8 +74,6 @@ func InitRule(idx int, rule *Rule) error {
 		rule.ruleType = UserConnHandler
 	case "drop":
 		rule.ruleType = Drop
-	case "passthrough":
-		rule.ruleType = PassThrough
 	default:
 		return fmt.Errorf("unknown rule type: %s", rule.Type)
 	}

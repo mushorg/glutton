@@ -40,14 +40,6 @@
                 "type"
             ],
             "title": "Rule"
-        },
-        "Type": {
-            "type": "string",
-            "enum": [
-                "passthrough",
-                "conn_handler"
-            ],
-            "title": "Type"
         }
     }
 }

@@ -65,7 +65,6 @@ func main() {
 			fmt.Println("stacktrace from panic: \n" + string(debug.Stack()))
 		}
 		exitMtx.Lock()
-		fmt.Println("\nshutting down...")
 		gtn.Shutdown()
 	}
 	defer exit()

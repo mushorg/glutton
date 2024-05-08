@@ -1,7 +1,4 @@
 rules:
-  - match: tcp dst port 5001
-    type: passthrough
-    name: ssh
   - match: tcp dst port 23 or port 2323 or port 23231
     type: conn_handler
     target: telnet
@@ -29,9 +26,6 @@ rules:
   - match: tcp dst port 5222 or port 5223
     type: conn_handler
     target: jabber
-  - match: tcp dst port 1080
-    type: passthrough
-    name: http
   - match: tcp dst port 11211
     type: conn_handler
     target: memcache
