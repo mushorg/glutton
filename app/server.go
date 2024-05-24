@@ -66,6 +66,7 @@ func main() {
 		}
 		exitMtx.Lock()
 		gtn.Shutdown()
+		exitMtx.Unlock()
 	}
 	defer exit()
 
