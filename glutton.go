@@ -145,6 +145,14 @@ func (g *Glutton) Init() error {
 	return nil
 }
 
+var maxCount = 5
+
+type BlockList struct {
+	IP      net.Addr
+	Counter int
+	Timeout time.Duration
+}
+
 func (g *Glutton) udpListen() {
 	buffer := make([]byte, 1024)
 	for {
@@ -168,8 +176,22 @@ func (g *Glutton) udpListen() {
 		if hfunc, ok := g.udpProtocolHandlers[rule.Target]; ok {
 			data := buffer[:n]
 			go func() {
-				if err := hfunc(g.ctx, srcAddr, dstAddr, data, md); err != nil {
+				response, err := hfunc(g.ctx, srcAddr, dstAddr, data, md)
+				if err != nil {
 					g.Logger.Error("failed to handle UDP payload", producer.ErrAttr(err))
+					return
+				}
+				if response != nil {
+					con, err := net.DialUDP("udp", dstAddr, srcAddr)
+					if err != nil {
+						g.Logger.Error("failed to dial UDP connection", producer.ErrAttr(err))
+						return
+					}
+					defer con.Close()
+					_, err = con.Write(response)
+					if err != nil {
+						g.Logger.Error("failed to send UDP response", producer.ErrAttr(err))
+					}
 				}
 			}()
 		}

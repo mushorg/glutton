@@ -29,6 +29,9 @@ rules:
   - match: tcp dst port 11211
     type: conn_handler
     target: memcache
+  - match: udp dst port 53
+    type: conn_handler
+    target: dns
   - match: tcp
     type: conn_handler
     target: tcp
