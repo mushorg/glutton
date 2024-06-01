@@ -145,14 +145,6 @@ func (g *Glutton) Init() error {
 	return nil
 }
 
-var maxCount = 5
-
-type BlockList struct {
-	IP      net.Addr
-	Counter int
-	Timeout time.Duration
-}
-
 func (g *Glutton) udpListen() {
 	buffer := make([]byte, 1024)
 	for {
