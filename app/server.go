@@ -35,6 +35,7 @@ func main() {
 	fmt.Printf("%s %s\n", VERSION, BUILDDATE)
 
 	pflag.StringP("interface", "i", "eth0", "Bind to this interface")
+	pflag.IntP("ssh", "s", 0, "Override SSH port")
 	pflag.StringP("logpath", "l", "/dev/null", "Log file path")
 	pflag.StringP("confpath", "c", "config/", "Configuration file path")
 	pflag.BoolP("debug", "d", false, "Enable debug mode")
@@ -43,6 +44,10 @@ func main() {
 
 	pflag.Parse()
 	viper.BindPFlags(pflag.CommandLine)
+
+	if viper.IsSet("ssh") {
+		viper.Set("ports.ssh", viper.GetInt("ssh"))
+	}
 
 	if viper.GetBool("version") {
 		return
