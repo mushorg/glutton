@@ -30,19 +30,19 @@ func genRuleSpec(chain, iface, protocol, _ string, sshPort, dport uint32) []stri
 	return strings.Split(fmt.Sprintf(spec, iface, protocol, sshPort, dport), ";")
 }
 
-func setTProxyIPTables(iface, srcIP, protocol string, port uint32) error {
+func setTProxyIPTables(iface, srcIP, protocol string, port, sshPort uint32) error {
 	ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
 	if err != nil {
 		return err
 	}
-	return ipt.AppendUnique("mangle", "PREROUTING", genRuleSpec("PREROUTING", iface, protocol, srcIP, 22, port)...)
+	return ipt.AppendUnique("mangle", "PREROUTING", genRuleSpec("PREROUTING", iface, protocol, srcIP, sshPort, port)...)
 }
 
-func flushTProxyIPTables(iface, srcIP, protocol string, port uint32) error {
+func flushTProxyIPTables(iface, srcIP, protocol string, port, sshPort uint32) error {
 	ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
 	if err != nil {
 		return err
 	}
 
-	return ipt.Delete("mangle", "PREROUTING", genRuleSpec("PREROUTING", iface, protocol, srcIP, 22, port)...)
+	return ipt.Delete("mangle", "PREROUTING", genRuleSpec("PREROUTING", iface, protocol, srcIP, sshPort, port)...)
 }
