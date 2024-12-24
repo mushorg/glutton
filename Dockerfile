@@ -12,9 +12,9 @@ ADD . .
 RUN make build
 
 # run container
-FROM alpine
+FROM alpine:3.19
 
-RUN apk add iptables-dev libpcap-dev
+RUN apk add iptables-dev libpcap-dev iptables
 WORKDIR /opt/glutton
 
 COPY --from=build-env /opt/glutton/bin/server /opt/glutton/bin/server
