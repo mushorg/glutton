@@ -59,7 +59,7 @@ func main() {
 	}
 
 	if err := gtn.Init(); err != nil {
-		log.Fatal(err)
+		log.Fatal("Failed to initialize Glutton:", err)
 	}
 
 	exitMtx := sync.RWMutex{}
@@ -86,6 +86,6 @@ func main() {
 	}()
 
 	if err := gtn.Start(); err != nil {
-		log.Fatalf("server start error: %s", err)
+		log.Fatal("Failed to start Glutton server:", err)
 	}
 }
