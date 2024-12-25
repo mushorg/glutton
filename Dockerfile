@@ -1,4 +1,4 @@
-FROM golang:1.21-alpine AS build-env
+FROM golang:1.23-alpine AS build-env
 RUN apk update
 RUN apk add g++ git make iptables-dev libpcap-dev
 
@@ -14,7 +14,7 @@ RUN make build
 # run container
 FROM alpine
 
-RUN apk add iptables-dev libpcap-dev
+RUN apk add iptables iptables-dev libpcap-dev
 WORKDIR /opt/glutton
 
 COPY --from=build-env /opt/glutton/bin/server /opt/glutton/bin/server

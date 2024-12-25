@@ -47,11 +47,9 @@ func (s *Server) Start() error {
 func (s *Server) Shutdown() error {
 	var err error
 	if s.tcpListener != nil {
-		println("closing tcp listener")
 		err = s.tcpListener.Close()
 	}
 	if s.udpListener != nil {
-		println("closing udp listener")
 		err = s.udpListener.Close()
 	}
 	return err

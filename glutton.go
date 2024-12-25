@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
@@ -53,6 +54,7 @@ func (g *Glutton) initConfig() error {
 	// If no config is found, use the defaults
 	viper.SetDefault("ports.tcp", 5000)
 	viper.SetDefault("ports.udp", 5001)
+	viper.SetDefault("ports.ssh", 22)
 	viper.SetDefault("max_tcp_payload", 4096)
 	viper.SetDefault("conn_timeout", 45)
 	viper.SetDefault("rules_path", "rules/rules.yaml")
@@ -145,7 +147,8 @@ func (g *Glutton) Init() error {
 	return nil
 }
 
-func (g *Glutton) udpListen() {
+func (g *Glutton) udpListen(wg *sync.WaitGroup) {
+	defer wg.Done()
 	buffer := make([]byte, 1024)
 	for {
 		n, srcAddr, dstAddr, err := tproxy.ReadFromUDP(g.Server.udpListener, buffer)
@@ -190,40 +193,25 @@ func (g *Glutton) udpListen() {
 	}
 }
 
-// Start the listener, this blocks for new connections
-func (g *Glutton) Start() error {
-	quit := make(chan struct{}) // stop monitor on shutdown
-	defer func() {
-		quit <- struct{}{}
-		g.Shutdown()
-	}()
-
-	g.startMonitor(quit)
-
-	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort)); err != nil {
-		return err
-	}
-
-	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort)); err != nil {
-		return err
-	}
-
-	go g.udpListen()
-
+func (g *Glutton) tcpListen(wg *sync.WaitGroup) {
+	defer wg.Done()
 	for {
 		select {
 		case <-g.ctx.Done():
-			return nil
+			return
 		default:
 		}
+
 		conn, err := g.Server.tcpListener.Accept()
 		if err != nil {
-			return err
+			g.Logger.Error("failed to accept connection", producer.ErrAttr(err))
+			continue
 		}
 
 		rule, err := g.applyRulesOnConn(conn)
 		if err != nil {
-			return fmt.Errorf("failed to apply rules: %w", err)
+			g.Logger.Error("failed to apply rules", producer.ErrAttr(err))
+			continue
 		}
 		if rule == nil {
 			rule = &rules.Rule{Target: "default"}
@@ -231,7 +219,8 @@ func (g *Glutton) Start() error {
 
 		md, err := g.connTable.RegisterConn(conn, rule)
 		if err != nil {
-			return err
+			g.Logger.Error("failed to register connection", producer.ErrAttr(err))
+			continue
 		}
 
 		g.Logger.Debug("new connection", slog.String("addr", conn.LocalAddr().String()), slog.String("handler", rule.Target))
@@ -249,6 +238,38 @@ func (g *Glutton) Start() error {
 			}()
 		}
 	}
+}
+
+// Start the listener, this blocks for new connections
+func (g *Glutton) Start() error {
+	quit := make(chan struct{}) // stop monitor on shutdown
+	defer func() {
+		quit <- struct{}{}
+		g.Shutdown()
+	}()
+
+	g.startMonitor(quit)
+
+	sshPort := viper.GetUint32("ports.ssh")
+	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), sshPort); err != nil {
+		return err
+	}
+
+	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), sshPort); err != nil {
+		return err
+	}
+
+	wg := &sync.WaitGroup{}
+
+	wg.Add(1)
+	go g.udpListen(wg)
+
+	wg.Add(1)
+	go g.tcpListen(wg)
+
+	wg.Wait()
+
+	return nil
 }
 
 func (g *Glutton) makeID() error {
@@ -349,11 +370,11 @@ func (g *Glutton) Shutdown() {
 	}
 
 	g.Logger.Info("FLushing TCP iptables")
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort)); err != nil {
+	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
 		g.Logger.Error("failed to drop tcp iptables", producer.ErrAttr(err))
 	}
 	g.Logger.Info("FLushing UDP iptables")
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort)); err != nil {
+	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
 		g.Logger.Error("failed to drop udp iptables", producer.ErrAttr(err))
 	}
 
