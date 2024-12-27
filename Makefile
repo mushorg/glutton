@@ -34,7 +34,7 @@ run: build
 
 docker:
 	docker build -t glutton .
-	docker run --cap-add=NET_ADMIN -it glutton
+	docker run --rm --cap-add=NET_ADMIN -it glutton
 
 test:
 	go test -v ./...

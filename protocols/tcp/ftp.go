@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strconv"
@@ -47,7 +48,6 @@ func (s *ftpServer) write(msg string) error {
 		Payload:   []byte(msg),
 	})
 	return nil
-
 }
 
 // HandleFTP takes a net.Conn and does basic FTP communication
@@ -77,8 +77,11 @@ func HandleFTP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			return err
 		}
 		msg, err := server.read(logger, h)
-		if len(msg) < 4 || err != nil {
+		if err != nil || err != io.EOF {
 			return err
+		}
+		if len(msg) < 4 {
+			continue
 		}
 		cmd := strings.ToUpper(msg[:4])
 
