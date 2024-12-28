@@ -40,6 +40,7 @@ func main() {
 	pflag.StringP("confpath", "c", "config/", "Configuration file path")
 	pflag.BoolP("debug", "d", false, "Enable debug mode")
 	pflag.Bool("version", false, "Print version")
+	pflag.Bool("nftables", false, "Use nftables instead of iptables")
 	pflag.String("var-dir", "/var/lib/glutton", "Set var-dir")
 
 	pflag.Parse()

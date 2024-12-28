@@ -20,9 +20,11 @@ import (
 	"github.com/mushorg/glutton/protocols"
 	"github.com/mushorg/glutton/rules"
 
+	"github.com/google/nftables"
 	"github.com/google/uuid"
 	"github.com/seud0nym/tproxy-go/tproxy"
 	"github.com/spf13/viper"
+	"golang.org/x/sys/unix"
 )
 
 // Glutton struct
@@ -38,6 +40,10 @@ type Glutton struct {
 	ctx                 context.Context
 	cancel              context.CancelFunc
 	publicAddrs         []net.IP
+	netfilter           struct {
+		c *nftables.Conn
+		r []*nftables.Rule
+	}
 }
 
 //go:embed config/rules.yaml
@@ -57,6 +63,7 @@ func (g *Glutton) initConfig() error {
 	viper.SetDefault("ports.ssh", 22)
 	viper.SetDefault("max_tcp_payload", 4096)
 	viper.SetDefault("conn_timeout", 45)
+	viper.SetDefault("nftables", false)
 	viper.SetDefault("rules_path", "rules/rules.yaml")
 	g.Logger.Debug("configuration set successfully", slog.String("reporter", "glutton"))
 	return nil
@@ -237,12 +244,35 @@ func (g *Glutton) Start() error {
 	g.startMonitor(quit)
 
 	sshPort := viper.GetUint32("ports.ssh")
-	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), sshPort); err != nil {
-		return err
-	}
 
-	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), sshPort); err != nil {
-		return err
+	switch viper.GetBool("nftables") {
+	case true:
+		var err error
+		g.netfilter.c, err = newCon()
+		if err != nil {
+			return err
+		}
+		if g.netfilter.c == nil {
+			return fmt.Errorf("failed to create nftables.Conn")
+		}
+		r, err := setTProxyNFTables(g.netfilter.c, uint16(g.Server.tcpPort), uint16(sshPort), unix.IPPROTO_TCP, viper.GetString("interface"))
+		if err != nil {
+			return fmt.Errorf("failed to set TCP TPROXY nftables rule: %w", err)
+		}
+		g.netfilter.r = append(g.netfilter.r, r)
+
+		r, err = setTProxyNFTables(g.netfilter.c, uint16(g.Server.udpPort), uint16(sshPort), unix.IPPROTO_UDP, viper.GetString("interface"))
+		if err != nil {
+			return fmt.Errorf("failed to set UDP TPROXY nftables rule: %w", err)
+		}
+		g.netfilter.r = append(g.netfilter.r, r)
+	default:
+		if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), sshPort); err != nil {
+			return err
+		}
+		if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), sshPort); err != nil {
+			return err
+		}
 	}
 
 	wg := &sync.WaitGroup{}
@@ -355,15 +385,21 @@ func (g *Glutton) Shutdown() {
 		g.Logger.Error("failed to shutdown server", producer.ErrAttr(err))
 	}
 
-	g.Logger.Info("FLushing TCP iptables")
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
-		g.Logger.Error("failed to drop tcp iptables", producer.ErrAttr(err))
+	switch viper.GetBool("nftables") {
+	case true:
+		if err := deleteTProxyNFTables(g.netfilter.c, g.netfilter.r); err != nil {
+			g.Logger.Error("failed to delete tproxy nftables", producer.ErrAttr(err))
+		}
+	default:
+		g.Logger.Info("FLushing TCP iptables")
+		if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
+			g.Logger.Error("failed to drop tcp iptables", producer.ErrAttr(err))
+		}
+		g.Logger.Info("FLushing UDP iptables")
+		if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
+			g.Logger.Error("failed to drop udp iptables", producer.ErrAttr(err))
+		}
 	}
-	g.Logger.Info("FLushing UDP iptables")
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
-		g.Logger.Error("failed to drop udp iptables", producer.ErrAttr(err))
-	}
-
 	g.Logger.Info("All done")
 }
 

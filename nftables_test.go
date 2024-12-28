@@ -21,9 +21,18 @@ func TestSetTProxyNFTables(t *testing.T) {
 		}))
 	require.NoError(t, err, "failed to create nftables.Conn")
 
-	err = setTProxyNFTables(c, 5000, unix.IPPROTO_TCP)
+	_, err = setTProxyNFTables(c, 5000, 22, unix.IPPROTO_TCP, "eth0")
 	require.NoError(t, err, "failed to set TCP TPROXY nftables rule")
 
-	err = setTProxyNFTables(c, 5001, unix.IPPROTO_UDP)
+	_, err = setTProxyNFTables(c, 5001, 22, unix.IPPROTO_UDP, "eth0")
 	require.NoError(t, err, "failed to set UDP TPROXY nftables rule")
+}
+
+func TestNFTablesConnection(t *testing.T) {
+	c, err := nftables.New()
+	require.NoError(t, err, "failed to create nftables.Conn")
+
+	tables, err := c.ListTables()
+	require.NoError(t, err, "failed to list nftables tables")
+	require.NotEmpty(t, tables, "no nftables tables found")
 }
