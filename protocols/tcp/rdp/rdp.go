@@ -73,7 +73,7 @@ func ConnectionConfirm(cr CRTPDU) (TKIPHeader, []byte, error) {
 			SelectedProtocol: [4]byte{0x3},
 		},
 	}
-	binary.BigEndian.PutUint16(cc.Header.Length[:], 19)
+	binary.BigEndian.PutUint16(cc.Header.Length[:], 12)
 	binary.LittleEndian.PutUint16(cc.Response.Length[:], 8)
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.LittleEndian, cc)
