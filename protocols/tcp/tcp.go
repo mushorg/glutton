@@ -66,7 +66,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		if msgLength > 0 {
 			payloadHash, err := helpers.StorePayload(data)
 			if err != nil {
-				logger.Error("failed to store payload", slog.String("handler", "tcp"), producer.ErrAttr(err))
+				logger.Error("Failed to store payload", slog.String("handler", "tcp"), producer.ErrAttr(err))
 			}
 			logger.Info(
 				"Packet got handled by TCP handler",
@@ -86,10 +86,10 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 
 		if err := h.ProduceTCP("tcp", conn, md, helpers.FirstOrEmpty[parsedTCP](server.events).Payload, server.events); err != nil {
-			logger.Error("failed to produce message", slog.String("protocol", "tcp"), producer.ErrAttr(err))
+			logger.Error("Failed to produce message", slog.String("protocol", "tcp"), producer.ErrAttr(err))
 		}
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close TCP connection", slog.String("handler", "tcp"), producer.ErrAttr(err))
+			logger.Error("Failed to close TCP connection", slog.String("handler", "tcp"), producer.ErrAttr(err))
 		}
 	}()
 

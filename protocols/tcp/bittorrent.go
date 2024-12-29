@@ -38,24 +38,23 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, md connection.Metadata
 	}
 	defer func() {
 		if err := h.ProduceTCP("bittorrent", conn, md, helpers.FirstOrEmpty[parsedBittorrent](server.events).Payload, server.events); err != nil {
-			logger.Error("failed to produce message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
+			logger.Error("Failed to produce message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
 		}
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close connection", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
+			logger.Error("Failed to close connection", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
 			return
 		}
 	}()
 
-	logger.Info("new bittorrent connection")
-
 	buffer := make([]byte, 1024)
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
-			return err
+			logger.Debug("Failed to set connection timeout", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
+			return nil
 		}
 		n, err := conn.Read(buffer)
 		if err != nil {
-			logger.Error("failed to read data", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
+			logger.Debug("Failed to read data", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
 			break
 		}
 
@@ -65,7 +64,7 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, md connection.Metadata
 
 		msg := bittorrentMsg{}
 		if err := binary.Read(bytes.NewReader(buffer[:n]), binary.BigEndian, &msg); err != nil {
-			logger.Error("failed to read message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
+			logger.Error("Failed to read message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
 			break
 		}
 
@@ -88,7 +87,7 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, md connection.Metadata
 			Payload:   buffer[:n],
 		})
 		if err = binary.Write(conn, binary.BigEndian, msg); err != nil {
-			logger.Error("failed to write message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
+			logger.Error("Failed to write message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
 			break
 		}
 	}

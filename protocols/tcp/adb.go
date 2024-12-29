@@ -37,7 +37,7 @@ func readHexLength(r io.Reader) (int, error) {
 func HandleADB(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close ADB connection", slog.String("handler", "adb"), producer.ErrAttr(err))
+			logger.Error("Failed to close ADB connection", slog.String("handler", "adb"), producer.ErrAttr(err))
 		}
 	}()
 	length, err := readHexLength(conn)
@@ -53,7 +53,7 @@ func HandleADB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	}
 
 	if err = h.ProduceTCP("adb", conn, md, data, nil); err != nil {
-		logger.Error("failed to produce message", producer.ErrAttr(err), slog.String("handler", "adb"))
+		logger.Error("Failed to produce message", producer.ErrAttr(err), slog.String("handler", "adb"))
 	}
 
 	logger.Info("handled adb request", slog.Int("data_read", n))

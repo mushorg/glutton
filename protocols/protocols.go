@@ -71,7 +71,8 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 			if err := conn.Close(); err != nil {
 				log.Error("failed to close connection", producer.ErrAttr(err))
 			}
-			return err
+			log.Debug("failed to peek connection", producer.ErrAttr(err))
+			return nil
 		}
 		// poor mans check for HTTP request
 		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true, "CONN": true}

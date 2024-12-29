@@ -58,10 +58,10 @@ func HandleFTP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	}
 	defer func() {
 		if err := h.ProduceTCP("ftp", conn, md, helpers.FirstOrEmpty[parsedFTP](server.events).Payload, server.events); err != nil {
-			logger.Error("failed to produce events", producer.ErrAttr(err))
+			logger.Error("Failed to produce events", slog.String("protocol", "ftp"), producer.ErrAttr(err))
 		}
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close FTP connection", producer.ErrAttr(err))
+			logger.Error("Failed to close FTP connection", slog.String("protocol", "ftp"), producer.ErrAttr(err))
 		}
 	}()
 
@@ -75,11 +75,13 @@ func HandleFTP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	}
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
-			return err
+			logger.Debug("Failed to set connection timeout", slog.String("protocol", "ftp"), producer.ErrAttr(err))
+			return nil
 		}
 		msg, err := server.read(logger, h)
 		if err != nil || err != io.EOF {
-			return err
+			logger.Debug("Failed to read data", slog.String("protocol", "ftp"), producer.ErrAttr(err))
+			break
 		}
 		if len(msg) < 4 {
 			continue
@@ -108,4 +110,5 @@ func HandleFTP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			return err
 		}
 	}
+	return nil
 }
