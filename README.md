@@ -6,7 +6,7 @@ Setup `go 1.21`.
 
 Install required system packages:
 
-Debian(ish)
+Debian:
 ```
 apt-get install gcc libpcap-dev iptables
 ```
@@ -25,3 +25,5 @@ To run/test glutton:
 ```
 bin/server
 ```
+
+To get this to work on WSL, use this kernel: https://github.com/Locietta/xanmod-kernel-WSL2
