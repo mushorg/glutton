@@ -7,10 +7,10 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
-	"sync"
 	"syscall"
 
 	"github.com/mushorg/glutton"
+
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
@@ -32,7 +32,7 @@ func main() {
  \_____|_|\__,_|\__|\__\___/|_| |_|
 
 	`)
-	fmt.Printf("%s %s\n", VERSION, BUILDDATE)
+	fmt.Printf("%s %s\n\n", VERSION, BUILDDATE)
 
 	pflag.StringP("interface", "i", "eth0", "Bind to this interface")
 	pflag.IntP("ssh", "s", 0, "Override SSH port")
@@ -53,39 +53,37 @@ func main() {
 		return
 	}
 
-	gtn, err := glutton.New(context.Background())
+	g, err := glutton.New(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if err := gtn.Init(); err != nil {
+	if err := g.Init(); err != nil {
 		log.Fatal("Failed to initialize Glutton:", err)
 	}
 
-	exitMtx := sync.RWMutex{}
 	exit := func() {
 		// See if there was a panic...
 		if r := recover(); r != nil {
 			fmt.Fprintln(os.Stderr, r)
 			fmt.Println("stacktrace from panic: \n" + string(debug.Stack()))
 		}
-		exitMtx.Lock()
-		gtn.Shutdown()
-		exitMtx.Unlock()
+		g.Shutdown()
 	}
-	defer exit()
 
 	// capture and handle signals
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sig
+		fmt.Print("\r")
 		exit()
-		fmt.Println("\nleaving...")
+		fmt.Println()
 		os.Exit(0)
 	}()
 
-	if err := gtn.Start(); err != nil {
+	if err := g.Start(); err != nil {
+		exit()
 		log.Fatal("Failed to start Glutton server:", err)
 	}
 }

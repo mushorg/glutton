@@ -148,55 +148,71 @@ func (g *Glutton) Init() error {
 }
 
 func (g *Glutton) udpListen(wg *sync.WaitGroup) {
-	defer wg.Done()
+	defer func() {
+		wg.Done()
+	}()
 	buffer := make([]byte, 1024)
 	for {
-		n, srcAddr, dstAddr, err := tproxy.ReadFromUDP(g.Server.udpListener, buffer)
+		select {
+		case <-g.ctx.Done():
+			if err := g.Server.udpConn.Close(); err != nil {
+				g.Logger.Error("Failed to close UDP listener", producer.ErrAttr(err))
+			}
+			return
+		default:
+		}
+		g.Server.udpConn.SetReadDeadline(time.Now().Add(1 * time.Second))
+		n, srcAddr, dstAddr, err := tproxy.ReadFromUDP(g.Server.udpConn, buffer)
 		if err != nil {
-			g.Logger.Error("failed to read UDP packet", producer.ErrAttr(err))
+			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
+				continue
+			}
+			g.Logger.Error("Failed to read UDP packet", producer.ErrAttr(err))
 		}
 
 		rule, err := g.applyRules("udp", srcAddr, dstAddr)
 		if err != nil {
-			g.Logger.Error("failed to apply rules", producer.ErrAttr(err))
+			g.Logger.Error("Failed to apply rules", producer.ErrAttr(err))
 		}
 		if rule == nil {
 			rule = &rules.Rule{Target: "udp"}
 		}
 		md, err := g.connTable.Register(srcAddr.IP.String(), strconv.Itoa(int(srcAddr.AddrPort().Port())), dstAddr.AddrPort().Port(), rule)
 		if err != nil {
-			g.Logger.Error("failed to register UDP packet", producer.ErrAttr(err))
+			g.Logger.Error("Failed to register UDP packet", producer.ErrAttr(err))
 		}
 
 		if hfunc, ok := g.udpProtocolHandlers[rule.Target]; ok {
 			data := buffer[:n]
 			go func() {
 				if err := hfunc(g.ctx, srcAddr, dstAddr, data, md); err != nil {
-					g.Logger.Error("failed to handle UDP payload", producer.ErrAttr(err))
+					g.Logger.Error("Failed to handle UDP payload", producer.ErrAttr(err))
 				}
 			}()
 		}
 	}
 }
 
-func (g *Glutton) tcpListen(wg *sync.WaitGroup) {
-	defer wg.Done()
+func (g *Glutton) tcpListen() {
 	for {
 		select {
 		case <-g.ctx.Done():
+			if err := g.Server.tcpListener.Close(); err != nil {
+				g.Logger.Error("Failed to close TCP listener", producer.ErrAttr(err))
+			}
 			return
 		default:
 		}
 
 		conn, err := g.Server.tcpListener.Accept()
 		if err != nil {
-			g.Logger.Error("failed to accept connection", producer.ErrAttr(err))
+			g.Logger.Error("Failed to accept connection", producer.ErrAttr(err))
 			continue
 		}
 
 		rule, err := g.applyRulesOnConn(conn)
 		if err != nil {
-			g.Logger.Error("failed to apply rules", producer.ErrAttr(err))
+			g.Logger.Error("Failed to apply rules", producer.ErrAttr(err))
 			continue
 		}
 		if rule == nil {
@@ -205,7 +221,7 @@ func (g *Glutton) tcpListen(wg *sync.WaitGroup) {
 
 		md, err := g.connTable.RegisterConn(conn, rule)
 		if err != nil {
-			g.Logger.Error("failed to register connection", producer.ErrAttr(err))
+			g.Logger.Error("Failed to register connection", producer.ErrAttr(err))
 			continue
 		}
 
@@ -213,13 +229,13 @@ func (g *Glutton) tcpListen(wg *sync.WaitGroup) {
 
 		g.ctx = context.WithValue(g.ctx, ctxTimeout("timeout"), int64(viper.GetInt("conn_timeout")))
 		if err := g.UpdateConnectionTimeout(g.ctx, conn); err != nil {
-			g.Logger.Error("failed to set connection timeout", producer.ErrAttr(err))
+			g.Logger.Error("Failed to set connection timeout", producer.ErrAttr(err))
 		}
 
 		if hfunc, ok := g.tcpProtocolHandlers[rule.Target]; ok {
 			go func() {
 				if err := hfunc(g.ctx, conn, md); err != nil {
-					g.Logger.Error("failed to handle TCP connection", producer.ErrAttr(err), slog.String("handler", rule.Target))
+					g.Logger.Error("Failed to handle TCP connection", producer.ErrAttr(err), slog.String("handler", rule.Target))
 				}
 			}()
 		}
@@ -228,13 +244,7 @@ func (g *Glutton) tcpListen(wg *sync.WaitGroup) {
 
 // Start the listener, this blocks for new connections
 func (g *Glutton) Start() error {
-	quit := make(chan struct{}) // stop monitor on shutdown
-	defer func() {
-		quit <- struct{}{}
-		g.Shutdown()
-	}()
-
-	g.startMonitor(quit)
+	g.startMonitor()
 
 	sshPort := viper.GetUint32("ports.ssh")
 	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), sshPort); err != nil {
@@ -249,9 +259,7 @@ func (g *Glutton) Start() error {
 
 	wg.Add(1)
 	go g.udpListen(wg)
-
-	wg.Add(1)
-	go g.tcpListen(wg)
+	go g.tcpListen()
 
 	wg.Wait()
 
@@ -350,18 +358,13 @@ func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md c
 func (g *Glutton) Shutdown() {
 	g.cancel() // close all connection
 
-	g.Logger.Info("Shutting down listeners")
-	if err := g.Server.Shutdown(); err != nil {
-		g.Logger.Error("failed to shutdown server", producer.ErrAttr(err))
-	}
-
-	g.Logger.Info("FLushing TCP iptables")
+	g.Logger.Info("Flushing TCP iptables")
 	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
-		g.Logger.Error("failed to drop tcp iptables", producer.ErrAttr(err))
+		g.Logger.Error("Failed to drop tcp iptables", producer.ErrAttr(err))
 	}
-	g.Logger.Info("FLushing UDP iptables")
+	g.Logger.Info("Flushing UDP iptables")
 	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
-		g.Logger.Error("failed to drop udp iptables", producer.ErrAttr(err))
+		g.Logger.Error("Failed to drop udp iptables", producer.ErrAttr(err))
 	}
 
 	g.Logger.Info("All done")

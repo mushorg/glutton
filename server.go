@@ -10,7 +10,7 @@ import (
 
 type Server struct {
 	tcpListener net.Listener
-	udpListener *net.UDPConn
+	udpConn     *net.UDPConn
 	tcpPort     uint
 	udpPort     uint
 }
@@ -31,26 +31,16 @@ func (s *Server) Start() error {
 	if s.tcpListener, err = tproxy.ListenTCP("tcp4", tcpAddr); err != nil {
 		return err
 	}
+
 	udpAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("127.0.0.1:%d", s.udpPort))
 	if err != nil {
 		return err
 	}
-	if s.udpListener, err = tproxy.ListenUDP("udp4", udpAddr); err != nil {
+	if s.udpConn, err = tproxy.ListenUDP("udp4", udpAddr); err != nil {
 		return err
 	}
-	if s.udpListener == nil {
+	if s.udpConn == nil {
 		return errors.New("nil udp listener")
 	}
 	return nil
-}
-
-func (s *Server) Shutdown() error {
-	var err error
-	if s.tcpListener != nil {
-		err = s.tcpListener.Close()
-	}
-	if s.udpListener != nil {
-		err = s.udpListener.Close()
-	}
-	return err
 }
