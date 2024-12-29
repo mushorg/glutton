@@ -7,6 +7,9 @@ WORKDIR /opt/glutton
 
 RUN cd $WORKDIR
 
+ADD go.mod go.sum ./
+RUN go mod download
+
 ADD . .
 
 RUN make build
