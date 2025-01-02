@@ -15,7 +15,7 @@ import (
 func parseRules(t *testing.T) Rules {
 	fh, err := os.Open("test.yaml")
 	require.NoError(t, err)
-	rules, err := ParseRuleSpec(fh)
+	rules, err := Init(fh)
 	require.NoError(t, err)
 	return rules
 }
@@ -28,10 +28,6 @@ func TestParseRuleSpec(t *testing.T) {
 func TestInitRule(t *testing.T) {
 	rules := parseRules(t)
 	require.NotEmpty(t, rules)
-	for i := range rules {
-		err := InitRule(i, rules[i])
-		require.NoError(t, err)
-	}
 
 	for _, rule := range rules {
 		require.True(t, rule.isInit)
@@ -71,10 +67,6 @@ func TestFakePacketBytes(t *testing.T) {
 func TestRunMatchTCP(t *testing.T) {
 	rules := parseRules(t)
 	require.NotEmpty(t, rules)
-	for i := range rules {
-		err := InitRule(i, rules[i])
-		require.NoError(t, err)
-	}
 	conn, ln := testConn(t)
 	defer func() {
 		conn.Close()
@@ -94,10 +86,6 @@ func TestRunMatchTCP(t *testing.T) {
 func TestRunMatchUDP(t *testing.T) {
 	rules := parseRules(t)
 	require.NotEmpty(t, rules)
-	for i := range rules {
-		err := InitRule(i, rules[i])
-		require.NoError(t, err)
-	}
 	conn, ln := testConn(t)
 	defer func() {
 		conn.Close()

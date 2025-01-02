@@ -97,15 +97,9 @@ func New(ctx context.Context) (*Glutton, error) {
 	}
 
 	var err error
-	g.rules, err = rules.ParseRuleSpec(rulesFile)
+	g.rules, err = rules.Init(rulesFile)
 	if err != nil {
 		return nil, err
-	}
-
-	for idx, rule := range g.rules {
-		if err := rules.InitRule(idx, rule); err != nil {
-			return nil, fmt.Errorf("failed to initialize rule: %w", err)
-		}
 	}
 
 	return g, nil
