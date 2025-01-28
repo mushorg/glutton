@@ -53,6 +53,9 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 	protocolHandlers["mqtt"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		return tcp.HandleMQTT(ctx, conn, md, log, h)
 	}
+	protocolHandlers["iscsi"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		return tcp.HandleISCSI(ctx, conn, md, log, h)
+	}
 	protocolHandlers["bittorrent"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		return tcp.HandleBittorrent(ctx, conn, md, log, h)
 	}
