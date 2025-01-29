@@ -49,7 +49,7 @@ var (
 var defaultRules []byte
 
 func init() {
-	flag.StringVar(&interfaceName, "interface", "", "Network interface name")
+	flag.StringVar(&interfaceName, "i", "", "Network interface name")
 	flag.Parse()
 }
 
