@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -40,8 +41,17 @@ type Glutton struct {
 	publicAddrs         []net.IP
 }
 
+var (
+	interfaceName string
+)
+
 //go:embed config/rules.yaml
 var defaultRules []byte
+
+func init() {
+	flag.StringVar(&interfaceName, "interface", "", "Network interface name")
+	flag.Parse()
+}
 
 func (g *Glutton) initConfig() error {
 	viper.SetConfigName("config")
@@ -58,6 +68,12 @@ func (g *Glutton) initConfig() error {
 	viper.SetDefault("max_tcp_payload", 4096)
 	viper.SetDefault("conn_timeout", 45)
 	viper.SetDefault("rules_path", "rules/rules.yaml")
+	viper.SetDefault("interface", "eth0") // Default interface name
+
+	if interfaceName == "" {
+		interfaceName = viper.GetString("interface")
+	}
+
 	g.Logger.Debug("configuration set successfully", slog.String("reporter", "glutton"))
 	return nil
 }
@@ -108,7 +124,7 @@ func New(ctx context.Context) (*Glutton, error) {
 // Init initializes server and handles
 func (g *Glutton) Init() error {
 	var err error
-	g.publicAddrs, err = getNonLoopbackIPs(viper.GetString("interface"))
+	g.publicAddrs, err = getNonLoopbackIPs(interfaceName)
 	if err != nil {
 		return err
 	}
@@ -241,11 +257,11 @@ func (g *Glutton) Start() error {
 	g.startMonitor()
 
 	sshPort := viper.GetUint32("ports.ssh")
-	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), sshPort); err != nil {
+	if err := setTProxyIPTables(interfaceName, g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), sshPort); err != nil {
 		return err
 	}
 
-	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), sshPort); err != nil {
+	if err := setTProxyIPTables(interfaceName, g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), sshPort); err != nil {
 		return err
 	}
 
@@ -353,11 +369,11 @@ func (g *Glutton) Shutdown() {
 	g.cancel() // close all connection
 
 	g.Logger.Info("Flushing TCP iptables")
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
+	if err := flushTProxyIPTables(interfaceName, g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
 		g.Logger.Error("Failed to drop tcp iptables", producer.ErrAttr(err))
 	}
 	g.Logger.Info("Flushing UDP iptables")
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
+	if err := flushTProxyIPTables(interfaceName, g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
 		g.Logger.Error("Failed to drop udp iptables", producer.ErrAttr(err))
 	}
 

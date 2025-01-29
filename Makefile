@@ -3,6 +3,8 @@ NAME := glutton
 BUILDSTRING := $(shell git log --pretty=format:'%h' -n 1)
 VERSIONSTRING := $(NAME) version $(VERSION)+$(BUILDSTRING)
 BUILDDATE := $(shell date -u -Iseconds)
+CONFIG_FILE=config/config.yaml
+INTERFACE=$(shell grep 'interface:' $(CONFIG_FILE) | awk '{print $$2}')
 
 LDFLAGS := "-X \"main.VERSION=$(VERSIONSTRING)\" -X \"main.BUILDDATE=$(BUILDDATE)\""
 
@@ -30,7 +32,7 @@ clean:
 	rm -rf bin/
 
 run: build
-	sudo bin/server -i eth0
+	sudo bin/server -i $(INTERFACE)
 
 docker:
 	docker build -t glutton .

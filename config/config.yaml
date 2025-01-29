@@ -1,3 +1,8 @@
+interface: eth0
+tcpPort: 8080
+udpPort: 8081
+sshPort: 2222
+
 ports:
   tcp: 5000
   udp: 5001
