@@ -29,54 +29,24 @@ type tcpServer struct {
 	events []parsedTCP
 }
 
-//go:embed responses/*
-var embeddedFiles embed.FS
+//go:embed banners/*
+var bannerFiles embed.FS
 
-var responseFileMap = map[uint16]string{
-	21:    "responses/21_tcp",
-	25:    "responses/25_tcp",
-	80:    "responses/80_tcp",
-	110:   "responses/110_tcp",
-	135:   "responses/135_tcp",
-	139:   "responses/139_tcp",
-	445:   "responses/445_tcp",
-	1433:  "responses/1433_tcp",
-	3306:  "responses/3306_tcp",
-	4444:  "responses/4444_tcp",
-	4899:  "responses/4899_tcp",
-	5060:  "responses/5060_tcp",
-	5900:  "responses/5900_tcp",
-	8009:  "responses/8009_tcp",
-	21000: "responses/21000_tcp",
-}
-
-func (s *tcpServer) getResponse(port uint16) ([]byte, error) {
-	filePath, exists := responseFileMap[port]
-	if !exists {
-		return nil, fmt.Errorf("file not found for port: %v", port)
-	}
-
-	return embeddedFiles.ReadFile(filePath)
-}
-
-func (s *tcpServer) sendPortSpecificResponse(conn net.Conn, port uint16, logger interfaces.Logger) error {
-	response, err := s.getResponse(port)
+func (s *tcpServer) sendBanner(conn net.Conn, port uint16) error {
+	bannerPath := fmt.Sprintf("banners/%d_tcp", port)
+	banner, err := bannerFiles.ReadFile(bannerPath)
 	if err != nil {
-		// If no specific response file exists, fall back to random data
-		logger.Debug("No specific response file found, sending random data",
-			slog.String("handler", "tcp"),
-			slog.Uint64("port", uint64(port)))
-		return s.sendRandom(conn)
+		return fmt.Errorf("failed to get banner: %w", err)
 	}
 
 	s.events = append(s.events, parsedTCP{
 		Direction:   "write",
-		PayloadHash: helpers.HashData(response),
-		Payload:     response,
+		PayloadHash: helpers.HashData(banner),
+		Payload:     banner,
 	})
 
-	if _, err := conn.Write(response); err != nil {
-		return fmt.Errorf("failed to write response: %w", err)
+	if _, err := conn.Write(banner); err != nil {
+		return fmt.Errorf("failed to write banner: %w", err)
 	}
 	return nil
 }
@@ -151,6 +121,9 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			return err
 		}
+		if err := server.sendBanner(conn, md.TargetPort); err != nil {
+			logger.Error("write error", slog.String("handler", "tcp"), producer.ErrAttr(err))
+		}
 		n, err := conn.Read(buffer)
 		if err != nil {
 			logger.Error("read error", slog.String("handler", "tcp"), producer.ErrAttr(err))
@@ -167,8 +140,8 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 	}
 
-	// Send port-specific or random response
-	if err := server.sendPortSpecificResponse(conn, md.TargetPort, logger); err != nil {
+	// sending some random data
+	if err := server.sendRandom(conn); err != nil {
 		logger.Error("write error", slog.String("handler", "tcp"), producer.ErrAttr(err))
 	}
 
