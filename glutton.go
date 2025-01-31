@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -44,6 +45,10 @@ type Glutton struct {
 var defaultRules []byte
 
 func (g *Glutton) initConfig() error {
+	var interfaceName string
+	flag.StringVar(&interfaceName, "i", "", "Network interface name")
+	flag.Parse()
+
 	viper.SetConfigName("config")
 	viper.AddConfigPath(viper.GetString("confpath"))
 	if _, err := os.Stat(viper.GetString("confpath")); !os.IsNotExist(err) {
@@ -58,6 +63,8 @@ func (g *Glutton) initConfig() error {
 	viper.SetDefault("max_tcp_payload", 4096)
 	viper.SetDefault("conn_timeout", 45)
 	viper.SetDefault("rules_path", "rules/rules.yaml")
+	viper.SetDefault("interface", "eth0") // Default interface name
+
 	g.Logger.Debug("configuration set successfully", slog.String("reporter", "glutton"))
 	return nil
 }
