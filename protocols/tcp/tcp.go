@@ -3,7 +3,6 @@ package tcp
 import (
 	"context"
 	"crypto/rand"
-	"embed"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -27,28 +26,6 @@ type parsedTCP struct {
 
 type tcpServer struct {
 	events []parsedTCP
-}
-
-//go:embed banners/*
-var bannerFiles embed.FS
-
-func (s *tcpServer) sendBanner(conn net.Conn, port uint16) error {
-	bannerPath := fmt.Sprintf("banners/%d_tcp", port)
-	banner, err := bannerFiles.ReadFile(bannerPath)
-	if err != nil {
-		return fmt.Errorf("failed to get banner: %w", err)
-	}
-
-	s.events = append(s.events, parsedTCP{
-		Direction:   "write",
-		PayloadHash: helpers.HashData(banner),
-		Payload:     banner,
-	})
-
-	if _, err := conn.Write(banner); err != nil {
-		return fmt.Errorf("failed to write banner: %w", err)
-	}
-	return nil
 }
 
 func (s *tcpServer) sendRandom(conn net.Conn) error {
@@ -120,9 +97,6 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			return err
-		}
-		if err := server.sendBanner(conn, md.TargetPort); err != nil {
-			logger.Error("write error", slog.String("handler", "tcp"), producer.ErrAttr(err))
 		}
 		n, err := conn.Read(buffer)
 		if err != nil {
