@@ -3,7 +3,6 @@ NAME := glutton
 BUILDSTRING := $(shell git log --pretty=format:'%h' -n 1)
 VERSIONSTRING := $(NAME) version $(VERSION)+$(BUILDSTRING)
 BUILDDATE := $(shell date -u -Iseconds)
-CONFIG_FILE=config/config.yaml
 
 LDFLAGS := "-X \"main.VERSION=$(VERSIONSTRING)\" -X \"main.BUILDDATE=$(BUILDDATE)\""
 

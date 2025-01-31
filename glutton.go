@@ -57,15 +57,13 @@ func (g *Glutton) initConfig() error {
 		}
 	}
 	// If no config is found, use the defaults
-	viper.SetDefault("ports.ttcp", 5000)
+	viper.SetDefault("ports.tcp", 5000)
 	viper.SetDefault("ports.udp", 5001)
 	viper.SetDefault("ports.ssh", 22)
 	viper.SetDefault("max_tcp_payload", 4096)
 	viper.SetDefault("conn_timeout", 45)
 	viper.SetDefault("rules_path", "rules/rules.yaml")
 	viper.SetDefault("interface", "eth0") // Default interface name
-
-	interfaceName = viper.GetString("interface")
 
 	g.Logger.Debug("configuration set successfully", slog.String("reporter", "glutton"))
 	return nil
