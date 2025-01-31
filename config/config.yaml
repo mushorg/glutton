@@ -3,6 +3,20 @@ ports:
   udp: 5001
   ssh: 2222
 
+delays:
+  global:
+    min: 50    # milliseconds
+    max: 200   # milliseconds
+  per_port:
+    - port: 5000
+      min: 100
+      max: 300
+      protocols: ["tcp"]
+    - port: 5001
+      min: 75 
+      max: 150
+      protocols: ["udp"]
+
 rules_path: config/rules.yaml
 
 addresses: ["1.2.3.4", "5.4.3.2"]
