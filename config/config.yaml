@@ -1,8 +1,3 @@
-interface: eth0
-tcpPort: 8080
-udpPort: 8081
-sshPort: 2222
-
 ports:
   tcp: 5000
   udp: 5001
@@ -11,6 +6,8 @@ ports:
 rules_path: config/rules.yaml
 
 addresses: ["1.2.3.4", "5.4.3.2"]
+
+interface: eth0
 
 producers:
   enabled: false
