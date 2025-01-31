@@ -23,32 +23,45 @@ type iscsiMsg struct {
 }
 
 type iscsiRes struct {
-	Opcode         uint8
-	Flags          uint8
-	TaskTag        uint32
-	Data           uint32
-	CID            uint32
-	LUN            uint64
-	Status         uint8
-	AdditionalData []byte
+	Opcode  uint8
+	Flags   uint8
+	TaskTag uint32
+	Data    uint32
+	CID     uint32
+	LUN     uint64
+	Status  uint8
+}
+
+type iscsiRequest struct {
+	Msg iscsiMsg
+	Res iscsiRes
+}
+
+type iscsiServer struct {
+	events []iscsiRequest
+	conn   net.Conn
 }
 
 // iSCSI messages contain a 48 byte header. The first byte contains the Opcode(Operation Code) which defines the type of operation that is to be performed.
-
-func parseISCSIMessage(conn net.Conn, md connection.Metadata, buffer []byte, logger interfaces.Logger, h interfaces.Honeypot) error {
-	if len(buffer) < 48 {
-		logger.Error("Invalid iSCSI data length")
+func handleISCSIMessage(conn net.Conn, md connection.Metadata, buffer []byte, logger interfaces.Logger, h interfaces.Honeypot) error {
+	server := &iscsiServer{
+		events: []iscsiRequest{},
+		conn:   conn,
 	}
+
+	defer func() {
+		if err := h.ProduceTCP("iscsi", conn, md, buffer, server.events); err != nil {
+			logger.Error("Failed to produce message", producer.ErrAttr(err), slog.String("handler", "iscsi"))
+		}
+	}()
+
 	msg := iscsiMsg{}
 	r := bytes.NewReader(buffer)
 	if err := binary.Read(r, binary.BigEndian, &msg); err != nil {
 		logger.Error("Error reading iSCSI message. Error : %v", err)
 		return err
 	}
-	if err := h.ProduceTCP("iscsi", conn, md, buffer, msg); err != nil {
-		logger.Error("Failed to produce message", producer.ErrAttr(err), slog.String("handler", "iscsi"))
-		return err
-	}
+
 	logger.Info(fmt.Sprintf("new iSCSI packet with opcode: %d, task tag: %d", msg.Opcode, msg.TaskTag), slog.String("handler", "iscsi"))
 
 	// Parse different iSCSI messages based on their opCode.
@@ -66,14 +79,13 @@ func parseISCSIMessage(conn net.Conn, md connection.Metadata, buffer []byte, log
 		}
 	case 0x01: //Initiator SCSI Command
 		res = iscsiRes{
-			Opcode:         0x21, // Target SCSI response
-			Flags:          0x00,
-			TaskTag:        msg.TaskTag,
-			Data:           8, //Can vary
-			CID:            msg.CID,
-			LUN:            msg.LUN,
-			Status:         0x00,
-			AdditionalData: []byte(" "), // Can be anything, set to a " " currently.
+			Opcode:  0x21, // Target SCSI response
+			Flags:   0x00,
+			TaskTag: msg.TaskTag,
+			Data:    8, //Can vary
+			CID:     msg.CID,
+			LUN:     msg.LUN,
+			Status:  0x00,
 		}
 	case 0x06: // Logout Request
 		res = iscsiRes{
@@ -96,14 +108,13 @@ func parseISCSIMessage(conn net.Conn, md connection.Metadata, buffer []byte, log
 			Status:  0x01,
 		}
 	}
+	server.events = append(server.events, iscsiRequest{
+		Msg: msg,
+		Res: res,
+	})
 
-	var buf bytes.Buffer
-	if err := binary.Write(&buf, binary.BigEndian, res); err != nil {
+	if err := binary.Write(conn, binary.BigEndian, res); err != nil {
 		logger.Error("Failed to write buffer", producer.ErrAttr(err), slog.String("handler", "iscsi"))
-		return err
-	}
-	if _, err := conn.Write(buf.Bytes()); err != nil {
-		logger.Error("Failed to write response", producer.ErrAttr(err), slog.String("handler", "iscsi"))
 		return err
 	}
 	return nil
@@ -115,7 +126,7 @@ func HandleISCSI(ctx context.Context, conn net.Conn, md connection.Metadata, log
 	defer func() {
 		err = conn.Close()
 		if err != nil {
-			logger.Error(fmt.Sprintf("Failed to close the iSCSI connection. Error : %v", err))
+			logger.Error(fmt.Sprintf("[iscsi    ] error: %v", err))
 		}
 	}()
 	buffer := make([]byte, 4096)
@@ -125,10 +136,9 @@ func HandleISCSI(ctx context.Context, conn net.Conn, md connection.Metadata, log
 		}
 		_, err := conn.Read(buffer)
 		if err != nil {
-			logger.Error(fmt.Sprintf("Failed to read. Error : %v", err))
-			break
+			logger.Error(fmt.Sprintf("[iscsi	] error : %v", err))
+			return err
 		}
-		parseISCSIMessage(conn, md, buffer, logger, h)
+		handleISCSIMessage(conn, md, buffer, logger, h)
 	}
-	return nil
 }
