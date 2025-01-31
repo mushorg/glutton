@@ -1,0 +1,26 @@
+SIP/2.0 200 OK
+Via: SIP/2.0/TCP 127.0.0.1:5060;branch=1234567890
+From: sip:1234567890@127.0.0.1;tag=bad-012345
+To: <sip:0987654321@127.0.0.1;user=phone>;tag=bad-012345
+Call-ID: 1348979872-797979222304855
+Cseq: 15 INVITE
+Contact: sip:0987654321@127.0.0.1
+Content-Length: 401
+Content-Type: application/sdp
+
+v=0
+Anonymous 1234567890 9876543210 IN IP4 127.0.0.1
+s=SIGMA is the best
+s=gotcha
+c=IN IP4 127.0.0.1
+t=0 0
+m=audio 36952 RTP/AVP 107 119 100 106 6 0 97 105 98 8 18 3 5 101
+a=rtpmap:107 BV32/16000
+a=rtpmap:119 BV32-FEC/16000
+a=rtpmap:100 SPEEX/16000
+a=rtpmap:106 SPEEX-FEC/16000
+a=rtpmap:97 SPEEX/8000
+a=rtpmap:105 SPEEX-FEC/8000
+a=rtpmap:98 iLBC/8000
+a=rtpmap:101 telephone-event/8000
+a=fmtp:101 0-11

@@ -66,6 +66,9 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		return tcp.HandleADB(ctx, conn, md, log, h)
 	}
 	protocolHandlers["tcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		if err := tcp.SendBanner(conn, md.TargetPort); err != nil {
+			log.Error("failed to send service banner", producer.ErrAttr(err))
+		}
 		snip, bufConn, err := Peek(conn, 4)
 		if err != nil {
 			if err := conn.Close(); err != nil {
