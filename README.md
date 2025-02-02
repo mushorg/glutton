@@ -28,8 +28,6 @@ bin/server
 
 To get this to work on WSL, use this kernel: https://github.com/Locietta/xanmod-kernel-WSL2
 
-Here’s a rephrased version:
-
 ### Setting Up the Dev Environment with VS Code Dev Container
 
 First, install the Dev Container extension. To learn more about setting up and using dev containers, check out the following resources:  
