@@ -1,5 +1,5 @@
 {
-    "name": "Gluttion Dev Environment",
+    "name": "Glutton Dev Environment",
     "dockerFile": "../Dockerfile.local",
     "postCreateCommand": "go mod download",
     "capAdd": ["NET_ADMIN"],
