@@ -43,11 +43,7 @@ type iscsiServer struct {
 }
 
 // iSCSI messages contain a 48 byte header. The first byte contains the Opcode(Operation Code) which defines the type of operation that is to be performed.
-func handleISCSIMessage(conn net.Conn, md connection.Metadata, buffer []byte, logger interfaces.Logger, h interfaces.Honeypot) error {
-	server := &iscsiServer{
-		events: []iscsiRequest{},
-		conn:   conn,
-	}
+func handleISCSIMessage(conn net.Conn, md connection.Metadata, buffer []byte, logger interfaces.Logger, h interfaces.Honeypot, server *iscsiServer) error {
 
 	defer func() {
 		if err := h.ProduceTCP("iscsi", conn, md, buffer, server.events); err != nil {
@@ -58,7 +54,6 @@ func handleISCSIMessage(conn net.Conn, md connection.Metadata, buffer []byte, lo
 	msg := iscsiMsg{}
 	r := bytes.NewReader(buffer)
 	if err := binary.Read(r, binary.BigEndian, &msg); err != nil {
-		logger.Error("Error reading iSCSI message. Error : %v", err)
 		return err
 	}
 
@@ -114,13 +109,11 @@ func handleISCSIMessage(conn net.Conn, md connection.Metadata, buffer []byte, lo
 	})
 
 	if err := binary.Write(conn, binary.BigEndian, res); err != nil {
-		logger.Error("Failed to write buffer", producer.ErrAttr(err), slog.String("handler", "iscsi"))
 		return err
 	}
 	return nil
 }
 
-// HandleISCSI handles a ISCSI connection
 func HandleISCSI(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	var err error
 	defer func() {
@@ -129,16 +122,23 @@ func HandleISCSI(ctx context.Context, conn net.Conn, md connection.Metadata, log
 			logger.Error(fmt.Sprintf("[iscsi    ] error: %v", err))
 		}
 	}()
+
+	server := &iscsiServer{
+		events: []iscsiRequest{},
+		conn:   conn,
+	}
+
 	buffer := make([]byte, 4096)
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
-			return err
+			logger.Error(fmt.Sprintf("[iscsi	] error : %v", err))
 		}
 		_, err := conn.Read(buffer)
 		if err != nil {
 			logger.Error(fmt.Sprintf("[iscsi	] error : %v", err))
-			return err
 		}
-		handleISCSIMessage(conn, md, buffer, logger, h)
+
+		_err := handleISCSIMessage(conn, md, buffer, logger, h, server)
+		logger.Error(fmt.Sprintf("[iscsi	] error : %v", _err))
 	}
 }

@@ -1,7 +1,9 @@
-package main
+package iscsi
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestHandleISCSIMessage(t *testing.T) {
@@ -20,7 +22,6 @@ func TestHandleISCSIMessage(t *testing.T) {
 		0x72, 0x79, 0x00, 0x41, 0x75, 0x74, 0x68, 0x4d, 0x65, 0x74, 0x68, 0x6f,
 		0x64, 0x3d, 0x4e, 0x6f, 0x6e, 0x65, 0x00, 0x00,
 	}
-
 	res, _, _ := handleISCSIMessage(data)
 
 	expectedRes := iscsiRes{
@@ -34,7 +35,7 @@ func TestHandleISCSIMessage(t *testing.T) {
 	}
 
 	if res != expectedRes {
-		t.Errorf("Expected response: %+v, but got: %+v", expectedRes, res)
+		require.Equal(t, expectedRes, res, "Expected response does not match the actual response")
 	}
 
 }

@@ -38,5 +38,3 @@ rules:
   - match: udp
     type: conn_handler
     target: udp
-
-    

@@ -1,4 +1,4 @@
-package main
+package iscsi
 
 import (
 	"bytes"
@@ -83,5 +83,3 @@ func handleISCSIMessage(buffer []byte) (iscsiRes, []byte, error) {
 	}
 	return res, buf.Bytes(), nil
 }
-
-
