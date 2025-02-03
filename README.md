@@ -27,3 +27,9 @@ bin/server
 ```
 
 To get this to work on WSL, use this kernel: https://github.com/Locietta/xanmod-kernel-WSL2
+
+### Setting Up the Dev Environment with VS Code Dev Container
+
+First, install the Dev Container extension. To learn more about setting up and using dev containers, check out the following resources:  
+- [Install Dev Container](https://code.visualstudio.com/docs/devcontainers/containers)  
+- [Learn More](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
