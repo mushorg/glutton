@@ -2,7 +2,6 @@ package tcp
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/binary"
 	"log/slog"
@@ -58,7 +57,6 @@ func HandleRFB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	serverName := "rfb-go"
 	lenName := int32(len(serverName))
 
-	buf := new(bytes.Buffer)
 	f := PixelFormat{
 		Width:            1,
 		Heigth:           1,
@@ -74,10 +72,7 @@ func HandleRFB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		BlueShift:        0,
 		ServerNameLength: lenName,
 	}
-	if err := binary.Write(buf, binary.LittleEndian, f); err != nil {
-		return err
-	}
-	if _, err := conn.Write(buf.Bytes()); err != nil {
+	if err := binary.Write(conn, binary.LittleEndian, f); err != nil {
 		return err
 	}
 	return readRFB(conn, logger)

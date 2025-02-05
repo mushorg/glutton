@@ -58,12 +58,12 @@ func TestRegisterConn(t *testing.T) {
 	require.NotNil(t, conn)
 	defer conn.Close()
 	table := New()
-	md, err := table.RegisterConn(conn, &rules.Rule{Target: "default"})
+	md, err := table.RegisterConn(conn, &rules.Rule{Target: "tcp"})
 	require.NoError(t, err)
 	require.NotNil(t, md)
 	m := table.Get(testck)
 	require.NotNil(t, m)
-	require.Equal(t, "default", m.Rule.Target)
+	require.Equal(t, "tcp", m.Rule.Target)
 }
 
 func TestFlushOlderThan(t *testing.T) {

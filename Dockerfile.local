@@ -1,0 +1,17 @@
+FROM golang:1.23-alpine
+
+RUN apk update
+RUN apk add -q --update --progress --no-cache g++ git make iptables iptables-dev libpcap-dev
+
+RUN go install golang.org/x/tools/gopls@latest 2>&1
+RUN go install -v github.com/go-delve/delve/cmd/dlv@latest 2>&1
+
+RUN mkdir -p /opt/glutton
+WORKDIR /opt/glutton
+
+RUN cd $WORKDIR
+
+ADD go.mod go.sum ./
+RUN go mod download
+
+ADD . .
