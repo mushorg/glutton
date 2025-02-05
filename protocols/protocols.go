@@ -3,8 +3,10 @@ package protocols
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
@@ -66,10 +68,17 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		return tcp.HandleADB(ctx, conn, md, log, h)
 	}
 	protocolHandlers["tcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		if err := tcp.SendBanner(conn, md.TargetPort); err != nil {
-			log.Error("failed to send service banner", producer.ErrAttr(err))
-		}
+		conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		snip, bufConn, err := Peek(conn, 4)
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			if err := tcp.SendBanner(md.TargetPort, conn, md, log, h); err != nil {
+				log.Error("Failed to send service banner", producer.ErrAttr(err))
+			}
+			conn.SetReadDeadline(time.Time{})
+			return tcp.HandleTCP(ctx, conn, md, log, h)
+		}
+		conn.SetReadDeadline(time.Time{})
 		if err != nil {
 			if err := conn.Close(); err != nil {
 				log.Error("failed to close connection", producer.ErrAttr(err))
