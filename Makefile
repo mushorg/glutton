@@ -30,7 +30,12 @@ clean:
 	rm -rf bin/
 
 run: build
-	sudo bin/server -c config.yaml
+	@if grep -q 'interface:' config.yaml; then \
+		INTERFACE=$$(grep 'interface:' config.yaml | awk '{print $$2}'); \
+	else \
+		INTERFACE=eth0; \
+	fi; \
+	sudo bin/server -c config.yaml -i $$INTERFACE
 
 docker:
 	docker build -t glutton .
