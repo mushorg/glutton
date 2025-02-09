@@ -30,7 +30,7 @@ clean:
 	rm -rf bin/
 
 run: build
-	sudo bin/server -i wlp2s0
+	sudo bin/server -i eth0
 
 docker:
 	docker build --progress=plain -t glutton .
