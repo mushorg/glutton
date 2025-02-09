@@ -34,7 +34,7 @@ func HandleMQTT(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 			logger.Error(fmt.Sprintf("[mqtt    ] error: %v", err))
 		}
 	}()
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, maxBufferSize)
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			return err

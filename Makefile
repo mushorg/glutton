@@ -30,11 +30,11 @@ clean:
 	rm -rf bin/
 
 run: build
-	sudo bin/server -i eth0
+	sudo bin/server -i wlp2s0
 
 docker:
-	docker build -t glutton .
-	docker run --rm --cap-add=NET_ADMIN -it glutton
+	docker build --progress=plain -t glutton .
+	docker run --rm --cap-add=NET_ADMIN -it --name glutton glutton 
 
 test:
 	go test -v ./...
