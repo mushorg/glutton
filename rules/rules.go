@@ -18,6 +18,7 @@ type RuleType int
 const (
 	UserConnHandler RuleType = iota
 	Drop
+	PassThrough
 )
 
 type Config struct {
@@ -35,6 +36,10 @@ type Rule struct {
 	ruleType RuleType
 	index    int
 	matcher  *pcap.BPF
+}
+
+func (r *Rule) GetRuleType() RuleType {
+	return r.ruleType
 }
 
 func (r *Rule) String() string {
@@ -62,6 +67,8 @@ func (rule *Rule) init(idx int) error {
 		rule.ruleType = UserConnHandler
 	case "drop":
 		rule.ruleType = Drop
+	case "passthrough":
+		rule.ruleType = PassThrough
 	default:
 		return fmt.Errorf("unknown rule type: %s", rule.Type)
 	}
