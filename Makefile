@@ -33,8 +33,8 @@ run: build
 	sudo bin/server -i eth0
 
 docker:
-	docker build -t glutton .
-	docker run --rm --cap-add=NET_ADMIN -it glutton
+	docker build --progress=plain -t glutton .
+	docker run --rm --cap-add=NET_ADMIN -it --name glutton glutton 
 
 test:
 	go test -v ./...
