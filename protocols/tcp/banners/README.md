@@ -1,0 +1,1 @@
+Service banners are sourced from: https://github.com/armedpot/honeytrap/tree/master/etc/responses.
