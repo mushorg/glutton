@@ -75,7 +75,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() {
 			if err := tcp.SendBanner(md.TargetPort, conn, md, log, h); err != nil {
-				log.Error("Failed to send service banner", producer.ErrAttr(err))
+				log.Info("Failed to send service banner", producer.ErrAttr(err))
 			}
 			if err := conn.SetReadDeadline(time.Time{}); err != nil {
 				log.Error("failed to reset read deadline", producer.ErrAttr(err))
