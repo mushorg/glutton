@@ -30,13 +30,7 @@ clean:
 	rm -rf bin/
 
 run: build
-	@if grep -q 'interface:' config.yaml; then \
-		INTERFACE=$$(grep 'interface:' config.yaml | awk '{print $$2}'); \
-	else \
-		INTERFACE=eth0; \
-	fi; \
-	sudo bin/server -c config.yaml -i $$INTERFACE
-
+	sudo bin/server
 docker:
 	docker build -t glutton .
 	docker run --rm --cap-add=NET_ADMIN -it glutton
