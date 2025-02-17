@@ -30,7 +30,7 @@ clean:
 	rm -rf bin/
 
 run: build
-	sudo bin/server -i eth0
+	sudo bin/server $(ARGS)
 
 docker:
 	docker build -t glutton .
