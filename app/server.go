@@ -44,6 +44,7 @@ func main() {
 
 	pflag.Parse()
 	viper.BindPFlags(pflag.CommandLine)
+	viper.BindPFlag("network.interface", pflag.Lookup("interface"))
 
 	if viper.IsSet("ssh") {
 		viper.Set("ports.ssh", viper.GetInt("ssh"))
