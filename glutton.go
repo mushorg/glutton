@@ -269,32 +269,34 @@ func (g *Glutton) makeID() error {
 	if err := os.MkdirAll(viper.GetString("var-dir"), 0744); err != nil {
 		return fmt.Errorf("failed to create var-dir: %w", err)
 	}
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		g.id = uuid.New()
-		data, err := g.id.MarshalBinary()
-		if err != nil {
-			return fmt.Errorf("failed to marshal UUID: %w", err)
+	if _, err := os.Stat(filePath); err != nil {
+		if os.IsNotExist(err) {
+			g.id = uuid.New()
+			data, err := g.id.MarshalBinary()
+			if err != nil {
+				return fmt.Errorf("failed to marshal UUID: %w", err)
+			}
+			if err := os.WriteFile(filePath, data, 0744); err != nil {
+				return fmt.Errorf("failed to create new PID file: %w", err)
+			}
+			return nil
 		}
-		if err := os.WriteFile(filePath, data, 0744); err != nil {
-			return fmt.Errorf("failed to create new PID file: %w", err)
-		}
-	} else {
-		if err != nil {
-			return fmt.Errorf("failed to access PID file: %w", err)
-		}
-		f, err := os.Open(filePath)
-		if err != nil {
-			return fmt.Errorf("failed to open PID file: %w", err)
-		}
-		buff, err := io.ReadAll(f)
-		if err != nil {
-			return fmt.Errorf("failed to read PID file: %w", err)
-		}
-		g.id, err = uuid.FromBytes(buff)
-		if err != nil {
-			return fmt.Errorf("failed to create UUID from PID filed content: %w", err)
-		}
+		return fmt.Errorf("failed to access PID file: %w", err)
 	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open PID file: %w", err)
+	}
+	buff, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("failed to read PID file: %w", err)
+	}
+	g.id, err = uuid.FromBytes(buff)
+	if err != nil {
+		return fmt.Errorf("failed to create UUID from PID filed content: %w", err)
+	}
+
 	return nil
 }
 
