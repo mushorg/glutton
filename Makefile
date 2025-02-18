@@ -30,8 +30,7 @@ clean:
 	rm -rf bin/
 
 run: build
-	sudo bin/server -i eth0
-
+	sudo bin/server
 docker:
 	docker build -t glutton .
 	docker run --rm --cap-add=NET_ADMIN -it glutton
