@@ -1,0 +1,15 @@
+HTTP/1.1 200 OK
+Connection: close
+Date: Sun, 27 Nov 2005 13:07:34 GMT
+Server: Microsoft-IIS/6.0
+X-Powered-By: ASP.NET
+X-AspNet-Version: 2.0.50727
+Accept-Ranges: bytes
+Content-Length: 30
+Cache-Control: private
+Content-Type: text/html; charset=utf-8
+
+<HTML>
+<BODY>
+</BODY>
+</HTML>

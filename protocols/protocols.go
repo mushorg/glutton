@@ -3,8 +3,10 @@ package protocols
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
@@ -66,13 +68,25 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		return tcp.HandleADB(ctx, conn, md, log, h)
 	}
 	protocolHandlers["tcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		if err := conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+			log.Error("failed to set read deadline", producer.ErrAttr(err))
+		}
 		snip, bufConn, err := Peek(conn, 4)
-		if err != nil {
-			if err := conn.Close(); err != nil {
-				log.Error("failed to close connection", producer.ErrAttr(err))
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			if err := tcp.SendBanner(md.TargetPort, conn, md, log, h); err != nil {
+				log.Info("Failed to send service banner", producer.ErrAttr(err))
 			}
+			if err := conn.SetReadDeadline(time.Time{}); err != nil {
+				log.Error("failed to reset read deadline", producer.ErrAttr(err))
+			}
+			return tcp.HandleTCP(ctx, conn, md, log, h)
+		}
+		if err := conn.SetReadDeadline(time.Time{}); err != nil {
+			log.Error("failed to reset read deadline", producer.ErrAttr(err))
+		}
+		if err != nil {
 			log.Debug("failed to peek connection", producer.ErrAttr(err))
-			return nil
 		}
 		// poor mans check for HTTP request
 		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true, "CONN": true}
