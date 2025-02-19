@@ -58,6 +58,8 @@ func (g *Glutton) initConfig() error {
 	viper.SetDefault("max_tcp_payload", 4096)
 	viper.SetDefault("conn_timeout", 45)
 	viper.SetDefault("rules_path", "rules/rules.yaml")
+	viper.SetDefault("interface", "eth0") // Default interface name
+
 	g.Logger.Debug("configuration set successfully", slog.String("reporter", "glutton"))
 	return nil
 }
