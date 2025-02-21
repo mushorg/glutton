@@ -236,10 +236,7 @@ func (g *Glutton) tcpListen() {
 	}
 }
 
-// Start the listener, this blocks for new connections
-func (g *Glutton) Start() error {
-	g.startMonitor()
-
+func (g *Glutton) SetupIPTableRules() error {
 	sshPort := viper.GetUint32("ports.ssh")
 	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), sshPort); err != nil {
 		return err
@@ -248,6 +245,12 @@ func (g *Glutton) Start() error {
 	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), sshPort); err != nil {
 		return err
 	}
+	return nil
+}
+
+// Start the listener, this blocks for new connections
+func (g *Glutton) Start() error {
+	g.startMonitor()
 
 	wg := &sync.WaitGroup{}
 

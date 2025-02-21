@@ -6,7 +6,9 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"os/user"
 	"runtime/debug"
+	"strconv"
 	"syscall"
 
 	"github.com/mushorg/glutton"
@@ -82,8 +84,41 @@ func main() {
 		os.Exit(0)
 	}()
 
+	defer exit()
+
+	if err := g.SetupIPTableRules(); err != nil {
+		log.Fatal("failed to setup ip table rules", err)
+	}
+
+	// Check if it started running as a root
+	if os.Geteuid() == 0 {
+		g.Logger.Warn("dropping root user privileges")
+
+		nobody, err := user.Lookup("nobody")
+		if err != nil {
+			log.Fatalf("failed to find nobody user: %v", err)
+		}
+
+		noGroup, err := user.LookupGroup("nobody")
+		if err != nil {
+			log.Fatalf("failed to find 'nogroup' group: %v", err)
+		}
+
+		nobodyUID, _ := strconv.Atoi(nobody.Uid)
+		noGroupID, _ := strconv.Atoi(noGroup.Gid)
+
+		// Set the effective GID
+		if err := syscall.Setgid(noGroupID); err != nil {
+			log.Fatalf("Failed to set group ID: %v", err)
+		}
+
+		// Set the real and effective UID
+		if err := syscall.Setuid(nobodyUID); err != nil {
+			log.Fatalf("Failed to drop root privileges: %v", err)
+		}
+	}
+
 	if err := g.Start(); err != nil {
-		exit()
 		log.Fatal("Failed to start Glutton server:", err)
 	}
 }
