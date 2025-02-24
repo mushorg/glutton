@@ -22,16 +22,15 @@ func TestHandleISCSIMessage(t *testing.T) {
 		0x72, 0x79, 0x00, 0x41, 0x75, 0x74, 0x68, 0x4d, 0x65, 0x74, 0x68, 0x6f,
 		0x64, 0x3d, 0x4e, 0x6f, 0x6e, 0x65, 0x00, 0x00,
 	}
-	res, _, _ := handleISCSIMessage(data)
+	_, res, _, _ := ParseISCSIMessage(data)
 
-	expectedRes := iscsiRes{
+	expectedRes := IscsiMsg{
 		Opcode:  0x23,
 		Flags:   0x00,
 		TaskTag: 0,
 		Data:    0,
 		CID:     20381696,
 		LUN:     65537,
-		Status:  0,
 	}
 
 	if res != expectedRes {
