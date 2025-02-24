@@ -3,6 +3,7 @@ package tcp
 import (
 	"context"
 	"encoding/binary"
+	"io"
 	"log/slog"
 	"net"
 
@@ -77,9 +78,12 @@ func HandleISCSI(ctx context.Context, conn net.Conn, md connection.Metadata, log
 			break
 		}
 		n, err := conn.Read(buffer)
-		if err != nil {
+		if err != nil && err != io.ErrUnexpectedEOF {
 			logger.Error("failed to read from connection", slog.String("protocol", "iscsi"), producer.ErrAttr(err))
 			break
+		}
+		if err == io.ErrUnexpectedEOF {
+			logger.Error("failed to read the complete file", slog.String("protocol", "iscsi"), producer.ErrAttr(err))
 		}
 		err = server.handleISCSIMessage(conn, md, buffer, logger, h, n)
 		if err != nil {
