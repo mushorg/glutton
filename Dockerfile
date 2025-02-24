@@ -1,4 +1,6 @@
-FROM golang:1.23-alpine AS build-env
+FROM golang:1.24-alpine AS build-env
+# dcc gcc compiling GO libraries problems
+###FROM golang:1.23-alpine AS build-env
 RUN apk update
 RUN apk add g++ git make iptables-dev libpcap-dev
 
