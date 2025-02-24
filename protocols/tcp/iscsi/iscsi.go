@@ -19,7 +19,7 @@ func ParseISCSIMessage(buffer []byte) (IscsiMsg, IscsiMsg, []byte, error) {
 	msg := IscsiMsg{}
 	r := bytes.NewReader(buffer)
 	if err := binary.Read(r, binary.BigEndian, &msg); err != nil {
-		return IscsiMsg{}, IscsiMsg{}, nil, fmt.Errorf("Error reading iSCSI message: %v", err)
+		return IscsiMsg{}, IscsiMsg{}, nil, fmt.Errorf("error reading iSCSI message: %w", err)
 	}
 
 	var res IscsiMsg
@@ -65,7 +65,7 @@ func ParseISCSIMessage(buffer []byte) (IscsiMsg, IscsiMsg, []byte, error) {
 
 	buf := new(bytes.Buffer)
 	if err := binary.Write(buf, binary.BigEndian, res); err != nil {
-		return IscsiMsg{}, IscsiMsg{}, nil, fmt.Errorf("Failed to write response: %v", err)
+		return IscsiMsg{}, IscsiMsg{}, nil, fmt.Errorf("failed to write response: %w", err)
 	}
 	return msg, res, buf.Bytes(), nil
 }
