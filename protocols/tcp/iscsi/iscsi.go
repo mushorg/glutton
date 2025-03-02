@@ -16,6 +16,9 @@ type IscsiMsg struct {
 }
 
 func ParseISCSIMessage(buffer []byte) (IscsiMsg, IscsiMsg, []byte, error) {
+	if len(buffer) < 48 {
+		return IscsiMsg{}, IscsiMsg{}, nil, fmt.Errorf("Incomplete iSCSI message")
+	}
 	msg := IscsiMsg{}
 	r := bytes.NewReader(buffer)
 	if err := binary.Read(r, binary.BigEndian, &msg); err != nil {
