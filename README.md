@@ -16,6 +16,11 @@ Arch:
 pacman -S gcc libpcap iptables
 ```
 
+Fedora:
+```
+sudo dnf install gcc libpcap-devel iptables
+```
+
 Build glutton:
 ```
 make build
@@ -23,7 +28,7 @@ make build
 
 To run/test glutton:
 ```
-bin/server
+sudo bin/server
 ```
 
 To get this to work on WSL, use this kernel: https://github.com/Locietta/xanmod-kernel-WSL2
