@@ -68,21 +68,18 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		return tcp.HandleADB(ctx, conn, md, log, h)
 	}
 	protocolHandlers["tcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		if err := conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
-			log.Error("failed to set read deadline", producer.ErrAttr(err))
-		}
 		snip, bufConn, err := Peek(conn, 4)
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() {
-			if err := tcp.SendBanner(md.TargetPort, conn, md, log, h); err != nil {
+			if err := tcp.SendBanner(md.TargetPort, bufConn, md, log, h); err != nil {
 				log.Info("Failed to send service banner", producer.ErrAttr(err))
 			}
-			if err := conn.SetReadDeadline(time.Time{}); err != nil {
+			if err := bufConn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 				log.Error("failed to reset read deadline", producer.ErrAttr(err))
 			}
-			return tcp.HandleTCP(ctx, conn, md, log, h)
+			return tcp.HandleTCP(ctx, bufConn, md, log, h)
 		}
-		if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		if err := bufConn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 			log.Error("failed to reset read deadline", producer.ErrAttr(err))
 		}
 		if err != nil {
