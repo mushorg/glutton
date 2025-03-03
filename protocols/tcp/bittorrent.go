@@ -46,7 +46,7 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, md connection.Metadata
 		}
 	}()
 
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, maxBufferSize)
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
