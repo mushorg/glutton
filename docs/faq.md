@@ -11,8 +11,11 @@
 
 ### Q: How do I configure Glutton?
 **A:** Configuration is managed through YAML files:
+
 - **config/config.yaml:** General settings such as port numbers and interface names.
 - **config/rules.yaml:** Defines rules for matching and processing network traffic.
 
+See the [Configuration](configuration.md) section for detailed instructions.
+
 ### Q: What are the system prerequisites?
-**A:** Glutton requires a Linux system, so if you're using a different OS, you'll have to use Docker to set it up. Specific installation commands are provided in the [Setup](setup.md) section.
+**A:** Glutton requires a Linux system, so if you're using a different OS, you'll have to use Docker to set it up. Specific installation commands are provided in the [Setup](setup.md) section. 

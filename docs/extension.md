@@ -20,7 +20,6 @@ Glutton is built to be easily extensible. Developers can add new protocol handle
 
             import (
                "context"
-               "log"
                "net"
                
                "github.com/mushorg/glutton/connection"
@@ -30,7 +29,7 @@ Glutton is built to be easily extensible. Developers can add new protocol handle
             // HandleNewProtocol handles incoming connections.
             func HandleNewProtocol(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
                // Log the connection for demonstration purposes.
-               log.Printf("Received NewProtocol connection from %s", conn.RemoteAddr().String())
+               logger.Info("Received NewProtocol connection from %s", conn.RemoteAddr().String())
                // Here you could add protocol-specific handling logic.
                // For now, simply close the connection.
                return conn.Close()
