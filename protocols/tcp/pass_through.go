@@ -36,21 +36,20 @@ func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadat
 	defer targetConn.Close()
 
 	errChan := make(chan error, 2)
-	// 创建双向数据传输的通道
 
-	// 源到目标
+	// source to target
 	go func() {
 		_, err := io.Copy(targetConn, conn)
 		errChan <- err
 	}()
 
-	// 目标到源
+	// target to source
 	go func() {
 		_, err := io.Copy(conn, targetConn)
 		errChan <- err
 	}()
 
-	// 等待任一方向完成或出错
+	// wait for either direction to succeed
 	select {
 	case err := <-errChan:
 		if err != nil && err != io.EOF {
