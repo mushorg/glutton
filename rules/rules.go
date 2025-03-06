@@ -33,13 +33,9 @@ type Rule struct {
 	Name   string `yaml:"name,omitempty"`
 
 	isInit   bool
-	ruleType RuleType
+	RuleType RuleType
 	index    int
 	matcher  *pcap.BPF
-}
-
-func (r *Rule) GetRuleType() RuleType {
-	return r.ruleType
 }
 
 func (r *Rule) String() string {
@@ -64,11 +60,11 @@ func (rule *Rule) init(idx int) error {
 
 	switch rule.Type {
 	case "conn_handler":
-		rule.ruleType = UserConnHandler
+		rule.RuleType = UserConnHandler
 	case "drop":
-		rule.ruleType = Drop
-	case "passthrough":
-		rule.ruleType = PassThrough
+		rule.RuleType = Drop
+	case "pass_through":
+		rule.RuleType = PassThrough
 	default:
 		return fmt.Errorf("unknown rule type: %s", rule.Type)
 	}

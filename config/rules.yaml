@@ -29,8 +29,9 @@ rules:
   - match: tcp dst port 11211
     type: conn_handler
     target: memcache
-  - match: tcp dst port 5000
-    type: passthrough
+  - match: tcp dst port 8080
+    type: pass_through
+    target: pass_through
   - match: tcp
     type: conn_handler
     target: tcp

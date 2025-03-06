@@ -3,6 +3,7 @@ package protocols
 import (
 	"bytes"
 	"context"
+	"github.com/mushorg/glutton/rules"
 	"net"
 	"strings"
 
@@ -66,6 +67,10 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		return tcp.HandleADB(ctx, conn, md, log, h)
 	}
 	protocolHandlers["tcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		if md.Rule != nil && md.Rule.RuleType == rules.PassThrough {
+			return tcp.HandlePassThrough(ctx, conn, md, log, h)
+		}
+
 		snip, bufConn, err := Peek(conn, 4)
 		if err != nil {
 			if err := conn.Close(); err != nil {

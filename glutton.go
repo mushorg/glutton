@@ -216,9 +216,6 @@ func (g *Glutton) tcpListen() {
 		}
 
 		md, err := g.connTable.RegisterConn(conn, rule)
-		if md.Rule.GetRuleType() == rules.PassThrough {
-			continue
-		}
 
 		if err != nil {
 			g.Logger.Error("Failed to register connection", producer.ErrAttr(err))
