@@ -3,7 +3,6 @@ package protocols
 import (
 	"bytes"
 	"context"
-	"github.com/mushorg/glutton/rules"
 	"net"
 	"strings"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp"
 	"github.com/mushorg/glutton/protocols/udp"
+	"github.com/mushorg/glutton/rules"
 )
 
 type TCPHandlerFunc func(ctx context.Context, conn net.Conn, md connection.Metadata) error

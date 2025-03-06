@@ -3,12 +3,13 @@ package tcp
 import (
 	"context"
 	"fmt"
-	"github.com/mushorg/glutton/connection"
-	"github.com/mushorg/glutton/producer"
-	"github.com/mushorg/glutton/protocols/interfaces"
 	"io"
 	"log/slog"
 	"net"
+
+	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
+	"github.com/mushorg/glutton/protocols/interfaces"
 )
 
 type parsedPassThrough struct {
@@ -28,29 +29,29 @@ func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadat
 		slog.String("srcAddr", srcAddr),
 		slog.String("localAddr", conn.LocalAddr().String()))
 
-	destAddr := conn.LocalAddr().String()
+	destAddr := md.Rule.Target
 	targetConn, err := net.Dial("tcp", destAddr)
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
 	defer targetConn.Close()
+	defer conn.Close()
 
 	errChan := make(chan error, 2)
-	// 创建双向数据传输的通道
 
-	// 源到目标
+	// source to target
 	go func() {
 		_, err := io.Copy(targetConn, conn)
 		errChan <- err
 	}()
 
-	// 目标到源
+	// target to source
 	go func() {
 		_, err := io.Copy(conn, targetConn)
 		errChan <- err
 	}()
 
-	// 等待任一方向完成或出错
+	// wait for either direction to succeed
 	select {
 	case err := <-errChan:
 		if err != nil && err != io.EOF {
