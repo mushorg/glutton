@@ -57,10 +57,10 @@ func ParseISCSIMessage(buffer []byte) (IscsiMsg, IscsiMsg, []byte, error) {
 		}
 	default:
 		res = IscsiMsg{
-			Opcode:  0x00,
+			Opcode:  0x20, // No Operation response
 			Flags:   0x00,
 			TaskTag: msg.TaskTag,
-			Data:    0,
+			Data:    0x00000001, // A generic error data
 			CID:     msg.CID,
 			LUN:     msg.LUN,
 		}
