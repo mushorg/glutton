@@ -11,6 +11,7 @@ import (
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp"
 	"github.com/mushorg/glutton/protocols/udp"
+	"github.com/mushorg/glutton/rules"
 )
 
 type TCPHandlerFunc func(ctx context.Context, conn net.Conn, md connection.Metadata) error
@@ -66,6 +67,10 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		return tcp.HandleADB(ctx, conn, md, log, h)
 	}
 	protocolHandlers["tcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		if md.Rule != nil && md.Rule.RuleType == rules.PassThrough {
+			return tcp.HandlePassThrough(ctx, conn, md, log, h)
+		}
+
 		snip, bufConn, err := Peek(conn, 4)
 		if err != nil {
 			if err := conn.Close(); err != nil {
