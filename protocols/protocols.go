@@ -75,7 +75,14 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 			return nil
 		}
 		// poor mans check for HTTP request
-		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true, "CONN": true,"PRI": true}
+		httpMap := map[string]bool{
+			"GET ": true,
+			"POST": true,
+			"HEAD": true,
+			"OPTI": true,
+			"CONN": true,
+			"PRI ": true,
+		}
 		if _, ok := httpMap[strings.ToUpper(string(snip))]; ok {
 			return tcp.HandleHTTP(ctx, bufConn, md, log, h)
 		}
