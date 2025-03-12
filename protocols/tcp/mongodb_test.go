@@ -10,7 +10,7 @@ import (
 
 // tests the Mongo response creation function
 func TestCreateOkResponse(t *testing.T) {
-	requestHeader := MsgHeader{
+	requestHeader := mongoMsgHeader{
 		MessageLength: 100,
 		RequestID:     12345,
 		ResponseTo:    0,
@@ -41,7 +41,7 @@ func TestHandleMongoDB(t *testing.T) {
 	var requestID int32 = 12345
 	var buffer bytes.Buffer
 
-	header := MsgHeader{
+	header := mongoMsgHeader{
 		MessageLength: 39, // length of the entire message including header
 		RequestID:     requestID,
 		ResponseTo:    0,
@@ -67,7 +67,7 @@ func TestHandleMongoDB(t *testing.T) {
 	buffer.Write(docBytes)
 
 	message := buffer.Bytes()
-	var msgHeader MsgHeader
+	var msgHeader mongoMsgHeader
 	err := binary.Read(bytes.NewReader(message[:16]), binary.LittleEndian, &msgHeader)
 	require.NoError(t, err)
 
@@ -80,7 +80,7 @@ func TestHandleMongoDB(t *testing.T) {
 	require.Equal(t, requestID, responseHeader.ResponseTo)
 	require.Equal(t, int32(OpMsg), responseHeader.OpCode)
 
-	var respHeader MsgHeader
+	var respHeader mongoMsgHeader
 	err = binary.Read(bytes.NewReader(response[:16]), binary.LittleEndian, &respHeader)
 	require.NoError(t, err)
 

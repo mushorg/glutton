@@ -17,7 +17,7 @@ import (
 	"github.com/mushorg/glutton/protocols/interfaces"
 )
 
-type MsgHeader struct {
+type mongoMsgHeader struct {
 	MessageLength int32
 	RequestID     int32
 	ResponseTo    int32
@@ -50,10 +50,10 @@ var opCodeNames = map[int32]string{
 }
 
 type parsedMongoDB struct {
-	Direction string    `json:"direction,omitempty"`
-	Header    MsgHeader `json:"header,omitempty"`
-	Payload   []byte    `json:"payload,omitempty"`
-	OpCodeStr string    `json:"opcode_str,omitempty"`
+	Direction string         `json:"direction,omitempty"`
+	Header    mongoMsgHeader `json:"header,omitempty"`
+	Payload   []byte         `json:"payload,omitempty"`
+	OpCodeStr string         `json:"opcode_str,omitempty"`
 }
 
 type mongoDBServer struct {
@@ -68,7 +68,7 @@ func (s *mongoDBServer) read() ([]byte, error) {
 		return nil, err
 	}
 
-	var header MsgHeader
+	var header mongoMsgHeader
 	if err := binary.Read(bytes.NewReader(headerBytes), binary.LittleEndian, &header); err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func (s *mongoDBServer) read() ([]byte, error) {
 }
 
 // writes a Mongo message to the connection
-func (s *mongoDBServer) write(header MsgHeader, data []byte) error {
+func (s *mongoDBServer) write(header mongoMsgHeader, data []byte) error {
 	_, err := s.conn.Write(data)
 	if err != nil {
 		return err
@@ -107,10 +107,10 @@ func (s *mongoDBServer) write(header MsgHeader, data []byte) error {
 }
 
 // creates a basic "ok" response for Mongo queries
-func createOkResponse(requestHeader MsgHeader) (MsgHeader, []byte, error) {
+func createOkResponse(requestHeader mongoMsgHeader) (mongoMsgHeader, []byte, error) {
 	buffer := new(bytes.Buffer)
 
-	responseHeader := MsgHeader{
+	responseHeader := mongoMsgHeader{
 		MessageLength: 0, // will fill in later
 		RequestID:     requestHeader.RequestID + 1,
 		ResponseTo:    requestHeader.RequestID,
@@ -191,7 +191,7 @@ func HandleMongoDB(ctx context.Context, conn net.Conn, md connection.Metadata, l
 			break
 		}
 
-		var header MsgHeader
+		var header mongoMsgHeader
 		if err := binary.Read(bytes.NewReader(message[:16]), binary.LittleEndian, &header); err != nil {
 			logger.Error("Failed to parse MongoDB header", producer.ErrAttr(err), slog.String("protocol", "mongodb"))
 			break
