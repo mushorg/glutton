@@ -29,9 +29,13 @@ rules:
   - match: tcp dst port 11211
     type: conn_handler
     target: memcache
+  - match: tcp dst port 3260
+    type: conn_handler
+    target: iscsi
   - match: tcp
     type: conn_handler
     target: tcp
   - match: udp
     type: conn_handler
     target: udp
+    
