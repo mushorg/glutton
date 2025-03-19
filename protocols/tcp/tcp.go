@@ -61,7 +61,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 
 	msgLength := 0
 	data := []byte{}
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, maxBufferSize)
 
 	defer func() {
 		if msgLength > 0 {
