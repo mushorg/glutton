@@ -44,6 +44,10 @@ func TestMapTCPProtocolHandlers(t *testing.T) {
 	h := &mocks.MockHoneypot{}
 	l := &mocks.MockLogger{}
 	l.EXPECT().Debug(mock.Anything, mock.Anything).Return().Maybe()
+	l.EXPECT().Info(mock.Anything, mock.Anything).Return().Maybe()
+
+	h.EXPECT().UpdateConnectionTimeout(mock.Anything, mock.Anything).Return(nil).Maybe()
+	h.EXPECT().ProduceTCP(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	m := MapTCPProtocolHandlers(l, h)
 	require.NotEmpty(t, m, "should get a non-empty map")
