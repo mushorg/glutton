@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
@@ -251,6 +252,12 @@ func (g *Glutton) Start() error {
 		return err
 	}
 
+	uid := syscall.Getuid()
+	if uid == 0 {
+		if err := dropPrivileges(); err != nil {
+			return err
+		}
+	}
 	wg := &sync.WaitGroup{}
 
 	wg.Add(1)
@@ -258,6 +265,18 @@ func (g *Glutton) Start() error {
 	go g.tcpListen()
 
 	wg.Wait()
+
+	return nil
+}
+
+// Change the user and group to 'nobody' (UID 65534, GID 65534)
+func dropPrivileges() error {
+	if err := syscall.Setgid(65534); err != nil {
+		return fmt.Errorf("failed to set group ID: %v", err)
+	}
+	if err := syscall.Setuid(65534); err != nil {
+		return fmt.Errorf("failed to set user ID: %v", err)
+	}
 
 	return nil
 }
