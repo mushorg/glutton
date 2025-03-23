@@ -53,7 +53,7 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 	}()
 
-	buffer := make([]byte, 4096)
+	buffer := make([]byte, maxBufferSize)
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "smb"), producer.ErrAttr(err))
@@ -64,7 +64,7 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			logger.Debug("Failed to read data", slog.String("protocol", "smb"), producer.ErrAttr(err))
 			break
 		}
-		if n > 0 && n < 4096 {
+		if n > 0 && n < maxBufferSize {
 			logger.Debug("SMB Payload", slog.String("payload", hex.Dump(buffer[0:n])), slog.String("protocol", "smb"))
 			buffer, err := smb.ValidateData(buffer[0:n])
 			if err != nil {
