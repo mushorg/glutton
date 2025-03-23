@@ -8,9 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mushorg/glutton/rules"
+
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	"github.com/mushorg/glutton/rules"
 )
 
 type CKey [2]uint64

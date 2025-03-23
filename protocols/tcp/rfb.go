@@ -2,23 +2,22 @@ package tcp
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/binary"
-	"fmt"
+	"log/slog"
 	"net"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/interfaces"
 )
 
 func readRFB(conn net.Conn, logger interfaces.Logger) error {
 	msg, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		logger.Error(fmt.Sprintf("[rfb     ] error: %v", err))
 		return err
 	}
-	logger.Info(fmt.Sprintf("[rfb     ] message %q", msg))
+	logger.Debug("RFB message", slog.String("msg", msg), slog.String("protocol", "rfb"))
 	return nil
 }
 
@@ -37,7 +36,7 @@ type PixelFormat struct {
 func HandleRFB(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			logger.Error(fmt.Sprintf("[rfb     ] error: %v", err))
+			logger.Debug("Failed to close RFB connection", slog.String("protocol", "rfb"), producer.ErrAttr(err))
 		}
 	}()
 
@@ -45,7 +44,8 @@ func HandleRFB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		return err
 	}
 	if err := readRFB(conn, logger); err != nil {
-		return err
+		logger.Debug("Failed to read RFB", slog.String("protocol", "rfb"), producer.ErrAttr(err))
+		return nil
 	}
 	var authNone uint32 = 1
 	bs := make([]byte, 4)
@@ -57,7 +57,6 @@ func HandleRFB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	serverName := "rfb-go"
 	lenName := int32(len(serverName))
 
-	buf := new(bytes.Buffer)
 	f := PixelFormat{
 		Width:            1,
 		Heigth:           1,
@@ -73,10 +72,7 @@ func HandleRFB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		BlueShift:        0,
 		ServerNameLength: lenName,
 	}
-	if err := binary.Write(buf, binary.LittleEndian, f); err != nil {
-		return err
-	}
-	if _, err := conn.Write(buf.Bytes()); err != nil {
+	if err := binary.Write(conn, binary.LittleEndian, f); err != nil {
 		return err
 	}
 	return readRFB(conn, logger)

@@ -41,17 +41,16 @@ type JabberClient struct {
 func parseJabberClient(conn net.Conn, md connection.Metadata, dataClient []byte, logger interfaces.Logger, h interfaces.Honeypot) error {
 	v := JabberClient{STo: "none", Version: "none"}
 	if err := xml.Unmarshal(dataClient, &v); err != nil {
-		logger.Error(fmt.Sprintf("error: %s", err.Error()), slog.String("handler", "jabber"))
 		return err
 	}
 
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
-		logger.Error(fmt.Sprintf("[jabber  ] error: %v", err))
+		return err
 	}
 
 	if err = h.ProduceTCP("jabber", conn, md, dataClient, v); err != nil {
-		logger.Error("failed to produce message", producer.ErrAttr(err), slog.String("handler", "jabber"))
+		logger.Error("Failed to produce message", producer.ErrAttr(err), slog.String("handler", "jabber"))
 	}
 
 	logger.Info(
@@ -69,8 +68,8 @@ func readMsgJabber(conn net.Conn, md connection.Metadata, logger interfaces.Logg
 	r := bufio.NewReader(conn)
 	line, _, err := r.ReadLine()
 	if err != nil {
-		logger.Error(fmt.Sprintf("error: %s", err.Error()), slog.String("handler", "jabber"))
-		return err
+		logger.Debug("Failed to read line", slog.String("handler", "jabber"), producer.ErrAttr(err))
+		return nil
 	}
 	return parseJabberClient(conn, md, line[:1024], logger, h)
 }
@@ -79,7 +78,7 @@ func readMsgJabber(conn net.Conn, md connection.Metadata, logger interfaces.Logg
 func HandleJabber(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			logger.Error(fmt.Sprintf("error: %s", err.Error()), slog.String("handler", "jabber"))
+			logger.Error("Failed to close connection", slog.String("handler", "jabber"), producer.ErrAttr(err))
 		}
 	}()
 
@@ -88,15 +87,12 @@ func HandleJabber(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 
 	output, err := xml.MarshalIndent(v, "  ", "    ")
 	if err != nil {
-		logger.Error(fmt.Sprintf("error: %s", err.Error()), slog.String("handler", "jabber"))
 		return err
 	}
 	if _, err := conn.Write(output); err != nil {
-		logger.Error(fmt.Sprintf("error: %s", err.Error()), slog.String("handler", "jabber"))
 		return err
 	}
 	if err := readMsgJabber(conn, md, logger, h); err != nil {
-		logger.Error(fmt.Sprintf("error: %s", err.Error()), slog.String("handler", "jabber"))
 		return err
 	}
 	return nil

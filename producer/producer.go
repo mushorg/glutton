@@ -75,7 +75,7 @@ func makeEventTCP(handler string, conn net.Conn, md connection.Metadata, payload
 	return &event, nil
 }
 
-func makeEventUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md connection.Metadata, payload []byte, decoded interface{}, sensorID string) (*Event, error) {
+func makeEventUDP(handler string, srcAddr *net.UDPAddr, md connection.Metadata, payload []byte, decoded interface{}, sensorID string) (*Event, error) {
 	_, scannerName, err := scanner.IsScanner(net.ParseIP(srcAddr.IP.String()))
 	if err != nil {
 		return nil, err
@@ -146,8 +146,8 @@ func (p *Producer) LogTCP(handler string, conn net.Conn, md connection.Metadata,
 }
 
 // LogUDP is a meta caller for all producers
-func (p *Producer) LogUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md connection.Metadata, payload []byte, decoded interface{}) error {
-	event, err := makeEventUDP(handler, srcAddr, dstAddr, md, payload, decoded, p.sensorID)
+func (p *Producer) LogUDP(handler string, srcAddr *net.UDPAddr, md connection.Metadata, payload []byte, decoded interface{}) error {
+	event, err := makeEventUDP(handler, srcAddr, md, payload, decoded, p.sensorID)
 	if err != nil {
 		return err
 	}

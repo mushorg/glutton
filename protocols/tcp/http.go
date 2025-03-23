@@ -120,7 +120,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 	defer func() {
 		err := conn.Close()
 		if err != nil {
-			logger.Error("failed to close the HTTP connection", producer.ErrAttr(err))
+			logger.Error("Failed to close the HTTP connection", producer.ErrAttr(err))
 		}
 	}()
 
@@ -162,7 +162,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 		Path:   req.URL.EscapedPath(),
 		Query:  req.URL.Query().Encode(),
 	}); err != nil {
-		logger.Error("failed to produce message", slog.String("protocol", "http"), producer.ErrAttr(err))
+		logger.Error("Failed to produce message", slog.String("protocol", "http"), producer.ErrAttr(err))
 	}
 
 	switch req.Method {
@@ -203,7 +203,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 			}
 			go func() {
 				if err := HandleTCP(ctx, conn, md, logger, h); err != nil {
-					logger.Error("failed to handle vmware attack", producer.ErrAttr(err))
+					logger.Error("Failed to handle vmware attack", producer.ErrAttr(err))
 				}
 			}()
 		}

@@ -3,6 +3,7 @@ package protocols
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"net"
 	"strings"
 
@@ -56,6 +57,9 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 	protocolHandlers["mqtt"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		return tcp.HandleMQTT(ctx, conn, md, log, h)
 	}
+	protocolHandlers["iscsi"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		return tcp.HandleISCSI(ctx, conn, md, log, h)
+	}
 	protocolHandlers["bittorrent"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		return tcp.HandleBittorrent(ctx, conn, md, log, h)
 	}
@@ -68,13 +72,17 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 	protocolHandlers["adb"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		return tcp.HandleADB(ctx, conn, md, log, h)
 	}
+	protocolHandlers["mongodb"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		return tcp.HandleMongoDB(ctx, conn, md, log, h)
+	}
 	protocolHandlers["tcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		snip, bufConn, err := Peek(conn, 4)
 		if err != nil {
 			if err := conn.Close(); err != nil {
 				log.Error("failed to close connection", producer.ErrAttr(err))
 			}
-			return err
+			log.Debug("failed to peek connection", producer.ErrAttr(err))
+			return nil
 		}
 		// poor mans check for HTTP request
 		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true, "CONN": true}
@@ -84,6 +92,35 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		// poor mans check for RDP header
 		if bytes.Equal(snip, []byte{0x03, 0x00, 0x00, 0x2b}) {
 			return tcp.HandleRDP(ctx, bufConn, md, log, h)
+		}
+		// poor mans check for MongoDB header (checking msg length and validating opcodes)
+		messageLength := binary.LittleEndian.Uint32(snip)
+		if messageLength > 0 && messageLength <= 48*1024*1024 {
+			moreSample, bufConn, err := Peek(bufConn, 16)
+			if err != nil {
+				if err := conn.Close(); err != nil {
+					log.Error("failed to close connection", producer.ErrAttr(err))
+				}
+				log.Debug("failed to peek connection", producer.ErrAttr(err))
+				return nil
+			}
+			if len(moreSample) == 16 {
+				opCode := binary.LittleEndian.Uint32(moreSample[12:16])
+				validOpCodes := map[uint32]bool{
+					1:    true, // OP_REPLY
+					2001: true, // OP_UPDATE
+					2002: true, // OP_INSERT
+					2004: true, // OP_QUERY
+					2005: true, // OP_GET_MORE
+					2006: true, // OP_DELETE
+					2007: true, // OP_KILL_CURSORS
+					2012: true, // OP_COMPRESSED
+					2013: true, // OP_MSG
+				}
+				if _, ok := validOpCodes[opCode]; ok {
+					return tcp.HandleMongoDB(ctx, bufConn, md, log, h)
+				}
+			}
 		}
 		// fallback TCP handler
 		return tcp.HandleTCP(ctx, bufConn, md, log, h)

@@ -28,7 +28,7 @@ func HandleMemcache(ctx context.Context, conn net.Conn, md connection.Metadata, 
 		}
 
 		if err = h.ProduceTCP("memcache", conn, md, buffer, nil); err != nil {
-			logger.Error("failed to produce message", producer.ErrAttr(err), slog.String("handler", "memcache"))
+			logger.Error("Failed to produce message", producer.ErrAttr(err), slog.String("handler", "memcache"))
 		}
 
 		parts := strings.Split(string(buffer[:]), " ")

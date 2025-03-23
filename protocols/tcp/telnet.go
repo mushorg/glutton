@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
@@ -96,7 +95,7 @@ func (s *telnetServer) read(conn net.Conn) (string, error) {
 func (s *telnetServer) getSample(cmd string, logger interfaces.Logger) error {
 	url := cmd[strings.Index(cmd, "http"):]
 	url = strings.Split(url, " ")[0]
-	logger.Info(fmt.Sprintf("getSample target URL: %s", url))
+	logger.Debug("Fetching sample", slog.String("url", url), slog.String("handler", "telnet"))
 	resp, err := s.client.Get(url)
 	if err != nil {
 		return err
@@ -120,7 +119,7 @@ func (s *telnetServer) getSample(cmd string, logger interfaces.Logger) error {
 	sha256Hash := hex.EncodeToString(sum[:])
 	path := filepath.Join("samples", sha256Hash)
 	if _, err = os.Stat(path); err == nil {
-		logger.Info("getSample already known", slog.String("sha", sha256Hash))
+		logger.Debug("getSample already known", slog.String("sha", sha256Hash), slog.String("handler", "telnet"))
 		return nil
 	}
 	out, err := os.Create(path)
@@ -151,12 +150,17 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 	}
 	defer func() {
 		if err := h.ProduceTCP("telnet", conn, md, []byte(helpers.FirstOrEmpty[parsedTelnet](s.events).Message), s.events); err != nil {
-			logger.Error("failed to produce message", producer.ErrAttr(err))
+			logger.Error("Failed to produce message", producer.ErrAttr(err))
 		}
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close telnet connection", producer.ErrAttr(err))
+			logger.Debug("Failed to close telnet connection", producer.ErrAttr(err))
 		}
 	}()
+
+	if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+		logger.Debug("Failed to set connection timeout", slog.String("protocol", "telnet"), producer.ErrAttr(err))
+		return nil
+	}
 
 	// TODO (glaslos): Add device banner
 
@@ -170,7 +174,8 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 		return err
 	}
 	if _, err := s.read(conn); err != nil {
-		return err
+		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
+		return nil
 	}
 	if err := s.write(conn, "Password: "); err != nil {
 		return err

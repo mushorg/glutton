@@ -3,20 +3,18 @@ package tcp
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"math/big"
 	"net"
-	"os"
-	"path/filepath"
 	"strconv"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+
 	"github.com/spf13/viper"
 )
 
@@ -28,28 +26,6 @@ type parsedTCP struct {
 
 type tcpServer struct {
 	events []parsedTCP
-}
-
-func storePayload(data []byte) (string, error) {
-	sum := sha256.Sum256(data)
-	if err := os.MkdirAll("payloads", os.ModePerm); err != nil {
-		return "", err
-	}
-	sha256Hash := hex.EncodeToString(sum[:])
-	path := filepath.Join("payloads", sha256Hash)
-	if _, err := os.Stat(path); err == nil {
-		return "", nil
-	}
-	out, err := os.Create(path)
-	if err != nil {
-		return "", err
-	}
-	defer out.Close()
-	_, err = out.Write(data)
-	if err != nil {
-		return "", err
-	}
-	return sha256Hash, nil
 }
 
 func (s *tcpServer) sendRandom(conn net.Conn) error {
@@ -89,9 +65,9 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 
 	defer func() {
 		if msgLength > 0 {
-			payloadHash, err := storePayload(data)
+			payloadHash, err := helpers.StorePayload(data)
 			if err != nil {
-				logger.Error("failed to store payload", slog.String("handler", "tcp"), producer.ErrAttr(err))
+				logger.Error("Failed to store payload", slog.String("handler", "tcp"), producer.ErrAttr(err))
 			}
 			logger.Info(
 				"Packet got handled by TCP handler",
@@ -111,10 +87,10 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 
 		if err := h.ProduceTCP("tcp", conn, md, helpers.FirstOrEmpty[parsedTCP](server.events).Payload, server.events); err != nil {
-			logger.Error("failed to produce message", slog.String("protocol", "tcp"), producer.ErrAttr(err))
+			logger.Error("Failed to produce message", slog.String("protocol", "tcp"), producer.ErrAttr(err))
 		}
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close TCP connection", slog.String("handler", "tcp"), producer.ErrAttr(err))
+			logger.Error("Failed to close TCP connection", slog.String("handler", "tcp"), producer.ErrAttr(err))
 		}
 	}()
 

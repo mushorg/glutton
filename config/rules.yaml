@@ -32,6 +32,12 @@ rules:
   - match: udp dst port 53
     type: conn_handler
     target: dns
+  - match: tcp dst port 3260
+    type: conn_handler
+    target: iscsi
+  - match: tcp dst port 27017
+    type: conn_handler
+    target: mongodb
   - match: tcp
     type: conn_handler
     target: tcp

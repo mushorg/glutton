@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
-	"fmt"
 	"log/slog"
 	"math/big"
 	"net"
@@ -58,7 +57,7 @@ func validateRCPT(query string) bool {
 func HandleSMTP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			logger.Error(fmt.Sprintf("[smtp    ]  error: %v", err))
+			logger.Debug("Failed to close SMTP connection", slog.String("protocol", "smtp"), producer.ErrAttr(err))
 		}
 	}()
 
@@ -81,7 +80,7 @@ func HandleSMTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 			break
 		}
 		query := strings.Trim(data, "\r\n")
-		logger.Info(fmt.Sprintf("[smtp    ] Payload : %q", query))
+		logger.Debug("SMTP Query", slog.String("query", query), slog.String("protocol", "smtp"))
 		if strings.HasPrefix(query, "HELO ") {
 			if err := randomSleep(); err != nil {
 				return err
@@ -107,9 +106,9 @@ func HandleSMTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 				if err := h.ProduceTCP("smtp", conn, md, []byte(data), struct {
 					Message string `json:"message,omitempty"`
 				}{Message: query}); err != nil {
-					logger.Error("failed to produce message", slog.String("protocol", "smpt"), producer.ErrAttr(err))
+					logger.Error("Failed to produce message", slog.String("protocol", "smpt"), producer.ErrAttr(err))
 				}
-				logger.Info(fmt.Sprintf("[smtp    ] Data : %q", data))
+				logger.Debug("SMTP Data", slog.String("data", data), slog.String("protocol", "smtp"))
 				// exit condition
 				if strings.Compare(data, ".\r\n") == 0 {
 					break

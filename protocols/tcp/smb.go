@@ -3,7 +3,6 @@ package tcp
 import (
 	"context"
 	"encoding/hex"
-	"fmt"
 	"log/slog"
 	"net"
 
@@ -46,25 +45,27 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	}
 	defer func() {
 		if err := h.ProduceTCP("smb", conn, md, helpers.FirstOrEmpty[parsedSMB](server.events).Payload, server.events); err != nil {
-			logger.Error("failed to produce message", slog.String("protocol", "smb"), producer.ErrAttr(err))
+			logger.Error("Failed to produce message", slog.String("protocol", "smb"), producer.ErrAttr(err))
 		}
 
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close SMB connection", producer.ErrAttr(err))
+			logger.Debug("Failed to close SMB connection", producer.ErrAttr(err), slog.String("protocol", "smb"))
 		}
 	}()
 
 	buffer := make([]byte, 4096)
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
-			return err
+			logger.Debug("Failed to set connection timeout", slog.String("protocol", "smb"), producer.ErrAttr(err))
+			return nil
 		}
 		n, err := conn.Read(buffer)
 		if err != nil {
-			return err
+			logger.Debug("Failed to read data", slog.String("protocol", "smb"), producer.ErrAttr(err))
+			break
 		}
 		if n > 0 && n < 4096 {
-			logger.Debug(fmt.Sprintf("SMB payload:\n%s", hex.Dump(buffer[0:n])))
+			logger.Debug("SMB Payload", slog.String("payload", hex.Dump(buffer[0:n])), slog.String("protocol", "smb"))
 			buffer, err := smb.ValidateData(buffer[0:n])
 			if err != nil {
 				return err
@@ -82,7 +83,7 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 				Payload:   buffer.Bytes(),
 			})
 
-			logger.Debug(fmt.Sprintf("SMB header: %+v", header))
+			logger.Debug("SMB Header", slog.Any("header", header), slog.String("protocol", "smb"))
 			switch header.Command {
 			case 0x72, 0x73, 0x75:
 				responseHeader, resp, err := smb.MakeNegotiateProtocolResponse(header)
@@ -111,4 +112,5 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			}
 		}
 	}
+	return nil
 }

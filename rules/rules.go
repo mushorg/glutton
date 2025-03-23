@@ -10,21 +10,19 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
-
 	yaml "gopkg.in/yaml.v2"
 )
 
 type RuleType int
 
 const (
-	Rewrite RuleType = iota
-	UserConnHandler
+	UserConnHandler RuleType = iota
 	Drop
 )
 
 type Config struct {
-	Version int     `yaml:"version"`
-	Rules   []*Rule `yaml:"rules"`
+	Version int   `yaml:"version"`
+	Rules   Rules `yaml:"rules"`
 }
 
 type Rule struct {
@@ -37,39 +35,29 @@ type Rule struct {
 	ruleType RuleType
 	index    int
 	matcher  *pcap.BPF
-	port     int
 }
 
 func (r *Rule) String() string {
 	return fmt.Sprintf("Rule: %s", r.Match)
 }
 
-func ParseRuleSpec(file io.Reader) (Rules, error) {
+func Init(file io.Reader) (Rules, error) {
 	config := &Config{}
 	if err := yaml.NewDecoder(file).Decode(config); err != nil {
 		return nil, err
 	}
-
-	if config.Version == 0 {
-		// TODO: log warning
-		config.Version = 1
+	if err := config.Rules.init(); err != nil {
+		return nil, err
 	}
-
-	if config.Version != 1 {
-		return nil, fmt.Errorf("unsupported rules version: %v", config.Version)
-	}
-
 	return config.Rules, nil
 }
 
-func InitRule(idx int, rule *Rule) error {
+func (rule *Rule) init(idx int) error {
 	if rule.isInit {
 		return nil
 	}
 
 	switch rule.Type {
-	case "rewrite":
-		rule.ruleType = Rewrite
 	case "conn_handler":
 		rule.ruleType = UserConnHandler
 	case "drop":
@@ -83,17 +71,6 @@ func InitRule(idx int, rule *Rule) error {
 		rule.matcher, err = pcap.NewBPF(layers.LinkTypeEthernet, 65535, rule.Match)
 		if err != nil {
 			return err
-		}
-	}
-
-	if rule.Target != "" {
-		var err error
-
-		if rule.ruleType == Rewrite {
-			rule.port, err = strconv.Atoi(rule.Target)
-			if err != nil {
-				return err
-			}
 		}
 	}
 
@@ -197,4 +174,15 @@ func (rs Rules) Match(network string, srcAddr, dstAddr net.Addr) (*Rule, error) 
 	}
 
 	return nil, nil
+}
+
+// Init initializes the rules
+func (rs Rules) init() error {
+	for i, rule := range rs {
+		if err := rule.init(i); err != nil {
+			return err
+		}
+		rs[i] = rule
+	}
+	return nil
 }
