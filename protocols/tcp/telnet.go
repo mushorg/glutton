@@ -3,26 +3,44 @@ package tcp
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
+	"fmt"
 	"io"
 	"log/slog"
-	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 )
+
+var MaliciousPatterns = []string{
+	"wget http://",
+	"tftp",
+	"/bin/busybox",
+	"bins.sh",
+	".sh",
+	"chmod 777",
+	"ECCHI",
+	"IHCCE",
+}
+
+var CommonCommands = map[string]string{
+	"enable":  "system disabled",
+	"system":  "error: system command disabled",
+	"shell":   "shell access denied",
+	"sh":      "sh: permission denied",
+	"/bin/sh": "access denied",
+}
 
 // Mirai botnet  - https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
 // Hajime botnet - https://security.rapiditynetworks.com/publications/2016-10-16/hajime.pdf
@@ -69,8 +87,36 @@ type parsedTelnet struct {
 }
 
 type telnetServer struct {
-	events []parsedTelnet
-	client *http.Client
+	events            []parsedTelnet
+	client            *http.Client
+	commandHistory    []string
+	maliciousAttempts int
+	rateLimiter       *rate.Limiter
+}
+
+func ExtractURLs(cmd string) []string {
+	urlPattern := regexp.MustCompile(`(http|tftp|ftp)://[^\s;>"']+`)
+	return urlPattern.FindAllString(cmd, -1)
+}
+
+func ValidateURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return u.Scheme != "" && u.Host != ""
+}
+
+func NewTelnetServer() *telnetServer {
+	return &telnetServer{
+		events: make([]parsedTelnet, 0),
+		client: &http.Client{
+			Timeout: 5 * time.Second,
+		},
+		commandHistory:    make([]string, 0),
+		maliciousAttempts: 0,
+		rateLimiter:       rate.NewLimiter(rate.Every(1*time.Second), 5),
+	}
 }
 
 // write writes a telnet message to the connection
@@ -82,74 +128,84 @@ func (s *telnetServer) write(conn net.Conn, msg string) error {
 	return nil
 }
 
+func (s *telnetServer) detectMaliciousCommand(cmd string) bool {
+	for _, pattern := range MaliciousPatterns {
+		if strings.Contains(cmd, pattern) {
+			s.maliciousAttempts++
+			return true
+		}
+	}
+	return false
+}
+
 // read reads a telnet message from a connection
 func (s *telnetServer) read(conn net.Conn) (string, error) {
 	msg, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		return msg, err
 	}
+
+	// Track command
+	s.commandHistory = append(s.commandHistory, msg)
+	s.detectMaliciousCommand(msg)
+
 	s.events = append(s.events, parsedTelnet{Direction: "read", Message: msg})
 	return msg, nil
 }
 
 func (s *telnetServer) getSample(cmd string, logger interfaces.Logger) error {
-	url := cmd[strings.Index(cmd, "http"):]
-	url = strings.Split(url, " ")[0]
-	logger.Debug("Fetching sample", slog.String("url", url), slog.String("handler", "telnet"))
+	if !s.rateLimiter.Allow() {
+		logger.Debug("Rate limit exceeded for sample collection")
+		return nil
+	}
+
+	urls := ExtractURLs(cmd)
+	for _, url := range urls {
+		if !ValidateURL(url) {
+			continue
+		}
+
+		if err := s.downloadSample(url); err != nil {
+			logger.Error("Failed to download sample",
+				slog.String("url", url),
+				producer.ErrAttr(err))
+			continue
+		}
+	}
+	return nil
+}
+
+func (s *telnetServer) downloadSample(url string) error {
 	resp, err := s.client.Get(url)
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != 200 {
-		return errors.New("getSample read http: error: Non 200 status code on getSample")
-	}
 	defer resp.Body.Close()
-	if resp.ContentLength <= 0 {
-		return errors.New("getSample read http: error: Empty response body")
-	}
-	bodyBuffer, err := io.ReadAll(resp.Body)
+
+	// Generate unique filename
+	filename := fmt.Sprintf("sample_%d_%s", time.Now().Unix(),
+		filepath.Base(url))
+
+	f, err := os.Create(filename)
 	if err != nil {
 		return err
 	}
-	sum := sha256.Sum256(bodyBuffer)
-	// Ignoring errors for if the folder already exists
-	if err = os.MkdirAll("samples", os.ModePerm); err != nil {
-		return err
-	}
-	sha256Hash := hex.EncodeToString(sum[:])
-	path := filepath.Join("samples", sha256Hash)
-	if _, err = os.Stat(path); err == nil {
-		logger.Debug("getSample already known", slog.String("sha", sha256Hash), slog.String("handler", "telnet"))
-		return nil
-	}
-	out, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = out.Write(bodyBuffer)
-	if err != nil {
-		return err
-	}
-	logger.Info(
-		"new sample fetched from telnet",
-		slog.String("handler", "telnet"),
-		slog.String("sha256", sha256Hash),
-		slog.String("source", url),
-	)
-	return nil
+	defer f.Close()
+
+	_, err = io.Copy(f, resp.Body)
+	return err
 }
 
 // HandleTelnet handles telnet communication on a connection
 func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
-	s := &telnetServer{
-		events: []parsedTelnet{},
-		client: &http.Client{
-			Timeout: time.Duration(5 * time.Second),
-		},
+	server := NewTelnetServer()
+
+	// Handle initial connection
+	if err := server.write(conn, "Username: "); err != nil {
+		return err
 	}
 	defer func() {
-		if err := h.ProduceTCP("telnet", conn, md, []byte(helpers.FirstOrEmpty[parsedTelnet](s.events).Message), s.events); err != nil {
+		if err := h.ProduceTCP("telnet", conn, md, []byte(helpers.FirstOrEmpty[parsedTelnet](server.events).Message), server.events); err != nil {
 			logger.Error("Failed to produce message", producer.ErrAttr(err))
 		}
 		if err := conn.Close(); err != nil {
@@ -165,81 +221,50 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 	// TODO (glaslos): Add device banner
 
 	// telnet window size negotiation response
-	if err := s.write(conn, "\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27"); err != nil {
+	if err := server.write(conn, "\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27"); err != nil {
 		return err
 	}
 
 	// User name prompt
-	if err := s.write(conn, "Username: "); err != nil {
+	if err := server.write(conn, "Username: "); err != nil {
 		return err
 	}
-	if _, err := s.read(conn); err != nil {
+	if _, err := server.read(conn); err != nil {
 		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
 		return nil
 	}
-	if err := s.write(conn, "Password: "); err != nil {
+	if err := server.write(conn, "Password: "); err != nil {
 		return err
 	}
-	if _, err := s.read(conn); err != nil {
+	if _, err := server.read(conn); err != nil {
 		return err
 	}
-	if err := s.write(conn, "welcome\r\n> "); err != nil {
+	if err := server.write(conn, "welcome\r\n> "); err != nil {
 		return err
 	}
-
 	for {
-		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
-			return err
-		}
-		msg, err := s.read(conn)
+		cmd, err := server.read(conn)
 		if err != nil {
 			return err
 		}
-		for _, cmd := range strings.Split(msg, ";") {
-			if strings.Contains(strings.Trim(cmd, " "), "wget http") {
-				go s.getSample(strings.Trim(cmd, " "), logger)
-			}
-			if strings.TrimRight(cmd, "") == " rm /dev/.t" {
-				continue
-			}
-			if strings.TrimRight(cmd, "\r\n") == " rm /dev/.sh" {
-				continue
-			}
-			if strings.TrimRight(cmd, "\r\n") == "cd /dev/" {
-				if err := s.write(conn, "ECCHI: applet not found\r\n"); err != nil {
-					return err
-				}
 
-				if err := s.write(conn, "\r\nBusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-it shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n"); err != nil {
-					return err
-				}
-				continue
-			}
-
-			if resp := miraiCom[strings.TrimSpace(cmd)]; len(resp) > 0 {
-				n, err := rand.Int(rand.Reader, big.NewInt(int64(len(resp))))
-				if err != nil {
-					return err
-				}
-				if err := s.write(conn, resp[n.Int64()]+"\r\n"); err != nil {
-					return err
-				}
-			} else {
-				// /bin/busybox YDKBI
-				re := regexp.MustCompile(`\/bin\/busybox (?P<applet>[A-Z]+)`)
-				match := re.FindStringSubmatch(cmd)
-				if len(match) > 1 {
-					if err := s.write(conn, match[1]+": applet not found\r\n"); err != nil {
-						return err
-					}
-
-					if err := s.write(conn, "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-in shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n"); err != nil {
-						return err
-					}
-				}
+		// Check for malicious command
+		if server.detectMaliciousCommand(cmd) {
+			if err := server.getSample(cmd, logger); err != nil {
+				logger.Error("Failed to get sample", producer.ErrAttr(err))
 			}
 		}
-		if err := s.write(conn, "> "); err != nil {
+
+		// Handle common commands
+		if response, exists := CommonCommands[strings.TrimSpace(cmd)]; exists {
+			if err := server.write(conn, response+"\n"); err != nil {
+				return err
+			}
+			continue
+		}
+
+		// Default response
+		if err := server.write(conn, "command not found\n"); err != nil {
 			return err
 		}
 	}
