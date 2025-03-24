@@ -39,6 +39,7 @@ type Glutton struct {
 	ctx                 context.Context
 	cancel              context.CancelFunc
 	publicAddrs         []net.IP
+	iptablesChan        chan string // channel to communicate with the IP Table routine
 }
 
 //go:embed config/rules.yaml
@@ -71,6 +72,7 @@ func New(ctx context.Context) (*Glutton, error) {
 		tcpProtocolHandlers: make(map[string]protocols.TCPHandlerFunc),
 		udpProtocolHandlers: make(map[string]protocols.UDPHandlerFunc),
 		connTable:           connection.New(),
+		iptablesChan:        make(chan string),
 	}
 	g.ctx, g.cancel = context.WithCancel(ctx)
 
@@ -252,12 +254,20 @@ func (g *Glutton) Start() error {
 		return err
 	}
 
-	uid := syscall.Getuid()
+	go g.manageIptables()
+
+	uid := syscall.Getuid() // get the real UID (0 in this case which corresponds to root)
+	fmt.Print("UID before dropping : ", uid, "\n")
+
 	if uid == 0 {
 		if err := dropPrivileges(); err != nil {
 			return err
 		}
 	}
+
+	uid2 := syscall.Getuid()
+	fmt.Print("UID after dropping : ", uid2, "\n")
+
 	wg := &sync.WaitGroup{}
 
 	wg.Add(1)
@@ -267,6 +277,22 @@ func (g *Glutton) Start() error {
 	wg.Wait()
 
 	return nil
+}
+
+// Separate function for IPTable management. (Runs with root privileges)
+func (g *Glutton) manageIptables() {
+	uid3 := syscall.Getuid()
+	fmt.Print("UID in IPTable routine : ", uid3, "\n")
+	for request := range g.iptablesChan {
+		if request == "flush" {
+			if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
+				g.Logger.Error("Failed to flush TCP iptables", producer.ErrAttr(err))
+			}
+			if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
+				g.Logger.Error("Failed to flush UDP iptables", producer.ErrAttr(err))
+			}
+		}
+	}
 }
 
 // Change the user and group to 'nobody' (UID 65534, GID 65534)
@@ -375,14 +401,7 @@ func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md c
 func (g *Glutton) Shutdown() {
 	g.cancel() // close all connection
 
-	g.Logger.Info("Flushing TCP iptables")
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
-		g.Logger.Error("Failed to drop tcp iptables", producer.ErrAttr(err))
-	}
-	g.Logger.Info("Flushing UDP iptables")
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
-		g.Logger.Error("Failed to drop udp iptables", producer.ErrAttr(err))
-	}
+	g.iptablesChan <- "flush"
 
 	g.Logger.Info("All done")
 }
