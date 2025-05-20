@@ -3,6 +3,7 @@ package tcp
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -37,9 +38,10 @@ func (s *tcpServer) sendRandom(conn net.Conn) error {
 	if _, err := rand.Read(randomBytes); err != nil {
 		return err
 	}
+	sum := sha256.Sum256(randomBytes)
 	s.events = append(s.events, parsedTCP{
 		Direction:   "write",
-		PayloadHash: hex.EncodeToString(randomBytes),
+		PayloadHash: hex.EncodeToString(sum[:]),
 		Payload:     randomBytes,
 	})
 	if _, err := conn.Write(randomBytes); err != nil {
