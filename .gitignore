@@ -30,6 +30,7 @@ _testmain.go
 # Artifacts
 glutton.log*
 payloads/
+samples/
 
 # PoCs
 poc/

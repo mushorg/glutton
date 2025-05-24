@@ -67,7 +67,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 
 	defer func() {
 		if msgLength > 0 {
-			payloadHash, err := helpers.StorePayload(data)
+			payloadHash, err := helpers.Store(data, "payloads")
 			if err != nil {
 				logger.Error("Failed to store payload", slog.String("handler", "tcp"), producer.ErrAttr(err))
 			}

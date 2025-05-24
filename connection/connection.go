@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -55,10 +56,25 @@ type ConnTable struct {
 	mtx   sync.RWMutex
 }
 
-func New() *ConnTable {
+func New(ctx context.Context) *ConnTable {
 	ct := &ConnTable{
 		table: make(map[CKey]Metadata, 1024),
 	}
+	// every 5 minutes using a ticker, flush the table
+
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				ct.FlushOlderThan(5 * time.Minute)
+			}
+		}
+	}()
+
 	return ct
 }
 

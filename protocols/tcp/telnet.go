@@ -4,16 +4,12 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -95,46 +91,38 @@ func (s *telnetServer) read(conn net.Conn) (string, error) {
 func (s *telnetServer) getSample(cmd string, logger interfaces.Logger) error {
 	url := cmd[strings.Index(cmd, "http"):]
 	url = strings.Split(url, " ")[0]
+	url = strings.TrimSpace(url)
 	logger.Debug("Fetching sample", slog.String("url", url), slog.String("handler", "telnet"))
 	resp, err := s.client.Get(url)
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode != 200 {
-		return errors.New("getSample read http: error: Non 200 status code on getSample")
+		return errors.New("failed to fetch sample: " + resp.Status)
 	}
 	defer resp.Body.Close()
 	if resp.ContentLength <= 0 {
-		return errors.New("getSample read http: error: Empty response body")
+		return errors.New("content length is 0")
 	}
-	bodyBuffer, err := io.ReadAll(resp.Body)
+
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
-	sum := sha256.Sum256(bodyBuffer)
-	// Ignoring errors for if the folder already exists
-	if err = os.MkdirAll("samples", os.ModePerm); err != nil {
-		return err
+
+	if len(data) == 0 {
+		return errors.New("empty response body")
 	}
-	sha256Hash := hex.EncodeToString(sum[:])
-	path := filepath.Join("samples", sha256Hash)
-	if _, err = os.Stat(path); err == nil {
-		logger.Debug("getSample already known", slog.String("sha", sha256Hash), slog.String("handler", "telnet"))
-		return nil
-	}
-	out, err := os.Create(path)
+
+	sha256Hash, err := helpers.Store(data, "samples")
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-	_, err = out.Write(bodyBuffer)
-	if err != nil {
-		return err
-	}
+
 	logger.Info(
-		"new sample fetched from telnet",
+		"New sample fetched",
 		slog.String("handler", "telnet"),
-		slog.String("sha256", sha256Hash),
+		slog.String("sample_hash", sha256Hash),
 		slog.String("source", url),
 	)
 	return nil
@@ -197,7 +185,12 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 		}
 		for _, cmd := range strings.Split(msg, ";") {
 			if strings.Contains(strings.Trim(cmd, " "), "wget http") {
-				go s.getSample(strings.Trim(cmd, " "), logger)
+				go func() {
+					err := s.getSample(strings.Trim(cmd, " "), logger)
+					if err != nil {
+						logger.Error("Failed to get sample", slog.String("handler", "telnet"), producer.ErrAttr(err))
+					}
+				}()
 			}
 			if strings.TrimRight(cmd, "") == " rm /dev/.t" {
 				continue
@@ -226,7 +219,7 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 				}
 			} else {
 				// /bin/busybox YDKBI
-				re := regexp.MustCompile(`\/bin\/busybox (?P<applet>[A-Z]+)`)
+				re := regexp.MustCompile(`\/bin\/busybox (?P<applet>[A-Za-z]+)`)
 				match := re.FindStringSubmatch(cmd)
 				if len(match) > 1 {
 					if err := s.write(conn, match[1]+": applet not found\r\n"); err != nil {
