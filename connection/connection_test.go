@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"context"
 	"net"
 	"testing"
 	"time"
@@ -32,12 +33,12 @@ func TestNewConnKeyFromNetConn(t *testing.T) {
 }
 
 func TestNewConnTable(t *testing.T) {
-	table := New()
+	table := New(context.Background())
 	require.NotNil(t, table)
 }
 
 func TestRegister(t *testing.T) {
-	table := New()
+	table := New(context.Background())
 	targetPort := 4321
 	m1, err := table.Register("127.0.0.1", "1234", uint16(targetPort), &rules.Rule{})
 	require.NoError(t, err)
@@ -57,7 +58,7 @@ func TestRegisterConn(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, conn)
 	defer conn.Close()
-	table := New()
+	table := New(context.Background())
 	md, err := table.RegisterConn(conn, &rules.Rule{Target: "tcp"})
 	require.NoError(t, err)
 	require.NotNil(t, md)
@@ -67,7 +68,7 @@ func TestRegisterConn(t *testing.T) {
 }
 
 func TestFlushOlderThan(t *testing.T) {
-	table := New()
+	table := New(context.Background())
 	targetPort := 4321
 	md, err := table.Register("127.0.0.1", "1234", uint16(targetPort), &rules.Rule{})
 	require.NoError(t, err)

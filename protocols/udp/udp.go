@@ -14,7 +14,7 @@ import (
 
 func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, log interfaces.Logger, h interfaces.Honeypot) error {
 	log.Info(fmt.Sprintf("UDP payload:\n%s", hex.Dump(data[:len(data)%1024])))
-	if _, err := helpers.StorePayload(data[:len(data)%1024]); err != nil {
+	if _, err := helpers.Store(data[:len(data)%1024], "payloads"); err != nil {
 		log.Error("failed to store UDP payload", producer.ErrAttr(err))
 	}
 	if err := h.ProduceUDP("udp", srcAddr, dstAddr, md, data[:len(data)%1024], nil); err != nil {

@@ -43,25 +43,19 @@ type Glutton struct {
 //go:embed config/rules.yaml
 var defaultRules []byte
 
+//go:embed config/config.yaml
+var defaultConfig []byte
+
 func (g *Glutton) initConfig() error {
 	viper.SetConfigName("config")
 	viper.AddConfigPath(viper.GetString("confpath"))
 	if _, err := os.Stat(viper.GetString("confpath")); !os.IsNotExist(err) {
-		if err := viper.ReadInConfig(); err != nil {
-			return err
-		}
+		g.Logger.Info("Using configuration file", slog.String("path", viper.GetString("confpath")), slog.String("reporter", "glutton"))
+		return viper.ReadInConfig()
 	}
-	// If no config is found, use the defaults
-	viper.SetDefault("ports.tcp", 5000)
-	viper.SetDefault("ports.udp", 5001)
-	viper.SetDefault("ports.ssh", 22)
-	viper.SetDefault("max_tcp_payload", 4096)
-	viper.SetDefault("conn_timeout", 45)
-	viper.SetDefault("rules_path", "rules/rules.yaml")
-	viper.SetDefault("interface", "eth0") // Default interface name
 
-	g.Logger.Debug("configuration set successfully", slog.String("reporter", "glutton"))
-	return nil
+	g.Logger.Info("No configuration file found, using default configuration", slog.String("reporter", "glutton"))
+	return viper.ReadConfig(bytes.NewBuffer(defaultConfig))
 }
 
 // New creates a new Glutton instance
@@ -69,17 +63,17 @@ func New(ctx context.Context) (*Glutton, error) {
 	g := &Glutton{
 		tcpProtocolHandlers: make(map[string]protocols.TCPHandlerFunc),
 		udpProtocolHandlers: make(map[string]protocols.UDPHandlerFunc),
-		connTable:           connection.New(),
 	}
 	g.ctx, g.cancel = context.WithCancel(ctx)
 
+	g.connTable = connection.New(ctx)
 	if err := g.makeID(); err != nil {
 		return nil, err
 	}
 	g.Logger = producer.NewLogger(g.id.String())
 
 	// Loading the configuration
-	g.Logger.Info("Loading configurations from: config/config.yaml", slog.String("reporter", "glutton"))
+	g.Logger.Info("Loading configurations", slog.String("reporter", "glutton"))
 	if err := g.initConfig(); err != nil {
 		return nil, err
 	}
