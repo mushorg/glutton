@@ -14,7 +14,7 @@ import (
 
 func HandleMemcache(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	var dataMap = map[string]string{}
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, maxBufferSize)
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			return err
