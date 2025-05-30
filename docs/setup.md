@@ -50,7 +50,7 @@ This will compile the project and place the server binary in the `bin/` director
 ```bash
 bin/server --version
 ```
-Replace `<network_interface>` (e.g., `eth0`) with the interface you want to monitor. You should see output similar to:
+You should see output similar to:
 
 ```bash
   _____ _       _   _
