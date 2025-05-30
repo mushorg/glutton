@@ -15,13 +15,13 @@ func FirstOrEmpty[T any](s []T) T {
 	return t
 }
 
-func StorePayload(data []byte) (string, error) {
+func Store(data []byte, folder string) (string, error) {
 	sum := sha256.Sum256(data)
-	if err := os.MkdirAll("payloads", os.ModePerm); err != nil {
+	if err := os.MkdirAll(folder, os.ModePerm); err != nil {
 		return "", err
 	}
 	sha256Hash := hex.EncodeToString(sum[:])
-	path := filepath.Join("payloads", sha256Hash)
+	path := filepath.Join(folder, sha256Hash)
 	if _, err := os.Stat(path); err == nil {
 		// file already exists
 		return "", nil
