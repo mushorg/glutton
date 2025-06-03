@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -123,6 +124,23 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 			logger.Error("Failed to close the HTTP connection", producer.ErrAttr(err))
 		}
 	}()
+
+	reader := bufio.NewReader(conn)
+	preface, err := reader.Peek(24)
+	if err != nil {
+		if err == io.EOF {
+			logger.Debug("Client disconneted early")
+			return nil
+		}
+		return fmt.Errorf("failed to peek HTTP/2 preface: %w", err)
+	}
+	if bytes.Equal(preface, []byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")) {
+		settingsFrame := []byte("\x00\x00\x00\x04\x00\x00\x00\x00\x00")
+		if _, err := conn.Write(settingsFrame); err != nil {
+			logger.Error("Failed to write HTTP/2 response", slog.String("error", err.Error()))
+		}
+		return conn.Close()
+	}
 
 	req, err := http.ReadRequest(bufio.NewReader(conn))
 	if err != nil {
