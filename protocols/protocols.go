@@ -16,13 +16,16 @@ import (
 
 type TCPHandlerFunc func(ctx context.Context, conn net.Conn, md connection.Metadata) error
 
-type UDPHandlerFunc func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error
+type UDPHandlerFunc func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) ([]byte, error)
 
 // MapUDPProtocolHandlers map protocol handlers to corresponding protocol
 func MapUDPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[string]UDPHandlerFunc {
 	protocolHandlers := map[string]UDPHandlerFunc{}
-	protocolHandlers["udp"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
-		return udp.HandleUDP(ctx, srcAddr, dstAddr, data, md, log, h)
+	protocolHandlers["udp"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) ([]byte, error) {
+		return nil, udp.HandleUDP(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
+	protocolHandlers["dns"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) ([]byte, error) {
+		return udp.HandleDNS(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
 	return protocolHandlers
 }
