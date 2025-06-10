@@ -35,6 +35,9 @@ rules:
   - match: tcp dst port 27017
     type: conn_handler
     target: mongodb
+  - match: tcp dst port 9889
+    type: passthrough
+    target: passthrough # Will switch to host:ip
   - match: tcp
     type: conn_handler
     target: tcp
