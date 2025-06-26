@@ -37,15 +37,11 @@ func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadat
 
 	srcAddr := conn.RemoteAddr().String()
 
-	// Still figuring out on this.
-	// targetIP := conn.LocalAddr().(*net.TCPAddr).IP.String()
-	// targetPort := md.TargetPort
-	// destAddr := fmt.Sprintf("%s:%d", targetIP, targetPort)
+	targetIP := conn.LocalAddr()
+	destAddr := fmt.Sprintf("%s", targetIP)
 
-	// Hardcoded for now
-	destAddr := "127.0.0.1:5000"
+	fmt.Println("src : ", srcAddr, ", dest : ", destAddr)
 
-	fmt.Println("dst", destAddr, " src", srcAddr)
 	if destAddr == "" {
 		logger.Error("no target defined", slog.String("handler", "passthrough"))
 		return nil
@@ -64,14 +60,40 @@ func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadat
 
 	// Source to target
 	go func() {
-		_, err := io.Copy(targetConn, conn)
-		errChan <- err
+		buf := make([]byte, 4096)
+		for {
+			n, err := conn.Read(buf)
+			if err != nil {
+				errChan <- err
+				return
+			}
+			if n > 0 {
+				logger.Info("source to target", slog.String("payload", string(buf[:n])))
+				if _, err := targetConn.Write(buf[:n]); err != nil {
+					errChan <- err
+					return
+				}
+			}
+		}
 	}()
 
-	// Target to source
 	go func() {
-		_, err := io.Copy(conn, targetConn)
-		errChan <- err
+		buf := make([]byte, 4096)
+		for {
+			n, err := targetConn.Read(buf)
+			if err != nil {
+				errChan <- err
+				return
+			}
+			if n > 0 {
+				logger.Info("target to source", slog.String("payload", string(buf[:n])))
+				if _, err := conn.Write(buf[:n]); err != nil {
+					errChan <- err
+					return
+				}
+			}
+
+		}
 	}()
 
 	// When either of the error is returned or no more data is left to be sent, the go routines exit.
