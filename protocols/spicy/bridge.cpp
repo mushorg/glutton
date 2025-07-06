@@ -17,6 +17,9 @@ static thread_local bool t_thread_ready = false;
 static std::mutex g_mutex;
 static bool g_runtime_ready = false;
 
+// Note: Spicy/HILTI keep thread-local state, so we must call init()
+// once on every OS thread that touches the runtime. The worker
+// goroutine is pinned with runtime.LockOSThread() on the Go side
 // initializes HILTI and Spicy for current thread
 static inline void ensure_thread_ready() {
     if (!t_thread_ready) {
@@ -26,7 +29,15 @@ static inline void ensure_thread_ready() {
     }
 }
 
+// helper for early bail out if a previous allocation failed
+// add_field_*() and dump_value() check this so that, after the first
+// OOM, we stop allocating and just walk the data
+static inline bool has_error(const ParsedData* d) {
+    return d && d->error_message;
+}
+
 // safely duplicates C string, handling NULL input
+// return NULL on OOM; callers must check
 static char* strdup_safe(const char* s) {
     if (!s) return nullptr;
     size_t n = std::strlen(s) + 1;
@@ -37,8 +48,10 @@ static char* strdup_safe(const char* s) {
 
 // ensures space in the ParsedData fields array and returns
 // reference to the next available field slot
-static ParsedField& ensure_slot(ParsedData* dst, const std::string& name) {
-    if ( dst->field_count >= dst->capacity ) { // need to grow the array
+// if realloc failed, sets error_message and returns a static dummy slot
+// safe because of single worker thread model
+static ParsedField& ensure_slot(ParsedData* dst) {
+    if (dst->field_count >= dst->capacity) { // need to grow the array
         const int new_cap = dst->capacity ? dst->capacity * 2 : 16;
         
         // realloc safety check
@@ -52,25 +65,64 @@ static ParsedField& ensure_slot(ParsedData* dst, const std::string& name) {
         dst->capacity = new_cap;
     }
 
-    ParsedField& f = dst->fields[dst->field_count++];
-    f.name = strdup_safe(name.c_str());
+    ParsedField& f  = dst->fields[dst->field_count++];
+    f.name          = nullptr;
+    f.value         = nullptr;
+    f.is_binary     = 0;
+    f.length        = 0;
     return f;
 }
 
 // adds a string field to the ParsedData structure
-static void add_field_str(ParsedData* dst, const std::string& name, const std::string& value) {
-    auto& f = ensure_slot(dst, name);
+static void add_field_str(ParsedData* dst, const std::string& name, const std::string& value){
+    if (has_error(dst)) return;
+
+    auto& f = ensure_slot(dst);
+    if (has_error(dst)) return;
+
+    f.name = strdup_safe(name.c_str());
+    if (!f.name) {
+        dst->error_message = strdup_safe("out of memory duplicating field name");
+        --dst->field_count; // revert field count increment
+        return;
+    }
     f.value = strdup_safe(value.c_str());
+    if (!f.value) {
+        dst->error_message = strdup_safe("out of memory duplicating field value");
+        std::free(f.name);
+        --dst->field_count; // revert field count increment
+        return;
+    }
     f.is_binary = 0;
     f.length = static_cast<int>(value.size());
 }
 
 // adds a binary field to the ParsedData structure
 static void add_field_bin(ParsedData* dst, const std::string& name, const uint8_t* data, size_t len) {
-    auto& f = ensure_slot(dst, name);
+    if (has_error(dst))
+        return;
+
+    if (len == 0) {
+        add_field_str(dst, name, "");
+        return;
+    }
+
+    auto& f = ensure_slot(dst);
+    if (has_error(dst))
+        return;
+
+    f.name = strdup_safe(name.c_str());
+    if (!f.name) {
+        dst->error_message = strdup_safe("out of memory duplicating field name");
+        --dst->field_count;
+        return;
+    }
+
     f.value = static_cast<char*>(std::malloc(len));
     if (!f.value) {
         dst->error_message = strdup_safe("memory allocation failed for binary field");
+        std::free(f.name);
+        --dst->field_count;
         return;
     }
     std::memcpy(f.value, data, len);
@@ -117,11 +169,9 @@ static std::string scalar_to_string(const hilti::rt::type_info::Value& v) {
     }
 }
 
-static constexpr int kMaxDepth = 64; // maximum recursion depth for nested structures
+static constexpr int kMaxDepth = 64; // maximum recursion depth for nested structures (prevents stack bombs)
 
-// recursively extracts and stores all fields from a HILTI value,
-// creates flat field names using dot notation for
-// nested structures and bracket notation for array indices
+// Recursively flattens HILTI containers to "foo[3].bar" keys and stops at kMaxDepth
 static void dump_value(ParsedData* dst, const std::string& prefix, const hilti::rt::type_info::Value& v, int depth = 0) {
     if (depth > kMaxDepth) {
         add_field_str(dst, prefix, "<depth-limit>");
@@ -267,8 +317,9 @@ char** spicy_list_parsers(int* count) {
 }
 
 // parses data using a specified Spicy parser and returns the parsed data
+// called only from the single locked OS thread in the Go worker
 ParsedData* spicy_parse_generic(const char* parser_name, const unsigned char* data, int length) {
-    if (!parser_name || ! data || length <= 0)
+    if (!parser_name || !data || length <= 0)
     return nullptr;
     
     auto* res = static_cast<ParsedData*>(std::calloc(1, sizeof(ParsedData)));

@@ -45,7 +45,7 @@ func startWorker() {
 	workerOnce.Do(func() {
 		cmdCh = make(chan workerCmd)
 		go func() {
-			runtime.LockOSThread() // lock to OS thread for C++ runtime thread-local storage
+			runtime.LockOSThread() // lock to OS thread for C++ runtime thread-local storage (mandatory for Spicy/HILTI TLS)
 			defer runtime.UnlockOSThread()
 
 			for cmd := range cmdCh {
@@ -171,6 +171,14 @@ func Parse(proto string, data []byte) (*ParsedData, error) {
 	select {
 	case raw = <-resp: // normal path
 	case <-time.After(parseTimeout): // worker stalled
+		// drain resp to free C memory even after we have returned
+		go func() {
+			if raw := <-resp; raw != nil {
+				if p, ok := raw.(*C.ParsedData); ok {
+					C.spicy_free_parsed_data(p)
+				}
+			}
+		}()
 		return nil, fmt.Errorf("Spicy parse timed-out after %s", parseTimeout)
 	}
 

@@ -22,7 +22,7 @@ func ReadInitialBytes(protocol string, conn net.Conn) ([]byte, error) {
 	switch protocol {
 
 	case "http":
-		const maxHTTPBody = 1 << 20 // 1 MiB limit
+		const maxHTTPBody = 1 << 20 // 1 MiB limit (abuse cap, not HTTP limit)
 
 		r := bufio.NewReader(conn)
 		raw := make([]byte, 0, 4096)
