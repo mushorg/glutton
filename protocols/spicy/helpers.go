@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+// reads protocol-specific initial data from a network connection and
+// returns the complete protocol message as a byte slice.
 func ReadInitialBytes(protocol string, conn net.Conn) ([]byte, error) {
 	switch protocol {
 
@@ -64,6 +66,8 @@ func ReadInitialBytes(protocol string, conn net.Conn) ([]byte, error) {
 	}
 }
 
+// converts a flat map with dot notation keys into a nested map structure.
+// created initially as a Spicy helper to handle nested data structures
 func NestedFromFlat(flat map[string]interface{}) map[string]interface{} {
 	root := map[string]interface{}{}
 
@@ -109,6 +113,7 @@ func NestedFromFlat(flat map[string]interface{}) map[string]interface{} {
 	return root
 }
 
+// retrieves a string value from a nested map using a path with dot notation
 func GetDeepStr(m map[string]interface{}, path ...string) string {
 	for _, p := range path {
 		parts := strings.Split(p, ".")

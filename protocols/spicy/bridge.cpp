@@ -10,8 +10,14 @@
 
 #include "parsers/http.h"
 
+// tracks runtime init per thread
 static thread_local bool t_thread_ready = false;
 
+// global mutex for runtime init sync
+static std::mutex g_mutex;
+static bool g_runtime_ready = false;
+
+// initializes HILTI and Spicy for current thread
 static inline void ensure_thread_ready() {
     if (!t_thread_ready) {
         hilti::rt::init();      // idempotent, but must run once per thread
@@ -20,9 +26,7 @@ static inline void ensure_thread_ready() {
     }
 }
 
-static std::mutex g_mutex;
-static bool g_runtime_ready = false;
-
+// safely duplicates C string, handling NULL input
 static char* strdup_safe(const char* s) {
     if (!s) return nullptr;
     size_t n = std::strlen(s) + 1;
@@ -31,6 +35,8 @@ static char* strdup_safe(const char* s) {
     return p;
 }
 
+// ensures space in the ParsedData fields array and returns
+// reference to the next available field slot
 static ParsedField& ensure_slot(ParsedData* dst, const std::string& name) {
     if (dst->field_count >= dst->capacity) {
         int new_cap = dst->capacity ? dst->capacity * 2 : 16;
@@ -42,6 +48,7 @@ static ParsedField& ensure_slot(ParsedData* dst, const std::string& name) {
     return f;
 }
 
+// adds a string field to the ParsedData structure
 static void add_field_str(ParsedData* dst, const std::string& name, const std::string& value) {
     auto& f = ensure_slot(dst, name);
     f.value = strdup_safe(value.c_str());
@@ -49,6 +56,7 @@ static void add_field_str(ParsedData* dst, const std::string& name, const std::s
     f.length = static_cast<int>(value.size());
 }
 
+// adds a binary field to the ParsedData structure
 static void add_field_bin(ParsedData* dst, const std::string& name, const uint8_t* data, size_t len) {
     auto& f = ensure_slot(dst, name);
     f.value = static_cast<char*>(std::malloc(len));
@@ -61,6 +69,8 @@ static void add_field_bin(ParsedData* dst, const std::string& name, const uint8_
     f.length = static_cast<int>(len);
 }
 
+// converts HILTI scalar value to its string representation and handles
+// various HILTI type system values properly
 static std::string scalar_to_string(const hilti::rt::type_info::Value& v) {
     const auto& T = v.type();
 
@@ -98,6 +108,9 @@ static std::string scalar_to_string(const hilti::rt::type_info::Value& v) {
     }
 }
 
+// recursively extracts and stores all fields from a HILTI value,
+// creates flat field names using dot notation for
+// nested structures and bracket notation for array indices
 static void dump_value(ParsedData* dst, const std::string& prefix, const hilti::rt::type_info::Value& v) {
     const auto& T = v.type();
 
@@ -170,7 +183,7 @@ static void dump_value(ParsedData* dst, const std::string& prefix, const hilti::
     add_field_str(dst, prefix, scalar_to_string(v));
 }
 
-
+// initializes HILTI and Spicy runtimes globally
 void spicy_init() {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_runtime_ready)
@@ -181,6 +194,7 @@ void spicy_init() {
     g_runtime_ready = true;
 }
 
+// cleans up HILTI and Spicy runtimes globally
 void spicy_cleanup() {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_runtime_ready)
@@ -191,11 +205,13 @@ void spicy_cleanup() {
     g_runtime_ready = false;
 }
 
+// checks if the Spicy runtime is initialized
 int spicy_is_initialized() {
     std::lock_guard<std::mutex> lock(g_mutex);
     return g_runtime_ready ? 1 : 0;
 }
 
+// lists all available Spicy parsers and returns their names
 char** spicy_list_parsers(int* count) {
     std::lock_guard<std::mutex> lock(g_mutex);
     
@@ -234,6 +250,7 @@ char** spicy_list_parsers(int* count) {
     }
 }
 
+// parses data using a specified Spicy parser and returns the parsed data
 ParsedData* spicy_parse_generic(const char* parser_name, const unsigned char* data, int length) {
     if (!parser_name || ! data || length <= 0)
     return nullptr;
@@ -284,6 +301,7 @@ ParsedData* spicy_parse_generic(const char* parser_name, const unsigned char* da
     return res;
 }
 
+// frees the memory allocated for ParsedData and its fields
 void spicy_free_parsed_data(ParsedData* d) {
     if (!d)
         return;
@@ -298,6 +316,7 @@ void spicy_free_parsed_data(ParsedData* d) {
     std::free(d);
 }
 
+// frees the memory allocated for a list of parser names
 void spicy_free_parser_list(char** p, int n) {
     if (!p)
         return;

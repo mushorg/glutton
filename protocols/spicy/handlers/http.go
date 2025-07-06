@@ -18,6 +18,9 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp"
 )
 
+// Identical implementation of the original Go HTTP handler, but using Spicy for parsing
+// I've tried to keep the logs and responses as close to the original as possible
+
 func sendJSON(conn net.Conn, b []byte) error {
 	_, err := conn.Write(
 		append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(b))), b...),
@@ -128,7 +131,6 @@ func handleVMwareSend(ctx context.Context, body []byte, uri string, md connectio
 }
 
 func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log interfaces.Logger, hp interfaces.Honeypot) error {
-
 	defer conn.Close()
 
 	payload, err := spicy.ReadInitialBytes("http", conn)
@@ -139,7 +141,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 		return nil
 	}
 
-	parsed, err := spicy.Parse("http", payload)
+	parsed, err := spicy.Parse("http", payload) // parse the HTTP request using Spicy
 	if err != nil {
 		log.Error("spicy parse error", producer.ErrAttr(err))
 		_ = hp.ProduceTCP("spicy-http-failed", conn, md, payload,
