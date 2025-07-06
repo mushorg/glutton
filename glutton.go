@@ -18,6 +18,7 @@ import (
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
+	"github.com/mushorg/glutton/protocols/spicy"
 	"github.com/mushorg/glutton/rules"
 
 	"github.com/google/uuid"
@@ -133,6 +134,11 @@ func (g *Glutton) Init() error {
 	// Initiating protocol handlers
 	g.tcpProtocolHandlers = protocols.MapTCPProtocolHandlers(g.Logger, g)
 	g.udpProtocolHandlers = protocols.MapUDPProtocolHandlers(g.Logger, g)
+
+	// Initializing Spicy parsers
+	if viper.GetBool("spicy.enabled") {
+		spicy.Initialize(g.Logger)
+	}
 
 	return nil
 }
@@ -358,7 +364,12 @@ func (g *Glutton) Shutdown() {
 	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
 		g.Logger.Error("Failed to drop udp iptables", producer.ErrAttr(err))
 	}
-
+	if viper.GetBool("spicy.enabled") {
+		g.Logger.Info("Cleaning up and shutting down Spicy and HILTI runtimes")
+		if err := spicy.Cleanup(); err != nil {
+			g.Logger.Error("Failed to clean up Spicy and HILTI runtimes", producer.ErrAttr(err))
+		}
+	}
 	g.Logger.Info("All done")
 }
 

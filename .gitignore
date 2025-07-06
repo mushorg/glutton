@@ -37,3 +37,7 @@ poc/
 
 # Dev
 .vscode
+
+# Spicy generated files
+protocols/spicy/*.cc
+protocols/spicy/parsers/*.h
