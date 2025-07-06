@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"regexp"
@@ -12,12 +13,17 @@ import (
 	"strings"
 )
 
+// package level regex to match conlen header in HTTP requests
+var contentLenRE = regexp.MustCompile(`(?i)Content-Length:\s*(\d+)`)
+
 // reads protocol-specific initial data from a network connection and
 // returns the complete protocol message as a byte slice.
 func ReadInitialBytes(protocol string, conn net.Conn) ([]byte, error) {
 	switch protocol {
 
 	case "http":
+		const maxHTTPBody = 1 << 20 // 1 MiB limit
+
 		r := bufio.NewReader(conn)
 		raw := make([]byte, 0, 4096)
 
@@ -33,8 +39,12 @@ func ReadInitialBytes(protocol string, conn net.Conn) ([]byte, error) {
 		}
 
 		var clen int
-		if m := regexp.MustCompile(`(?i)content-length:\s*(\d+)`).FindSubmatch(raw); m != nil {
+		if m := contentLenRE.FindSubmatch(raw); m != nil {
 			clen, _ = strconv.Atoi(string(m[1]))
+		}
+
+		if clen > maxHTTPBody {
+			return nil, fmt.Errorf("Content-Length %d exceeds maximum %d", clen, maxHTTPBody)
 		}
 
 		if clen > 0 {
@@ -96,7 +106,10 @@ func NestedFromFlat(flat map[string]interface{}) map[string]interface{} {
 					if slice[idx] == nil {
 						slice[idx] = map[string]interface{}{}
 					}
-					cur = slice[idx].(map[string]interface{})
+					cur, ok = slice[idx].(map[string]interface{})
+					if !ok {
+						return nil
+					}
 				}
 			} else {
 				if i == len(parts)-1 {
@@ -105,7 +118,11 @@ func NestedFromFlat(flat map[string]interface{}) map[string]interface{} {
 					if _, ok := cur[p]; !ok {
 						cur[p] = map[string]interface{}{}
 					}
-					cur = cur[p].(map[string]interface{})
+					m, ok := cur[p].(map[string]interface{})
+					if !ok {
+						return nil
+					}
+					cur = m
 				}
 			}
 		}

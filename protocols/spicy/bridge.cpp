@@ -38,11 +38,20 @@ static char* strdup_safe(const char* s) {
 // ensures space in the ParsedData fields array and returns
 // reference to the next available field slot
 static ParsedField& ensure_slot(ParsedData* dst, const std::string& name) {
-    if (dst->field_count >= dst->capacity) {
-        int new_cap = dst->capacity ? dst->capacity * 2 : 16;
-        dst->fields = static_cast<ParsedField*>(std::realloc(dst->fields, sizeof(ParsedField) * new_cap));
+    if ( dst->field_count >= dst->capacity ) { // need to grow the array
+        const int new_cap = dst->capacity ? dst->capacity * 2 : 16;
+        
+        // realloc safety check
+        void* mem = std::realloc(dst->fields, sizeof(ParsedField) * new_cap);
+        if (!mem) { // memory allocation failed
+            static ParsedField dummy; // placeholder
+            dst->error_message = strdup_safe("out of memory while growing ParsedField slot array");
+            return dummy;
+        }
+        dst->fields = static_cast<ParsedField*>(mem);
         dst->capacity = new_cap;
     }
+
     ParsedField& f = dst->fields[dst->field_count++];
     f.name = strdup_safe(name.c_str());
     return f;
@@ -108,10 +117,17 @@ static std::string scalar_to_string(const hilti::rt::type_info::Value& v) {
     }
 }
 
+static constexpr int kMaxDepth = 64; // maximum recursion depth for nested structures
+
 // recursively extracts and stores all fields from a HILTI value,
 // creates flat field names using dot notation for
 // nested structures and bracket notation for array indices
-static void dump_value(ParsedData* dst, const std::string& prefix, const hilti::rt::type_info::Value& v) {
+static void dump_value(ParsedData* dst, const std::string& prefix, const hilti::rt::type_info::Value& v, int depth = 0) {
+    if (depth > kMaxDepth) {
+        add_field_str(dst, prefix, "<depth-limit>");
+        return;
+    }
+
     const auto& T = v.type();
 
     if (T.tag == hilti::rt::TypeInfo::ValueReference) {
@@ -123,7 +139,7 @@ static void dump_value(ParsedData* dst, const std::string& prefix, const hilti::
         size_t idx = 0;
         for (const auto& elem : T.vector->iterate(v)) {
             std::string key = prefix + "[" + std::to_string(idx++) + "]";
-            dump_value(dst, key, elem);
+            dump_value(dst, key, elem, depth + 1);
         }
         return;
     }
@@ -131,7 +147,7 @@ static void dump_value(ParsedData* dst, const std::string& prefix, const hilti::
         size_t idx = 0;
         for (const auto& elem : T.set->iterate(v)) {
             std::string key = prefix + "[" + std::to_string(idx++) + "]";
-            dump_value(dst, key, elem);
+            dump_value(dst, key, elem, depth + 1);
         }
         return;
     }
@@ -142,14 +158,14 @@ static void dump_value(ParsedData* dst, const std::string& prefix, const hilti::
         for (const auto& [k, val] : mt->iterate(v)) {
             std::string kstr = scalar_to_string(k);
             std::string key  = prefix.empty() ? kstr : prefix + "." + kstr;
-            dump_value(dst, key, val);
+            dump_value(dst, key, val, depth + 1);
         }
         return;
     }
 
     if (T.tag == hilti::rt::TypeInfo::Optional) {
         if (auto inner = T.optional->value(v))
-            dump_value(dst, prefix, inner);
+            dump_value(dst, prefix, inner, depth + 1);
         else
             add_field_str(dst, prefix, "<nil>");
         return;
@@ -158,7 +174,7 @@ static void dump_value(ParsedData* dst, const std::string& prefix, const hilti::
     if (T.tag == hilti::rt::TypeInfo::Struct) {
         for (const auto& [info, field] : T.struct_->iterate(v)) {
             std::string key = prefix.empty() ? info.name : prefix + "." + info.name;
-            dump_value(dst, key, field);
+            dump_value(dst, key, field, depth + 1);
         }
         return;
     }
@@ -285,7 +301,7 @@ ParsedData* spicy_parse_generic(const char* parser_name, const unsigned char* da
         auto unit = drv.processInput(**parser, in);
         
         if (unit && unit->value()) {
-            dump_value(res, "", unit->value());
+            dump_value(res, "", unit->value(), 0);
         }
         else {
             res->error_message = strdup_safe("no value returned");

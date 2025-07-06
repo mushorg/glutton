@@ -137,7 +137,9 @@ func (g *Glutton) Init() error {
 
 	// Initializing Spicy parsers
 	if viper.GetBool("spicy.enabled") {
-		spicy.Initialize(g.Logger)
+		if err := spicy.Initialize(g.Logger); err != nil {
+			return fmt.Errorf("failed to initialize Spicy: %w", err)
+		}
 	}
 
 	return nil

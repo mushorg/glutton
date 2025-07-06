@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/mushorg/glutton/protocols/interfaces"
@@ -99,7 +100,9 @@ var (
 	parsersMutex      sync.RWMutex // protects access to registeredParsers
 )
 
-func Initialize(logger interfaces.Logger) {
+var initErr error
+
+func Initialize(logger interfaces.Logger) error {
 	initOnce.Do(func() {
 		startWorker()
 
@@ -108,7 +111,8 @@ func Initialize(logger interfaces.Logger) {
 		names := (<-resp).([]string)
 
 		if C.spicy_is_initialized() == 0 {
-			logger.Error("failed to initialise Spicy runtime")
+			initErr = errors.New("failed to initialise Spicy runtime")
+			logger.Error(initErr.Error())
 			return
 		}
 		logger.Info("Spicy runtime initialised successfully")
@@ -133,6 +137,7 @@ func Initialize(logger interfaces.Logger) {
 		}
 		parsersMutex.Unlock()
 	})
+	return initErr
 }
 
 // represents the result of parsing protocol data with Spicy
@@ -141,6 +146,8 @@ type ParsedData struct {
 	Fields   map[string]interface{} `json:"fields"`
 	Error    error                  `json:"-"`
 }
+
+const parseTimeout = 10 * time.Second
 
 // analyzes protocol data using the appropriate Spicy parser
 // the parser is automatically selected based on the protocol name
@@ -159,10 +166,18 @@ func Parse(proto string, data []byte) (*ParsedData, error) {
 
 	resp := make(chan any, 1)
 	cmdCh <- workerCmd{kind: cmdParse, parser: name, data: data, replyChan: resp}
-	raw := <-resp
+
+	var raw any
+	select {
+	case raw = <-resp: // normal path
+	case <-time.After(parseTimeout): // worker stalled
+		return nil, fmt.Errorf("Spicy parse timed-out after %s", parseTimeout)
+	}
+
 	if raw == nil {
 		return nil, errors.New("Spicy parse failed: no response received")
 	}
+
 	cRes, ok := raw.(*C.ParsedData)
 	if !ok {
 		return nil, errors.New("internal type assertion failed")
