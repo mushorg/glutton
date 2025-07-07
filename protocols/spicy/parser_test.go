@@ -73,9 +73,14 @@ func TestParseHTTPRequest(t *testing.T) {
 	require.NotNil(t, result.Fields)
 	require.NoError(t, result.Error)
 
-	if method, ok := result.Fields["method"]; ok {
-		require.Equal(t, "GET", method)
-	}
+	method := result.Fields["method"]
+	require.Equal(t, "GET", method)
+
+	uri := result.Fields["uri"]
+	require.Equal(t, "/test", uri)
+
+	version := result.Fields["version.number"]
+	require.Equal(t, "1.1", version)
 }
 
 func TestParseUnknownProtocol(t *testing.T) {

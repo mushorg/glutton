@@ -78,6 +78,7 @@ func ReadInitialBytes(protocol string, conn net.Conn) ([]byte, error) {
 
 // converts a flat map with dot notation keys into a nested map structure.
 // created initially as a Spicy helper to handle nested data structures
+// currently unused, kept for potential future use
 func NestedFromFlat(flat map[string]interface{}) map[string]interface{} {
 	root := map[string]interface{}{}
 
@@ -131,6 +132,7 @@ func NestedFromFlat(flat map[string]interface{}) map[string]interface{} {
 }
 
 // retrieves a string value from a nested map using a path with dot notation
+// currently unused, kept for potential future use
 func GetDeepStr(m map[string]interface{}, path ...string) string {
 	for _, p := range path {
 		parts := strings.Split(p, ".")
