@@ -10,8 +10,22 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - name: Dependencies
-        run: sudo apt install libpcap-dev iptables
+      - name: Basic Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcap-dev iptables zlib1g-dev build-essential
+
+      - name: Install spicyc
+        run: |
+          wget https://github.com/zeek/spicy/releases/download/v1.13.1/spicy_linux_ubuntu24.deb
+          sudo dpkg --install spicy_linux_ubuntu24.deb
+          rm spicy_linux_ubuntu24.deb
+
+      - name: Install clang17
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
 
       - name: Checkout
         uses: actions/checkout@v3
@@ -19,10 +33,16 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "^1.21"
+          go-version: "^1.23"
 
       - name: Build
+        env:
+          CC: clang
+          CXX: clang++
         run: go build -v ./...
 
       - name: Test
+        env:
+          CC: clang
+          CXX: clang++
         run: go test -v ./...
