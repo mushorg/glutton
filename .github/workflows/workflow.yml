@@ -19,7 +19,11 @@ jobs:
         run: |
           wget https://github.com/zeek/spicy/releases/download/v1.13.1/spicy_linux_ubuntu24.deb
           sudo dpkg --install spicy_linux_ubuntu24.deb
+          sudo apt-get install -f -y # pulling in any missing deps
           rm spicy_linux_ubuntu24.deb
+
+      - name: Add Spicy CLI to PATH
+        run: echo "/opt/spicy/bin" >> $GITHUB_PATH
 
       - name: Install clang17
         run: |
