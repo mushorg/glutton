@@ -20,7 +20,7 @@ upx:
 default: build
 
 build:
-	CC=clang CXX=clang++ go build -o bin/server app/server.go
+	CC=clang CXX=clang++ go build -ldflags=$(LDFLAGS) -o bin/server app/server.go
 
 spicy:
 	cd protocols/spicy && make
