@@ -173,8 +173,8 @@ func Parse(proto string, data []byte) (*ParsedData, error) {
 	case <-time.After(parseTimeout): // worker stalled
 		// drain resp to free C memory even after we have returned
 		go func() {
-			if raw := <-resp; raw != nil {
-				if p, ok := raw.(*C.ParsedData); ok {
+			if r := <-resp; r != nil {
+				if p, ok := r.(*C.ParsedData); ok {
 					C.spicy_free_parsed_data(p)
 				}
 			}
