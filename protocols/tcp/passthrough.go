@@ -2,6 +2,7 @@ package tcp
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,19 +16,51 @@ import (
 type parsedPassThrough struct {
 	Direction   string `json:"direction,omitempty"`
 	Payload     []byte `json:"payload,omitempty"`
-	PayloadHash string `json:"payload_hash,omitempty"`
+	PayloadHash string `json:"payload_hash,omitempty"` // Used for easier identification, can remove
 }
 
 type passThroughServer struct {
 	events []parsedPassThrough
+	conn   net.Conn
 	target string
+	source string
+}
+
+func (srv *passThroughServer) recordEvent(dir string, buf []byte, capture bool) {
+	if !capture {
+		return
+	}
+	hash := sha256.Sum256(buf)
+
+	payload := append([]byte(nil), buf...) // defensive copy
+
+	srv.events = append(srv.events, parsedPassThrough{
+		Direction:   dir,
+		Payload:     payload,
+		PayloadHash: fmt.Sprintf("%x", hash[:]),
+	})
 }
 
 // Dial to the source ip, acting as a proxy between the client and real source by piping the data back and forth w/o interfering w it.
-func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot, capture bool) error {
 	var err error
+
+	srcAddr := conn.RemoteAddr().String()
+	destAddr := md.Rule.Target
+
+	server := &passThroughServer{
+		events: []parsedPassThrough{},
+		conn:   conn,
+		target: destAddr,
+		source: srcAddr,
+	}
+
 	defer func() {
-		if err := h.ProduceTCP("passthrough", conn, md, nil, nil); err != nil {
+		var events []parsedPassThrough
+		if capture {
+			events = server.events
+		}
+		if err := h.ProduceTCP("passthrough", conn, md, nil, events); err != nil {
 			logger.Error("failed to produce passthrough message", producer.ErrAttr(err))
 		}
 		if err := conn.Close(); err != nil {
@@ -35,19 +68,12 @@ func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadat
 		}
 	}()
 
-	srcAddr := conn.RemoteAddr().String()
-
-	targetIP := conn.LocalAddr()
-	destAddr := fmt.Sprintf("%s", targetIP)
-
-	fmt.Println("src : ", srcAddr, ", dest : ", destAddr)
-
 	if destAddr == "" {
 		logger.Error("no target defined", slog.String("handler", "passthrough"))
 		return nil
 	}
 
-	targetConn, err := net.Dial("tcp", string(destAddr))
+	targetConn, err := net.Dial("tcp", destAddr)
 	if err != nil {
 		logger.Error("failed to connect to the target", slog.String("handler", "passthrough"), slog.String("target", string(destAddr)), producer.ErrAttr(err))
 		return nil
@@ -69,6 +95,7 @@ func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadat
 			}
 			if n > 0 {
 				logger.Info("source to target", slog.String("payload", string(buf[:n])))
+				server.recordEvent("source->target", buf[:n], capture)
 				if _, err := targetConn.Write(buf[:n]); err != nil {
 					errChan <- err
 					return
@@ -87,6 +114,7 @@ func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadat
 			}
 			if n > 0 {
 				logger.Info("target to source", slog.String("payload", string(buf[:n])))
+				server.recordEvent("target->source", buf[:n], capture)
 				if _, err := conn.Write(buf[:n]); err != nil {
 					errChan <- err
 					return

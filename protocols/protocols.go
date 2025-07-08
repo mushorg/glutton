@@ -12,6 +12,7 @@ import (
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp"
 	"github.com/mushorg/glutton/protocols/udp"
+	"github.com/spf13/viper"
 )
 
 type TCPHandlerFunc func(ctx context.Context, conn net.Conn, md connection.Metadata) error
@@ -72,8 +73,13 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 	protocolHandlers["mongodb"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		return tcp.HandleMongoDB(ctx, conn, md, log, h)
 	}
+	var capture bool
+	if viper.GetBool("capture_traffic.enabled") {
+		log.Info("Capturing traffic enabled.")
+		capture = true
+	}
 	protocolHandlers["passthrough"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandlePassThrough(ctx, conn, md, log, h)
+		return tcp.HandlePassThrough(ctx, conn, md, log, h, capture)
 	}
 	protocolHandlers["tcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		snip, bufConn, err := Peek(conn, 4)
