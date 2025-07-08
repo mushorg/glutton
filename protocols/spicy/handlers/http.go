@@ -80,13 +80,16 @@ func handleWallet(uri string, conn net.Conn) bool {
 	return true
 }
 
-func handleDockerAPIVersion(uri string, conn net.Conn) bool {
+func handleDockerAPIVersion(uri string, conn net.Conn, log interfaces.Logger) bool {
 	if !strings.HasPrefix(uri, "/v1.16/version") {
 		return false
 	}
-	if data, err := tcp.Res.ReadFile("resources/docker_api.json"); err == nil {
-		conn.Write(append([]byte(fmt.Sprintf(
-			"HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(data))), data...))
+	data, err := tcp.Res.ReadFile("resources/docker_api.json")
+	if err != nil {
+		log.Error("failed to read docker_api.json", producer.ErrAttr(err))
+		return false
+	} else {
+		conn.Write(append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(data))), data...))
 	}
 	return true
 }
@@ -196,7 +199,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 		handled = handleEthereumRPC(body, conn) || handleYarnNewApplication(method, uri, conn)
 	}
 
-	handled = handled || handleWallet(uri, conn) || handleDockerAPIVersion(uri, conn) || handleCitrixSMB(uri, conn) || handleVMwareSend(ctx, body, uri, md, log, hp)
+	handled = handled || handleWallet(uri, conn) || handleDockerAPIVersion(uri, conn, log) || handleCitrixSMB(uri, conn) || handleVMwareSend(ctx, body, uri, md, log, hp)
 
 	if !handled {
 		_ = writePlainOK(conn)
