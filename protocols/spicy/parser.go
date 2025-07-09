@@ -153,12 +153,12 @@ const parseTimeout = 10 * time.Second
 // the parser is automatically selected based on the protocol name
 func Parse(proto string, data []byte) (*ParsedData, error) {
 	parsersMutex.RLock()
-	name, ok := registeredParsers[strings.ToLower(proto)] // parser lookup
+	key := strings.ToLower(strings.TrimSpace(proto))
+	name, ok := registeredParsers[key] // parser lookup
 	parsersMutex.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("no Spicy parser registered for %q", proto)
 	}
-	name = strings.TrimSpace(name)
 
 	if len(data) == 0 {
 		return nil, errors.New("input data is empty")
