@@ -3,6 +3,7 @@ package tcp
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/spf13/viper"
 )
 
 type parsedPassThrough struct {
@@ -26,6 +28,44 @@ type passThroughServer struct {
 	source string
 }
 
+// checks whether the payload can be converted to text, to prevent expensive hex coding.
+func (srv *passThroughServer) isLikelyText(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+
+	printable := 0
+	for _, b := range data {
+		if b >= 32 && b <= 126 || b == '\n' || b == '\r' || b == '\t' {
+			printable++
+		}
+	}
+
+	return (printable*100)/len(data) > 80 // threshold value --> 80%
+}
+
+// logs the payload hex or payload text.
+func (srv *passThroughServer) logPayload(direction string, data []byte, logger interfaces.Logger) {
+	if len(data) == 0 {
+		return
+	}
+
+	fields := []any{
+		slog.String("direction", direction),
+		slog.Int("length", len(data)),
+		slog.String("sha256", fmt.Sprintf("%x", sha256.Sum256(data))),
+	}
+
+	if srv.isLikelyText(data) {
+		fields = append(fields, slog.String("payload", string(data)))
+	} else {
+		fields = append(fields, slog.String("hex", hex.EncodeToString(data)))
+	}
+
+	logger.Info("payload_transferred", fields...)
+}
+
+// records the events in the server
 func (srv *passThroughServer) recordEvent(dir string, buf []byte, capture bool) {
 	if !capture {
 		return
@@ -41,8 +81,44 @@ func (srv *passThroughServer) recordEvent(dir string, buf []byte, capture bool) 
 	})
 }
 
+// pipeBidirectional handles data transfer between the two connections
+func pipeBidirectional(ctx context.Context, src, dst net.Conn, server *passThroughServer, logger interfaces.Logger, capture bool, errChan chan error) {
+	buf := make([]byte, 4096)
+	direction := getDirection(src, dst)
+	for {
+		select {
+		case <-ctx.Done():
+			errChan <- ctx.Err()
+			return
+		default:
+			n, err := src.Read(buf)
+			if err != nil {
+				errChan <- err
+				return
+			}
+
+			if n > 0 {
+				server.logPayload(direction, buf[:n], logger)
+				server.recordEvent(direction, buf[:n], capture)
+
+				if _, err := dst.Write(buf[:n]); err != nil {
+					errChan <- err
+					return
+				}
+			}
+		}
+	}
+}
+
+// getDirection returns the direction as a string
+func getDirection(src, dst net.Conn) string {
+	srcAddr := src.RemoteAddr().String()
+	dstAddr := dst.RemoteAddr().String()
+	return fmt.Sprintf("%s -> %s", srcAddr, dstAddr)
+}
+
 // Dial to the source ip, acting as a proxy between the client and real source by piping the data back and forth w/o interfering w it.
-func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot, capture bool) error {
+func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	var err error
 
 	srcAddr := conn.RemoteAddr().String()
@@ -53,6 +129,11 @@ func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadat
 		conn:   conn,
 		target: destAddr,
 		source: srcAddr,
+	}
+
+	var capture bool
+	if viper.GetBool("capture_traffic.enabled") {
+		capture = true
 	}
 
 	defer func() {
@@ -84,47 +165,9 @@ func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadat
 
 	errChan := make(chan error, 2)
 
-	// Source to target
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, err := conn.Read(buf)
-			if err != nil {
-				errChan <- err
-				return
-			}
-			if n > 0 {
-				logger.Info("source to target", slog.String("payload", string(buf[:n])))
-				server.recordEvent("source->target", buf[:n], capture)
-				if _, err := targetConn.Write(buf[:n]); err != nil {
-					errChan <- err
-					return
-				}
-			}
-		}
-	}()
+	go pipeBidirectional(ctx, conn, targetConn, server, logger, capture, errChan) // source to target
+	go pipeBidirectional(ctx, targetConn, conn, server, logger, capture, errChan) // target to source
 
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, err := targetConn.Read(buf)
-			if err != nil {
-				errChan <- err
-				return
-			}
-			if n > 0 {
-				logger.Info("target to source", slog.String("payload", string(buf[:n])))
-				server.recordEvent("target->source", buf[:n], capture)
-				if _, err := conn.Write(buf[:n]); err != nil {
-					errChan <- err
-					return
-				}
-			}
-
-		}
-	}()
-
-	// When either of the error is returned or no more data is left to be sent, the go routines exit.
 	select {
 	case err := <-errChan:
 		if err != nil && err != io.EOF {

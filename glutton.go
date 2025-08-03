@@ -222,22 +222,21 @@ func (g *Glutton) tcpListen() {
 			g.Logger.Error("Failed to set connection timeout", producer.ErrAttr(err))
 		}
 
-		// If hostip:port is used as target, pass on to the passthrough handler.
-		if host, port, err := net.SplitHostPort(rule.Target); err == nil && host != "" && port != "" {
+		if rule.Type == "passthrough" {
 			if hfunc, ok := g.tcpProtocolHandlers["passthrough"]; ok {
 				go func() {
 					if err := hfunc(g.ctx, conn, md); err != nil {
 						g.Logger.Error("Failed to handle TCP passthrough", producer.ErrAttr(err), slog.String("handler", "Passthrough"))
 					}
 				}()
-			}
-		} else {
-			if hfunc, ok := g.tcpProtocolHandlers[rule.Target]; ok {
-				go func() {
-					if err := hfunc(g.ctx, conn, md); err != nil {
-						g.Logger.Error("Failed to handle TCP connection", producer.ErrAttr(err), slog.String("handler", rule.Target))
-					}
-				}()
+			} else {
+				if hfunc, ok := g.tcpProtocolHandlers[rule.Target]; ok {
+					go func() {
+						if err := hfunc(g.ctx, conn, md); err != nil {
+							g.Logger.Error("Failed to handle TCP connection", producer.ErrAttr(err), slog.String("handler", rule.Target))
+						}
+					}()
+				}
 			}
 		}
 	}
