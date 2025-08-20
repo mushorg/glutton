@@ -238,7 +238,6 @@ func TestPipeBidirectional(t *testing.T) {
 			}
 
 			go pipeBidirectional(
-				tt.args.ctx,
 				tt.args.src,
 				tt.args.dst,
 				tt.args.server,

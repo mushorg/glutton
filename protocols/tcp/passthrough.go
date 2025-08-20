@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net"
+	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
@@ -26,6 +28,20 @@ type passThroughServer struct {
 	conn   net.Conn
 	target string
 	source string
+}
+
+type loggingWriter struct {
+	dst     net.Conn
+	server  *passThroughServer
+	logger  interfaces.Logger
+	capture bool
+	dir     string
+}
+
+func (lw *loggingWriter) Write(p []byte) (int, error) {
+	lw.server.logPayload(lw.dir, p, lw.logger)
+	lw.server.recordEvent(lw.dir, p, lw.capture)
+	return lw.dst.Write(p)
 }
 
 // checks whether the payload can be converted to text, to prevent expensive hex coding.
@@ -82,32 +98,24 @@ func (srv *passThroughServer) recordEvent(dir string, buf []byte, capture bool) 
 }
 
 // pipeBidirectional handles data transfer between the two connections
-func pipeBidirectional(ctx context.Context, src, dst net.Conn, server *passThroughServer, logger interfaces.Logger, capture bool, errChan chan error) {
-	buf := make([]byte, 4096)
+func pipeBidirectional(src, dst net.Conn, server *passThroughServer, logger interfaces.Logger, capture bool, errChan chan error) {
 	direction := getDirection(src, dst)
-	for {
-		select {
-		case <-ctx.Done():
-			errChan <- ctx.Err()
-			return
-		default:
-			n, err := src.Read(buf)
-			if err != nil {
-				errChan <- err
-				return
-			}
+	writer := &loggingWriter{dst: dst, server: server, logger: logger, capture: capture, dir: direction}
 
-			if n > 0 {
-				server.logPayload(direction, buf[:n], logger)
-				server.recordEvent(direction, buf[:n], capture)
+	// source to target
+	go func() {
+		_, err := io.Copy(writer, src)
+		errChan <- err
+	}()
 
-				if _, err := dst.Write(buf[:n]); err != nil {
-					errChan <- err
-					return
-				}
-			}
-		}
-	}
+	revDirection := getDirection(dst, src)
+	revWriter := &loggingWriter{dst: src, server: server, logger: logger, capture: capture, dir: revDirection}
+
+	// target to source
+	go func() {
+		_, err := io.Copy(revWriter, dst)
+		errChan <- err
+	}()
 }
 
 // getDirection returns the direction as a string
@@ -120,9 +128,22 @@ func getDirection(src, dst net.Conn) string {
 // Dial to the source ip, acting as a proxy between the client and real source by piping the data back and forth w/o interfering w it.
 func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	var err error
+	handler := "tcp_proxy"
 
 	srcAddr := conn.RemoteAddr().String()
 	destAddr := md.Rule.Target
+
+	host, _, err := net.SplitHostPort(destAddr)
+	if err != nil {
+		logger.Error("invalid address format", producer.ErrAttr(err))
+		return nil
+	}
+
+	if ip := net.ParseIP(host); ip == nil {
+		if _, err := net.LookupHost(host); err != nil {
+			return fmt.Errorf("invalid host: %w", err)
+		}
+	}
 
 	server := &passThroughServer{
 		events: []parsedPassThrough{},
@@ -145,38 +166,33 @@ func HandlePassThrough(ctx context.Context, conn net.Conn, md connection.Metadat
 			logger.Error("failed to produce passthrough message", producer.ErrAttr(err))
 		}
 		if err := conn.Close(); err != nil {
-			logger.Error("failed to close incoming connection", slog.String("handler", "passthrough"), producer.ErrAttr(err))
+			logger.Error("failed to close incoming connection", slog.String("handler", handler), producer.ErrAttr(err))
 		}
 	}()
 
 	if destAddr == "" {
-		logger.Error("no target defined", slog.String("handler", "passthrough"))
+		logger.Error("no target defined", slog.String("handler", handler))
 		return nil
 	}
 
-	targetConn, err := net.Dial("tcp", destAddr)
+	timeout := 5 * time.Second
+
+	targetConn, err := net.DialTimeout("tcp", destAddr, timeout)
 	if err != nil {
-		logger.Error("failed to connect to the target", slog.String("handler", "passthrough"), slog.String("target", string(destAddr)), producer.ErrAttr(err))
+		logger.Error("failed to connect to the target", slog.String("handler", handler), slog.String("target", string(destAddr)), producer.ErrAttr(err))
 		return nil
 	}
 	defer targetConn.Close()
 
-	logger.Info("starting passthrough", slog.String("source", srcAddr), slog.String("target", string(destAddr)), slog.String("handler", "passthrough"))
+	logger.Info("starting passthrough", slog.String("source", srcAddr), slog.String("target", string(destAddr)), slog.String("handler", handler))
 
 	errChan := make(chan error, 2)
 
-	go pipeBidirectional(ctx, conn, targetConn, server, logger, capture, errChan) // source to target
-	go pipeBidirectional(ctx, targetConn, conn, server, logger, capture, errChan) // target to source
+	go pipeBidirectional(conn, targetConn, server, logger, capture, errChan)
 
-	select {
-	case err := <-errChan:
-		if err != nil && err != io.EOF {
-			logger.Error("transfer error", producer.ErrAttr(err))
-			return err
-		}
-	case <-ctx.Done():
-		logger.Info("context cancelled")
-		return ctx.Err()
+	// wait for either side to close
+	if err := <-errChan; err != nil {
+		log.Printf("connection closed: %v", err)
 	}
 
 	logger.Info("Passthrough completed successfully")

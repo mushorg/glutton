@@ -72,7 +72,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 	protocolHandlers["mongodb"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		return tcp.HandleMongoDB(ctx, conn, md, log, h)
 	}
-	protocolHandlers["passthrough"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+	protocolHandlers["tcp_proxy"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		return tcp.HandlePassThrough(ctx, conn, md, log, h)
 	}
 	protocolHandlers["tcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {

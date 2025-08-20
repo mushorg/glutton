@@ -18,7 +18,7 @@ type RuleType int
 const (
 	UserConnHandler RuleType = iota
 	Drop
-	Passthrough
+	Tcp_Proxy
 )
 
 type Config struct {
@@ -61,8 +61,8 @@ func (rule *Rule) init(idx int) error {
 	switch rule.Type {
 	case "conn_handler":
 		rule.RuleType = UserConnHandler
-	case "passthrough":
-		rule.RuleType = Passthrough
+	case "tcp_proxy":
+		rule.RuleType = Tcp_Proxy
 	case "drop":
 		rule.RuleType = Drop
 	default:
