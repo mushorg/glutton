@@ -18,6 +18,7 @@ type RuleType int
 const (
 	UserConnHandler RuleType = iota
 	Drop
+	Tcp_Proxy
 )
 
 type Config struct {
@@ -32,7 +33,7 @@ type Rule struct {
 	Name   string `yaml:"name,omitempty"`
 
 	isInit   bool
-	ruleType RuleType
+	RuleType RuleType
 	index    int
 	matcher  *pcap.BPF
 }
@@ -59,9 +60,11 @@ func (rule *Rule) init(idx int) error {
 
 	switch rule.Type {
 	case "conn_handler":
-		rule.ruleType = UserConnHandler
+		rule.RuleType = UserConnHandler
+	case "tcp_proxy":
+		rule.RuleType = Tcp_Proxy
 	case "drop":
-		rule.ruleType = Drop
+		rule.RuleType = Drop
 	default:
 		return fmt.Errorf("unknown rule type: %s", rule.Type)
 	}
