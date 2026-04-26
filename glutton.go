@@ -222,11 +222,11 @@ func (g *Glutton) tcpListen() {
 			g.Logger.Error("Failed to set connection timeout", producer.ErrAttr(err))
 		}
 
-		if rule.Type == "tcp_proxy" {
+		if rule.Type == "proxy_tcp" {
 			if hfunc, ok := g.tcpProtocolHandlers[rule.Type]; ok {
 				go func() {
 					if err := hfunc(g.ctx, conn, md); err != nil {
-						g.Logger.Error("Failed to handle TCP passthrough", producer.ErrAttr(err), slog.String("handler", "tcp_proxy"))
+						g.Logger.Error("Failed to handle proxy TCP", producer.ErrAttr(err), slog.String("handler", "proxy_tcp"))
 					}
 				}()
 			}

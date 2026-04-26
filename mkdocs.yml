@@ -5,7 +5,7 @@ nav:
   - Setup: setup.md
   - Configuration: configuration.md
   - Extension: extension.md
+  - Engineering Guidelines: engineering-guidelines.md
   - FAQs: faq.md
 theme:
   name: readthedocs
-

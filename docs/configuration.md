@@ -13,8 +13,10 @@ This file holds the core settings for Glutton. Key configuration options include
   - **udp:** The UDP port for intercepted packets (default: `5001`).
   - **ssh:** Typically excluded from redirection to avoid interfering with SSH (default: `22`).
 - **interface:** The network interface Glutton listens on (default: `eth0`).
-- **max_tcp_payload:** Maximum TCP payload size in bytes (default: `4096`).
-- **conn_timeout:** The connection timeout duration in seconds (default: `45`).
+- **conn_timeout:** Idle I/O timeout, in seconds, for established connections (default: `45`).
+- **max_tcp_payload:** Maximum TCP payload size in bytes (default: `4096`). Proxy TCP uses this as the per-direction captured payload cap.
+- **dial_timeout:** Timeout, in seconds, for opening outbound proxy TCP target connections (default: `5`).
+- **capture_traffic.enabled:** Enables raw payload capture in logs and produced decoded events. When disabled, proxy TCP still forwards traffic and logs metadata, but raw payload bytes are omitted from decoded events.
 - **confpath:** The directory path where the configuration file resides.
 - **producers:** 
     - **enabled**: Boolean flag to enable or disable logging/producer functionality.
@@ -55,6 +57,10 @@ producers:
 
 conn_timeout: 45
 max_tcp_payload: 4096
+dial_timeout: 5
+
+capture_traffic:
+  enabled: false
 ```
 
 ### config/rules.yaml
@@ -63,8 +69,8 @@ This file defines the rules that Glutton uses to determine which protocol handle
 
 Key elements include:
 
-- **type**: `conn_handler` to pass off to the appropriate protocol handler or `drop` to ignore packets.
-- **target**: Indicates the protocol handler (e.g., "http", "ftp") to be used.
+- **type**: `conn_handler` to pass off to the appropriate protocol handler, `proxy_tcp` to forward the TCP connection to an upstream target, or `drop` to ignore packets.
+- **target**: For `conn_handler`, indicates the protocol handler (e.g., `http`, `ftp`) to use. For `proxy_tcp`, this must be the upstream target in `host:port` form.
 - **match**: Define criteria such as source IP ranges or destination ports to match incoming traffic, according to [BPF syntax](https://biot.com/capstats/bpf.html).
 
 Example rule:
@@ -80,7 +86,13 @@ rules:
   - match: tcp dst port 6969
     type: drop # drops any matching packets
     target: bittorrent
+  - name: Proxy TCP example
+    match: tcp dst port 9889
+    type: proxy_tcp
+    target: 127.0.0.1:9889
 ```
+
+`proxy_tcp` dials the configured `target` and forwards bytes in both directions between the incoming connection and the upstream service. Produced decoded events use the `proxy_tcp` protocol name and can include one captured payload entry per direction. Captured payloads are capped by `max_tcp_payload`; when a direction transfers more bytes than the cap, the decoded event is marked as truncated.
 
 ## Configuration Loading Process
 Glutton uses the [Viper](https://github.com/spf13/viper) library to load configuration settings. The process works as follows:

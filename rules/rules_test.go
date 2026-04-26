@@ -3,6 +3,7 @@ package rules
 import (
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +42,97 @@ func TestSplitAddr(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "192.168.1.1", ip)
 	require.Equal(t, uint16(8080), port)
+}
+
+func TestParseProxyTarget(t *testing.T) {
+	tests := []struct {
+		name        string
+		raw         string
+		wantAddress string
+		wantErr     string
+	}{
+		{
+			name:        "plain target",
+			raw:         "127.0.0.1:9889",
+			wantAddress: "127.0.0.1:9889",
+		},
+		{
+			name:        "hostname target",
+			raw:         "localhost:9889",
+			wantAddress: "localhost:9889",
+		},
+		{
+			name:    "empty target",
+			raw:     "",
+			wantErr: "target is required",
+		},
+		{
+			name:    "scheme not supported",
+			raw:     "tcp://127.0.0.1:9889",
+			wantErr: "too many colons",
+		},
+		{
+			name:    "missing port",
+			raw:     "127.0.0.1",
+			wantErr: "missing port",
+		},
+		{
+			name:    "missing host",
+			raw:     ":9889",
+			wantErr: "host is required",
+		},
+		{
+			name:    "non numeric port",
+			raw:     "127.0.0.1:http",
+			wantErr: "invalid port",
+		},
+		{
+			name:    "port out of range",
+			raw:     "127.0.0.1:70000",
+			wantErr: "port out of range",
+		},
+		{
+			name:    "path not supported",
+			raw:     "127.0.0.1:9889/path",
+			wantErr: "invalid port",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target, err := parseProxyTarget(tt.raw)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tt.wantAddress, target.DialAddress)
+		})
+	}
+}
+
+func TestInitProxyTCPRuleParsesTarget(t *testing.T) {
+	rules, err := Init(strings.NewReader(`rules:
+  - match: tcp dst port 9889
+    type: proxy_tcp
+    target: 127.0.0.1:9889
+`))
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	require.NotNil(t, rules[0].ProxyTarget)
+	require.Equal(t, "127.0.0.1:9889", rules[0].ProxyTarget.DialAddress)
+}
+
+func TestInitProxyTCPRuleRejectsInvalidTarget(t *testing.T) {
+	_, err := Init(strings.NewReader(`rules:
+  - match: tcp dst port 9889
+    type: proxy_tcp
+    target: tcp://127.0.0.1:9889
+`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "too many colons")
 }
 
 func testConn(t *testing.T) (net.Conn, net.Listener) {
@@ -100,6 +192,21 @@ func TestRunMatchUDP(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, match)
 	require.Equal(t, "test", match.Target)
+}
+
+func TestRunMatchProxyTCP(t *testing.T) {
+	rules := parseRules(t)
+	require.NotEmpty(t, rules)
+
+	srcAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 50000}
+	dstAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 80}
+
+	match, err := rules.Match("tcp", srcAddr, dstAddr)
+	require.NoError(t, err)
+	require.NotNil(t, match)
+	require.Equal(t, "proxy_tcp", match.Type)
+	require.NotNil(t, match.ProxyTarget)
+	require.Equal(t, "127.0.0.1:9889", match.ProxyTarget.DialAddress)
 }
 
 func TestBPF(t *testing.T) {

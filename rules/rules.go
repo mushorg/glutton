@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/gopacket"
@@ -17,8 +18,8 @@ type RuleType int
 
 const (
 	UserConnHandler RuleType = iota
+	ProxyTCP
 	Drop
-	Tcp_Proxy
 )
 
 type Config struct {
@@ -32,10 +33,17 @@ type Rule struct {
 	Target string `yaml:"target,omitempty"`
 	Name   string `yaml:"name,omitempty"`
 
-	isInit   bool
-	RuleType RuleType
-	index    int
-	matcher  *pcap.BPF
+	isInit      bool
+	RuleType    RuleType
+	ProxyTarget *ProxyTarget `yaml:"-"`
+	index       int
+	matcher     *pcap.BPF
+}
+
+type ProxyTarget struct {
+	Host        string
+	Port        uint16
+	DialAddress string
 }
 
 func (r *Rule) String() string {
@@ -61,12 +69,20 @@ func (rule *Rule) init(idx int) error {
 	switch rule.Type {
 	case "conn_handler":
 		rule.RuleType = UserConnHandler
-	case "tcp_proxy":
-		rule.RuleType = Tcp_Proxy
+	case "proxy_tcp":
+		rule.RuleType = ProxyTCP
 	case "drop":
 		rule.RuleType = Drop
 	default:
 		return fmt.Errorf("unknown rule type: %s", rule.Type)
+	}
+
+	if rule.RuleType == ProxyTCP {
+		target, err := parseProxyTarget(rule.Target)
+		if err != nil {
+			return fmt.Errorf("invalid proxy_tcp target: %w", err)
+		}
+		rule.ProxyTarget = target
 	}
 
 	var err error
@@ -81,6 +97,35 @@ func (rule *Rule) init(idx int) error {
 	rule.isInit = true
 
 	return nil
+}
+
+func parseProxyTarget(raw string) (*ProxyTarget, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("target is required")
+	}
+
+	host, portValue, err := net.SplitHostPort(raw)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(host) == "" {
+		return nil, fmt.Errorf("host is required")
+	}
+
+	port, err := strconv.Atoi(portValue)
+	if err != nil {
+		return nil, fmt.Errorf("invalid port %q: %w", portValue, err)
+	}
+	if port < 1 || port > 65535 {
+		return nil, fmt.Errorf("port out of range: %d", port)
+	}
+
+	return &ProxyTarget{
+		Host:        host,
+		Port:        uint16(port),
+		DialAddress: net.JoinHostPort(host, strconv.Itoa(port)),
+	}, nil
 }
 
 func splitAddr(addr string) (string, uint16, error) {
