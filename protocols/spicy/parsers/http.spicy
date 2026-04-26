@@ -1,0 +1,37 @@
+module HTTP;
+
+const Token = /[^ \t\r\n:]+/;
+const HeaderName = /[^:\r\n]+/;
+const WhiteSpace = /[ \t]+/;
+const OptionalWhiteSpace = /[ \t]*/;
+const NewLine = /\r?\n/;
+const RestOfLine = /[^\r\n]*/;
+
+type Version = unit {
+    :       /HTTP\//;
+    number: /[0-9]+\.[0-9]*/;
+};
+
+type Header = unit {
+    name:  HeaderName;
+    :      /:/;
+    :      OptionalWhiteSpace;
+    value: RestOfLine;
+    :      NewLine;
+};
+
+type Body = unit {
+    content: bytes &eod;
+};
+
+public type Request = unit {
+    method:  Token;
+    :        WhiteSpace;
+    uri:     Token;
+    :        WhiteSpace;
+    version: Version;
+    :        NewLine;
+    headers: Header[];
+    :        NewLine;
+    body: Body;
+};

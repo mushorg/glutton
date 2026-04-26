@@ -10,8 +10,10 @@ import (
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	spicyHandlers "github.com/mushorg/glutton/protocols/spicy/handlers"
 	"github.com/mushorg/glutton/protocols/tcp"
 	"github.com/mushorg/glutton/protocols/udp"
+	"github.com/spf13/viper"
 )
 
 type TCPHandlerFunc func(ctx context.Context, conn net.Conn, md connection.Metadata) error
@@ -84,7 +86,11 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		// poor mans check for HTTP request
 		httpMap := map[string]bool{"GET ": true, "POST": true, "HEAD": true, "OPTI": true, "CONN": true}
 		if _, ok := httpMap[strings.ToUpper(string(snip))]; ok {
-			return tcp.HandleHTTP(ctx, bufConn, md, log, h)
+			if viper.GetBool("spicy.enabled") {
+				return spicyHandlers.HandleHTTP(ctx, bufConn, md, log, h)
+			} else {
+				return tcp.HandleHTTP(ctx, bufConn, md, log, h)
+			}
 		}
 		// poor mans check for RDP header
 		if bytes.Equal(snip, []byte{0x03, 0x00, 0x00, 0x2b}) {
