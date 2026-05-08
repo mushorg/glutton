@@ -23,6 +23,8 @@ sudo apt-get update
 sudo apt-get install gcc libpcap-dev iptables
 ```
 
+Spicy parser development also requires Spicy/HILTI headers and libraries under `/opt/spicy` and a C++20-capable compiler. After installing Spicy, run `make spicy` before `make build` or `go test ./...`.
+
 ### Arch Linux
 ```bash
 sudo pacman -S gcc libpcap iptables
@@ -103,4 +105,3 @@ To deploy using Docker:
     ```
 
 The Docker container is preconfigured with the necessary dependencies (iptables, libpcap, etc.) and copies the configuration and rules files into the container.
-

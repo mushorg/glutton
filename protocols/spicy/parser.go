@@ -1,7 +1,7 @@
 package spicy
 
 /*
-#cgo CXXFLAGS: -I/opt/spicy/include -I${SRCDIR}/parsers -std=c++17 -fPIC -O3 -DNDEBUG -fvisibility=hidden
+#cgo CXXFLAGS: -I/opt/spicy/include -I${SRCDIR}/parsers -std=c++20 -fPIC -O3 -DNDEBUG -fvisibility=hidden
 #cgo LDFLAGS:  -L/opt/spicy/lib -lspicy-rt -lhilti-rt -lz -lpthread -ldl "-Wl,-rpath,/opt/spicy/lib"
 #include <stdlib.h>
 #include "bridge.h"
@@ -104,6 +104,7 @@ var initErr error
 
 func Initialize(logger interfaces.Logger) error {
 	initOnce.Do(func() {
+		// starts Spicy worker thread
 		startWorker()
 
 		resp := make(chan any, 1)

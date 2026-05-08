@@ -8,8 +8,8 @@
 #include <string>
 #include <vector>
 
-#include "parsers/http.h"
-
+// Concrete parser modules are registered through generated Spicy linker code.
+// Keep this bridge independent of parser-specific generated headers.
 // tracks runtime init per thread
 static thread_local bool t_thread_ready = false;
 

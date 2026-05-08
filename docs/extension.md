@@ -58,8 +58,14 @@ For example:
       - Write tests similar to those in `protocols/protocols_test.go` to verify your new handler’s functionality.
       - Use `go test` to ensure that your changes do not break existing functionality.
 
+## Adding a Spicy Parser
+
+- Add parser grammars under `protocols/spicy/parsers/*.spicy`.
+- Run `make spicy` before building or testing so the generated parser C++ files and combined Spicy linker file are available.
+- Keep `protocols/spicy/bridge.cpp` parser-agnostic. Concrete parser modules are registered through generated linker code, not by including parser-specific headers in the bridge.
+- Add or update protocol-specific Glutton routing and handler code when a parser needs to be used for live traffic. A compiled Spicy grammar makes parsing available, but it does not by itself decide how much data to read, what response to send, or which producer event shape to emit.
+
 ## Customizing Logging and Rules
 
 - **Logging:** The logging mechanism is provided by the Producer (located in `producer/`). You can modify or extend it to suit your logging infrastructure.
 - **Rules Engine:** The rules engine (found in `rules/`) can be extended to support additional matching criteria or custom rule types.
-
