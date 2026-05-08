@@ -46,7 +46,6 @@ type reader struct {
 }
 
 func (r reader) Read(p []byte) (int, error) {
-
 	if r.idle > 0 {
 		if err := r.conn.SetReadDeadline(time.Now().Add(r.idle)); err != nil {
 			return 0, fmt.Errorf("%s set read deadline: %w", r.name, err)
@@ -74,7 +73,6 @@ type writer struct {
 }
 
 func (w *writer) Write(p []byte) (int, error) {
-
 	if w.session.idleTimeout > 0 {
 		if err := w.conn.SetWriteDeadline(time.Now().Add(w.session.idleTimeout)); err != nil {
 			return 0, fmt.Errorf("%s set write deadline: %w", w.name, err)
@@ -82,16 +80,6 @@ func (w *writer) Write(p []byte) (int, error) {
 	}
 
 	n, err := w.conn.Write(p)
-
-	// A Write can partially succeed. Only p[:n] reached the destination, so only
-	// those bytes should affect logs, byte counts, and capture samples.
-	if n > 0 {
-		written := p[:n]
-		w.written += int64(n)
-		w.session.logPayload(w.dir, written, w.logger)
-		w.storePayload(written)
-	}
-
 	if err != nil {
 		w.logger.Debug("proxy writer returned error", logAttrs(
 			slog.String("function", "writer.Write"),
@@ -100,6 +88,15 @@ func (w *writer) Write(p []byte) (int, error) {
 			producer.ErrAttr(err),
 		)...)
 		return n, fmt.Errorf("%s write: %w", w.name, err)
+	}
+
+	// A Write can partially succeed. Only p[:n] reached the destination, so only
+	// those bytes should affect logs, byte counts, and capture samples.
+	if n > 0 {
+		written := p[:n]
+		w.written += int64(n)
+		w.session.logPayload(w.dir, written, w.logger)
+		w.storePayload(written)
 	}
 
 	if n != len(p) {
@@ -111,7 +108,6 @@ func (w *writer) Write(p []byte) (int, error) {
 
 // emits a structured log for connection metadata including raw payload
 func (s *session) logPayload(direction string, data []byte, logger interfaces.Logger) {
-
 	if len(data) == 0 {
 		return
 	}
@@ -145,7 +141,6 @@ func (s *session) logPayload(direction string, data []byte, logger interfaces.Lo
 
 // storePayload stores a bounded sample of written bytes for producer output.
 func (w *writer) storePayload(p []byte) {
-
 	if !w.session.producer || w.session.payloadSize <= 0 {
 		return
 	}
@@ -188,7 +183,6 @@ func logAttrs(fields ...any) []any {
 
 // isLikelyText checks whether a byte slice is mostly printable text.
 func isLikelyText(data []byte) bool {
-
 	if len(data) == 0 {
 		return false
 	}
@@ -251,7 +245,6 @@ func pipe(done chan<- pipeResult, dst, src net.Conn, session *session, logger in
 
 // pipeBothWays starts proxy connection between client and target
 func pipeBothWays(client, target net.Conn, session *session, logger interfaces.Logger) []pipeResult {
-
 	logger.Debug("starting proxy bidirectional copy", logAttrs(
 		slog.String("function", "pipeBothWays"),
 		slog.String("source", session.source),
@@ -312,7 +305,6 @@ func logResult(logger interfaces.Logger, result pipeResult) {
 
 // expectedPipeError classifies normal network shutdown results from io.Copy.
 func expectedPipeError(err error) bool {
-
 	if err == nil {
 		return true
 	}
@@ -338,7 +330,6 @@ type closeReader interface {
 
 // Use for used for half-closing a write side, if unavailable, it uses a deadline
 func finishWriteSide(conn net.Conn, logger interfaces.Logger, dir string) error {
-
 	if cw, ok := conn.(closeWriter); ok {
 		logger.Debug("closing proxy write side", logAttrs(
 			slog.String("function", "finishWriteSide"),
@@ -362,7 +353,6 @@ func finishWriteSide(conn net.Conn, logger interfaces.Logger, dir string) error 
 
 // Use for used for half-closing a read side, if unavailable, it uses a deadline
 func finishReadSide(conn net.Conn, logger interfaces.Logger, dir string) error {
-
 	if cr, ok := conn.(closeReader); ok {
 		logger.Debug("closing proxy read side", logAttrs(
 			slog.String("function", "finishReadSide"),
@@ -401,7 +391,6 @@ func setKeepAlive(conn net.Conn, logger interfaces.Logger, name string) {
 
 func stopProxyOnCancel(ctx context.Context, client, target net.Conn, logger interfaces.Logger) func() {
 	done := make(chan struct{})
-
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -431,7 +420,6 @@ func closeProxyConn(conn net.Conn, logger interfaces.Logger, name string) {
 }
 
 func HandleProxyTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
-
 	srcAddr := conn.RemoteAddr().String()
 
 	logger.Debug("entered proxy handler", logAttrs(

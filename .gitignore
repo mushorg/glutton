@@ -38,3 +38,9 @@ poc/
 # Dev
 .vscode
 openspec/
+.cache
+.codex
+openspec/
+docs/roadmap.md
+docs/engineering-guidelines.md
+

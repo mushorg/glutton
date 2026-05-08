@@ -282,12 +282,12 @@ func TestHandleProxyTCP(t *testing.T) {
 	require.True(t, payloads["target-response"])
 }
 
-func TestWriter(t *testing.T) {
+func TestPartialWriter(t *testing.T) {
 	writeErr := errors.New("short write")
 	logger := &recordingLogger{}
 	session := &session{producer: true, payloadSize: 4096}
 	writer := &writer{
-		conn:    partialWriteConn{written: 3, err: writeErr},
+		conn:    testWriteConn{written: 3, err: writeErr},
 		session: session,
 		logger:  logger,
 		dir:     "client->target",
@@ -299,11 +299,8 @@ func TestWriter(t *testing.T) {
 	require.Equal(t, 3, n)
 
 	event := writer.event()
-	require.NotNil(t, event)
-	require.Equal(t, "abc", string(event.Payload))
-	require.Equal(t, int64(3), event.Bytes)
-	require.False(t, event.Truncated)
-	require.Equal(t, int64(3), writer.written)
+	require.Nil(t, event)
+	require.Zero(t, writer.written)
 }
 
 // test capture writer skipped failed writer
@@ -312,7 +309,7 @@ func TestFailedWrites(t *testing.T) {
 	logger := &recordingLogger{}
 	session := &session{producer: true, payloadSize: 4096}
 	writer := &writer{
-		conn:    partialWriteConn{written: 0, err: writeErr},
+		conn:    testWriteConn{written: 0, err: writeErr},
 		session: session,
 		logger:  logger,
 		dir:     "client->target",
@@ -331,7 +328,7 @@ func TestShortWriteError(t *testing.T) {
 	logger := &recordingLogger{}
 	session := &session{producer: true, payloadSize: 4096}
 	writer := &writer{
-		conn:    partialWriteConn{written: 3},
+		conn:    testWriteConn{written: 3},
 		session: session,
 		logger:  logger,
 		dir:     "client->target",
@@ -352,7 +349,7 @@ func TestWriterByteCaps(t *testing.T) {
 	logger := &recordingLogger{}
 	session := &session{producer: true, payloadSize: 4}
 	writer := &writer{
-		conn:    partialWriteConn{written: 6},
+		conn:    testWriteConn{written: 6},
 		session: session,
 		logger:  logger,
 		dir:     "client->target",
@@ -394,30 +391,12 @@ func TestMissingMetadata(t *testing.T) {
 	require.Error(t, err)
 }
 
-type partialWriteConn struct {
+type testWriteConn struct {
 	net.Conn
 	written int
 	err     error
 }
 
-func (c partialWriteConn) Write(p []byte) (int, error) {
+func (c testWriteConn) Write(p []byte) (int, error) {
 	return c.written, c.err
-}
-
-func (c partialWriteConn) RemoteAddr() net.Addr {
-	return testAddr("partial-remote")
-}
-
-func (c partialWriteConn) LocalAddr() net.Addr {
-	return testAddr("partial-local")
-}
-
-type testAddr string
-
-func (a testAddr) Network() string {
-	return "test"
-}
-
-func (a testAddr) String() string {
-	return string(a)
 }
