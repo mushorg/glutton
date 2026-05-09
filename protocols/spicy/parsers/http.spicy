@@ -13,6 +13,7 @@ type Version = unit {
 };
 
 type URI = unit {
+    # parse path/query fields for handlers.
     raw: Token {
         local parts = $$.split1(b"?");
         self.path = parts[0];
