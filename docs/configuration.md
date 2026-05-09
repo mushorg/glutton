@@ -15,6 +15,7 @@ This file holds the core settings for Glutton. Key configuration options include
 - **interface:** The network interface Glutton listens on (default: `eth0`).
 - **max_tcp_payload:** Maximum TCP payload size in bytes (default: `4096`).
 - **conn_timeout:** The connection timeout duration in seconds (default: `45`).
+- **spicy.enabled:** Enables Spicy parser integration for supported protocols. When enabled, Glutton initializes the Spicy/HILTI runtime and uses Spicy-backed parsing paths where implemented. When disabled, Glutton uses the existing Go parser and TCP fallback paths.
 - **confpath:** The directory path where the configuration file resides.
 - **producers:** 
     - **enabled**: Boolean flag to enable or disable logging/producer functionality.
@@ -55,6 +56,9 @@ producers:
 
 conn_timeout: 45
 max_tcp_payload: 4096
+
+spicy:
+  enabled: true
 ```
 
 ### config/rules.yaml
