@@ -57,7 +57,7 @@ func TestParseHTTPRequest(t *testing.T) {
 		t.Skipf("Skipping test as Spicy initialization failed: %v", spicyInitErr)
 	}
 
-	httpRequest := "GET /test HTTP/1.1\r\nHost: example.com\r\nContent-Length: 4\r\n\r\ntest"
+	httpRequest := "POST /test/path?x=1&y=two HTTP/1.1\r\nHost: example.com:8080\r\nUser-Agent: glutton-test\r\nContent-Type: application/json\r\nContent-Length: 4\r\n\r\ntest"
 	result, err := Parse("http", []byte(httpRequest))
 
 	if err != nil {
@@ -73,14 +73,44 @@ func TestParseHTTPRequest(t *testing.T) {
 	require.NotNil(t, result.Fields)
 	require.NoError(t, result.Error)
 
-	method := result.Fields["method"]
-	require.Equal(t, "GET", method)
+	require.Equal(t, "POST", result.Fields["method"])
+	require.Equal(t, "/test/path?x=1&y=two", result.Fields["uri.raw"])
+	require.Equal(t, "/test/path", result.Fields["uri.path"])
+	require.Equal(t, "x=1&y=two", result.Fields["uri.query"])
+	require.Equal(t, "1.1", result.Fields["version.number"])
+	require.Equal(t, "Host", result.Fields["headers[0].name"])
+	require.Equal(t, "example.com:8080", result.Fields["headers[0].value"])
+	require.Equal(t, "test", result.Fields["body.content"])
+	require.NotContains(t, result.Fields, "header.host")
+	require.NotContains(t, result.Fields, "header.user_agent")
+	require.NotContains(t, result.Fields, "header.content_type")
+	require.NotContains(t, result.Fields, "header.content_length")
+	require.NotContains(t, result.Fields, "host")
+	require.NotContains(t, result.Fields, "port_")
+}
 
-	uri := result.Fields["uri"]
-	require.Equal(t, "/test", uri)
+func TestParseHTTPRequestAbsoluteTarget(t *testing.T) {
+	ensureSpicyInitialized()
 
-	version := result.Fields["version.number"]
-	require.Equal(t, "1.1", version)
+	if spicyInitErr != nil {
+		t.Skipf("Skipping test as Spicy initialization failed: %v", spicyInitErr)
+	}
+
+	httpRequest := "GET http://example.com/test/path?x=1 HTTP/1.1\r\nHost: example.com\r\n\r\n"
+	result, err := Parse("http", []byte(httpRequest))
+
+	if err != nil {
+		if err.Error() == "no Spicy parser registered for \"http\"" {
+			t.Skip("HTTP parser not available in this build")
+			return
+		}
+		require.NoError(t, err, "Unexpected parsing error")
+	}
+
+	require.NotNil(t, result)
+	require.Equal(t, "http://example.com/test/path?x=1", result.Fields["uri.raw"])
+	require.Equal(t, "http://example.com/test/path", result.Fields["uri.path"])
+	require.Equal(t, "x=1", result.Fields["uri.query"])
 }
 
 func TestParseUnknownProtocol(t *testing.T) {

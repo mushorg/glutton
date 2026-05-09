@@ -3,10 +3,10 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/mocks"
@@ -17,10 +17,10 @@ import (
 )
 
 type mockConn struct {
+	net.Conn
 	readBuf    *bytes.Buffer
 	writeBuf   *bytes.Buffer
 	remoteAddr net.Addr
-	localAddr  net.Addr
 	closed     bool
 }
 
@@ -29,19 +29,14 @@ func newMockConn(data string) *mockConn {
 		readBuf:    bytes.NewBufferString(data),
 		writeBuf:   &bytes.Buffer{},
 		remoteAddr: &net.TCPAddr{IP: net.ParseIP("192.168.1.100"), Port: 12345},
-		localAddr:  &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 80},
 	}
 }
 
-func (m *mockConn) Read(b []byte) (n int, err error)   { return m.readBuf.Read(b) }
-func (m *mockConn) Write(b []byte) (n int, err error)  { return m.writeBuf.Write(b) }
-func (m *mockConn) Close() error                       { m.closed = true; return nil }
-func (m *mockConn) LocalAddr() net.Addr                { return m.localAddr }
-func (m *mockConn) RemoteAddr() net.Addr               { return m.remoteAddr }
-func (m *mockConn) SetDeadline(t time.Time) error      { return nil }
-func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
-func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }
-func (m *mockConn) Written() string                    { return m.writeBuf.String() }
+func (m *mockConn) Read(b []byte) (n int, err error)  { return m.readBuf.Read(b) }
+func (m *mockConn) Write(b []byte) (n int, err error) { return m.writeBuf.Write(b) }
+func (m *mockConn) Close() error                      { m.closed = true; return nil }
+func (m *mockConn) RemoteAddr() net.Addr              { return m.remoteAddr }
+func (m *mockConn) Written() string                   { return m.writeBuf.String() }
 
 func createMockLogger() *mocks.MockLogger {
 	logger := &mocks.MockLogger{}
@@ -67,53 +62,104 @@ func ensureSpicyInitialized() {
 	})
 }
 
-func TestHandleHTTPBasicGET(t *testing.T) {
+func buildHTTPRequest(method, target, body string, headers ...string) string {
+	request := fmt.Sprintf("%s %s HTTP/1.1\r\nHost: example.com\r\n", method, target)
+	for _, header := range headers {
+		request += header + "\r\n"
+	}
+	if body != "" {
+		request += fmt.Sprintf("Content-Length: %d\r\n", len(body))
+	}
+	return request + "\r\n" + body
+}
+
+func runHTTPHandler(t *testing.T, request string) *mockConn {
+	t.Helper()
 	ensureSpicyInitialized()
 
-	httpRequest := "GET /test HTTP/1.1\r\nHost: example.com\r\n\r\n"
-	conn := newMockConn(httpRequest)
-
+	conn := newMockConn(request)
 	logger := createMockLogger()
 	honeypot := &mocks.MockHoneypot{}
-	honeypot.EXPECT().ProduceTCP(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	honeypot.EXPECT().ProduceTCP("http", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	md := connection.Metadata{
 		TargetPort: 80,
 		Rule:       &rules.Rule{Target: "http"},
 	}
 
-	ctx := context.Background()
-	err := HandleHTTP(ctx, conn, md, logger, honeypot)
-
+	err := HandleHTTP(context.Background(), conn, md, logger, honeypot)
 	require.NoError(t, err)
 	require.True(t, conn.closed)
 
-	response := conn.Written()
-	require.Contains(t, response, "HTTP/1.1 200 OK")
-
 	logger.AssertExpectations(t)
 	honeypot.AssertExpectations(t)
+
+	return conn
+}
+
+func TestHandleHTTPBasicGET(t *testing.T) {
+	conn := runHTTPHandler(t, buildHTTPRequest("GET", "/test", ""))
+
+	require.Contains(t, conn.Written(), "HTTP/1.1 200 OK")
+}
+
+func TestHandleHTTPResponseBranches(t *testing.T) {
+	ethereumBody := `{"jsonrpc":"2.0","method":"eth_blockNumber","id":1}`
+
+	tests := []struct {
+		name     string
+		request  string
+		contains string
+	}{
+		{
+			name:     "Default",
+			request:  buildHTTPRequest("GET", "/test", ""),
+			contains: "HTTP/1.1 200 OK\r\n\r\n",
+		},
+		{
+			name:     "Wallet",
+			request:  buildHTTPRequest("GET", "/wallet", ""),
+			contains: `[[""]]`,
+		},
+		{
+			name:     "Docker",
+			request:  buildHTTPRequest("GET", "/v1.16/version", ""),
+			contains: `"ApiVersion":"1.41"`,
+		},
+		{
+			name:     "YARN",
+			request:  buildHTTPRequest("POST", "/ws/v1/cluster/apps/new-application", `{}`),
+			contains: `"application-id":"application_1527144634877_20465"`,
+		},
+		{
+			name:     "Ethereum",
+			request:  buildHTTPRequest("POST", "/", ethereumBody),
+			contains: `"result":"0x2ecd9e"`,
+		},
+		{
+			name:     "Citrix",
+			request:  buildHTTPRequest("GET", "/vpn/index.html", ""),
+			contains: "[global]",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Contains(t, runHTTPHandler(t, test.request).Written(), test.contains)
+		})
+	}
+}
+
+func TestHandleHTTPUsesParsedQuery(t *testing.T) {
+	conn := runHTTPHandler(t, buildHTTPRequest("GET", "/test/path?x=1&y=two", ""))
+
+	require.Contains(t, conn.Written(), "HTTP/1.1 200 OK")
 }
 
 func TestHandleHTTPWithBody(t *testing.T) {
-	ensureSpicyInitialized()
+	conn := runHTTPHandler(t, buildHTTPRequest("POST", "/api", `{"test":true}`))
 
-	httpRequest := "POST /api HTTP/1.1\r\nHost: example.com\r\nContent-Length: 13\r\n\r\n{\"test\":true}"
-	conn := newMockConn(httpRequest)
-
-	logger := createMockLogger()
-	honeypot := &mocks.MockHoneypot{}
-	honeypot.EXPECT().ProduceTCP(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	md := connection.Metadata{TargetPort: 80}
-	ctx := context.Background()
-
-	err := HandleHTTP(ctx, conn, md, logger, honeypot)
-	require.NoError(t, err)
 	require.True(t, conn.closed)
-
-	logger.AssertExpectations(t)
-	honeypot.AssertExpectations(t)
 }
 
 func TestHandleHTTPMalformedRequest(t *testing.T) {

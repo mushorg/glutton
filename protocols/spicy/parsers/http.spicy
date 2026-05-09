@@ -1,6 +1,6 @@
 module HTTP;
 
-const Token = /[^ \t\r\n:]+/;
+const Token = /[^ \t\r\n]+/;
 const HeaderName = /[^:\r\n]+/;
 const WhiteSpace = /[ \t]+/;
 const OptionalWhiteSpace = /[ \t]*/;
@@ -10,6 +10,17 @@ const RestOfLine = /[^\r\n]*/;
 type Version = unit {
     :       /HTTP\//;
     number: /[0-9]+\.[0-9]*/;
+};
+
+type URI = unit {
+    raw: Token {
+        local parts = $$.split1(b"?");
+        self.path = parts[0];
+        self.query = parts[1];
+    }
+
+    var path: bytes;
+    var query: bytes;
 };
 
 type Header = unit {
@@ -27,7 +38,7 @@ type Body = unit {
 public type Request = unit {
     method:  Token;
     :        WhiteSpace;
-    uri:     Token;
+    uri:     URI;
     :        WhiteSpace;
     version: Version;
     :        NewLine;

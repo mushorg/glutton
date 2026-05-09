@@ -80,8 +80,8 @@ func handleWallet(uri string, conn net.Conn) bool {
 	return true
 }
 
-func handleDockerAPIVersion(uri string, conn net.Conn, log interfaces.Logger) bool {
-	if !strings.HasPrefix(uri, "/v1.16/version") {
+func handleDockerAPIVersion(path string, conn net.Conn, log interfaces.Logger) bool {
+	if !strings.HasPrefix(path, "/v1.16/version") {
 		return false
 	}
 	data, err := tcp.Res.ReadFile("resources/docker_api.json")
@@ -94,8 +94,8 @@ func handleDockerAPIVersion(uri string, conn net.Conn, log interfaces.Logger) bo
 	return true
 }
 
-func handleCitrixSMB(uri string, conn net.Conn) bool {
-	if !strings.HasPrefix(uri, "/vpn/") {
+func handleCitrixSMB(path string, conn net.Conn) bool {
+	if !strings.HasPrefix(path, "/vpn/") {
 		return false
 	}
 	headers := `Server: Apache
@@ -153,10 +153,14 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 	}
 
 	method, _ := parsed.Fields["method"].(string)
-	uri, _ := parsed.Fields["uri"].(string)
-	version, _ := parsed.Fields["version.number"].(string)
-
 	method = strings.ToUpper(method)
+	uriRaw, _ := parsed.Fields["uri.raw"].(string)
+	path, _ := parsed.Fields["uri.path"].(string)
+	if path == "" {
+		path = uriRaw
+	}
+	query, _ := parsed.Fields["uri.query"].(string)
+	version, _ := parsed.Fields["version.number"].(string)
 
 	var body []byte
 	if v, ok := parsed.Fields["body.content"]; ok {
@@ -168,17 +172,12 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 		}
 	}
 
-	path, query := uri, ""
-	if sp := strings.SplitN(uri, "?", 2); len(sp) == 2 {
-		path, query = sp[0], sp[1]
-	}
-
-	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
+	srcHost, srcPort, _ := net.SplitHostPort(conn.RemoteAddr().String())
 	log.Info(fmt.Sprintf("HTTP %s %s request handled: %s", version, method, path), // added "version" as a proof of concept, not identical to the original pure Go parser
 		slog.String("handler", "spicy-http"),
 		slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-		slog.String("src_ip", host),
-		slog.String("src_port", port),
+		slog.String("src_ip", srcHost),
+		slog.String("src_port", srcPort),
 		slog.String("path", path),
 		slog.String("query", query),
 	)
@@ -196,10 +195,10 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 	handled := false
 	switch method {
 	case "POST":
-		handled = handleEthereumRPC(body, conn) || handleYarnNewApplication(method, uri, conn)
+		handled = handleEthereumRPC(body, conn) || handleYarnNewApplication(method, uriRaw, conn)
 	}
 
-	handled = handled || handleWallet(uri, conn) || handleDockerAPIVersion(uri, conn, log) || handleCitrixSMB(uri, conn) || handleVMwareSend(ctx, body, uri, md, log, hp)
+	handled = handled || handleWallet(uriRaw, conn) || handleDockerAPIVersion(path, conn, log) || handleCitrixSMB(path, conn) || handleVMwareSend(ctx, body, uriRaw, md, log, hp)
 
 	if !handled {
 		_ = writePlainOK(conn)
