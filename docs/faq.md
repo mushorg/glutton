@@ -1,21 +1,43 @@
 # Frequently Asked Questions
 
-### Q: What is Glutton?
-**A:** Glutton is a protocol-agnostic honeypot that intercepts network traffic, applies customizable rules, and logs interactions to help analyze malicious activities.
+Last verified against source on 2026-05-15.
 
-### Q: Which protocols does Glutton support?
-**A:** Out of the box, Glutton supports multiple protocols via its TCP and UDP handlers. The repository includes handlers for protocols such as HTTP, FTP, SMTP, Telnet, MQTT, and more. You can extend support to additional protocols as needed.
+## What is Glutton?
 
-### Q: How do I add a new protocol or extend existing functionality?
-**A:** You can add a new protocol handler by implementing the appropriate interface in the `protocols/` directory and registering your handler in the corresponding mapping function. See the [Extension](extension.md) section for detailed instructions.
+Glutton is a Go-based, multi-protocol honeypot. It redirects TCP and UDP traffic through local TPROXY listeners, applies rule-based dispatch, runs protocol handlers, and logs interaction data.
 
-### Q: How do I configure Glutton?
-**A:** Configuration is managed through YAML files:
+## Is Glutton high-interaction?
 
-- **config/config.yaml:** General settings such as port numbers and interface names.
-- **config/rules.yaml:** Defines rules for matching and processing network traffic.
+No. Glutton does not give attackers a real host or full service environment. It sits in the low-to-medium interaction range: handlers emulate enough protocol behavior to capture useful probes and payloads, but they are still controlled Go implementations.
 
-See the [Configuration](configuration.md) section for detailed instructions.
+## Which protocols are registered today?
 
-### Q: What are the system prerequisites?
-**A:** Glutton requires a Linux system, so if you're using a different OS, you'll have to use Docker to set it up. Specific installation commands are provided in the [Setup](setup.md) section. 
+TCP handler targets include SMTP, RDP, SMB, FTP, SIP, RFB/VNC, Telnet, MQTT, iSCSI, BitTorrent, Memcache, Jabber, ADB, MongoDB, HTTP, and generic TCP. UDP currently has a generic UDP handler.
+
+## Does Spicy parse every protocol?
+
+No. Current Spicy grammar files are `http.spicy` and `tcp.spicy`. Spicy is used for selected HTTP parsing and TCP payload protocol detection paths. Most protocol behavior still lives in Go handlers.
+
+## Why does a rule target of `http` use the Go HTTP handler?
+
+`protocols/protocols.go` maps target `http` to `protocols/tcp/http.go`. The Spicy HTTP handler is reached from the generic `tcp` path when Spicy detection classifies a catch-all TCP payload as HTTP.
+
+## What is the default SSH exclusion port?
+
+The source has an ambiguity: `config/config.yaml` sets `ports.ssh: 2222`, while the CLI flag `--ssh` has default `22`. Set `ports.ssh` explicitly or pass `--ssh` explicitly in production.
+
+## Are environment variables supported for config?
+
+Not as a documented current behavior. The code binds CLI flags and reads YAML config through Viper, but does not call `viper.AutomaticEnv()`.
+
+## Does `type: drop` drop traffic?
+
+Not in the current listener dispatch path. The rules parser accepts `drop`, but Glutton does not currently special-case that rule type after a match. Treat it as unsupported for production drop behavior until code support is added and tested.
+
+## Where do logs go?
+
+Process logs are JSON `slog` records written to stdout and to `--logpath`. Producer events are separate and only go to HTTP or hpfeeds when producers and those sinks are enabled.
+
+## What should I read before adding a protocol?
+
+Read [Extension system](extension-system.md), then [Adding a protocol](protocols/adding-a-protocol.md). If you need Spicy parsing, read [Spicy cheatsheet](protocols/spicy-cheatsheet.md).

@@ -1,55 +1,47 @@
 # Configuration
 
-Glutton’s behavior is controlled by several configuration files written in YAML (and JSON for schema validation). This page details the available configuration options, how they’re loaded, and best practices for customizing your setup. 
+Last verified against source on 2026-05-15.
 
-## Configuration Files
+Glutton uses Viper for runtime configuration. The main config file is YAML, and the rules file is YAML with BPF-style match expressions.
 
-### config/config.yaml
+## Loading Behavior
 
-This file holds the core settings for Glutton. Key configuration options include:
+Startup uses this sequence:
 
-- **ports:** Defines the network ports used for traffic interception.
-  - **tcp:** The TCP port for intercepted connections (default: `5000`).
-  - **udp:** The UDP port for intercepted packets (default: `5001`).
-  - **ssh:** Typically excluded from redirection to avoid interfering with SSH (default: `22`).
-- **interface:** The network interface Glutton listens on (default: `eth0`).
-- **max_tcp_payload:** Maximum TCP payload size in bytes (default: `4096`).
-- **conn_timeout:** The connection timeout duration in seconds (default: `45`).
-- **spicy.enabled:** Enables Spicy parser integration for supported protocols. When enabled, Glutton initializes the Spicy/HILTI runtime and uses Spicy-backed parsing paths where implemented. When disabled, Glutton uses the existing Go parser and TCP fallback paths.
-- **confpath:** The directory path where the configuration file resides.
-- **producers:** 
-    - **enabled**: Boolean flag to enable or disable logging/producer functionality.
-    - **http:** HTTP producer for sending logs to a remote endpoint, like [Ochi](https://github.com/honeynet/ochi).
-    - **hpfeeds:** [HPFeeds](https://github.com/hpfeeds/hpfeeds) producer for sharing data with other security tools.
-- **addresses:** A list of additional public IP addresses for traffic handling.
+1. CLI flags are parsed and bound into Viper in `app/server.go`.
+2. If `--ssh` is considered set by Viper, `app/server.go` copies it into `ports.ssh`.
+3. Glutton looks for `config.yaml` under `--confpath`.
+4. If the `--confpath` directory exists, Glutton calls `viper.ReadInConfig()`.
+5. If the `--confpath` directory does not exist, Glutton loads the embedded default `config/config.yaml`.
+6. Glutton reads `rules_path`; if that file exists, it loads it. Otherwise it loads the embedded default `config/rules.yaml`.
 
-Example configuration:
+Environment variables are not currently configured as a documented input source. There is no `viper.AutomaticEnv()` call in the current source.
+
+## Main Config
+
+Source file: `config/config.yaml`
 
 ```yaml
-# config/config.yaml
-
 ports:
   tcp: 5000
   udp: 5001
-  ssh: 22
+  ssh: 2222
 
 rules_path: config/rules.yaml
 
-addresses: ["1.2.3.4"]
+addresses: ["1.2.3.4", "5.4.3.2"]
 
 interface: eth0
 
 producers:
-  enabled: true # enables producers
+  enabled: false
   http:
-    enabled: true # enables http producer
-    # Connect with Ochi here or other remote log aggregation servers 
-    remote: http://localhost:3000/publish?token=token 
+    enabled: false
+    remote: https://localhost:9000
   hpfeeds:
-    enabled: false # disables HPFeeds
+    enabled: false
     host: 172.26.0.2
     port: 20000
-    # HPFeeds specific details go here
     ident: ident
     auth: auth
     channel: test
@@ -61,40 +53,72 @@ spicy:
   enabled: true
 ```
 
-### config/rules.yaml
+## Main Config Reference
 
-This file defines the rules that Glutton uses to determine which protocol handler should process incoming traffic.
+| Key | Type | Source default | Description |
+| --- | --- | --- | --- |
+| `ports.tcp` | int | `5000` | Local TCP TPROXY listener port. |
+| `ports.udp` | int | `5001` | Local UDP TPROXY listener port. |
+| `ports.ssh` | int | `2222` in `config/config.yaml` | Destination port excluded from TPROXY redirection. See SSH default note below. |
+| `rules_path` | string | `config/rules.yaml` | Path to the rules YAML file. |
+| `addresses` | string list | `["1.2.3.4", "5.4.3.2"]` | Extra public addresses used for payload sanitization and address awareness. |
+| `interface` | string | `eth0` | Interface used to discover non-loopback IPs and build TPROXY rules. |
+| `producers.enabled` | bool | `false` | Creates the producer object when true. |
+| `producers.http.enabled` | bool | `false` | Enables HTTP producer POST output when producers are enabled. |
+| `producers.http.remote` | string | `https://localhost:9000` | HTTP producer endpoint. Userinfo in the URL can supply basic auth. |
+| `producers.hpfeeds.enabled` | bool | `false` | Enables hpfeeds output when producers are enabled. |
+| `producers.hpfeeds.host` | string | `172.26.0.2` | hpfeeds broker host. |
+| `producers.hpfeeds.port` | int | `20000` | hpfeeds broker port. |
+| `producers.hpfeeds.ident` | string | `ident` | hpfeeds identity. |
+| `producers.hpfeeds.auth` | string | `auth` | hpfeeds auth secret. |
+| `producers.hpfeeds.channel` | string | `test` | hpfeeds channel. |
+| `conn_timeout` | int | `45` | Connection deadline in seconds, refreshed around I/O. |
+| `max_tcp_payload` | int | `4096` | Generic TCP handler maximum payload accumulation threshold. |
+| `spicy.enabled` | bool | `true` | Initializes Spicy/HILTI and enables Spicy-backed paths where wired. |
 
-Key elements include:
+## SSH Default Note
 
-- **type**: `conn_handler` to pass off to the appropriate protocol handler or `drop` to ignore packets.
-- **target**: Indicates the protocol handler (e.g., "http", "ftp") to be used.
-- **match**: Define criteria such as source IP ranges or destination ports to match incoming traffic, according to [BPF syntax](https://biot.com/capstats/bpf.html).
+There are two source-level defaults for the SSH exclusion port:
 
-Example rule:
+- `config/config.yaml` sets `ports.ssh: 2222`.
+- `app/server.go` defines `--ssh` with CLI default `22`.
+
+The code only copies `--ssh` into `ports.ssh` when Viper reports the `ssh` key as set. Because this is easy to misread, production deployments should set `ports.ssh` explicitly in config or pass `--ssh` explicitly. Do not rely on an implicit value.
+
+## CLI Flag Reference
+
+| Flag | Config effect |
+| --- | --- |
+| `--interface`, `-i` | Bound as `interface`. |
+| `--ssh`, `-s` | Can override `ports.ssh`. |
+| `--logpath`, `-l` | Bound as `logpath` and used by the logger. |
+| `--confpath`, `-c` | Bound as `confpath` and used as the config directory. |
+| `--debug`, `-d` | Parsed, but not currently wired into `slog.HandlerOptions`. |
+| `--version` | Causes the process to print version information and exit before runtime init. |
+| `--var-dir` | Directory for persistent `glutton.id`. |
+
+## Rules File
+
+Source file: `config/rules.yaml`
 
 ```yaml
-# config/rules.yaml
-
 rules:
-  - name: Telnet filter
-    match: tcp dst port 23 or port 2323 or port 23231
-    type: conn_handler # will find the appropriate target protocol handler
+  - match: tcp dst port 23 or port 2323 or port 23231
+    type: conn_handler
     target: telnet
-  - match: tcp dst port 6969
-    type: drop # drops any matching packets
-    target: bittorrent
+  - match: tcp dst port 1883
+    type: conn_handler
+    target: mqtt
+  - match: tcp
+    type: conn_handler
+    target: tcp
+  - match: udp
+    type: conn_handler
+    target: udp
 ```
 
-## Configuration Loading Process
-Glutton uses the [Viper](https://github.com/spf13/viper) library to load configuration settings. The process works as follows:
+Rules are evaluated in order. The first matching rule wins. See [Rules engine](rules-engine.md) for behavior details and caveats about `drop`.
 
-- **Default Settings**: Glutton initializes with default values for critical parameters.
-- **File-based Overrides**: Viper looks for `config.yaml` in the directory specified by confpath. If found, the settings from the file override the defaults.
-- **Additional Sources**: Environment variables or command-line flags can further override file-based configurations, allowing for flexible deployments.
+## Schema File
 
-## Best Practices
-
-- **Backup Your Files**: Always save a backup of your configuration files before making changes.
-- **Validate Configurations**: Use YAML validators and the provided JSON schema to ensure your configuration is error-free.
-- **Test Changes**: After modifying your configuration, restart Glutton and review the logs to confirm that your changes have been applied as expected.
+`config/schema.json` currently describes the rules document shape, not the full `config/config.yaml` shape. It requires a top-level `rules` array and validates rule fields such as `match`, `type`, `name`, and `target`.
