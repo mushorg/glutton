@@ -31,5 +31,6 @@ capture_traffic:
 
 spicy:
   # Spicy parser paths (HTTP parsing, TCP-payload protocol detection)
-  # are still maturing. Enable deliberately when evaluating.
-  enabled: false
+  # are enabled by default. Set to false only if you built without
+  # Spicy/HILTI or want to test the Spicy-free dispatch path.
+  enabled: true

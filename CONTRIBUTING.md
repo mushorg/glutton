@@ -1,92 +1,25 @@
-# Contributing To Glutton
+# Contributing to Glutton
 
 Thanks for considering a contribution. Glutton is a security tool, so small source-verified changes are easier to review than broad rewrites.
 
-## Development Setup
+See [Getting started](docs/setup.md) for the toolchain, Spicy/HILTI, and Glutton build steps.
 
-Use a Linux environment with the same dependency shape as CI:
+## Guidelines
 
-```bash
-sudo apt-get update
-sudo apt-get install -y libpcap-dev iptables zlib1g-dev build-essential clang
-```
+- **Pick an issue** from the [tracker](https://github.com/mushorg/glutton/issues). Useful labels: `good first issue`, `help wanted`, `protocol`, `enhancement`. Reproduce older issues against `main` before starting. For protocol work, read [Extension system](docs/extension-system.md), [Adding a protocol](docs/protocols/adding-a-protocol.md), and [Spicy cheatsheet](docs/protocols/spicy-cheatsheet.md) first to gauge effort.
+- **Comment before you start** so a maintainer can confirm scope or redirect.
+- **Keep PRs small and source-verified.** Split large work into a thin first slice.
+- **Add tests** beside the package you change.
+- **Update docs in the same PR** when behavior changes:
+  - Build/CI/Docker or Go version → [Getting started](docs/setup.md)
+  - Config defaults or rules behavior → [Configuration](docs/configuration.md)
+  - Handler registration or protocol behavior → [Architecture](docs/architecture.md), [Extension system](docs/extension-system.md), [FAQ](docs/faq.md)
+  - Producer event fields → [Logging and producers](docs/logging.md)
+  - Spicy parser coverage → [Spicy cheatsheet](docs/protocols/spicy-cheatsheet.md)
 
-Install Spicy/HILTI under `/opt/spicy` and add its CLI to PATH:
+## Code style and PRs
 
-```bash
-export PATH=/opt/spicy/bin:$PATH
-```
-
-Then build:
-
-```bash
-make spicy
-make build
-```
-
-## Tests
-
-Run focused tests first:
-
-```bash
-go test ./protocols/...
-go test ./rules/...
-```
-
-Run the full suite before opening a PR when the environment has Spicy installed:
-
-```bash
-CC=clang CXX=clang++ go test ./...
-```
-
-If you change `.spicy` files, run `make spicy` before testing.
-
-## Code Style
-
-- Run `gofmt` on Go files.
-- Keep handler behavior close to existing patterns in `protocols/tcp/` and `protocols/udp/`.
-- Keep Spicy parser behavior separate from Go handler behavior.
-- Add tests beside the package you change.
-- Do not commit generated Spicy artifacts. They are ignored by Git.
-
-## Adding A Protocol
-
-Read:
-
-- [Extension system](docs/extension-system.md)
-- [Adding a protocol](docs/protocols/adding-a-protocol.md)
-- [Spicy cheatsheet](docs/protocols/spicy-cheatsheet.md)
-
-Protocol changes usually need:
-
-- a handler
-- handler registration
-- a rule example
-- tests
-- docs updates
-- optional Spicy parser work
-
-## Documentation Drift Checklist
-
-When changing behavior, update docs in the same PR:
-
-- CLI flags: update [Setup](docs/setup.md) and [Configuration](docs/configuration.md).
-- Config defaults: update [Configuration](docs/configuration.md).
-- Rules behavior: update [Rules engine](docs/rules-engine.md).
-- Handler registration or protocol behavior: update [Architecture](docs/architecture.md), [Extension system](docs/extension-system.md), and [FAQ](docs/faq.md).
-- Producer event fields: update [Logging and producers](docs/logging.md).
-- Spicy parser coverage: update [Spicy cheatsheet](docs/protocols/spicy-cheatsheet.md).
-- Build, CI, Docker, or Go version changes: update [Setup](docs/setup.md) and [Deployment](docs/deployment.md).
-
-If source and docs disagree, the source is the authority unless the maintainer says the code is the bug.
-
-## Pull Request Notes
-
-In your PR description, include:
-
-- what changed
-- how it was tested
-- any docs updated
-- any source/doc drift you found but did not fix
-
-Keep unrelated refactors out of functional PRs.
+- **Format** Mirror the structure of existing handlers in `protocols/tcp/` and `protocols/udp/`.
+- **Respect the boundary:** parsing belongs in `.spicy` files, protocol logic in Go. Never commit generated parser artifacts — they're git-ignored.
+- **Test before pushing:** run `go test ./protocols/... ./rules/...` while iterating, and the full `CC=clang CXX=clang++ go test ./...` (Spicy must be installed) before opening a PR. If you changed any `.spicy` file, run `make spicy` first so tests pick up the regenerated parser.
+- **Write a focused PR:** describe what changed, how you tested it, and which docs moved with it. Keep unrelated cleanup in its own PR.

@@ -1,6 +1,4 @@
-# Spicy Cheatsheet
-
-Last verified against source on 2026-05-15.
+# Spicy cheatsheet
 
 This page covers only the Spicy concepts needed to work in this repository. For the language reference, use the upstream Spicy documentation.
 
@@ -122,8 +120,6 @@ This is why Go calls `spicy.Parse("http", payload)` rather than `spicy.Parse("HT
 ## No `.evt` Files Today
 
 Some Spicy and Zeek documentation describes `.evt` event-translation files. Glutton's current repository does not include `.evt` files. It compiles `.spicy` grammar files and consumes parser output through the generic Go bridge.
-
-Do not document a `.evt` workflow for Glutton unless the implementation adds one.
 
 ## What Stays In Go
 

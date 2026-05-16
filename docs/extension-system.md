@@ -1,36 +1,16 @@
-# Extension System
+# Extension system
 
-Last verified against source on 2026-05-15.
-
-Glutton's extension model has three separate layers:
+Glutton's extension model has three layers, kept deliberately separate:
 
 ```text
-rules
-  decide which named target should handle traffic
-
-Go handlers
-  own connection lifecycle, logging, producers, and fake responses
-
-Spicy parsers
-  extract structured fields from selected byte streams
+rules           decide which named target should handle traffic
+Go handlers     own connection lifecycle, logging, producers, and fake responses
+Spicy parsers   extract structured fields from selected byte streams
 ```
 
-Keeping those layers separate is the main thing to understand before adding a protocol.
+Most extensions are a Go handler plus a rule. A Spicy parser is optional and only worthwhile when byte-level field extraction will be reused downstream. See [Adding a protocol](protocols/adding-a-protocol.md) for the end-to-end walkthrough.
 
-## What Can Be Extended
-
-You can extend Glutton by adding:
-
-- a new TCP protocol handler under `protocols/tcp/`
-- a new UDP protocol handler under `protocols/udp/`
-- a new target in `protocols/protocols.go`
-- a new rule in `config/rules.yaml`
-- a proxy TCP route with `type: proxy_tcp`
-- a new Spicy grammar under `protocols/spicy/parsers/`
-- handler logic that consumes Spicy parse results
-- producer event fields through handler-specific decoded output
-
-## Handler Responsibilities
+## Handler responsibilities
 
 A Go protocol handler owns runtime behavior:
 
@@ -42,59 +22,39 @@ A Go protocol handler owns runtime behavior:
 - close the connection when done
 - preserve fallback behavior for malformed or unknown input
 
-TCP handlers use this shape:
+TCP handler shape:
 
 ```go
 func HandleExample(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error
 ```
 
-UDP handlers use this shape:
+UDP handler shape:
 
 ```go
 func HandleExample(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error
 ```
 
-The concrete handler function is registered through `MapTCPProtocolHandlers(...)` or `MapUDPProtocolHandlers(...)` in `protocols/protocols.go`.
+Registration happens through `MapTCPProtocolHandlers(...)` or `MapUDPProtocolHandlers(...)` in `protocols/protocols.go`.
 
-## Rule Responsibilities
+## Rule responsibilities
 
-Rules route traffic before a handler runs. A rule can send traffic to a named target:
+Rules route traffic before a handler runs. A `conn_handler` rule sends traffic to a registered handler key; a `proxy_tcp` rule sends it to an upstream `host:port`:
 
 ```yaml
 rules:
   - match: tcp dst port 11211
     type: conn_handler
     target: memcache
-```
-
-The target must exist in the relevant handler map. If the target does not exist, the current listener code does not run a handler.
-
-See [Rules engine](rules-engine.md) for matching details and the current `drop` caveat.
-
-For TCP proxying, the rule type is `proxy_tcp` and the target is the upstream `host:port`:
-
-```yaml
-rules:
   - match: tcp dst port 9889
     type: proxy_tcp
     target: 127.0.0.1:9889
 ```
 
-That path uses `protocols/tcp/proxy_tcp.go` rather than a protocol-specific emulator.
+If the `conn_handler` target isn't registered in the handler map, the listener doesn't run a handler. See [Configuration → Rules](configuration.md#rules) for matching details.
 
-## Spicy Responsibilities
+## Spicy responsibilities
 
-Spicy parsers own byte-level structure, not honeypot behavior. A parser can turn raw payload bytes into fields such as:
-
-```text
-method
-uri.path
-headers[0].name
-body.content
-protocol
-```
-
-The Go side still decides how many bytes to read, which parser to call, what to log, which producer event to emit, and what response to write.
+Spicy parsers own byte-level structure, not honeypot behavior. A parser turns raw payload bytes into named fields like `method`, `uri.path`, `headers[0].name`. The Go side still decides how many bytes to read, which parser to call, what to log, which producer event to emit, and what response to write.
 
 Current Spicy-backed paths:
 
@@ -103,26 +63,19 @@ Current Spicy-backed paths:
 - The generic TCP handler path can use `TCP::Protocol` to detect HTTP, RDP, or MongoDB.
 - HTTP payloads detected through the generic TCP path can be handled by `protocols/spicy/handlers/http.go`.
 
-A rule target of `http` currently calls the Go HTTP handler in `protocols/tcp/http.go`; it does not automatically select the Spicy HTTP handler.
+A rule target of `http` calls the Go HTTP handler in `protocols/tcp/http.go`; it does not auto-select the Spicy HTTP handler.
 
-## Producer Responsibilities
+## Producer responsibilities
 
-Handlers choose what decoded data to pass to producers. The shared producer event envelope is defined in `producer.Event`, but `decoded` is handler-specific.
+Handlers choose what to pass to producers. The envelope is fixed (`producer.Event`); the `decoded` payload is handler-specific. When adding a handler, decide what raw payload to include, what decoded structure is stable enough for downstream consumers, whether public addresses need sanitization, and what protocol name to pass to `ProduceTCP(...)` / `ProduceUDP(...)`.
 
-If you add a handler, decide:
+## Tests
 
-- what raw payload should be included
-- what decoded structure should be stable enough for downstream consumers
-- whether public addresses should be sanitized before producer output
-- what protocol name should be passed to `ProduceTCP(...)` or `ProduceUDP(...)`
+For a new handler or parser:
 
-## Tests To Add
-
-For a new handler or parser, add focused tests near the code:
-
-- handler registration tests in `protocols/protocols_test.go` when adding map keys
+- handler registration test in `protocols/protocols_test.go` when adding map keys
 - handler behavior tests beside the handler package
 - parser tests under `protocols/spicy/` for Spicy field contracts
-- rules tests under `rules/` if rule behavior changes
+- rules tests under `rules/` when rule behavior changes
 
-Tests should verify both successful parsing/handling and malformed input behavior.
+Cover both successful and malformed input.

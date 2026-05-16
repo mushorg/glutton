@@ -1,72 +1,39 @@
-# Logging And Producers
+# Logging and producers
 
-Last verified against source on 2026-05-15.
+Glutton has two output paths: process logs through Go `slog`, and optional producer events sent to HTTP or hpfeeds sinks. Handlers can emit both, but they're configured separately.
 
-Glutton has two output paths that are easy to confuse:
+## Process logs
 
-- process logs written through Go `slog`
-- optional producer events sent to HTTP or hpfeeds sinks
-
-Handlers can write both, but they are configured separately.
-
-## Process Logs
-
-`producer.NewLogger(...)` creates a JSON `slog` logger. It writes every log record to:
+`producer.NewLogger(...)` creates a JSON `slog` logger that writes every record to:
 
 - stdout
 - the path configured by `--logpath`
 
-The file writer uses lumberjack rotation with:
+The file writer uses lumberjack rotation: 200 MB max size, 356 days max age, compression on. Every record carries the `sensorID` attribute (read from / written to `<var-dir>/glutton.id`).
 
-| Setting | Value |
-| --- | --- |
-| Max size | 200 MB |
-| Max age | 356 days |
-| Compression | true |
+The `--debug` flag is parsed but not wired into `slog.HandlerOptions`, so it does not currently lower the log level.
 
-Every process log includes the `sensorID` attribute. The sensor ID is read from or written to `<var-dir>/glutton.id`.
+## Producer events
 
-The `--debug` flag is parsed, but the current logger uses default `slog.HandlerOptions`, so debug logs are not enabled by that flag in the current implementation.
-
-## Producer Events
-
-Producer events are defined by `producer.Event`:
+Producer events follow the `producer.Event` schema:
 
 | JSON field | Meaning |
 | --- | --- |
 | `timestamp` | UTC event timestamp. |
 | `transport` | `tcp` or `udp`. |
-| `srcHost` | Source IP address. |
+| `srcHost` | Source IP. |
 | `srcPort` | Source port. |
 | `dstPort` | Original destination port from metadata. |
 | `sensorID` | Glutton sensor ID. |
 | `rule` | Rule string when metadata includes a rule. |
 | `handler` | Handler name supplied by the protocol handler. |
 | `payload` | Base64-encoded payload bytes. |
-| `scanner` | Scanner classification returned by `scanner.IsScanner(...)`. |
+| `scanner` | Scanner classification from `scanner.IsScanner(...)`. |
 | `decoded` | Handler-specific decoded data. |
 
-Producer events are only sent when:
+Events are emitted only when (1) `producers.enabled` is true so a producer object exists, (2) a handler calls `ProduceTCP(...)` or `ProduceUDP(...)`, and (3) at least one sink is enabled. Before output, configured `addresses` values are scrubbed from the payload and replaced with `1.2.3.4`.
 
-1. `producers.enabled` is true, so `glutton.Init()` creates a producer.
-2. A handler calls `ProduceTCP(...)` or `ProduceUDP(...)`.
-3. At least one sink, such as HTTP or hpfeeds, is enabled.
-
-Before producer output, Glutton sanitizes configured public addresses out of the payload by replacing them with `1.2.3.4`.
-
-## HTTP Producer
-
-When `producers.http.enabled` is true, Glutton marshals the event as JSON and sends it with `Content-Type: application/json` to `producers.http.remote`.
-
-Details from source:
-
-- HTTP client timeout is 10 seconds.
-- TLS handshake timeout is 5 seconds.
-- If the source host is a private IP, the HTTP producer skips the event.
-- If the remote URL includes username and password, Glutton uses HTTP Basic Auth.
-- The request URL preserves the configured query string.
-
-Example event shape:
+Example shape:
 
 ```json
 {
@@ -80,40 +47,24 @@ Example event shape:
   "handler": "http",
   "payload": "R0VUIC8gSFRUUC8xLjENCg0K",
   "scanner": "",
-  "decoded": {
-    "protocol": "http",
-    "fields": {}
-  }
+  "decoded": { "protocol": "http", "fields": {} }
 }
 ```
 
-The example is illustrative. Handler-specific `decoded` content varies by protocol path.
+`decoded` is handler-specific. For `proxy_tcp`, it contains per-direction entries (`direction`, `payload`, `payload_hash`, `bytes`, `truncated`) when `capture_traffic.enabled` is true; samples are capped by `max_tcp_payload`, and `truncated` reflects whether more bytes were forwarded than captured.
 
-## Proxy TCP Events
+## HTTP producer
 
-The `proxy_tcp` handler can forward bytes without storing raw payload samples, or it can include bounded per-direction samples when `capture_traffic.enabled` is true.
+When `producers.http.enabled` is true, Glutton marshals each event as JSON and POSTs it to `producers.http.remote` with `Content-Type: application/json`. From source:
 
-Proxy decoded events can include entries like:
+- HTTP client timeout: 10s; TLS handshake timeout: 5s.
+- Events from private source IPs are skipped.
+- Userinfo in the remote URL is used as HTTP Basic Auth.
+- Query strings in the configured URL are preserved.
 
-```json
-[
-  {
-    "direction": "203.0.113.10:54321 -> 127.0.0.1:9889",
-    "payload": "cmVxdWVzdA==",
-    "payload_hash": "example",
-    "bytes": 7,
-    "truncated": false
-  }
-]
-```
+## hpfeeds producer
 
-The exact direction strings come from the connection addresses. Payload samples are capped by `max_tcp_payload`; `truncated` is true when more bytes were forwarded than captured.
-
-## hpfeeds Producer
-
-When `producers.hpfeeds.enabled` is true, Glutton connects to the configured hpfeeds broker at startup and publishes gob-encoded `producer.Event` values to `producers.hpfeeds.channel`.
-
-The hpfeeds configuration keys are:
+When `producers.hpfeeds.enabled` is true, Glutton connects to the broker at startup and publishes gob-encoded `producer.Event` values to `producers.hpfeeds.channel`.
 
 ```yaml
 producers:
@@ -126,12 +77,4 @@ producers:
     channel: test
 ```
 
-## Handler Logs
-
-Handlers log protocol-specific details. Examples include:
-
-- HTTP method, path, query, source, and destination port.
-- TCP payload hashes and payload hex dumps.
-- Protocol-specific connection events for services such as SMTP, FTP, Telnet, MongoDB, and SMB.
-
-Treat log payloads as attacker-controlled data.
+Treat all logged payloads as attacker-controlled data in downstream pipelines.

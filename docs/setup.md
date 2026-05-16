@@ -1,50 +1,37 @@
-# Setup
+# Getting started
 
-Last verified against source on 2026-05-15.
+Glutton is a Go-based, multi-protocol honeypot. It uses Linux iptables and TPROXY to transparently redirect TCP and UDP traffic to local listeners, dispatches connections through a BPF-style rule engine, runs protocol-specific handlers (or forwards to an upstream via `proxy_tcp`, or falls back to generic capture), and writes structured JSON logs and optional producer events.
 
-Glutton is a Linux-oriented Go project that depends on iptables, libpcap, C/C++ build tooling, and Spicy/HILTI for the current parser integration.
+## Spicy
+
+Glutton also includes an emerging Spicy parser path. Spicy is the parser-definition language from the Zeek project; it lets contributors describe byte-level protocol grammars in a small DSL instead of writing the parser in Go. Currently Glutton uses Spicy for HTTP parsing and TCP-payload protocol detection only.
 
 ## Requirements
 
-| Requirement | Source |
-| --- | --- |
-| Go 1.23.x | `go.mod` declares `go 1.23.5`; CI uses `go-version: "^1.23"`. |
-| libpcap | Required by `github.com/google/gopacket/pcap` and installed in CI. |
-| iptables | Required for TPROXY rule management. |
-| zlib and build-essential tools | Installed in CI for Spicy and cgo builds. |
-| clang / clang++ | `Makefile` builds with `CC=clang CXX=clang++`; CI installs clang 17. |
-| Spicy 1.13.1 under `/opt/spicy` | CI installs the Zeek Spicy 1.13.1 Ubuntu package and adds `/opt/spicy/bin` to PATH. |
+Glutton is a Linux-only Go binary that depends on iptables, libpcap, a C/C++ toolchain, and Spicy/HILTI. Treat it as hostile-facing infrastructure once it's running: it receives unsolicited traffic, records attacker-controlled payloads, and manages network redirection rules.
 
-The Spicy cgo flags in `protocols/spicy/parser.go` expect headers under `/opt/spicy/include` and libraries under `/opt/spicy/lib`.
+| Requirement                     | Source of truth                                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Go 1.23+                        | `go.mod` declares `go 1.23.5`; CI uses `^1.23`.                                                                          |
+| libpcap                         | Required by `github.com/google/gopacket/pcap`.                                                                           |
+| iptables                        | TPROXY rule management.                                                                                                  |
+| zlib + build-essential          | Spicy and cgo builds.                                                                                                    |
+| clang / clang++                 | `Makefile` uses `CC=clang CXX=clang++`; CI installs clang 17.                                                            |
+| Spicy 1.13.1 under `/opt/spicy` | The cgo flags in `protocols/spicy/parser.go` expect headers under `/opt/spicy/include` and libraries under `/opt/spicy/lib`. |
 
-## Debian / Ubuntu
+## Build
 
-The CI workflow uses Ubuntu and installs these base packages:
+CI runs on Ubuntu. Other distros need equivalent packages.
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y libpcap-dev iptables zlib1g-dev build-essential
-```
+sudo apt-get install -y libpcap-dev iptables zlib1g-dev build-essential clang
 
-Install Spicy/HILTI from the Zeek Spicy release package that matches your distribution. CI currently uses:
-
-```bash
 wget https://github.com/zeek/spicy/releases/download/v1.13.1/spicy_linux_ubuntu24.deb
 sudo dpkg --install spicy_linux_ubuntu24.deb
 sudo apt-get install -f -y
 rm spicy_linux_ubuntu24.deb
-export PATH=/opt/spicy/bin:$PATH
-```
 
-Install clang if your environment does not already provide a suitable C++20 compiler:
-
-```bash
-sudo apt-get install -y clang
-```
-
-## Build
-
-```bash
 git clone https://github.com/mushorg/glutton.git
 cd glutton
 export PATH=/opt/spicy/bin:$PATH
@@ -52,67 +39,57 @@ make spicy
 make build
 ```
 
-`make spicy` runs the Spicy Makefile in `protocols/spicy/`. It generates parser C++ files, parser headers, and a combined linker file. Those generated files are ignored by Git.
+`make spicy` runs the Spicy Makefile under `protocols/spicy/` to generate parser C++ and headers (gitignored). `make build` compiles `app/server.go` into `bin/server` with embedded version metadata.
 
-`make build` compiles `app/server.go` into `bin/server` and embeds version metadata from the top-level `Makefile`.
+## Run
 
-## Test
+Glutton modifies iptables rules and needs root (or `CAP_NET_ADMIN`).
 
 ```bash
-export PATH=/opt/spicy/bin:$PATH
-make spicy
-go test -v ./...
+sudo bin/server --interface eth0 --confpath config/ --logpath /var/log/glutton.log
 ```
 
-The GitHub Actions workflow runs `make spicy`, `go build -v ./...`, and `go test -v ./...` with `CC=clang` and `CXX=clang++`.
+For Docker, mount or build the config you intend to run, and use the host network namespace so TPROXY rules apply to a real interface:
 
-## Version Check
+```bash
+docker build -t glutton .
+docker run --rm --network host --cap-add=NET_ADMIN -it glutton
+```
+
+Without `--network host` the container installs TPROXY rules on the docker bridge and never sees external traffic. The host kernel must have iptables `mangle` and `xt_TPROXY` available.
+
+### Verify
 
 ```bash
 bin/server --version
 ```
 
-The binary prints the Glutton banner and version string, then exits before initializing the honeypot runtime.
+Prints the banner and version string and exits without initializing the runtime. Useful for confirming a build picked up the expected `Makefile` version metadata.
 
-## CLI Flags
+## Privileges
 
-Flags are defined in `app/server.go`.
+Glutton needs permission to:
 
-| Flag | Short | Type | CLI default | Purpose |
-| --- | --- | --- | --- | --- |
-| `--interface` | `-i` | string | `eth0` | Network interface used for public address discovery and TPROXY rules. |
-| `--ssh` | `-s` | int | `22` | Overrides `ports.ssh` when supplied. See the configuration note about SSH defaults. |
-| `--logpath` | `-l` | string | `/dev/null` | File path for rotating JSON logs. Logs also go to stdout. |
-| `--confpath` | `-c` | string | `config/` | Directory where Viper looks for `config.yaml`. |
-| `--debug` | `-d` | bool | `false` | Parsed and bound, but the current logger setup does not use it to lower the slog level. |
-| `--version` | none | bool | `false` | Prints the banner/version and exits. |
-| `--var-dir` | none | string | `/var/lib/glutton` | Directory where `glutton.id` is stored. |
+- read from TPROXY sockets
+- add and remove iptables mangle PREROUTING rules
+- bind local TCP and UDP listener ports
+- write its sensor ID under `--var-dir` (default `/var/lib/glutton`)
+- write the configured log file
 
-## Run Locally
+`sudo` on bare metal or `--cap-add=NET_ADMIN` in Docker satisfies all of these.
 
-Glutton modifies iptables rules and normally needs root or equivalent privileges:
+## Host placement
 
-```bash
-sudo bin/server --interface eth0 --confpath config/ --logpath glutton.log
-```
+- Run on a dedicated host, VM, or isolated network segment. Not a workstation, not anything with internal access.
+- Restrict outbound egress unless a handler or producer needs it. `proxy_tcp` rules open outbound connections to whatever upstream the rule targets — keep that surface explicit.
+- Keep producer endpoints (HTTP collector, hpfeeds broker) off the exposed honeypot network.
+- Rotate and ship logs before disk pressure becomes operational risk.
 
-The process starts local listeners on the configured TCP and UDP redirect ports, installs TPROXY rules, and then handles redirected traffic.
+Glutton is a sensor, not a containment boundary. Use network isolation around it.
 
-If you use `proxy_tcp` rules, set `dial_timeout`, `conn_timeout`, `max_tcp_payload`, and `capture_traffic.enabled` deliberately in `config/config.yaml`.
+## Operational hazards
 
-## Docker
-
-The repository includes a multi-stage Dockerfile:
-
-```bash
-docker build -t glutton .
-docker run --rm --cap-add=NET_ADMIN -it glutton
-```
-
-The container command runs:
-
-```bash
-./bin/server -i eth0 -l /var/log/glutton.log -d true
-```
-
-`--cap-add=NET_ADMIN` is required because Glutton manages iptables rules. The Dockerfile should be kept aligned with the Spicy requirements used in CI.
+- iptables state can be left behind if the process is killed without a clean shutdown.
+- Captured payloads are attacker-controlled. Handle them as untrusted in any downstream pipeline.
+- Some handlers send fake service responses. Don't route real internal clients through the sensor.
+- Legal and privacy obligations vary by jurisdiction. Get local review before collecting or sharing payloads.

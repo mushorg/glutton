@@ -1,24 +1,20 @@
-# Adding A Protocol
+# Adding a protocol
 
-Last verified against source on 2026-05-15.
+End-to-end source changes to add a new protocol path. Start with a Go handler. Add a Spicy parser only when byte-level field extraction is useful and you're ready to wire that parser into live traffic.
 
-This guide describes the source changes required to add a new protocol path. Start with a Go handler. Add a Spicy parser only when byte-level field extraction is useful and you are ready to wire that parser into live traffic.
-
-## 1. Pick The Extension Shape
-
-There are three common shapes:
+## 1. Pick the shape
 
 | Shape | Use when |
 | --- | --- |
-| Go handler only | You need simple interaction, banner capture, protocol response shaping, or payload logging. |
-| Go handler plus Spicy parser | You need structured parsing but Go still owns responses and producer events. |
-| Spicy detection from generic TCP | You want catch-all TCP traffic to be classified before fallback handling. |
+| Go handler only | Simple interaction, banner capture, response shaping, or payload logging. |
+| Go handler + Spicy parser | You need structured parsing but Go still owns responses and producer events. |
+| Spicy detection from generic TCP | You want catch-all TCP traffic classified before fallback handling. |
 
-Do not add a `.spicy` file and assume Glutton will use it automatically. A compiled parser must be called from Go or routed through handler logic.
+A `.spicy` file alone does nothing — a compiled parser must be called from Go or routed through handler logic.
 
-## 2. Add A TCP Handler
+## 2. Add a TCP handler
 
-Create a file under `protocols/tcp/`, for example `protocols/tcp/example.go`:
+Create `protocols/tcp/example.go`:
 
 ```go
 package tcp
@@ -61,11 +57,11 @@ func HandleExample(ctx context.Context, conn net.Conn, md connection.Metadata, l
 }
 ```
 
-Use existing handlers as the real style reference. `protocols/tcp/http.go`, `protocols/tcp/tcp.go`, and `protocols/tcp/mongodb.go` show different levels of interaction and decoded output.
+Style references in-tree: `protocols/tcp/http.go`, `protocols/tcp/tcp.go`, `protocols/tcp/mongodb.go` cover different interaction depths and decoded shapes.
 
-## 3. Register The Handler
+## 3. Register the handler
 
-Add a key to `MapTCPProtocolHandlers(...)` in `protocols/protocols.go`:
+In `protocols/protocols.go`, add to `MapTCPProtocolHandlers(...)`:
 
 ```go
 protocolHandlers["example"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
@@ -73,11 +69,11 @@ protocolHandlers["example"] = func(ctx context.Context, conn net.Conn, md connec
 }
 ```
 
-For UDP, add the handler to `MapUDPProtocolHandlers(...)` instead.
+UDP handlers register through `MapUDPProtocolHandlers(...)` instead.
 
-## 4. Add A Rule
+## 4. Add a rule
 
-Route a public destination port to the new handler in `config/rules.yaml`:
+In `config/rules.yaml`:
 
 ```yaml
 rules:
@@ -86,40 +82,29 @@ rules:
     target: example
 ```
 
-Place specific rules before broad catch-all rules such as `match: tcp`.
+Place specific rules before broad catch-alls like `match: tcp`.
 
-## 5. Add Tests
+## 5. Add tests
 
-At minimum:
+- registration assertion in `protocols/protocols_test.go`
+- handler behavior tests beside the handler
+- malformed input / short read coverage
+- producer call coverage when the handler emits decoded data
 
-- add a registration assertion in `protocols/protocols_test.go`
-- add handler behavior tests beside the handler
-- test malformed input or short reads
-- test producer calls when the handler emits decoded data
+Use the mock honeypot in `protocols/mocks/` for producer assertions.
 
-Use the existing mock honeypot in `protocols/mocks/` when testing producer calls.
+## 6. Optional: add a Spicy parser
 
-## 6. Optional: Add A Spicy Parser
-
-Add a parser under `protocols/spicy/parsers/`. Existing real examples are:
-
-```text
-protocols/spicy/parsers/http.spicy
-protocols/spicy/parsers/tcp.spicy
-```
-
-Run:
+Add a grammar under `protocols/spicy/parsers/`. Existing examples: `http.spicy`, `tcp.spicy`.
 
 ```bash
 export PATH=/opt/spicy/bin:$PATH
 make spicy
 ```
 
-The Spicy Makefile generates ignored C++ and header artifacts under `protocols/spicy/`. Parser registration happens at runtime in `spicy.Initialize(...)`: names such as `HTTP::Request` are split on `::`, lowercased by module name, and registered as parser key `http`.
+The Spicy Makefile generates gitignored C++ and headers under `protocols/spicy/`. Parser registration happens at runtime in `spicy.Initialize(...)`: names like `HTTP::Request` are split on `::`, lowercased by module name, and registered as parser key `http`.
 
-## 7. Call The Parser From Go
-
-Use the Spicy API from Go:
+Call from Go:
 
 ```go
 parsed, err := spicy.Parse("example", payload)
@@ -128,37 +113,24 @@ if err != nil {
 }
 ```
 
-Then consume `parsed.Fields` in the handler. Do not move connection lifecycle, logging, producer calls, or fake response behavior into Spicy.
+Consume `parsed.Fields` in the handler. Do not move connection lifecycle, logging, producer calls, or fake responses into Spicy.
 
-## 8. Optional: Add Detection To The Generic TCP Path
+## 7. Optional: detect from the generic TCP path
 
-The generic `tcp` target currently peeks at initial bytes and, when Spicy is enabled, calls the `tcp` parser to detect HTTP, RDP, and MongoDB. To add another detector:
+The generic `tcp` target peeks at initial bytes and, when Spicy is enabled, calls the `tcp` parser to classify HTTP, RDP, or MongoDB payloads. To add a detector:
 
 1. extend `protocols/spicy/parsers/tcp.spicy`
 2. regenerate parser artifacts with `make spicy`
 3. update the switch in `protocols/protocols.go`
 4. add parser and routing tests
 
-Only do this for protocols that should be detected from the catch-all TCP path. If the protocol has a stable port, a rule target may be simpler and clearer.
+Only do this for protocols that should be detected from catch-all TCP. If the protocol has a stable port, a dedicated rule is simpler.
 
-## 9. Verify
-
-Run the relevant tests first:
-
-```bash
-go test ./protocols/...
-```
-
-If the change touches Spicy:
+## 8. Verify
 
 ```bash
 export PATH=/opt/spicy/bin:$PATH
-make spicy
-CC=clang CXX=clang++ go test ./protocols/spicy/...
-```
-
-Then run the full suite in an environment with Spicy installed:
-
-```bash
 CC=clang CXX=clang++ go test ./...
 ```
+
+For faster iteration during development, scope to the package: `go test ./protocols/...`.

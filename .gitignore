@@ -42,6 +42,7 @@ poc/
 docs/engineering-guidelines.md
 docs/roadmap.md
 openspec/
+.DS_Store
 
 # Spicy generated files
 protocols/spicy/*.cc
