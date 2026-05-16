@@ -48,9 +48,13 @@ producers:
 
 conn_timeout: 45
 max_tcp_payload: 4096
+dial_timeout: 5
+
+capture_traffic:
+  enabled: false
 
 spicy:
-  enabled: true
+  enabled: false
 ```
 
 ## Main Config Reference
@@ -72,9 +76,11 @@ spicy:
 | `producers.hpfeeds.ident` | string | `ident` | hpfeeds identity. |
 | `producers.hpfeeds.auth` | string | `auth` | hpfeeds auth secret. |
 | `producers.hpfeeds.channel` | string | `test` | hpfeeds channel. |
-| `conn_timeout` | int | `45` | Connection deadline in seconds, refreshed around I/O. |
-| `max_tcp_payload` | int | `4096` | Generic TCP handler maximum payload accumulation threshold. |
-| `spicy.enabled` | bool | `true` | Initializes Spicy/HILTI and enables Spicy-backed paths where wired. |
+| `conn_timeout` | int | `45` | Connection deadline in seconds, refreshed around I/O. Proxy TCP also uses it as the idle I/O timeout. |
+| `max_tcp_payload` | int | `4096` | Generic TCP handler payload threshold and proxy TCP per-direction capture cap. |
+| `dial_timeout` | int | `5` | Timeout in seconds for opening outbound proxy TCP target connections. |
+| `capture_traffic.enabled` | bool | `false` | Enables raw payload capture in proxy TCP logs and produced decoded events. Proxying still forwards traffic when disabled. |
+| `spicy.enabled` | bool | `false` | Initializes Spicy/HILTI and enables Spicy-backed paths where wired. The bundled paths are still maturing; enable deliberately. |
 
 ## SSH Default Note
 
@@ -106,9 +112,9 @@ rules:
   - match: tcp dst port 23 or port 2323 or port 23231
     type: conn_handler
     target: telnet
-  - match: tcp dst port 1883
-    type: conn_handler
-    target: mqtt
+  - match: tcp dst port 9889
+    type: proxy_tcp
+    target: 127.0.0.1:9889
   - match: tcp
     type: conn_handler
     target: tcp
@@ -117,7 +123,17 @@ rules:
     target: udp
 ```
 
-Rules are evaluated in order. The first matching rule wins. See [Rules engine](rules-engine.md) for behavior details and caveats about `drop`.
+Rules are evaluated in order. The first matching rule wins. See [Rules engine](rules-engine.md) for behavior details.
+
+## Rule Types
+
+| Type | Target meaning | Behavior |
+| --- | --- | --- |
+| `conn_handler` | Registered handler key such as `http`, `ftp`, `tcp`, or `udp`. | Dispatches traffic to the named local protocol handler. |
+| `proxy_tcp` | Upstream TCP target in `host:port` form. | Dials the target and forwards bytes in both directions between the client and upstream service. |
+| `drop` | Currently not enforced by listener dispatch. | Accepted by the parser, but not a production drop action in the current listener path. |
+
+`proxy_tcp` produced decoded events use the `proxy_tcp` protocol name and can include one captured payload entry per direction. Captured payload samples are capped by `max_tcp_payload`; when a direction transfers more bytes than the cap, the decoded event is marked as truncated.
 
 ## Schema File
 

@@ -98,6 +98,8 @@ sudo bin/server --interface eth0 --confpath config/ --logpath glutton.log
 
 The process starts local listeners on the configured TCP and UDP redirect ports, installs TPROXY rules, and then handles redirected traffic.
 
+If you use `proxy_tcp` rules, set `dial_timeout`, `conn_timeout`, `max_tcp_payload`, and `capture_traffic.enabled` deliberately in `config/config.yaml`.
+
 ## Docker
 
 The repository includes a multi-stage Dockerfile:

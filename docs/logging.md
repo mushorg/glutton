@@ -89,6 +89,26 @@ Example event shape:
 
 The example is illustrative. Handler-specific `decoded` content varies by protocol path.
 
+## Proxy TCP Events
+
+The `proxy_tcp` handler can forward bytes without storing raw payload samples, or it can include bounded per-direction samples when `capture_traffic.enabled` is true.
+
+Proxy decoded events can include entries like:
+
+```json
+[
+  {
+    "direction": "203.0.113.10:54321 -> 127.0.0.1:9889",
+    "payload": "cmVxdWVzdA==",
+    "payload_hash": "example",
+    "bytes": 7,
+    "truncated": false
+  }
+]
+```
+
+The exact direction strings come from the connection addresses. Payload samples are capped by `max_tcp_payload`; `truncated` is true when more bytes were forwarded than captured.
+
 ## hpfeeds Producer
 
 When `producers.hpfeeds.enabled` is true, Glutton connects to the configured hpfeeds broker at startup and publishes gob-encoded `producer.Event` values to `producers.hpfeeds.channel`.

@@ -12,10 +12,14 @@ flowchart TD
     Rules --> Meta[connection.Metadata]
     Meta --> Dispatch[Protocol handler registry]
     Dispatch --> GoHandler[Go protocol handler]
+    Dispatch --> Proxy[proxy_tcp forwarder]
     Dispatch --> Spicy[Optional Spicy detection/parsing]
     Spicy --> GoHandler
+    Proxy --> Upstream[Upstream TCP service]
     GoHandler --> ProcessLog[slog JSON process logs]
+    Proxy --> ProcessLog
     GoHandler --> Producer[Optional HTTP / hpfeeds producer events]
+    Proxy --> Producer
 ```
 
 ## Components
@@ -28,7 +32,7 @@ flowchart TD
 | iptables integration | `iptables.go` | Appends and removes mangle table PREROUTING TPROXY rules. |
 | Rules engine | `rules/rules.go` | Compiles BPF expressions and returns the first matching rule. |
 | Connection metadata | `connection/connection.go` | Stores source, target port, rule, and timestamp in an in-memory table. |
-| Handler registry | `protocols/protocols.go` | Maps rule targets such as `smtp`, `http`, or `tcp` to Go handler functions. |
+| Handler registry | `protocols/protocols.go` | Maps rule targets such as `smtp`, `http`, `proxy_tcp`, or `tcp` to Go handler functions. |
 | TCP/UDP handlers | `protocols/tcp/`, `protocols/udp/` | Perform protocol interaction, logging, producer calls, and responses. |
 | Spicy bridge | `protocols/spicy/` | Initializes the Spicy/HILTI runtime and parses selected payloads. |
 | Logging | `producer/logger.go` | Writes JSON process logs to stdout and a rotating log file. |
@@ -53,9 +57,9 @@ The sensor ID is stored as binary UUID data in `<var-dir>/glutton.id`. The defau
 4. If no rule matches, Glutton creates a fallback rule with target `default`.
 5. The connection is registered in the connection table.
 6. The configured connection timeout is applied.
-7. If the target exists in the TCP handler map, Glutton runs the handler in a goroutine.
+7. If the rule is `proxy_tcp`, Glutton dispatches to the proxy TCP handler. Otherwise, if the target exists in the TCP handler map, Glutton runs the handler in a goroutine.
 
-The TCP handler map is static today. It includes named handlers for SMTP, RDP, SMB, FTP, SIP, RFB/VNC, Telnet, MQTT, iSCSI, BitTorrent, Memcache, Jabber, ADB, MongoDB, HTTP, and generic TCP.
+The TCP handler map is static today. It includes named handlers for SMTP, RDP, SMB, FTP, SIP, RFB/VNC, Telnet, MQTT, iSCSI, BitTorrent, Memcache, Jabber, ADB, MongoDB, HTTP, proxy TCP forwarding, and generic TCP.
 
 ### UDP
 
@@ -71,7 +75,7 @@ The current UDP handler map contains the generic `udp` handler.
 
 Rules are loaded from `rules_path`, usually `config/rules.yaml`. If that path does not exist, Glutton falls back to the embedded default rules. Rule matching uses `pcap.NewBPF(...)` with Ethernet link type and a synthetic packet built from the connection addresses.
 
-The first matching rule wins. A rule target must match a registered handler key to run code. See [Rules engine](rules-engine.md) for details and caveats.
+The first matching rule wins. A `conn_handler` target must match a registered handler key to run code. A `proxy_tcp` rule target is an upstream `host:port` address that is parsed into proxy metadata. See [Rules engine](rules-engine.md) for details and caveats.
 
 ## Spicy Boundary
 

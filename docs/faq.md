@@ -12,7 +12,7 @@ No. Glutton does not give attackers a real host or full service environment. It 
 
 ## Which protocols are registered today?
 
-TCP handler targets include SMTP, RDP, SMB, FTP, SIP, RFB/VNC, Telnet, MQTT, iSCSI, BitTorrent, Memcache, Jabber, ADB, MongoDB, HTTP, and generic TCP. UDP currently has a generic UDP handler.
+TCP handler targets include SMTP, RDP, SMB, FTP, SIP, RFB/VNC, Telnet, MQTT, iSCSI, BitTorrent, Memcache, Jabber, ADB, MongoDB, HTTP, proxy TCP forwarding, and generic TCP. UDP currently has a generic UDP handler.
 
 ## Does Spicy parse every protocol?
 
@@ -33,6 +33,10 @@ Not as a documented current behavior. The code binds CLI flags and reads YAML co
 ## Does `type: drop` drop traffic?
 
 Not in the current listener dispatch path. The rules parser accepts `drop`, but Glutton does not currently special-case that rule type after a match. Treat it as unsupported for production drop behavior until code support is added and tested.
+
+## What does `type: proxy_tcp` do?
+
+`proxy_tcp` forwards a matched TCP connection to the rule target, which must be an upstream `host:port` address. It logs transfer metadata and can include bounded per-direction payload samples in decoded producer events when `capture_traffic.enabled` is true.
 
 ## Where do logs go?
 

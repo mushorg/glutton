@@ -18,8 +18,8 @@ rules:
 | --- | --- | --- |
 | `name` | no | Human-readable rule name. The current `Rule.String()` returns the match expression, not this name. |
 | `match` | yes | BPF expression compiled with `pcap.NewBPF(...)`. |
-| `type` | yes | Accepted values are `conn_handler` and `drop`. |
-| `target` | no | Handler key such as `telnet`, `http`, `tcp`, or `udp`. Required for useful `conn_handler` dispatch. |
+| `type` | yes | Accepted values are `conn_handler`, `proxy_tcp`, and `drop`. |
+| `target` | no | Handler key for `conn_handler`, or an upstream `host:port` target for `proxy_tcp`. |
 
 ## Matching Behavior
 
@@ -59,6 +59,7 @@ jabber
 adb
 mongodb
 http
+proxy_tcp
 tcp
 ```
 
@@ -68,7 +69,27 @@ The UDP handler map currently includes:
 udp
 ```
 
-If a rule target is not registered in the relevant handler map, the current listener code does not run a handler for that connection or packet.
+If a `conn_handler` target is not registered in the relevant handler map, the current listener code does not run a handler for that connection or packet.
+
+## Proxy TCP Rules
+
+`proxy_tcp` rules forward a TCP connection to an upstream target while preserving Glutton logging and optional producer output:
+
+```yaml
+rules:
+  - match: tcp dst port 9889
+    type: proxy_tcp
+    target: 127.0.0.1:9889
+```
+
+The `target` must be in `host:port` form. Glutton parses it during rule initialization and stores the dial address in rule metadata. At dispatch time, `proxy_tcp` uses the `proxy_tcp` handler key rather than the literal target address.
+
+Relevant config:
+
+- `dial_timeout`: outbound target connection timeout in seconds
+- `conn_timeout`: idle I/O timeout for the proxy session
+- `max_tcp_payload`: per-direction payload capture cap
+- `capture_traffic.enabled`: controls whether proxy payload samples are included in decoded producer events
 
 ## Catch-All Rules
 
@@ -101,6 +122,9 @@ rules:
   - match: tcp dst port 27017
     type: conn_handler
     target: mongodb
+  - match: tcp dst port 9889
+    type: proxy_tcp
+    target: 127.0.0.1:9889
   - match: tcp
     type: conn_handler
     target: tcp

@@ -25,6 +25,7 @@ You can extend Glutton by adding:
 - a new UDP protocol handler under `protocols/udp/`
 - a new target in `protocols/protocols.go`
 - a new rule in `config/rules.yaml`
+- a proxy TCP route with `type: proxy_tcp`
 - a new Spicy grammar under `protocols/spicy/parsers/`
 - handler logic that consumes Spicy parse results
 - producer event fields through handler-specific decoded output
@@ -69,6 +70,17 @@ rules:
 The target must exist in the relevant handler map. If the target does not exist, the current listener code does not run a handler.
 
 See [Rules engine](rules-engine.md) for matching details and the current `drop` caveat.
+
+For TCP proxying, the rule type is `proxy_tcp` and the target is the upstream `host:port`:
+
+```yaml
+rules:
+  - match: tcp dst port 9889
+    type: proxy_tcp
+    target: 127.0.0.1:9889
+```
+
+That path uses `protocols/tcp/proxy_tcp.go` rather than a protocol-specific emulator.
 
 ## Spicy Responsibilities
 

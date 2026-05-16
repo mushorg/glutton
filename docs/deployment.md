@@ -89,4 +89,5 @@ HTTP producer output skips private source IP addresses. hpfeeds output connects 
 - iptables state can be left behind if the process is killed without normal shutdown.
 - Captured payloads are attacker-controlled data. Handle them as untrusted.
 - Some handlers intentionally send fake service responses. Do not route internal production clients through the sensor.
+- `proxy_tcp` rules can create outbound connections from the sensor to configured upstream services. Restrict egress so proxy targets are explicit and expected.
 - Legal and privacy obligations vary by deployment environment. Get local review before collecting or sharing traffic payloads.
