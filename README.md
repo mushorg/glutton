@@ -8,13 +8,21 @@
 
 > A highly sensitive, protocol-agnostic TCP/UDP honeypot in Go.
 
-Glutton is built to catch activity that traditional single-service honeypots can miss: low-volume scans on non-standard ports, partial protocol handshakes, and incomplete or incorrect protocol usage. It uses iptables and TPROXY to redirect TCP and UDP traffic through local listeners, applies a dynamic rule engine, and records interaction metadata and payloads for analysis.
+Glutton is a highly sensitive, protocol-agnostic, low-interaction honeypot that intercepts network traffic and logs interactions to help analyze malicious activity. It is built in Go and uses iptables with TPROXY to redirect TCP and UDP traffic through local listeners.
 
-Glutton can accept traffic across exposed TCP and UDP ports even when no protocol-specific handler exists. Known traffic can be routed to built-in protocol handlers, proxied to an upstream TCP service with `proxy_tcp`, or captured through generic fallback handlers.
+Glutton is designed to detect network attacks that traditional single-service honeypots can miss, including low-volume scans on non-standard ports, partial protocol handshakes, and incomplete or incorrect protocol usage. It can accept traffic across exposed TCP and UDP ports without requiring a protocol implementation for every service. The dynamic rule engine can route known traffic to built-in protocol handlers, proxy TCP traffic to an upstream service with `proxy_tcp`, or fall back to generic capture.
 
-Security teams can run Glutton as a standalone honeypot sensor or as a front door for a broader deception network. Its open handler and parser architecture makes it straightforward to add new protocol handling paths as attacker behavior changes.
+Security teams can run Glutton as a standalone honeypot sensor or as a front door for a broader deception network. Its open handler and parser architecture lets teams bring existing protocol knowledge into Glutton or add new parsing paths as attacker behavior changes.
 
 Note: Zeek/Spicy-based protocol and file parsing should be treated as beta/staging-oriented. This branch includes selected Spicy parser paths for HTTP parsing and TCP payload protocol detection; it does not include a full Zeek correlation layer.
+
+Glutton's core is designed for:
+
+- **Protocol-agnostic capture:** Instead of fully emulating each protocol, Glutton uses configurable rules and generic handlers to process TCP/UDP interactions across exposed ports.
+- **Detailed interaction logging:** Glutton records connection metadata, payload samples, handler output, and producer events so partial or malformed interactions are preserved for analysis.
+- **Extensibility:** Built-in handlers, proxy rules, and Spicy-backed parser paths give teams multiple ways to adapt Glutton to new protocols without changing its core dispatch model.
+
+The repository ships handlers for SMTP, RDP, SMB, FTP, SIP, RFB/VNC, Telnet, MQTT, iSCSI, BitTorrent, Memcache, Jabber, ADB, MongoDB, HTTP, generic TCP, generic UDP, and TCP proxy forwarding.
 
 ## Quick Start
 
@@ -107,7 +115,7 @@ Compared to tools such as Cowrie, Dionaea, and T-Pot, Glutton's distinctive surf
 - [Adding a protocol](docs/protocols/adding-a-protocol.md)
 - [Spicy cheatsheet](docs/protocols/spicy-cheatsheet.md)
 
-## Community And Contributing
+## Community and contributing
 
 - Chat: [Honeynet Project Discord](https://discord.gg/rUgDRn3R)
 - Issues and PRs: [github.com/mushorg/glutton](https://github.com/mushorg/glutton)
