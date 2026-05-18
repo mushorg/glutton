@@ -36,7 +36,7 @@ func TestMapUDPProtocolHandlers(t *testing.T) {
 	l.AssertExpectations(t)
 	require.Contains(t, m, "udp", "expected UDP handler")
 	ctx := context.Background()
-	err := m["udp"](ctx, &net.UDPAddr{}, &net.UDPAddr{}, []byte{}, connection.Metadata{})
+	_, err := m["udp"](ctx, &net.UDPAddr{}, &net.UDPAddr{}, []byte{}, connection.Metadata{})
 	require.NoError(t, err, "expected no error from connection handler")
 }
 

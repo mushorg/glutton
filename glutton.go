@@ -175,8 +175,22 @@ func (g *Glutton) udpListen(wg *sync.WaitGroup) {
 		if hfunc, ok := g.udpProtocolHandlers[rule.Target]; ok {
 			data := buffer[:n]
 			go func() {
-				if err := hfunc(g.ctx, srcAddr, dstAddr, data, md); err != nil {
+				response, err := hfunc(g.ctx, srcAddr, dstAddr, data, md)
+				if err != nil {
 					g.Logger.Error("Failed to handle UDP payload", producer.ErrAttr(err))
+					return
+				}
+				if response != nil {
+					con, err := net.DialUDP("udp", dstAddr, srcAddr)
+					if err != nil {
+						g.Logger.Error("failed to dial UDP connection", producer.ErrAttr(err))
+						return
+					}
+					defer con.Close()
+					_, err = con.Write(response)
+					if err != nil {
+						g.Logger.Error("failed to send UDP response", producer.ErrAttr(err))
+					}
 				}
 			}()
 		}
