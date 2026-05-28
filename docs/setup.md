@@ -20,10 +20,10 @@ Ensure you have [Go](https://go.dev/dl/) installed (recommended version: **Go 1.
 
 ```bash
 sudo apt-get update
-sudo apt-get install gcc libpcap-dev iptables
+sudo apt-get install gcc g++ libpcap-dev iptables
 ```
 
-Spicy parser development also requires Spicy/HILTI headers and libraries under `/opt/spicy` and a C++20-capable compiler. After installing Spicy, run `make spicy` before `make build` or `go test ./...`.
+Spicy parser development also requires Spicy/HILTI headers and libraries under `/opt/spicy` and a C++20-capable compiler. After installing Spicy, run `make spicy` before `make build` or `go test ./...`. The `make spicy` target generates parser C++ files, parser headers, and the combined linker file used by the generic Spicy bridge.
 
 ### Arch Linux
 ```bash
@@ -32,7 +32,7 @@ sudo pacman -S gcc libpcap iptables
 
 ### Fedora
 ```bash
-sudo dnf install gcc libpcap-devel iptables
+sudo dnf install gcc gcc-c++ libpcap-devel iptables
 ```
 
 ## Building Glutton
