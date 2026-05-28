@@ -22,5 +22,12 @@ producers:
     auth: auth
     channel: test
 
-conn_timeout: 45
-max_tcp_payload: 4096
+conn_timeout: 45    # idle I/O timeout in seconds for established connections.
+max_tcp_payload: 4096   # bytes
+dial_timeout: 5   # timeout in seconds for proxy target connection.
+
+capture_traffic:
+  enabled: false
+
+spicy:
+  enabled: true

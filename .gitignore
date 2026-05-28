@@ -37,3 +37,12 @@ poc/
 
 # Dev
 .vscode
+.cache/
+.codex/
+docs/engineering-guidelines.md
+docs/roadmap.md
+openspec/
+
+# Spicy generated files
+protocols/spicy/*.cc
+protocols/spicy/parsers/*.h
