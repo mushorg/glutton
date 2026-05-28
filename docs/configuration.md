@@ -17,6 +17,7 @@ This file holds the core settings for Glutton. Key configuration options include
 - **max_tcp_payload:** Maximum TCP payload size in bytes (default: `4096`). Proxy TCP uses this as the per-direction captured payload cap.
 - **dial_timeout:** Timeout, in seconds, for opening outbound proxy TCP target connections (default: `5`).
 - **capture_traffic.enabled:** Enables raw payload capture in logs and produced decoded events. When disabled, proxy TCP still forwards traffic and logs metadata, but raw payload bytes are omitted from decoded events.
+- **spicy.enabled:** Enables Spicy parser integration for supported protocols. When enabled, Glutton initializes the Spicy/HILTI runtime and uses Spicy-backed parsing paths where implemented. When disabled, Glutton uses the existing Go parser and TCP fallback paths.
 - **confpath:** The directory path where the configuration file resides.
 - **producers:** 
     - **enabled**: Boolean flag to enable or disable logging/producer functionality.
@@ -61,6 +62,9 @@ dial_timeout: 5
 
 capture_traffic:
   enabled: false
+
+spicy:
+  enabled: true
 ```
 
 ### config/rules.yaml
