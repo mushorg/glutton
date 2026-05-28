@@ -14,10 +14,10 @@ import (
 )
 
 func testConn(t *testing.T) (net.Conn, func() error) {
-	l, err := net.Listen("tcp", ":1235")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	require.NotNil(t, l)
-	conn, err := net.Dial("tcp", ":1235")
+	conn, err := net.Dial(l.Addr().Network(), l.Addr().String())
 	require.NoError(t, err)
 	err = conn.SetDeadline(time.Now().Add(time.Millisecond))
 	require.NoError(t, err)
