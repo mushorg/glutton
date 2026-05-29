@@ -136,7 +136,7 @@ func TestInitProxyTCPRuleRejectsInvalidTarget(t *testing.T) {
 }
 
 func testConn(t *testing.T) (net.Conn, net.Listener) {
-	ln, err := net.Listen("tcp", "127.0.0.1:1234")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	require.NotNil(t, ln)
 	con, err := net.Dial(ln.Addr().Network(), ln.Addr().String())
@@ -159,17 +159,14 @@ func TestFakePacketBytes(t *testing.T) {
 func TestRunMatchTCP(t *testing.T) {
 	rules := parseRules(t)
 	require.NotEmpty(t, rules)
-	conn, ln := testConn(t)
-	defer func() {
-		conn.Close()
-		ln.Close()
-	}()
 	var (
 		match *Rule
 		err   error
 	)
 
-	match, err = rules.Match("tcp", conn.LocalAddr(), conn.RemoteAddr())
+	srcAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 50000}
+	dstAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
+	match, err = rules.Match("tcp", srcAddr, dstAddr)
 	require.NoError(t, err)
 	require.NotNil(t, match)
 	require.Equal(t, "test", match.Target)
@@ -178,17 +175,14 @@ func TestRunMatchTCP(t *testing.T) {
 func TestRunMatchUDP(t *testing.T) {
 	rules := parseRules(t)
 	require.NotEmpty(t, rules)
-	conn, ln := testConn(t)
-	defer func() {
-		conn.Close()
-		ln.Close()
-	}()
 	var (
 		match *Rule
 		err   error
 	)
 
-	match, err = rules.Match("udp", conn.LocalAddr(), conn.RemoteAddr())
+	srcAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 50000}
+	dstAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
+	match, err = rules.Match("udp", srcAddr, dstAddr)
 	require.NoError(t, err)
 	require.NotNil(t, match)
 	require.Equal(t, "test", match.Target)
