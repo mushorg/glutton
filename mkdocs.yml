@@ -1,10 +1,14 @@
 site_name: Glutton Documentation
 version: 1.0
 nav:
-  - Introduction: index.md
-  - Setup: setup.md
+  - Getting started: setup.md
   - Configuration: configuration.md
-  - Extension: extension.md
-  - FAQs: faq.md
+  - Architecture: architecture.md
+  - Logging and producers: logging.md
+  - Extending:
+      - Extension system: extension-system.md
+      - Adding a protocol: protocols/adding-a-protocol.md
+      - Spicy cheatsheet: protocols/spicy-cheatsheet.md
+  - FAQ: faq.md
 theme:
   name: readthedocs

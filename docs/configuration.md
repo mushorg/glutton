@@ -1,112 +1,83 @@
 # Configuration
 
-Glutton’s behavior is controlled by several configuration files written in YAML (and JSON for schema validation). This page details the available configuration options, how they’re loaded, and best practices for customizing your setup. 
+Glutton uses Viper. It reads two files from `--confpath`: `config/config.yaml` (main settings) and `config/rules.yaml` (TCP/UDP traffic rounting rules). If either is missing, Glutton falls back to embedded defaults.
 
-## Configuration Files
+For the exact defaults shipped with the binary, see `[config/config.yaml](../config/config.yaml)` and `[config/rules.yaml](../config/rules.yaml)`.
 
-### config/config.yaml
+## CLI flags
 
-This file holds the core settings for Glutton. Key configuration options include:
+CLI flags override the matching keys in `config.yaml`.
 
-- **ports:** Defines the network ports used for traffic interception.
-  - **tcp:** The TCP port for intercepted connections (default: `5000`).
-  - **udp:** The UDP port for intercepted packets (default: `5001`).
-  - **ssh:** Typically excluded from redirection to avoid interfering with SSH (default: `22`).
-- **interface:** The network interface Glutton listens on (default: `eth0`).
-- **conn_timeout:** Idle I/O timeout, in seconds, for established connections (default: `45`).
-- **max_tcp_payload:** Maximum TCP payload size in bytes (default: `4096`). Proxy TCP uses this as the per-direction captured payload cap.
-- **dial_timeout:** Timeout, in seconds, for opening outbound proxy TCP target connections (default: `5`).
-- **capture_traffic.enabled:** Enables raw payload capture in logs and produced decoded events. When disabled, proxy TCP still forwards traffic and logs metadata, but raw payload bytes are omitted from decoded events.
-- **spicy.enabled:** Enables Spicy parser integration for supported protocols. When enabled, Glutton initializes the Spicy/HILTI runtime and uses Spicy-backed parsing paths where implemented. When disabled, Glutton uses the existing Go parser and TCP fallback paths.
-- **confpath:** The directory path where the configuration file resides.
-- **producers:** 
-    - **enabled**: Boolean flag to enable or disable logging/producer functionality.
-    - **http:** HTTP producer for sending logs to a remote endpoint, like [Ochi](https://github.com/honeynet/ochi).
-    - **hpfeeds:** [HPFeeds](https://github.com/hpfeeds/hpfeeds) producer for sharing data with other security tools.
-- **addresses:** A list of additional public IP addresses for traffic handling.
 
-Example configuration:
+| Flag          | Short | Default            | Notes                                                                        |
+| ------------- | ----- | ------------------ | ---------------------------------------------------------------------------- |
+| `--interface` | `-i`  | `eth0`             | Bound as `interface`.                                                        |
+| `--ssh`       | `-s`  | `2222`             | Overrides `ports.ssh`. Match this to the port your sshd actually listens on. |
+| `--logpath`   | `-l`  | `/dev/null`        | Rotating JSON log file path. Logs also go to stdout.                         |
+| `--confpath`  | `-c`  | `config/`          | Directory holding `config.yaml` and `rules.yaml`.                            |
+| `--debug`     | `-d`  | `false`            | Parsed and bound, but not yet wired into `slog.HandlerOptions`.              |
+| `--version`   | —     | `false`            | Prints version and exits before runtime init.                                |
+| `--var-dir`   | —     | `/var/lib/glutton` | Directory for `glutton.id`.                                                  |
 
-```yaml
-# config/config.yaml
 
-ports:
-  tcp: 5000
-  udp: 5001
-  ssh: 22
+## Main config
 
-rules_path: config/rules.yaml
+Source: `config/config.yaml`. Keys you'll most often touch:
 
-addresses: ["1.2.3.4"]
 
-interface: eth0
+| Key                                                                  | Default                  | Description                                                                                                                                                                         |
+| -------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ports.tcp`                                                          | `5000`                   | Local TCP TPROXY listener port.                                                                                                                                                     |
+| `ports.udp`                                                          | `5001`                   | Local UDP TPROXY listener port.                                                                                                                                                     |
+| `ports.ssh`                                                          | `2222`                   | Destination port excluded from TPROXY redirection (see [SSH exclusion](#ssh-exclusion)).                                                                                            |
+| `rules_path`                                                         | `config/rules.yaml`      | Path to the rules file.                                                                                                                                                             |
+| `addresses`                                                          | `["1.2.3.4", "5.4.3.2"]` | Public addresses used for payload sanitization.                                                                                                                                     |
+| `interface`                                                          | `eth0`                   | Interface used for public IP discovery and TPROXY rule installation.                                                                                                                |
+| `producers.enabled`                                                  | `false`                  | Creates the producer object.                                                                                                                                                        |
+| `producers.http.enabled`                                             | `false`                  | Enables HTTP producer POSTs.                                                                                                                                                        |
+| `producers.http.remote`                                              | `https://localhost:9000` | HTTP endpoint. Userinfo in the URL supplies basic auth.                                                                                                                             |
+| `producers.hpfeeds.enabled`                                          | `false`                  | Enables hpfeeds output.                                                                                                                                                             |
+| `producers.hpfeeds.host` / `.port` / `.ident` / `.auth` / `.channel` | —                        | hpfeeds broker connection.                                                                                                                                                          |
+| `conn_timeout`                                                       | `45`                     | Connection deadline in seconds (also the `proxy_tcp` idle I/O timeout).                                                                                                             |
+| `max_tcp_payload`                                                    | `4096`                   | Generic TCP handler threshold and `proxy_tcp` per-direction capture cap.                                                                                                            |
+| `dial_timeout`                                                       | `5`                      | Outbound `proxy_tcp` dial timeout in seconds.                                                                                                                                       |
+| `capture_traffic.enabled`                                            | `false`                  | Enables raw payload capture in `proxy_tcp` logs and produced events. Proxying still forwards traffic when disabled.                                                                 |
+| `spicy.enabled`                                                      | `true`                   | Initializes Spicy/HILTI and enables Spicy-backed paths (HTTP parsing, TCP-payload protocol detection). Set `false` if you build without Spicy or want the Spicy-free dispatch path. |
 
-producers:
-  enabled: true # enables producers
-  http:
-    enabled: true # enables http producer
-    # Connect with Ochi here or other remote log aggregation servers 
-    remote: http://localhost:3000/publish?token=token 
-  hpfeeds:
-    enabled: false # disables HPFeeds
-    host: 172.26.0.2
-    port: 20000
-    # HPFeeds specific details go here
-    ident: ident
-    auth: auth
-    channel: test
 
-conn_timeout: 45
-max_tcp_payload: 4096
-dial_timeout: 5
+### SSH exclusion
 
-capture_traffic:
-  enabled: false
+`ports.ssh` is the destination port iptables skips when redirecting traffic into the honeypot, so your management SSH session survives. Both `ports.ssh` (default `2222`) and the CLI flag `--ssh` (default `2222`) need to match the port your sshd actually listens on. If your sshd is on `22`, pass `--ssh 22` or set `ports.ssh: 22` before exposing the sensor — otherwise the management port will be redirected into the honeypot and you'll lock yourself out.
 
-spicy:
-  enabled: true
-```
+## Rules
 
-### config/rules.yaml
+Rules decide which handler receives a redirected TCP connection or UDP packet. They're parsed by `rules/rules.go` and evaluated in order, **first match wins**, so put specific rules before broad catch-alls.
 
-This file defines the rules that Glutton uses to determine which protocol handler should process incoming traffic.
-
-Key elements include:
-
-- **type**: `conn_handler` to pass off to the appropriate protocol handler, `proxy_tcp` to forward the TCP connection to an upstream target, or `drop` to ignore packets.
-- **target**: For `conn_handler`, indicates the protocol handler (e.g., `http`, `ftp`) to use. For `proxy_tcp`, this must be the upstream target in `host:port` form.
-- **match**: Define criteria such as source IP ranges or destination ports to match incoming traffic, according to [BPF syntax](https://biot.com/capstats/bpf.html).
-
-Example rule:
+### Rule shape
 
 ```yaml
-# config/rules.yaml
-
 rules:
   - name: Telnet filter
     match: tcp dst port 23 or port 2323 or port 23231
-    type: conn_handler # will find the appropriate target protocol handler
+    type: conn_handler
     target: telnet
-  - match: tcp dst port 6969
-    type: drop # drops any matching packets
-    target: bittorrent
-  - name: Proxy TCP example
-    match: tcp dst port 9889
-    type: proxy_tcp
-    target: 127.0.0.1:9889
 ```
 
-`proxy_tcp` dials the configured `target` and forwards bytes in both directions between the incoming connection and the upstream service. Produced decoded events use the `proxy_tcp` protocol name and can include one captured payload entry per direction. Captured payloads are capped by `max_tcp_payload`; when a direction transfers more bytes than the cap, the decoded event is marked as truncated.
 
-## Configuration Loading Process
-Glutton uses the [Viper](https://github.com/spf13/viper) library to load configuration settings. The process works as follows:
+| Field    | Required | Description                                                                          |
+| -------- | -------- | ------------------------------------------------------------------------------------ |
+| `name`   | no       | Human-readable label. `Rule.String()` returns the `match` expression, not this name. |
+| `match`  | yes      | BPF expression compiled with `pcap.NewBPF(...)`.                                     |
+| `type`   | yes      | `conn_handler` or `proxy_tcp`.                                                       |
+| `target` | yes      | Handler key for `conn_handler`; `host:port` upstream for `proxy_tcp`.                |
 
-- **Default Settings**: Glutton initializes with default values for critical parameters.
-- **File-based Overrides**: Viper looks for `config.yaml` in the directory specified by confpath. If found, the settings from the file override the defaults.
-- **Additional Sources**: Environment variables or command-line flags can further override file-based configurations, allowing for flexible deployments.
 
-## Best Practices
+### Rule types
 
-- **Backup Your Files**: Always save a backup of your configuration files before making changes.
-- **Validate Configurations**: Use YAML validators and the provided JSON schema to ensure your configuration is error-free.
-- **Test Changes**: After modifying your configuration, restart Glutton and review the logs to confirm that your changes have been applied as expected.
+`**conn_handler**` — `target` is a handler key. Current TCP keys: `smtp`, `rdp`, `smb`, `ftp`, `sip`, `rfb`, `telnet`, `mqtt`, `iscsi`, `bittorrent`, `memcache`, `jabber`, `adb`, `mongodb`, `http`, `proxy_tcp`, `tcp`. UDP keys: `udp`. If the target isn't registered, the listener accepts the connection but no handler runs.
+
+`**proxy_tcp**` — forwards a matched TCP connection to an upstream `host:port`. The address is parsed at rule-load time and stored in rule metadata; at dispatch the proxy handler dials it and pipes bytes both directions. Tunable via `dial_timeout`, `conn_timeout`, `max_tcp_payload`, and `capture_traffic.enabled` in the main config.
+
+### Catch-all interaction with Spicy
+
+The default rules end with `match: tcp` → `target: tcp`, the generic TCP handler peeks at the initial bytes and uses the spicy parser to detect HTTP, RDP, or MongoDB payloads, if detected traffic is routed to a specific handler otherwise it fallback to generic TCP handler.

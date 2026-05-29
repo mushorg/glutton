@@ -1,107 +1,95 @@
-# Setup
+# Getting started
 
-Follow these steps to install Glutton on your system.
+Glutton is a Go-based, multi-protocol honeypot. It uses Linux iptables and TPROXY to transparently redirect TCP and UDP traffic to local listeners, dispatches connections through a BPF-style rule engine, runs protocol-specific handlers (or forwards to an upstream via `proxy_tcp`, or falls back to generic capture), and writes structured JSON logs and optional producer events.
 
-## Environment Requirements
+## Spicy
 
+Glutton also includes an emerging Spicy parser path. Spicy is the parser-definition language from the Zeek project; it lets contributors describe byte-level protocol grammars in a small DSL instead of writing the parser in Go. Currently Glutton uses Spicy for HTTP parsing and TCP-payload protocol detection only.
 
-- **Linux Required:** Glutton must be built and run on a Linux system.
-- **Non-Linux Users:** For Windows or macOS, use Docker or the VSCode Dev Container Extension.
-- **WSL Users:** When using WOS, we recommend running glutton with the [xanmod-kernel-WSL2](https://github.com/Locietta/xanmod-kernel-WSL2)
-- For setting up the development environment using VS Code Dev Containers, refer to:
-    - [Install Dev Container](https://code.visualstudio.com/docs/devcontainers/containers)  
-    - [Learn More](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+## Requirements
 
-## Prerequisites
+Glutton is a Linux-only Go binary that depends on iptables, libpcap, a C/C++ toolchain, and Spicy/HILTI. Treat it as hostile-facing infrastructure once it's running: it receives unsolicited traffic, records attacker-controlled payloads, and manages network redirection rules.
 
-Ensure you have [Go](https://go.dev/dl/) installed (recommended version: **Go 1.21** or later). In addition, you will need system packages for building and running Glutton:
+| Requirement                     | Source of truth                                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Go 1.23+                        | `go.mod` declares `go 1.23.5`; CI uses `^1.23`.                                                                          |
+| libpcap                         | Required by `github.com/google/gopacket/pcap`.                                                                           |
+| iptables                        | TPROXY rule management.                                                                                                  |
+| zlib + build-essential          | Spicy and cgo builds.                                                                                                    |
+| clang / clang++                 | `Makefile` uses `CC=clang CXX=clang++`; CI installs clang 17.                                                            |
+| Spicy 1.13.1 under `/opt/spicy` | The cgo flags in `protocols/spicy/parser.go` expect headers under `/opt/spicy/include` and libraries under `/opt/spicy/lib`. |
 
-### Debian/Ubuntu
+## Build
+
+CI runs on Ubuntu. Other distros need equivalent packages.
 
 ```bash
 sudo apt-get update
-sudo apt-get install gcc g++ libpcap-dev iptables
-```
+sudo apt-get install -y libpcap-dev iptables zlib1g-dev build-essential clang
 
-Spicy parser development also requires Spicy/HILTI headers and libraries under `/opt/spicy` and a C++20-capable compiler. After installing Spicy, run `make spicy` before `make build` or `go test ./...`. The `make spicy` target generates parser C++ files, parser headers, and the combined linker file used by the generic Spicy bridge.
+wget https://github.com/zeek/spicy/releases/download/v1.13.1/spicy_linux_ubuntu24.deb
+sudo dpkg --install spicy_linux_ubuntu24.deb
+sudo apt-get install -f -y
+rm spicy_linux_ubuntu24.deb
 
-### Arch Linux
-```bash
-sudo pacman -S gcc libpcap iptables
-```
-
-### Fedora
-```bash
-sudo dnf install gcc gcc-c++ libpcap-devel iptables
-```
-
-## Building Glutton
-
-Clone the repository and build the project:
-
-```bash
 git clone https://github.com/mushorg/glutton.git
 cd glutton
+export PATH=/opt/spicy/bin:$PATH
+make spicy
 make build
 ```
 
-This will compile the project and place the server binary in the `bin/` directory.
+`make spicy` runs the Spicy Makefile under `protocols/spicy/` to generate parser C++ and headers (gitignored). `make build` compiles `app/server.go` into `bin/server` with embedded version metadata.
 
-## Testing the Installation
+## Run
+
+Glutton modifies iptables rules and needs root (or `CAP_NET_ADMIN`).
+
+```bash
+sudo bin/server --interface eth0 --confpath config/ --logpath /var/log/glutton.log
+```
+
+For Docker, mount or build the config you intend to run, and use the host network namespace so TPROXY rules apply to a real interface:
+
+```bash
+docker build -t glutton .
+docker run --rm --network host --cap-add=NET_ADMIN -it glutton
+```
+
+Without `--network host` the container installs TPROXY rules on the docker bridge and never sees external traffic. The host kernel must have iptables `mangle` and `xt_TPROXY` available.
+
+### Verify
 
 ```bash
 bin/server --version
 ```
-You should see output similar to:
 
-```bash
-  _____ _       _   _
- / ____| |     | | | |
-| |  __| |_   _| |_| |_ ___  _ __
-| | |_ | | | | | __| __/ _ \| '_ \
-| |__| | | |_| | |_| || (_) | | | |
- \_____|_|\__,_|\__|\__\___/|_| |_|
+Prints the banner and version string and exits without initializing the runtime. Useful for confirming a build picked up the expected `Makefile` version metadata.
 
-	
-glutton version v1.0.1+d2503ba 2025-02-21T05:48:07+00:00
-```
+## Privileges
 
-## Usage
+Glutton needs permission to:
 
-Glutton can be configured using several command-line flags:
+- read from TPROXY sockets
+- add and remove iptables mangle PREROUTING rules
+- bind local TCP and UDP listener ports
+- write its sensor ID under `--var-dir` (default `/var/lib/glutton`)
+- write the configured log file
 
-- **--interface, -i**: `string` - Specifies the network interface (default: `eth0`)
-- **--ssh, -s**: `int` - If set, it overrides the default SSH port
-- **--logpath, -l**: `string` - Sets the file path for logging (default: `/dev/null`)
-- **--confpath, -c**: `string` - Defines the path to the configuration directory (default: `config/`)
-- **--debug, -d**: `bool` - Enables debug mode (default: `false`)
-- **--version**: `bool` - Prints the version and exits
-- **--var-dir**: `string` - Sets the directory for variable data storage (default: `/var/lib/glutton`)
+`sudo` on bare metal or `--cap-add=NET_ADMIN` in Docker satisfies all of these.
 
-For example, to run Glutton with a custom interface and enable debug mode, you might use the following command:
+## Host placement
 
-```bash
-bin/server --interface <network_interface> --debug
-```
+- Run on a dedicated host, VM, or isolated network segment. Not a workstation, not anything with internal access.
+- Restrict outbound egress unless a handler or producer needs it. `proxy_tcp` rules open outbound connections to whatever upstream the rule targets — keep that surface explicit.
+- Keep producer endpoints (HTTP collector, hpfeeds broker) off the exposed honeypot network.
+- Rotate and ship logs before disk pressure becomes operational risk.
 
-Replace `<network_interface>` (e.g., `eth0`) with the interface you want to monitor. The command starts the Glutton server, which sets up TCP/UDP listeners and applies iptables rules for transparent proxying.
+Glutton is a sensor, not a containment boundary. Use network isolation around it.
 
-**Configuration:** Before deployment, ensure your configuration files, in the `config/` folder by default, are properly set up. For detailed instructions, refer to the [Configuration](configuration.md) page.
+## Operational hazards
 
-## Docker
-
-To deploy using Docker:
-
-1. Build the Docker image:
-   
-    ```
-    docker build -t glutton .
-    ```
-
-2. Run the Container:
-   
-    ```
-    docker run --rm --cap-add=NET_ADMIN -it glutton
-    ```
-
-The Docker container is preconfigured with the necessary dependencies (iptables, libpcap, etc.) and copies the configuration and rules files into the container.
+- iptables state can be left behind if the process is killed without a clean shutdown.
+- Captured payloads are attacker-controlled. Handle them as untrusted in any downstream pipeline.
+- Some handlers send fake service responses. Don't route real internal clients through the sensor.
+- Legal and privacy obligations vary by jurisdiction. Get local review before collecting or sharing payloads.
