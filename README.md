@@ -24,7 +24,7 @@ Out of the box, Glutton ships handlers that capture exploit probes targeting Cit
 
 ## Quick start
 
-Glutton requires Linux, root privileges for iptables, and a build toolchain compatible with the [CI workflow](.github/workflows/workflow.yml) — currently Go 1.23+, Spicy 1.13.1, clang 17, libpcap, iptables, and zlib1g.
+Glutton requires Linux, root privileges for iptables, and a build toolchain compatible with the [CI workflow](.github/workflows/workflow.yml) — currently Go 1.26+, Spicy 1.13.1, clang 17, libpcap, iptables, and zlib1g.
 
 ```bash
 git clone https://github.com/mushorg/glutton.git
