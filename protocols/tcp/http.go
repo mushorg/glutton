@@ -180,7 +180,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 	}
 
 	if strings.Contains(req.RequestURI, "/v1.16/version") {
-		data, err := res.ReadFile("resources/docker_api.json")
+		data, err := Res.ReadFile("resources/docker_api.json")
 		if err != nil {
 			return fmt.Errorf("failed to read embedded file: %w", err)
 		}

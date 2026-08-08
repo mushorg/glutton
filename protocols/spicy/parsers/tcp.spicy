@@ -1,0 +1,35 @@
+module TCP;
+
+import spicy;
+
+const MaxMongoDBMessageLength: uint64 = 48 * 1024 * 1024;
+
+# Protocol inspects TCP payload bytes, not TCP/IP headers, to identify the
+# application handler Glutton should route to.
+public type Protocol = unit {
+    first: bytes &size=4 {
+        self.message_length = $$.to_uint(spicy::ByteOrder::Little);
+
+        if ($$ == b"GET " || $$ == b"POST" || $$ == b"HEAD" || $$ == b"OPTI" || $$ == b"CONN")
+            self.protocol = "http";
+        else if ($$ == b"\x03\x00\x00\x2b")
+            self.protocol = "rdp";
+    }
+
+    rest: bytes &eod;
+
+    on %done {
+        if (self.protocol == "" && self.message_length > 0 && self.message_length <= MaxMongoDBMessageLength && |self.rest| >= 12) {
+            local op_code = cast<uint32>(*self.rest.at(8)) |
+                (cast<uint32>(*self.rest.at(9)) << 8) |
+                (cast<uint32>(*self.rest.at(10)) << 16) |
+                (cast<uint32>(*self.rest.at(11)) << 24);
+
+            if (op_code == 1 || op_code == 2001 || op_code == 2002 || op_code == 2004 || op_code == 2005 || op_code == 2006 || op_code == 2007 || op_code == 2012 || op_code == 2013)
+                self.protocol = "mongodb";
+        }
+    }
+
+    var protocol: string = "";
+    var message_length: uint64 = 0;
+};

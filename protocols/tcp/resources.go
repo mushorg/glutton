@@ -4,5 +4,5 @@ import "embed"
 
 var (
 	//go:embed resources
-	res embed.FS
+	Res embed.FS
 )

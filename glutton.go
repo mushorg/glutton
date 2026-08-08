@@ -18,6 +18,7 @@ import (
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
+	"github.com/mushorg/glutton/protocols/spicy"
 	"github.com/mushorg/glutton/rules"
 
 	"github.com/google/uuid"
@@ -134,6 +135,13 @@ func (g *Glutton) Init() error {
 	g.tcpProtocolHandlers = protocols.MapTCPProtocolHandlers(g.Logger, g)
 	g.udpProtocolHandlers = protocols.MapUDPProtocolHandlers(g.Logger, g)
 
+	// Initializing Spicy parsers
+	if viper.GetBool("spicy.enabled") {
+		if err := spicy.Initialize(g.Logger); err != nil {
+			return fmt.Errorf("failed to initialize Spicy: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -222,10 +230,18 @@ func (g *Glutton) tcpListen() {
 			g.Logger.Error("Failed to set connection timeout", producer.ErrAttr(err))
 		}
 
-		if hfunc, ok := g.tcpProtocolHandlers[rule.Target]; ok {
+		var handlerName string
+		switch rule.Type {
+		case "proxy_tcp":
+			handlerName = rule.Type
+		default:
+			handlerName = rule.Target
+		}
+
+		if hfunc, ok := g.tcpProtocolHandlers[handlerName]; ok {
 			go func() {
 				if err := hfunc(g.ctx, conn, md); err != nil {
-					g.Logger.Error("Failed to handle TCP connection", producer.ErrAttr(err), slog.String("handler", rule.Target))
+					g.Logger.Error("Failed to handle ", producer.ErrAttr(err), slog.String("handler", handlerName))
 				}
 			}()
 		}
@@ -358,7 +374,12 @@ func (g *Glutton) Shutdown() {
 	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
 		g.Logger.Error("Failed to drop udp iptables", producer.ErrAttr(err))
 	}
-
+	if viper.GetBool("spicy.enabled") {
+		g.Logger.Info("Cleaning up and shutting down Spicy and HILTI runtimes")
+		if err := spicy.Cleanup(); err != nil {
+			g.Logger.Error("Failed to clean up Spicy and HILTI runtimes", producer.ErrAttr(err))
+		}
+	}
 	g.Logger.Info("All done")
 }
 

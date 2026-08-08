@@ -20,7 +20,10 @@ upx:
 default: build
 
 build:
-	go build -ldflags=$(LDFLAGS) -o bin/server app/server.go
+	CC=clang CXX=clang++ go build -ldflags=$(LDFLAGS) -o bin/server app/server.go
+
+spicy:
+	cd protocols/spicy && make
 
 static:
 	go build --ldflags '-extldflags "-static"' -o bin/server app/server.go

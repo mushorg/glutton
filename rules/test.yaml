@@ -9,6 +9,9 @@ rules:
   - match: udp dst port 1234
     type: conn_handler
     target: test
+  - match: tcp dst port 80
+    type: proxy_tcp
+    target: 127.0.0.1:9889
   - match: tcp
     type: conn_handler
     target: tcp
