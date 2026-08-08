@@ -7,7 +7,7 @@ LINKER_CC := spicy_linker.cc
 HEADERS := $(patsubst parsers/%.spicy,parsers/%.h,$(GRAMMARS))
 
 SPICY_FLAGS := -g
-CXX ?= clang++
+CXX ?= clang++-17
 CXXFLAGS += -I/opt/spicy/include -std=c++20 -fPIC -O3 -DNDEBUG -fvisibility=hidden -I$(CURDIR)/parsers
 
 .SECONDARY: $(GEN_CC) $(LINKER_CC) $(HEADERS)

@@ -130,7 +130,7 @@ Only do this for protocols that should be detected from catch-all TCP. If the pr
 
 ```bash
 export PATH=/opt/spicy/bin:$PATH
-CC=clang CXX=clang++ go test ./...
+CC=clang-17 CXX=clang++-17 go test ./...
 ```
 
 For faster iteration during development, scope to the package: `go test ./protocols/...`.
