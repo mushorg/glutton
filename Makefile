@@ -20,8 +20,9 @@ upx:
 default: build
 
 build:
-	CC=clang CXX=clang++ go build -ldflags=$(LDFLAGS) -o bin/server app/server.go
+	CC=clang-17 CXX=clang++-17 go build -ldflags=$(LDFLAGS) -o bin/server app/server.go
 
+.PHONY: spicy
 spicy:
 	cd protocols/spicy && make
 
@@ -34,9 +35,10 @@ clean:
 
 run: build
 	sudo bin/server
+
 docker:
 	docker build -t glutton .
 	docker run --rm --cap-add=NET_ADMIN -it glutton
 
-test:
+test: spicy
 	go test -v ./...

@@ -6,6 +6,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Concrete parser modules are registered through generated Spicy linker code.
@@ -150,8 +151,10 @@ static std::string scalar_to_string(const hilti::rt::type_info::Value& v) {
     case hilti::rt::TypeInfo::Bool:
         return T.bool_->get(v) ? "true" : "false";
     
-    case hilti::rt::TypeInfo::String:
-        return T.string->get(v);
+    case hilti::rt::TypeInfo::String: {
+        auto s = T.string->get(v);
+        return std::string(static_cast<std::string_view>(s));
+    }
     
     case hilti::rt::TypeInfo::Enum:
         return std::to_string(v);
@@ -339,7 +342,7 @@ ParsedData* spicy_parse_generic(const char* parser_name, const unsigned char* da
     
     try {
         spicy::rt::Driver drv;
-        auto parser = drv.lookupParser(parser_name);
+        auto parser = drv.lookupParser(hilti::rt::String(parser_name));
         
         if (!parser) {
             res->error_message = strdup_safe("parser not found");
