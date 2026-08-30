@@ -12,7 +12,7 @@ Glutton is a Linux-only Go binary that depends on iptables, libpcap, a C/C++ too
 
 | Requirement                     | Source of truth                                                                                                          |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Go 1.23+                        | `go.mod` declares `go 1.23.5`; CI uses `^1.23`.                                                                          |
+| Go 1.26+                        | `go.mod` declares `go 1.26.5`; CI uses `^1.26`.                                                                          |
 | libpcap                         | Required by `github.com/google/gopacket/pcap`.                                                                           |
 | iptables                        | TPROXY rule management.                                                                                                  |
 | zlib + build-essential          | Spicy and cgo builds.                                                                                                    |
