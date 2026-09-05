@@ -36,3 +36,8 @@ func Store(data []byte, folder string) (string, error) {
 	}
 	return sha256Hash, nil
 }
+
+func HashData(data []byte) string {
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}

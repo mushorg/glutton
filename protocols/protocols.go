@@ -2,8 +2,10 @@ package protocols
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
@@ -81,12 +83,21 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 	}
 	protocolHandlers["tcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		snip, bufConn, err := Peek(conn, 4)
-		if err != nil {
-			if err := conn.Close(); err != nil {
-				log.Error("failed to close connection", producer.ErrAttr(err))
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			if err := tcp.SendBanner(md.TargetPort, bufConn, md, log, h); err != nil {
+				log.Info("Failed to send service banner", producer.ErrAttr(err))
 			}
+			if err := bufConn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+				log.Error("failed to reset read deadline", producer.ErrAttr(err))
+			}
+			return tcp.HandleTCP(ctx, bufConn, md, log, h)
+		}
+		if err := bufConn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			log.Error("failed to reset read deadline", producer.ErrAttr(err))
+		}
+		if err != nil {
 			log.Debug("failed to peek connection", producer.ErrAttr(err))
-			return nil
 		}
 
 		// Uses a basic spicy parser to detect application protocol from tcp payload
