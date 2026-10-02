@@ -31,6 +31,7 @@ _testmain.go
 glutton.log*
 payloads/
 samples/
+events/
 
 # PoCs
 poc/
@@ -43,6 +44,7 @@ docs/engineering-guidelines.md
 docs/roadmap.md
 openspec/
 *.deb
+.cursor/
 
 # Spicy generated files
 protocols/spicy/*.cc

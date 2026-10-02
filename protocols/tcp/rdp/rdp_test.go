@@ -38,10 +38,13 @@ func TestRDPParseHeader2(t *testing.T) {
 }
 
 func TestConnectionConfirm(t *testing.T) {
-	cr := CRTPDU{}
-	_, cc, err := ConnectionConfirm(cr)
+	cr := CRTPDU{SrcRef: [2]byte{0x11, 0x22}}
+	header, cc, err := ConnectionConfirm(cr)
 	require.NoError(t, err)
-	fmt.Printf("Parsed data: %+v\n", cc)
+	// TPKT v3, length 19 | X.224 CC (LI 14, type 0xD0, dst-ref echoes CR src-ref) | RDP_NEG_RSP TLS|CredSSP
+	require.Equal(t, "030000130ed011220000000200080003000000", hex.EncodeToString(cc))
+	require.Equal(t, byte(3), header.Version)
+	require.Equal(t, [2]byte{0x00, 0x13}, header.Length)
 }
 
 /*

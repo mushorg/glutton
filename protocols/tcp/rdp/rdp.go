@@ -63,21 +63,26 @@ func ConnectionConfirm(cr CRTPDU) (TKIPHeader, []byte, error) {
 			Version: 3,
 		},
 		TPDU: CCTPDU{
-			Length: 6,
-			CCCDT:  0xc, // 1101-xxxx
-			DstRef: cr.DstRef,
-			SrcRef: cr.SrcRef,
+			// LI excludes itself: 6-byte fixed CC header plus the 8-byte RDP_NEG_RSP.
+			// MS-RDPBCGR 2.2.1.2: 14 when rdpNegData is present, 6 when it is not.
+			Length: 14,
+			CCCDT:  0xd0, // 1101 0000: Connection Confirm, CDT 0
+			DstRef: cr.SrcRef,
 		},
 		Response: NegotiationResponse{
-			Type:             0x02,
+			Type:             0x02, // TYPE_RDP_NEG_RSP
 			SelectedProtocol: [4]byte{0x3},
 		},
 	}
-	binary.BigEndian.PutUint16(cc.Header.Length[:], 12)
 	binary.LittleEndian.PutUint16(cc.Response.Length[:], 8)
 	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.LittleEndian, cc)
-	return cc.Header, buf.Bytes(), err
+	if err := binary.Write(buf, binary.LittleEndian, cc); err != nil {
+		return TKIPHeader{}, nil, err
+	}
+	// TPKT length is the whole PDU, written big-endian.
+	binary.BigEndian.PutUint16(cc.Header.Length[:], uint16(buf.Len()))
+	binary.BigEndian.PutUint16(buf.Bytes()[2:4], uint16(buf.Len()))
+	return cc.Header, buf.Bytes(), nil
 }
 
 // ParsePDU takes raw data and parses into struct
