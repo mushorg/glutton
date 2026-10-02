@@ -79,7 +79,7 @@ func (s *ftpServer) write(resp ftpResponse) error {
 
 func (s *ftpServer) ftpSTOR(ip string, port int) (ftpResponse, string) {
 	dialer := &net.Dialer{Timeout: 2 * time.Second}
-	conn, err := dialer.Dial("tcp", fmt.Sprintf("%s:%d", ip, port))
+	conn, err := dialer.Dial("tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
 	if err != nil {
 		return ftpResponse{StatusCannotOpenDataConnection, "Failed to establish connection."}, ""
 	}
