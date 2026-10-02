@@ -76,6 +76,9 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 	protocolHandlers["http"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		return tcp.HandleHTTP(ctx, conn, md, log, h)
 	}
+	protocolHandlers["modbus"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		return tcp.HandleModbus(ctx, conn, md, log, h)
+	}
 	protocolHandlers["proxy_tcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		return tcp.HandleProxyTCP(ctx, conn, md, log, h)
 	}

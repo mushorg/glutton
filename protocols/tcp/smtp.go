@@ -27,7 +27,8 @@ type Client struct {
 }
 
 func (c *Client) w(s string) {
-	c.bufout.WriteString(s + "\r\n")
+	c.bufout.WriteString(s)
+	c.bufout.WriteString("\r\n")
 	c.bufout.Flush()
 }
 func (c *Client) read() (string, error) {
