@@ -5,10 +5,28 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
-	"math/big"
 	"time"
+	"unicode/utf16"
+)
 
-	"github.com/google/uuid"
+const (
+	cmdNegotiate     = 0x72
+	cmdSessionSetup  = 0x73
+	cmdTreeConnect   = 0x75
+	flagsReply       = 0x80
+	flags2Unicode    = 0x8000
+	flags2NTStatus   = 0x4000
+	capUnicode       = 0x00000004
+	capNTSMBs        = 0x00000010
+	capStatus32      = 0x00000040
+	capLevel2Oplocks = 0x00000080
+	capNTFind        = 0x00000200
+	capLargeFiles    = 0x00000008
+	capNTLM          = capUnicode | capLargeFiles | capNTSMBs | capStatus32 | capLevel2Oplocks | capNTFind
+	nativeOS         = "Windows 5.1"
+	nativeLanMan     = "Windows 5.1"
+	primaryDomain    = "WORKGROUP"
+	ntLMDialect      = "NT LM 0.12"
 )
 
 type SMBHeader struct {
@@ -41,80 +59,13 @@ type NegotiateProtocolRequest struct {
 	Data   SMBData
 }
 
-type NegotiateProtocolResponse struct {
-	Header                 SMBHeader
-	StructureSize          [2]byte
-	SecurityMode           [2]byte
-	DialectRevision        [2]byte
-	NegotiateContextCount  [2]byte
-	ServerGUID             [16]byte
-	Capabilities           [4]byte
-	MaxTransactSize        [4]byte
-	MaxReadSize            [4]byte
-	MaxWriteSize           [4]byte
-	SystemTime             Filetime
-	ServerStartTime        Filetime
-	SecurityBufferOffset   [2]byte
-	SecurityBufferLength   [2]byte
-	NegotiateContextOffset [4]byte
-	//Buffer                 []byte
-	//Padding                []byte
-	//NegotiateContextList   []byte
-}
+// STATUS_INSUFF_SERVER_RESOURCES (0xC0000205) — unpatched MS17-010 fingerprint.
+var statusInsuffServerResources = [4]byte{0x05, 0x02, 0x00, 0xc0}
 
-type Filetime struct {
-	low  uint32
-	high uint32
-}
-
-func ValidateData(data []byte) (*bytes.Buffer, error) {
-	// HACK: Not sure what the data in front is supposed to be...
-	if !bytes.Contains(data, []byte("\xff")) {
-		return nil, errors.New("packet is unrecognizable")
-	}
-
-	start := bytes.Index(data, []byte("\xff"))
-	buffer := bytes.NewBuffer(data[start:])
-	return buffer, nil
-}
-
-func filetime(offset time.Duration) Filetime {
-	epochAsFiletime := int64(116444736000000000) // January 1, 1970 as MS file time
-	hundredsOfNanoseconds := int64(10000000)
-	fileTime := epochAsFiletime + time.Now().Add(offset).Unix()*hundredsOfNanoseconds
-	return Filetime{
-		low:  uint32(fileTime),
-		high: uint32(fileTime << 32),
-	}
-}
-
-func random(min, max int) (int, error) {
-	rn, err := rand.Int(rand.Reader, big.NewInt(int64(max-min)))
-	if err != nil {
-		return 0, err
-	}
-	return int(rn.Int64()) + min, nil
-}
-
-func toBytes(smb interface{}) ([]byte, error) {
-	var buf bytes.Buffer
-	err := binary.Write(&buf, binary.LittleEndian, smb)
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func MakeHeaderResponse(header SMBHeader) (SMBHeader, []byte, error) {
-	smb := NegotiateProtocolResponse{}
-	smb.Header.Protocol = header.Protocol
-	smb.Header.Command = header.Command
-	smb.Header.Status = [4]byte{0, 0, 0, 0}
-	smb.Header.Flags = 0x98
-	smb.Header.Flags2 = [2]byte{28, 1}
-
-	data, err := toBytes(smb)
-	return smb.Header, data, err
+type ComTransaction2Error struct {
+	Header    SMBHeader
+	WordCount byte
+	ByteCount [2]byte
 }
 
 type ComTransaction2Response struct {
@@ -154,9 +105,246 @@ type ComTransaction2Response struct {
 	Data12                [4]byte
 }
 
+// ValidateData locates the SMB1 magic (\xffSMB), skipping a Direct TCP / NBT
+// session header when present.
+func ValidateData(data []byte) (*bytes.Buffer, error) {
+	start := bytes.Index(data, []byte("\xffSMB"))
+	if start < 0 {
+		return nil, errors.New("packet is unrecognizable")
+	}
+	return bytes.NewBuffer(data[start:]), nil
+}
+
+// FrameOffset returns the start of the Direct TCP session header when the
+// buffer has at least 4 bytes before \xffSMB; otherwise the SMB magic offset.
+func FrameOffset(data []byte) int {
+	start := bytes.Index(data, []byte("\xffSMB"))
+	if start < 0 {
+		return 0
+	}
+	if start >= 4 {
+		return start - 4
+	}
+	return start
+}
+
+// WrapSessionMessage prefixes an SMB PDU with a Direct TCP (port 445) length header.
+func WrapSessionMessage(smbPDU []byte) []byte {
+	if len(smbPDU) > 0xffffff {
+		smbPDU = smbPDU[:0xffffff]
+	}
+	n := len(smbPDU)
+	out := make([]byte, 4+n)
+	out[0] = 0x00
+	out[1] = byte(n >> 16)
+	out[2] = byte(n >> 8)
+	out[3] = byte(n)
+	copy(out[4:], smbPDU)
+	return out
+}
+
+func flags2(h SMBHeader) uint16 {
+	return binary.LittleEndian.Uint16(h.Flags2[:])
+}
+
+func putUint16(b *bytes.Buffer, v uint16) {
+	var tmp [2]byte
+	binary.LittleEndian.PutUint16(tmp[:], v)
+	b.Write(tmp[:])
+}
+
+func putUint32(b *bytes.Buffer, v uint32) {
+	var tmp [4]byte
+	binary.LittleEndian.PutUint32(tmp[:], v)
+	b.Write(tmp[:])
+}
+
+func putFiletime(b *bytes.Buffer, t time.Time) {
+	const epochAsFiletime int64 = 116444736000000000
+	ft := epochAsFiletime + t.UnixNano()/100
+	putUint32(b, uint32(ft))
+	putUint32(b, uint32(ft>>32))
+}
+
+func encodeString(s string, unicode bool) []byte {
+	if !unicode {
+		return append([]byte(s), 0)
+	}
+	u := utf16.Encode([]rune(s + "\x00"))
+	out := make([]byte, len(u)*2)
+	for i, r := range u {
+		binary.LittleEndian.PutUint16(out[i*2:], r)
+	}
+	return out
+}
+
+func replyHeader(req SMBHeader) SMBHeader {
+	h := req
+	h.Status = [4]byte{0, 0, 0, 0}
+	h.Flags = req.Flags | flagsReply
+	// Clear security features on replies; keep client's PID/MID/TID/UID unless overridden.
+	h.SecurityFeatures = [8]byte{}
+	h.Reserved = [2]byte{}
+	f2 := flags2(req) | flags2NTStatus
+	binary.LittleEndian.PutUint16(h.Flags2[:], f2)
+	return h
+}
+
+func headerBytes(h SMBHeader) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, h); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func toBytes(smb interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	err := binary.Write(&buf, binary.LittleEndian, smb)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// DialectIndex returns the 0-based index of want in an SMB1 negotiate dialect
+// list (BufferFormat 0x02 + OEM string + NUL). Falls back to 0.
+func DialectIndex(dialects []byte, want string) uint16 {
+	parts := bytes.Split(dialects, []byte{0})
+	var idx uint16
+	for _, p := range parts {
+		if len(p) == 0 {
+			continue
+		}
+		name := p
+		if p[0] == 0x02 && len(p) > 1 {
+			name = p[1:]
+		}
+		if string(name) == want {
+			return idx
+		}
+		idx++
+	}
+	return 0
+}
+
+// MakeHeaderResponse builds a minimal success reply (WordCount=0, ByteCount=0).
+func MakeHeaderResponse(header SMBHeader) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	return h, append(hb, 0x00, 0x00, 0x00), nil
+}
+
+// MakeNegotiateProtocolResponse builds an SMB1 Negotiate response selecting NT LM 0.12.
+// dialectBytes is the negotiate data after WordCount/ByteCount (dialect strings); may be nil.
+func MakeNegotiateProtocolResponse(header SMBHeader, dialectBytes []byte) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	h.Command = cmdNegotiate
+	h.UID = [2]byte{}
+	h.TID = [2]byte{}
+
+	dialectIdx := DialectIndex(dialectBytes, ntLMDialect)
+	challenge := make([]byte, 8)
+	if _, err := rand.Read(challenge); err != nil {
+		return h, nil, err
+	}
+
+	unicode := flags2(h)&flags2Unicode != 0
+	domain := encodeString(primaryDomain, unicode)
+	server := encodeString("GLUTTON", unicode)
+
+	var body bytes.Buffer
+	body.WriteByte(17) // WordCount
+	putUint16(&body, dialectIdx)
+	body.WriteByte(0x03)      // SecurityMode: user-level + encrypted passwords
+	putUint16(&body, 50)      // MaxMpxCount
+	putUint16(&body, 1)       // MaxNumberVcs
+	putUint32(&body, 16644)   // MaxBufferSize
+	putUint32(&body, 65536)   // MaxRawSize
+	putUint32(&body, 0)       // SessionKey
+	putUint32(&body, capNTLM) // Capabilities
+	putFiletime(&body, time.Now().UTC())
+	putUint16(&body, 0) // ServerTimeZone
+	body.WriteByte(byte(len(challenge)))
+	putUint16(&body, uint16(len(challenge)+len(domain)+len(server)))
+	body.Write(challenge)
+	body.Write(domain)
+	body.Write(server)
+
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	return h, append(hb, body.Bytes()...), nil
+}
+
+// MakeSessionSetupAndXResponse builds an SMB1 Session Setup AndX success reply
+// assigning uid to the client.
+func MakeSessionSetupAndXResponse(header SMBHeader, uid uint16) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	h.Command = cmdSessionSetup
+	binary.LittleEndian.PutUint16(h.UID[:], uid)
+
+	unicode := flags2(h)&flags2Unicode != 0
+	nativeOSB := encodeString(nativeOS, unicode)
+	nativeLMB := encodeString(nativeLanMan, unicode)
+	domainB := encodeString(primaryDomain, unicode)
+	byteCount := len(nativeOSB) + len(nativeLMB) + len(domainB)
+
+	var body bytes.Buffer
+	body.WriteByte(3)    // WordCount
+	body.WriteByte(0xff) // AndXCommand: none
+	body.WriteByte(0)    // AndXReserved
+	putUint16(&body, 0)  // AndXOffset
+	putUint16(&body, 1)  // Action: guest
+	putUint16(&body, uint16(byteCount))
+	body.Write(nativeOSB)
+	body.Write(nativeLMB)
+	body.Write(domainB)
+
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	return h, append(hb, body.Bytes()...), nil
+}
+
+// MakeTreeConnectAndXResponse builds an SMB1 Tree Connect AndX success reply
+// assigning tid to the client.
+func MakeTreeConnectAndXResponse(header SMBHeader, tid uint16) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	h.Command = cmdTreeConnect
+	binary.LittleEndian.PutUint16(h.TID[:], tid)
+
+	unicode := flags2(h)&flags2Unicode != 0
+	service := append([]byte("A:"), 0) // disk share
+	fs := encodeString("NTFS", unicode)
+	byteCount := len(service) + len(fs)
+
+	var body bytes.Buffer
+	body.WriteByte(3)    // WordCount
+	body.WriteByte(0xff) // AndXCommand: none
+	body.WriteByte(0)    // AndXReserved
+	putUint16(&body, 0)  // AndXOffset
+	putUint16(&body, 1)  // OptionalSupport: SMB_SUPPORT_SEARCH_BITS
+	putUint16(&body, uint16(byteCount))
+	body.Write(service)
+	body.Write(fs)
+
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	return h, append(hb, body.Bytes()...), nil
+}
+
 func MakeComTransaction2Response(header SMBHeader) (SMBHeader, []byte, error) {
 	smb := ComTransaction2Response{}
-	smb.Header = header
+	smb.Header = replyHeader(header)
+	smb.Header.Command = header.Command
 	smb.WordCount = 0x0A
 	smb.TotalParameterCount = [2]byte{0x0A}
 	smb.TotalDataCount = [2]byte{196}
@@ -171,7 +359,6 @@ func MakeComTransaction2Response(header SMBHeader) (SMBHeader, []byte, error) {
 	smb.Reserved2 = 2
 	smb.ByteCount = [2]byte{209}
 	smb.Pad1 = 0
-	smb.SearchID = [2]byte{0xff, 0xfd}
 	smb.SearchCount = [2]byte{2}
 	smb.SearchID = [2]byte{1}
 	smb.ErrorOffset = [2]byte{}
@@ -195,38 +382,13 @@ func MakeComTransaction2Response(header SMBHeader) (SMBHeader, []byte, error) {
 	return smb.Header, data, err
 }
 
-type ComTransaction2Error struct {
-	Header    SMBHeader
-	WordCount byte
-	ByteCount [2]byte
-}
-
-// STATUS_INSUFF_SERVER_RESOURCES (0xC0000205) — unpatched MS17-010 fingerprint.
-var statusInsuffServerResources = [4]byte{0x05, 0x02, 0x00, 0xc0}
-
-type ComTransactionResponse struct {
-	Header                SMBHeader
-	WordCount             byte
-	TotalParameterCount   [2]byte
-	TotalDataCount        [2]byte
-	Reserved1             [2]byte
-	ParameterCount        [2]byte
-	ParameterOffset       [2]byte
-	ParameterDisplacement [2]byte
-	DataCount             [2]byte
-	DataOffset            [2]byte
-	DataDisplacement      [2]byte
-	SetupCount            byte
-	Reserved2             byte
-}
-
 // MakeComTransactionResponse builds an SMB_COM_TRANSACTION reply that reports
 // STATUS_INSUFF_SERVER_RESOURCES, the NT status MS17-010 scanners treat as vulnerable.
 func MakeComTransactionResponse(header SMBHeader) (SMBHeader, []byte, error) {
 	smb := ComTransaction2Error{}
-	smb.Header = header
+	smb.Header = replyHeader(header)
+	smb.Header.Command = header.Command
 	smb.Header.Status = statusInsuffServerResources
-	smb.Header.Flags = header.Flags | 0x80
 	smb.WordCount = 0x00
 	smb.ByteCount = [2]byte{}
 
@@ -236,40 +398,10 @@ func MakeComTransactionResponse(header SMBHeader) (SMBHeader, []byte, error) {
 
 func MakeComTransaction2Error(header SMBHeader) (SMBHeader, []byte, error) {
 	smb := ComTransaction2Error{}
-	smb.Header = header
+	smb.Header = replyHeader(header)
 	smb.Header.Status = [4]byte{0x02, 0x00, 0x00, 0xc0}
 	smb.WordCount = 0x00
 	smb.ByteCount = [2]byte{}
-
-	data, err := toBytes(smb)
-	return smb.Header, data, err
-}
-
-func MakeNegotiateProtocolResponse(header SMBHeader) (SMBHeader, []byte, error) {
-	id := uuid.New()
-	smb := NegotiateProtocolResponse{}
-	smb.Header.Protocol = header.Protocol
-	smb.Header.Command = header.Command
-	smb.Header.Status = [4]byte{0, 0, 0, 0}
-	smb.Header.Flags = 0x98
-	smb.Header.Flags2 = [2]byte{28, 1}
-	smb.StructureSize = [2]byte{65}
-	smb.SecurityMode = [2]byte{0x0003}
-	smb.DialectRevision = [2]byte{0x03, 0x00}
-	b, err := id.MarshalBinary()
-	if err != nil {
-		return SMBHeader{}, nil, err
-	}
-	copy(smb.ServerGUID[:], b)
-	smb.Capabilities = [4]byte{0x80, 0x01, 0xe3, 0xfc}
-	smb.MaxTransactSize = [4]byte{0x04, 0x11}
-	smb.MaxReadSize = [4]byte{0x00, 0x00, 0x01}
-	smb.SystemTime = filetime(0)
-	randomTime, err := random(1000, 2000)
-	if err != nil {
-		return SMBHeader{}, nil, err
-	}
-	smb.ServerStartTime = filetime(time.Duration(randomTime) * time.Hour)
 
 	data, err := toBytes(smb)
 	return smb.Header, data, err

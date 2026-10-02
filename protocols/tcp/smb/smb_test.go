@@ -2,6 +2,7 @@ package smb
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"testing"
 
@@ -26,6 +27,8 @@ func TestParseSMB(t *testing.T) {
 		"0024c4d312e325830303200024c414e4d414e322e3100024e54204c4d20302e313200"
 	data, _ := hex.DecodeString(raw)
 
+	require.Equal(t, 0, FrameOffset(data))
+
 	buffer, err := ValidateData(data)
 	require.NoError(t, err)
 
@@ -39,28 +42,116 @@ func TestParseSMB(t *testing.T) {
 
 	dialectString := bytes.Split(parsed.Data.DialectString, []byte("\x00"))
 	require.Equal(t, string(dialectString[0][:]), "\x02PC NETWORK PROGRAM 1.0", "dialect string mismatch")
+	require.Equal(t, uint16(5), DialectIndex(parsed.Data.DialectString, "NT LM 0.12"))
+}
+
+func TestValidateDataRequiresSMBMagic(t *testing.T) {
+	_, err := ValidateData([]byte{0xff, 0x00, 0x01})
+	require.Error(t, err)
+
+	buf, err := ValidateData([]byte{0x00, 0x00, 0x00, 0x04, 0xff, 'S', 'M', 'B'})
+	require.NoError(t, err)
+	require.Equal(t, []byte{0xff, 'S', 'M', 'B'}, buf.Bytes())
+	require.Equal(t, 0, FrameOffset([]byte{0x00, 0x00, 0x00, 0x04, 0xff, 'S', 'M', 'B'}))
+}
+
+func TestWrapSessionMessage(t *testing.T) {
+	pdu := []byte{0xff, 'S', 'M', 'B', 0x72}
+	framed := WrapSessionMessage(pdu)
+	require.Equal(t, byte(0x00), framed[0])
+	require.Equal(t, []byte{0x00, 0x00, 0x05}, framed[1:4])
+	require.Equal(t, pdu, framed[4:])
 }
 
 func TestMakeResponses(t *testing.T) {
+	req := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  0x72,
+		Flags:    0x18,
+		Flags2:   [2]byte{0x53, 0xc8},
+		PIDLow:   [2]byte{0xff, 0xfe},
+		MID:      [2]byte{0x40, 0x00},
+	}
+
 	tests := []struct {
-		name   string
-		header SMBHeader
-		f      func(SMBHeader) (SMBHeader, []byte, error)
+		name string
+		cmd  byte
+		run  func(SMBHeader) (SMBHeader, []byte, error)
 	}{
-		{name: "MakeHeaderResponse", header: SMBHeader{}, f: MakeHeaderResponse},
-		{name: "MakeComTransaction2Response", header: SMBHeader{Command: 0x32}, f: MakeComTransaction2Response},
-		{name: "MakeComTransactionResponse", header: SMBHeader{Command: 0x25}, f: MakeComTransactionResponse},
-		{name: "MakeComTransaction2Error", header: SMBHeader{}, f: MakeComTransaction2Error},
-		{name: "MakeNegotiateProtocolResponse", header: SMBHeader{Command: 0x25}, f: MakeNegotiateProtocolResponse},
+		{name: "MakeHeaderResponse", cmd: 0x72, run: MakeHeaderResponse},
+		{name: "MakeNegotiateProtocolResponse", cmd: 0x72, run: func(h SMBHeader) (SMBHeader, []byte, error) {
+			return MakeNegotiateProtocolResponse(h, nil)
+		}},
+		{name: "MakeSessionSetupAndXResponse", cmd: 0x73, run: func(h SMBHeader) (SMBHeader, []byte, error) {
+			return MakeSessionSetupAndXResponse(h, 1)
+		}},
+		{name: "MakeTreeConnectAndXResponse", cmd: 0x75, run: func(h SMBHeader) (SMBHeader, []byte, error) {
+			return MakeTreeConnectAndXResponse(h, 1)
+		}},
+		{name: "MakeComTransaction2Response", cmd: 0x32, run: MakeComTransaction2Response},
+		{name: "MakeComTransactionResponse", cmd: 0x25, run: MakeComTransactionResponse},
+		{name: "MakeComTransaction2Error", cmd: 0x32, run: MakeComTransaction2Error},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			responseHeader, data, err := test.f(test.header)
+			h := req
+			h.Command = test.cmd
+			responseHeader, data, err := test.run(h)
 			require.NoError(t, err)
 			require.NotEmpty(t, data)
-			require.NotEmpty(t, responseHeader, "invalid response header")
+			require.Equal(t, byte(0xff), data[0])
+			require.Equal(t, "SMB", string(data[1:4]))
+			require.True(t, responseHeader.Flags&flagsReply != 0, "reply flag must be set")
+			require.Equal(t, test.cmd, responseHeader.Command)
 		})
 	}
+}
+
+func TestMakeNegotiateSelectsNTLM(t *testing.T) {
+	dialects := []byte("\x02PC NETWORK PROGRAM 1.0\x00\x02NT LM 0.12\x00")
+	header := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  0x72,
+		Flags:    0x18,
+		Flags2:   [2]byte{0x03, 0xc0}, // Unicode + NT status
+	}
+	rh, data, err := MakeNegotiateProtocolResponse(header, dialects)
+	require.NoError(t, err)
+	require.Equal(t, byte(0x72), rh.Command)
+	require.True(t, rh.Flags&flagsReply != 0)
+	require.GreaterOrEqual(t, len(data), 32+1+2)
+	require.Equal(t, byte(17), data[32])                                 // WordCount
+	require.Equal(t, uint16(1), binary.LittleEndian.Uint16(data[33:35])) // dialect index of NT LM 0.12
+}
+
+func TestMakeSessionSetupAssignsUID(t *testing.T) {
+	header := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  0x73,
+		Flags:    0x18,
+		Flags2:   [2]byte{0x03, 0xc0},
+	}
+	rh, data, err := MakeSessionSetupAndXResponse(header, 0x41)
+	require.NoError(t, err)
+	require.Equal(t, uint16(0x41), binary.LittleEndian.Uint16(rh.UID[:]))
+	require.Equal(t, []byte{0x41, 0x00}, data[28:30])
+	require.Equal(t, byte(3), data[32]) // WordCount
+}
+
+func TestMakeTreeConnectAssignsTID(t *testing.T) {
+	header := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  0x75,
+		Flags:    0x18,
+		Flags2:   [2]byte{0x03, 0xc0},
+		UID:      [2]byte{0x41, 0x00},
+	}
+	rh, data, err := MakeTreeConnectAndXResponse(header, 0x08)
+	require.NoError(t, err)
+	require.Equal(t, uint16(0x08), binary.LittleEndian.Uint16(rh.TID[:]))
+	require.Equal(t, []byte{0x08, 0x00}, data[24:26])
+	require.Equal(t, byte(3), data[32])
+	require.Contains(t, string(data[32:]), "A:")
 }
 
 func TestMakeComTransactionResponseMS17010(t *testing.T) {
@@ -87,4 +178,18 @@ func TestMakeComTransactionResponseMS17010(t *testing.T) {
 	require.Equal(t, byte(0x00), data[32])
 	require.Equal(t, []byte{0x00, 0x00}, data[33:35])
 	require.Equal(t, statusInsuffServerResources[:], data[5:9])
+}
+
+func TestMakeComTransaction2SetsReplyFlag(t *testing.T) {
+	header := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  0x32,
+		Flags:    0x18,
+		UID:      [2]byte{0x01, 0x00},
+		MID:      [2]byte{0x41, 0x00},
+	}
+	rh, data, err := MakeComTransaction2Response(header)
+	require.NoError(t, err)
+	require.Equal(t, byte(0x98), rh.Flags)
+	require.Equal(t, byte(0x98), data[9])
 }
