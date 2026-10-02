@@ -12,7 +12,7 @@ canonical shape of a handler so new or refactored handlers stay consistent.
 | --- | --- |
 | `protocols/tcp/*.go` | One file per TCP protocol handler (`HandleSMTP`, `HandleSMB`, ...). |
 | `protocols/tcp/<proto>/` | Optional sub-package with pure parsing / response-building code (e.g. `protocols/tcp/smb/`, `protocols/tcp/rdp/`). |
-| `protocols/udp/*.go` | UDP handlers (`HandleUDP` catch-all, `HandleSIP`, …). |
+| `protocols/udp/*.go` | UDP handlers (`HandleUDP` catch-all, `HandleSIP`, `HandleOpenVPN`, `HandleMDNS`, …). |
 | `protocols/protocols.go` | Handler registry: maps rule `target` names to handler funcs. |
 | `protocols/interfaces/` | `Logger` and `Honeypot` interfaces every handler receives. |
 | `protocols/helpers/` | `FirstOrEmpty`, `Store` (content-addressed file storage). |

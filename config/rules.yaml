@@ -53,6 +53,9 @@ rules:
   - match: udp dst port 1194
     type: conn_handler
     target: openvpn
+  - match: udp dst port 5353
+    type: conn_handler
+    target: mdns
   - match: udp
     type: conn_handler
     target: udp

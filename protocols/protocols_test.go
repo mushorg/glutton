@@ -38,6 +38,7 @@ func TestMapUDPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "udp", "expected UDP handler")
 	require.Contains(t, m, "sip", "expected SIP UDP handler")
 	require.Contains(t, m, "openvpn", "expected OpenVPN UDP handler")
+	require.Contains(t, m, "mdns", "expected mDNS UDP handler")
 	ctx := context.Background()
 	err := m["udp"](ctx, &net.UDPAddr{}, &net.UDPAddr{}, []byte{}, connection.Metadata{})
 	require.NoError(t, err, "expected no error from connection handler")
