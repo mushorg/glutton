@@ -16,18 +16,20 @@ Glutton is a Linux-only Go binary that depends on iptables, libpcap, a C/C++ too
 | libpcap                         | Required by `github.com/google/gopacket/pcap`.                                                                           |
 | iptables                        | TPROXY rule management.                                                                                                  |
 | zlib + build-essential          | Spicy and cgo builds.                                                                                                    |
-| clang / clang++                 | `Makefile` uses `CC=clang CXX=clang++`; CI installs clang 17.                                                            |
-| Spicy 1.13.1 under `/opt/spicy` | The cgo flags in `protocols/spicy/parser.go` expect headers under `/opt/spicy/include` and libraries under `/opt/spicy/lib`. |
+| clang-17 / clang++-17           | `Makefile` uses `CC=clang-17 CXX=clang++-17`; CI installs clang 17. Unversioned `clang` on Ubuntu 22.04 is often too old. |
+| Spicy 1.16.0 under `/opt/spicy` | The cgo flags in `protocols/spicy/parser.go` expect headers under `/opt/spicy/include` and libraries under `/opt/spicy/lib`. |
 
 ## Build
 
-CI runs on Ubuntu. Other distros need equivalent packages.
+CI runs on Ubuntu 24.04 (`ubuntu-latest`). Other distros need equivalent packages. Install the Spicy deb that matches your host release (`spicy_linux_ubuntu22.deb` on Ubuntu 22.04 / jammy, `spicy_linux_ubuntu24.deb` on Ubuntu 24.04).
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y libpcap-dev iptables zlib1g-dev build-essential clang
+sudo apt-get install -y libpcap-dev iptables zlib1g-dev build-essential clang-17
 
-wget https://github.com/zeek/spicy/releases/download/v1.13.1/spicy_linux_ubuntu24.deb
+# Pick the deb for your Ubuntu release (example: 24.04 / CI):
+wget https://github.com/zeek/spicy/releases/download/v1.16.0/spicy_linux_ubuntu24.deb
+# On Ubuntu 22.04, use spicy_linux_ubuntu22.deb instead.
 sudo dpkg --install spicy_linux_ubuntu24.deb
 sudo apt-get install -f -y
 rm spicy_linux_ubuntu24.deb

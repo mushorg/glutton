@@ -21,5 +21,5 @@ See [Getting started](docs/setup.md) for the toolchain, Spicy/HILTI, and Glutton
 
 - **Format** Mirror the structure of existing handlers in `protocols/tcp/` and `protocols/udp/`.
 - **Respect the boundary:** parsing belongs in `.spicy` files, protocol logic in Go. Never commit generated parser artifacts — they're git-ignored.
-- **Test before pushing:** run `go test ./protocols/... ./rules/...` while iterating, and the full `CC=clang CXX=clang++ go test ./...` (Spicy must be installed) before opening a PR. If you changed any `.spicy` file, run `make spicy` first so tests pick up the regenerated parser.
+- **Test before pushing:** run `go test ./protocols/... ./rules/...` while iterating, and the full `CC=clang-17 CXX=clang++-17 go test ./...` (Spicy must be installed) before opening a PR. If you changed any `.spicy` file, run `make spicy` first so tests pick up the regenerated parser.
 - **Write a focused PR:** describe what changed, how you tested it, and which docs moved with it. Keep unrelated cleanup in its own PR.
