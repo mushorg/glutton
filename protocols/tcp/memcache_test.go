@@ -137,11 +137,10 @@ func TestHandleMemcacheEarlyDisconnect(t *testing.T) {
 	client, serverConn := net.Pipe()
 
 	hp := newFakeHoneypot()
-	logger := &recordingLogger{}
 
 	done := make(chan error, 1)
 	go func() {
-		done <- handleMemcache(context.Background(), newMemcacheServer(serverConn), connection.Metadata{}, logger, hp)
+		done <- handleMemcache(context.Background(), newMemcacheServer(serverConn), connection.Metadata{}, &recordingLogger{}, hp)
 	}()
 
 	require.NoError(t, client.Close())
@@ -153,11 +152,11 @@ func TestHandleMemcacheEarlyDisconnect(t *testing.T) {
 		t.Fatal("handler did not finish")
 	}
 
-	produced := waitProduced(t, hp)
-	require.Equal(t, "memcache", produced.protocol)
-	events, ok := produced.decoded.([]parsedMemcache)
-	require.True(t, ok)
-	require.Empty(t, events)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("connect-only probe should not produce an event, got: %+v", extra)
+	case <-time.After(100 * time.Millisecond):
+	}
 }
 
 func TestHandleMemcacheStatsOnlyPayloadNoPadding(t *testing.T) {
@@ -190,4 +189,55 @@ func TestHandleMemcacheStatsOnlyPayloadNoPadding(t *testing.T) {
 	events := produced.decoded.([]parsedMemcache)
 	require.Equal(t, []byte("stats\r\n"), events[0].Payload)
 	require.Len(t, events[0].Payload, 7)
+}
+
+func TestHandleMemcacheClientClosesAfterStats(t *testing.T) {
+	client, serverConn := net.Pipe()
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- handleMemcache(context.Background(), newMemcacheServer(serverConn), connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write([]byte("stats\r\n"))
+	require.NoError(t, err)
+	require.NoError(t, client.Close()) // scanner-style: do not read the STAT response
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	produced := waitProduced(t, hp)
+	events, ok := produced.decoded.([]parsedMemcache)
+	require.True(t, ok)
+	require.NotEmpty(t, events, "expected at least the stats read frame")
+	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, "stats", events[0].Command)
+	require.Equal(t, []byte("stats\r\n"), events[0].Payload)
+}
+
+func TestHandleMemcachePartialLineOnEOF(t *testing.T) {
+	client, serverConn := net.Pipe()
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- handleMemcache(context.Background(), newMemcacheServer(serverConn), connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write([]byte("stats")) // no newline
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	produced := waitProduced(t, hp)
+	events, ok := produced.decoded.([]parsedMemcache)
+	require.True(t, ok)
+	require.GreaterOrEqual(t, len(events), 1)
+	require.Equal(t, "stats", events[0].Command)
+	require.Equal(t, []byte("stats"), events[0].Payload)
 }

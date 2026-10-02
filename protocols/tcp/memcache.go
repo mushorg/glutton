@@ -120,8 +120,12 @@ func HandleMemcache(ctx context.Context, conn net.Conn, md connection.Metadata, 
 func handleMemcache(ctx context.Context, server *memcacheServer, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	conn := server.conn
 	defer func() {
-		if err := h.ProduceTCP("memcache", conn, md, helpers.FirstOrEmpty[parsedMemcache](server.events).Payload, server.events); err != nil {
-			logger.Error("Failed to produce message", slog.String("protocol", "memcache"), producer.ErrAttr(err))
+		// No greeting is sent, so a connect-only probe leaves events empty.
+		// Skip producing those — they show up in Ochi as a useless `[]`.
+		if len(server.events) > 0 {
+			if err := h.ProduceTCP("memcache", conn, md, helpers.FirstOrEmpty[parsedMemcache](server.events).Payload, server.events); err != nil {
+				logger.Error("Failed to produce message", slog.String("protocol", "memcache"), producer.ErrAttr(err))
+			}
 		}
 		if err := conn.Close(); err != nil {
 			logger.Debug("Failed to close memcache connection", slog.String("protocol", "memcache"), producer.ErrAttr(err))
@@ -135,77 +139,76 @@ func handleMemcache(ctx context.Context, server *memcacheServer, md connection.M
 		}
 
 		line, err := server.readLine()
+		// ReadString returns any bytes already buffered when the delimiter is
+		// missing (EOF/timeout). Scanners sometimes omit the trailing newline;
+		// still record and handle that partial command before exiting.
+		if len(line) > 0 {
+			done, handleErr := server.handleCommand(line)
+			if handleErr != nil {
+				logger.Debug("Failed to write response", slog.String("protocol", "memcache"), producer.ErrAttr(handleErr))
+				return nil
+			}
+			if done {
+				return nil
+			}
+		}
 		if err != nil {
 			logger.Debug("Failed to read data", slog.String("protocol", "memcache"), producer.ErrAttr(err))
 			break
 		}
-
-		command := memcacheVerb(line)
-		payload := []byte(line)
-		parts := strings.Fields(strings.Trim(line, "\r\n"))
-
-		switch command {
-		case "stats":
-			server.recordRead(command, payload)
-			if err := server.write(memcacheStatsResponse()); err != nil {
-				return err
-			}
-		case "get", "gets":
-			server.recordRead(command, payload)
-			keys := []string{}
-			if len(parts) > 1 {
-				keys = parts[1:]
-			}
-			if err := server.write(memcacheGetResponse(keys, server.dataMap)); err != nil {
-				return err
-			}
-		case "set", "add", "replace":
-			if len(parts) < 5 {
-				server.recordRead(command, payload)
-				if err := server.write([]byte("CLIENT_ERROR bad command line format\r\n")); err != nil {
-					return err
-				}
-				continue
-			}
-			nbytes, err := strconv.Atoi(parts[4])
-			if err != nil || nbytes < 0 || nbytes > maxMemcacheBody {
-				server.recordRead(command, payload)
-				if err := server.write([]byte("CLIENT_ERROR bad data chunk\r\n")); err != nil {
-					return err
-				}
-				continue
-			}
-			body := make([]byte, nbytes+2) // data + trailing \r\n
-			if _, err := io.ReadFull(server.bufin, body); err != nil {
-				server.recordRead(command, payload)
-				logger.Debug("Failed to read set body", slog.String("protocol", "memcache"), producer.ErrAttr(err))
-				break
-			}
-			// Keep the CRLF terminator in the stored payload; strip it from the value map.
-			value := body[:nbytes]
-			payload = append(payload, body...)
-			server.recordRead(command, payload)
-			server.dataMap[parts[1]] = string(value)
-			noreply := len(parts) >= 6 && parts[5] == "noreply"
-			if !noreply {
-				if err := server.write([]byte("STORED\r\n")); err != nil {
-					return err
-				}
-			}
-		case "quit":
-			server.recordRead(command, payload)
-			return nil
-		case "version":
-			server.recordRead(command, payload)
-			if err := server.write([]byte("VERSION 1.6.22\r\n")); err != nil {
-				return err
-			}
-		default:
-			server.recordRead(command, payload)
-			if err := server.write([]byte("ERROR\r\n")); err != nil {
-				return err
-			}
-		}
 	}
 	return nil
+}
+
+// handleCommand processes one client command line. done is true for quit.
+func (s *memcacheServer) handleCommand(line string) (done bool, err error) {
+	command := memcacheVerb(line)
+	payload := []byte(line)
+	parts := strings.Fields(strings.Trim(line, "\r\n"))
+
+	switch command {
+	case "stats":
+		s.recordRead(command, payload)
+		return false, s.write(memcacheStatsResponse())
+	case "get", "gets":
+		s.recordRead(command, payload)
+		keys := []string{}
+		if len(parts) > 1 {
+			keys = parts[1:]
+		}
+		return false, s.write(memcacheGetResponse(keys, s.dataMap))
+	case "set", "add", "replace":
+		if len(parts) < 5 {
+			s.recordRead(command, payload)
+			return false, s.write([]byte("CLIENT_ERROR bad command line format\r\n"))
+		}
+		nbytes, convErr := strconv.Atoi(parts[4])
+		if convErr != nil || nbytes < 0 || nbytes > maxMemcacheBody {
+			s.recordRead(command, payload)
+			return false, s.write([]byte("CLIENT_ERROR bad data chunk\r\n"))
+		}
+		body := make([]byte, nbytes+2) // data + trailing \r\n
+		if _, readErr := io.ReadFull(s.bufin, body); readErr != nil {
+			s.recordRead(command, payload)
+			return false, readErr
+		}
+		value := body[:nbytes]
+		payload = append(payload, body...)
+		s.recordRead(command, payload)
+		s.dataMap[parts[1]] = string(value)
+		noreply := len(parts) >= 6 && parts[5] == "noreply"
+		if noreply {
+			return false, nil
+		}
+		return false, s.write([]byte("STORED\r\n"))
+	case "quit":
+		s.recordRead(command, payload)
+		return true, nil
+	case "version":
+		s.recordRead(command, payload)
+		return false, s.write([]byte("VERSION 1.6.22\r\n"))
+	default:
+		s.recordRead(command, payload)
+		return false, s.write([]byte("ERROR\r\n"))
+	}
 }
