@@ -58,7 +58,7 @@ The sensor ID is stored as binary UUID data in `<var-dir>/glutton.id`. Default `
 3. If no rule matches, target `udp` is used.
 4. The packet is registered and the handler runs in a goroutine.
 
-The UDP handler map includes `sip` (UDP/5060 OPTIONS replies with structured decoded frames), `openvpn` (UDP/1194 parse-only opcode/session tagging), `mdns` (UDP/5353 parse-only DNS question tagging), and the generic `udp` catch-all.
+The UDP handler map includes `sip` (UDP/5060 OPTIONS replies with structured decoded frames), `openvpn` (UDP/1194 parse-only opcode/session tagging), `mdns` (UDP/5353 parse-only DNS question tagging), `l2tp` (UDP/1701 SCCRQ → SCCRP with message/host/vendor tagging), and the generic `udp` catch-all.
 
 ## Spicy boundary
 
