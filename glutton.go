@@ -49,6 +49,7 @@ var defaultConfig []byte
 
 func (g *Glutton) initConfig() error {
 	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
 	viper.AddConfigPath(viper.GetString("confpath"))
 	if _, err := os.Stat(viper.GetString("confpath")); !os.IsNotExist(err) {
 		g.Logger.Info("Using configuration file", slog.String("path", viper.GetString("confpath")), slog.String("reporter", "glutton"))
