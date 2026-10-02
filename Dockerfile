@@ -1,5 +1,5 @@
 # build container
-FROM golang:1.23-alpine AS build-env
+FROM golang:1.26-alpine AS build-env
 RUN set -ex && apk add --no-cache gcc musl-dev git make iptables-dev libpcap-dev
 
 RUN mkdir -p /opt/glutton
