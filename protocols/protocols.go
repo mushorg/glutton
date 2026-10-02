@@ -25,6 +25,9 @@ func MapUDPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 	protocolHandlers["sip"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
 		return udp.HandleSIP(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
+	protocolHandlers["openvpn"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
+		return udp.HandleOpenVPN(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
 	protocolHandlers["udp"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
 		return udp.HandleUDP(ctx, srcAddr, dstAddr, data, md, log, h)
 	}

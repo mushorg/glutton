@@ -50,6 +50,9 @@ rules:
   - match: tcp
     type: conn_handler
     target: tcp
+  - match: udp dst port 1194
+    type: conn_handler
+    target: openvpn
   - match: udp
     type: conn_handler
     target: udp
