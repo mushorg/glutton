@@ -1,0 +1,18 @@
+{
+    "name": "Glutton Dev Environment",
+    "dockerFile": "../Dockerfile.local",
+    "postCreateCommand": "go mod download",
+    "capAdd": ["NET_ADMIN"],
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "go.useLanguageServer": true
+            },
+            "extensions": [
+                "ms-vscode.go",
+                "golang.go",
+                "streetsidesoftware.code-spell-checker"
+            ]
+        }
+    }
+}

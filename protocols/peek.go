@@ -3,6 +3,7 @@ package protocols
 import (
 	"bufio"
 	"net"
+	"time"
 )
 
 // BufferedConn provides an interface to peek at a connection
@@ -26,6 +27,9 @@ func (b BufferedConn) Read(p []byte) (int, error) {
 // Peek reads `length` amount of data from the connection
 func Peek(conn net.Conn, length int) ([]byte, BufferedConn, error) {
 	bufConn := newBufferedConn(conn)
+	if err := bufConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
+		return nil, bufConn, err
+	}
 	snip, err := bufConn.peek(length)
 	return snip, bufConn, err
 }

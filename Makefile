@@ -20,7 +20,11 @@ upx:
 default: build
 
 build:
-	go build -ldflags=$(LDFLAGS) -o bin/server app/server.go
+	CC=clang-17 CXX=clang++-17 go build -ldflags=$(LDFLAGS) -o bin/server app/server.go
+
+.PHONY: spicy
+spicy:
+	cd protocols/spicy && make
 
 static:
 	go build --ldflags '-extldflags "-static"' -o bin/server app/server.go
@@ -30,11 +34,11 @@ clean:
 	rm -rf bin/
 
 run: build
-	sudo bin/server -i eth0
+	sudo bin/server
 
 docker:
 	docker build --progress=plain -t glutton .
 	docker run --rm --cap-add=NET_ADMIN -it --name glutton glutton 
 
-test:
+test: spicy
 	go test -v ./...

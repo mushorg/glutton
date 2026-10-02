@@ -24,11 +24,11 @@ func TestProducerLog(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, p)
 
-	l, err := net.Listen("tcp", ":1234")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	require.NotNil(t, l)
 	defer l.Close()
-	conn, err := net.Dial("tcp", ":1234")
+	conn, err := net.Dial(l.Addr().Network(), l.Addr().String())
 	require.NoError(t, err)
 	require.NoError(t, conn.Close())
 	md := connection.Metadata{

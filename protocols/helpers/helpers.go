@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
-	"path"
 	"path/filepath"
 )
 
@@ -16,20 +15,18 @@ func FirstOrEmpty[T any](s []T) T {
 	return t
 }
 
-func StorePayload(data []byte, paths ...string) (string, error) {
-	paths = append([]string{"payloads"}, paths...)
-	path := path.Join(paths...)
-	if err := os.MkdirAll(path, os.ModePerm); err != nil {
+func Store(data []byte, folder string) (string, error) {
+	sum := sha256.Sum256(data)
+	if err := os.MkdirAll(folder, os.ModePerm); err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(data)
 	sha256Hash := hex.EncodeToString(sum[:])
-	filePath := filepath.Join(path, sha256Hash)
-	if _, err := os.Stat(filePath); err == nil {
+	path := filepath.Join(folder, sha256Hash)
+	if _, err := os.Stat(path); err == nil {
 		// file already exists
 		return "", nil
 	}
-	out, err := os.Create(filePath)
+	out, err := os.Create(path)
 	if err != nil {
 		return "", err
 	}

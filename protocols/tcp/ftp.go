@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -91,7 +92,7 @@ func (s *ftpServer) ftpSTOR(ip string, port int) (ftpResponse, string) {
 		return ftpResponse{StatusActionNotTaken, "Failed to read file."}, ""
 	}
 
-	fileHash, err := helpers.StorePayload(buffer, "ftp")
+	fileHash, err := helpers.Store(buffer, filepath.Join("payloads", "ftp"))
 	if err != nil {
 		return ftpResponse{StatusActionNotTaken, "Failed to store file."}, ""
 	}

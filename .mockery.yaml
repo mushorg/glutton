@@ -1,0 +1,9 @@
+with-expecter: true
+packages:
+    github.com/mushorg/glutton/protocols/interfaces:
+        # place your package-specific config here
+        config:
+            all: true
+            dir: protocols/mocks/
+            filename: mock_{{.InterfaceName | lower}}.go
+            outpkg: mocks

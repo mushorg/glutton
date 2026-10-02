@@ -30,9 +30,20 @@ _testmain.go
 # Artifacts
 glutton.log*
 payloads/
+samples/
 
 # PoCs
 poc/
 
 # Dev
 .vscode
+.cache/
+.codex/
+docs/engineering-guidelines.md
+docs/roadmap.md
+openspec/
+*.deb
+
+# Spicy generated files
+protocols/spicy/*.cc
+protocols/spicy/parsers/*.h

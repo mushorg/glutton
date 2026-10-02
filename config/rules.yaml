@@ -29,6 +29,21 @@ rules:
   - match: tcp dst port 11211
     type: conn_handler
     target: memcache
+  - match: tcp dst port 3260
+    type: conn_handler
+    target: iscsi
+  - match: tcp dst port 27017
+    type: conn_handler
+    target: mongodb
+  - match: tcp dst port 502
+    type: conn_handler
+    target: modbus
+  - match: tcp dst port 9889
+    type: proxy_tcp
+    target: 127.0.0.1:9889
+  - match: tcp dst port 3306
+    type: proxy_tcp
+    target: 127.0.0.1:3306
   - match: tcp
     type: conn_handler
     target: tcp

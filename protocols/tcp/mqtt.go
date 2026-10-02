@@ -70,13 +70,8 @@ func HandleMQTT(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 					Length:     0,
 				}
 			}
-			var buf bytes.Buffer
-			if err = binary.Write(&buf, binary.LittleEndian, res); err != nil {
-				logger.Error("Failed to write buffer", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
-				break
-			}
-			if _, err = conn.Write(buf.Bytes()); err != nil {
-				logger.Error("Failed to write message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
+			if err = binary.Write(conn, binary.LittleEndian, res); err != nil {
+				logger.Error("Failed to write message", producer.ErrAttr(err), slog.String("handler", "mqtt"))
 				break
 			}
 		} else {
