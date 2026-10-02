@@ -62,3 +62,29 @@ func TestMakeResponses(t *testing.T) {
 		})
 	}
 }
+
+func TestMakeComTransactionResponseMS17010(t *testing.T) {
+	header := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  0x25,
+		Flags:    0x18,
+		TID:      [2]byte{0x00, 0x08},
+		UID:      [2]byte{0x01, 0x00},
+		MID:      [2]byte{0x01, 0x00},
+	}
+
+	responseHeader, data, err := MakeComTransactionResponse(header)
+	require.NoError(t, err)
+	require.Equal(t, statusInsuffServerResources, responseHeader.Status)
+	require.Equal(t, byte(0x98), responseHeader.Flags) // request flags | reply
+	require.Equal(t, header.Command, responseHeader.Command)
+	require.Equal(t, header.TID, responseHeader.TID)
+	require.Equal(t, header.UID, responseHeader.UID)
+	require.Equal(t, header.MID, responseHeader.MID)
+
+	// Error-style body: WordCount=0, ByteCount=0 after the 32-byte SMB header.
+	require.GreaterOrEqual(t, len(data), 35)
+	require.Equal(t, byte(0x00), data[32])
+	require.Equal(t, []byte{0x00, 0x00}, data[33:35])
+	require.Equal(t, statusInsuffServerResources[:], data[5:9])
+}

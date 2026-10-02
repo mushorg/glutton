@@ -201,6 +201,9 @@ type ComTransaction2Error struct {
 	ByteCount [2]byte
 }
 
+// STATUS_INSUFF_SERVER_RESOURCES (0xC0000205) — unpatched MS17-010 fingerprint.
+var statusInsuffServerResources = [4]byte{0x05, 0x02, 0x00, 0xc0}
+
 type ComTransactionResponse struct {
 	Header                SMBHeader
 	WordCount             byte
@@ -217,12 +220,15 @@ type ComTransactionResponse struct {
 	Reserved2             byte
 }
 
+// MakeComTransactionResponse builds an SMB_COM_TRANSACTION reply that reports
+// STATUS_INSUFF_SERVER_RESOURCES, the NT status MS17-010 scanners treat as vulnerable.
 func MakeComTransactionResponse(header SMBHeader) (SMBHeader, []byte, error) {
-	smb := ComTransactionResponse{}
+	smb := ComTransaction2Error{}
 	smb.Header = header
-	smb.WordCount = 10
-	smb.ParameterOffset = [2]byte{56}
-	smb.DataOffset = [2]byte{56}
+	smb.Header.Status = statusInsuffServerResources
+	smb.Header.Flags = header.Flags | 0x80
+	smb.WordCount = 0x00
+	smb.ByteCount = [2]byte{}
 
 	data, err := toBytes(smb)
 	return smb.Header, data, err
