@@ -15,6 +15,9 @@ import (
 	"github.com/spf13/viper"
 )
 
+// peek enough of the HTTP request line to detect /mcp or /sse
+const mcpRequestLinePeek = 96
+
 type TCPHandlerFunc func(ctx context.Context, conn net.Conn, md connection.Metadata) error
 
 type UDPHandlerFunc func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error
@@ -88,6 +91,9 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 	protocolHandlers["http"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		return tcp.HandleHTTP(ctx, conn, md, log, h)
 	}
+	protocolHandlers["mcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		return tcp.HandleMCP(ctx, conn, md, log, h)
+	}
 	protocolHandlers["modbus"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		return tcp.HandleModbus(ctx, conn, md, log, h)
 	}
@@ -109,6 +115,13 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 			if protocol, ok := parseTCPProtocol(snip, log); ok {
 				switch protocol {
 				case "http":
+					reqLine, httpConn, peekErr := Peek(bufConn, mcpRequestLinePeek)
+					if peekErr == nil && tcp.LooksLikeMCP(reqLine) {
+						return tcp.HandleMCP(ctx, httpConn, md, log, h)
+					}
+					if peekErr == nil {
+						bufConn = httpConn
+					}
 					return spicyHandlers.HandleHTTP(ctx, bufConn, md, log, h)
 				case "rdp":
 					return tcp.HandleRDP(ctx, bufConn, md, log, h)

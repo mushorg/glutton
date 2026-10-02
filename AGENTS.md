@@ -131,6 +131,7 @@ func HandleX(ctx context.Context, conn net.Conn, md connection.Metadata, logger 
 | `protocols/tcp/mongodb.go` | length-prefixed binary | `io.ReadFull` header then body; opcode names in decoded frames. |
 | `protocols/tcp/telnet.go` | interactive text | Multi-step prompt flow, fetches samples asynchronously. |
 | `protocols/tcp/tcp.go` | catch-all | Reads up to `max_tcp_payload`, replies with random bytes. |
+| `protocols/tcp/mcp.go` | HTTP JSON-RPC session | Streamable HTTP MCP; keeps session past `initialize`. |
 | `protocols/tcp/proxy_tcp.go` | transparent proxy | Per-direction capture with byte caps and `truncated` flag. |
 
 ## Checklist for a new or changed handler

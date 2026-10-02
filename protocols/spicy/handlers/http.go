@@ -134,7 +134,12 @@ func handleVMwareSend(ctx context.Context, body []byte, uri string, md connectio
 }
 
 func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log interfaces.Logger, hp interfaces.Honeypot) error {
-	defer conn.Close()
+	handoff := false
+	defer func() {
+		if !handoff {
+			_ = conn.Close()
+		}
+	}()
 
 	payload, err := spicy.ReadInitialBytes("http", conn)
 	if err != nil {
@@ -161,6 +166,11 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 	}
 	query, _ := parsed.Fields["uri.query"].(string)
 	version, _ := parsed.Fields["version.number"].(string)
+
+	if tcp.IsMCPPath(path) {
+		handoff = true
+		return tcp.HandleMCP(ctx, tcp.PrependConn(conn, payload), md, log, hp)
+	}
 
 	var body []byte
 	if v, ok := parsed.Fields["body.content"]; ok {

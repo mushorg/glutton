@@ -55,6 +55,8 @@ func TestMapTCPProtocolHandlers(t *testing.T) {
 	h.AssertExpectations(t)
 	l.AssertExpectations(t)
 	require.Contains(t, m, "tcp", "expected TCP handler")
+	require.Contains(t, m, "mcp", "expected MCP handler")
+	require.Contains(t, m, "memcache", "expected memcache handler")
 	ctx := context.Background()
 	conn, close := testConn(t)
 	defer close()

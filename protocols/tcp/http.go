@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"strconv"
 	"strings"
 
@@ -117,7 +118,11 @@ type decodedHTTP struct {
 
 // HandleHTTP takes a net.Conn and does basic HTTP communication
 func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+	handoff := false
 	defer func() {
+		if handoff {
+			return
+		}
 		err := conn.Close()
 		if err != nil {
 			logger.Error("Failed to close the HTTP connection", producer.ErrAttr(err))
@@ -127,6 +132,15 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 	req, err := http.ReadRequest(bufio.NewReader(conn))
 	if err != nil {
 		return fmt.Errorf("failed to read the HTTP request: %w", err)
+	}
+
+	if IsMCPPath(req.URL.EscapedPath()) {
+		raw, dumpErr := httputil.DumpRequest(req, true)
+		if dumpErr != nil {
+			return fmt.Errorf("failed to dump MCP HTTP request: %w", dumpErr)
+		}
+		handoff = true
+		return HandleMCP(ctx, PrependConn(conn, raw), md, logger, h)
 	}
 
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
