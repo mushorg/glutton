@@ -38,6 +38,14 @@ func NewLogger(id string) *slog.Logger {
 			Compress: true, // disabled by default
 		},
 	}
-	handler := slog.NewJSONHandler(writer, &slog.HandlerOptions{})
+	handlerOptions := &slog.HandlerOptions{}
+	debug := viper.GetBool("debug")
+	switch debug {
+	case true:
+		handlerOptions.Level = slog.Leveler(slog.LevelDebug)
+	default:
+		handlerOptions.Level = slog.Leveler(slog.LevelInfo)
+	}
+	handler := slog.NewJSONHandler(writer, handlerOptions)
 	return slog.New(handler.WithAttrs([]slog.Attr{slog.String("sensorID", id)}))
 }
