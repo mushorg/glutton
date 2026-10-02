@@ -358,9 +358,23 @@ func (g *Glutton) ProduceTCP(handler string, conn net.Conn, md connection.Metada
 func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md connection.Metadata, payload []byte, decoded interface{}) error {
 	if g.Producer != nil {
 		payload = g.sanitizePayload(payload)
-		return g.Producer.LogUDP("udp", srcAddr, md, payload, decoded)
+		return g.Producer.LogUDP(handler, srcAddr, md, payload, decoded)
 	}
 	return nil
+}
+
+// ReplyUDP sends a transparent UDP response to srcAddr, sourced from dstAddr.
+func (g *Glutton) ReplyUDP(srcAddr, dstAddr *net.UDPAddr, payload []byte) error {
+	if srcAddr == nil || dstAddr == nil {
+		return fmt.Errorf("nil udp address")
+	}
+	conn, err := tproxy.DialUDP("udp4", dstAddr, srcAddr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_, err = conn.Write(payload)
+	return err
 }
 
 // Shutdown the packet processor

@@ -228,6 +228,54 @@ func (_c *MockHoneypot_ProduceUDP_Call) RunAndReturn(run func(string, *net.UDPAd
 	return _c
 }
 
+// ReplyUDP provides a mock function with given fields: srcAddr, dstAddr, payload
+func (_m *MockHoneypot) ReplyUDP(srcAddr *net.UDPAddr, dstAddr *net.UDPAddr, payload []byte) error {
+	ret := _m.Called(srcAddr, dstAddr, payload)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ReplyUDP")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(*net.UDPAddr, *net.UDPAddr, []byte) error); ok {
+		r0 = rf(srcAddr, dstAddr, payload)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockHoneypot_ReplyUDP_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ReplyUDP'
+type MockHoneypot_ReplyUDP_Call struct {
+	*mock.Call
+}
+
+// ReplyUDP is a helper method to define mock.On call
+//   - srcAddr *net.UDPAddr
+//   - dstAddr *net.UDPAddr
+//   - payload []byte
+func (_e *MockHoneypot_Expecter) ReplyUDP(srcAddr interface{}, dstAddr interface{}, payload interface{}) *MockHoneypot_ReplyUDP_Call {
+	return &MockHoneypot_ReplyUDP_Call{Call: _e.mock.On("ReplyUDP", srcAddr, dstAddr, payload)}
+}
+
+func (_c *MockHoneypot_ReplyUDP_Call) Run(run func(srcAddr *net.UDPAddr, dstAddr *net.UDPAddr, payload []byte)) *MockHoneypot_ReplyUDP_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(*net.UDPAddr), args[1].(*net.UDPAddr), args[2].([]byte))
+	})
+	return _c
+}
+
+func (_c *MockHoneypot_ReplyUDP_Call) Return(_a0 error) *MockHoneypot_ReplyUDP_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockHoneypot_ReplyUDP_Call) RunAndReturn(run func(*net.UDPAddr, *net.UDPAddr, []byte) error) *MockHoneypot_ReplyUDP_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // UpdateConnectionTimeout provides a mock function with given fields: ctx, conn
 func (_m *MockHoneypot) UpdateConnectionTimeout(ctx context.Context, conn net.Conn) error {
 	ret := _m.Called(ctx, conn)

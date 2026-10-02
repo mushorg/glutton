@@ -12,7 +12,7 @@ canonical shape of a handler so new or refactored handlers stay consistent.
 | --- | --- |
 | `protocols/tcp/*.go` | One file per TCP protocol handler (`HandleSMTP`, `HandleSMB`, ...). |
 | `protocols/tcp/<proto>/` | Optional sub-package with pure parsing / response-building code (e.g. `protocols/tcp/smb/`, `protocols/tcp/rdp/`). |
-| `protocols/udp/udp.go` | UDP catch-all handler. |
+| `protocols/udp/*.go` | UDP handlers (`HandleUDP` catch-all, `HandleSIP`, …). |
 | `protocols/protocols.go` | Handler registry: maps rule `target` names to handler funcs. |
 | `protocols/interfaces/` | `Logger` and `Honeypot` interfaces every handler receives. |
 | `protocols/helpers/` | `FirstOrEmpty`, `Store` (content-addressed file storage). |
@@ -135,8 +135,8 @@ func HandleX(ctx context.Context, conn net.Conn, md connection.Metadata, logger 
 
 ## Checklist for a new or changed handler
 
-1. Handler in `protocols/tcp/<name>.go` following the skeleton above.
-2. Registration in `protocols/protocols.go` (`MapTCPProtocolHandlers`) and an assertion in `protocols/protocols_test.go`.
+1. Handler in `protocols/tcp/<name>.go` (or `protocols/udp/<name>.go`) following the skeleton above. UDP handlers that must answer use `h.ReplyUDP(srcAddr, dstAddr, payload)`.
+2. Registration in `protocols/protocols.go` (`MapTCPProtocolHandlers` / `MapUDPProtocolHandlers`) and an assertion in `protocols/protocols_test.go`.
 3. Rule in `config/rules.yaml`, placed before broad catch-alls.
 4. Tests beside the handler (`protocols/tcp/<name>_test.go`):
    - drive `HandleX` over `net.Pipe()` with the `fakeHoneypot` / `recordingLogger` helpers from `protocols/tcp/proxytcp_test.go` (or `mocks.MockHoneypot`);

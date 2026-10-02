@@ -51,7 +51,7 @@ Example shape:
 }
 ```
 
-`decoded` is handler-specific. For `proxy_tcp`, it contains per-direction entries (`direction`, `payload`, `payload_hash`, `bytes`, `truncated`) when `capture_traffic.enabled` is true; samples are capped by `max_tcp_payload`, and `truncated` reflects whether more bytes were forwarded than captured.
+`decoded` is handler-specific. For `proxy_tcp`, it contains per-direction entries (`direction`, `payload`, `payload_hash`, `bytes`, `truncated`) when `capture_traffic.enabled` is true; samples are capped by `max_tcp_payload`, and `truncated` reflects whether more bytes were forwarded than captured. For TCP/UDP `sip`, it is an array of per-direction frames (`direction`, `payload`, `message`); UDP OPTIONS probes get a `write` frame with the `200 OK` response.
 
 ## HTTP producer
 

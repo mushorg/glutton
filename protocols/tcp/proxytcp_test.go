@@ -89,6 +89,10 @@ func (h *fakeHoneypot) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr,
 	return nil
 }
 
+func (h *fakeHoneypot) ReplyUDP(srcAddr, dstAddr *net.UDPAddr, payload []byte) error {
+	return nil
+}
+
 func (h *fakeHoneypot) ConnectionByFlow([2]uint64) connection.Metadata {
 	return connection.Metadata{}
 }
