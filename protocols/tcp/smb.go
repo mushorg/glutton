@@ -132,12 +132,14 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 				return err
 			}
 		case 0x75: // SMB_COM_TREE_CONNECT_ANDX
-			responseHeader, resp, err = smb.MakeTreeConnectAndXResponse(header, server.nextTID())
+			share := smb.TreeConnectShare(header, smbBuf.Bytes())
+			responseHeader, resp, err = smb.MakeTreeConnectAndXResponse(header, server.nextTID(), share)
 			if err != nil {
 				return err
 			}
 		case 0x32: // SMB_COM_TRANSACTION2
-			responseHeader, resp, err = smb.MakeComTransaction2Response(header)
+			setup, setupOK := smb.Trans2Setup(smbBuf.Bytes())
+			responseHeader, resp, err = smb.MakeComTransaction2Reply(header, setup, setupOK)
 			if err != nil {
 				return err
 			}

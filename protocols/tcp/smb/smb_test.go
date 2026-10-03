@@ -86,7 +86,7 @@ func TestMakeResponses(t *testing.T) {
 			return MakeSessionSetupAndXResponse(h, 1)
 		}},
 		{name: "MakeTreeConnectAndXResponse", cmd: 0x75, run: func(h SMBHeader) (SMBHeader, []byte, error) {
-			return MakeTreeConnectAndXResponse(h, 1)
+			return MakeTreeConnectAndXResponse(h, 1, "C$")
 		}},
 		{name: "MakeComTransaction2Response", cmd: 0x32, run: MakeComTransaction2Response},
 		{name: "MakeComTransactionResponse", cmd: 0x25, run: MakeComTransactionResponse},
@@ -122,6 +122,9 @@ func TestMakeNegotiateSelectsNTLM(t *testing.T) {
 	require.GreaterOrEqual(t, len(data), 32+1+2)
 	require.Equal(t, byte(17), data[32])                                 // WordCount
 	require.Equal(t, uint16(1), binary.LittleEndian.Uint16(data[33:35])) // dialect index of NT LM 0.12
+	require.NotContains(t, string(data), "GLUTTON")
+	// Server NetBIOS name is UTF-16LE "SERVER".
+	require.Contains(t, string(data), string(encodeString(serverName, true)))
 }
 
 func TestMakeSessionSetupAssignsUID(t *testing.T) {
@@ -146,12 +149,91 @@ func TestMakeTreeConnectAssignsTID(t *testing.T) {
 		Flags2:   [2]byte{0x03, 0xc0},
 		UID:      [2]byte{0x41, 0x00},
 	}
-	rh, data, err := MakeTreeConnectAndXResponse(header, 0x08)
+	rh, data, err := MakeTreeConnectAndXResponse(header, 0x08, "C$")
 	require.NoError(t, err)
 	require.Equal(t, uint16(0x08), binary.LittleEndian.Uint16(rh.TID[:]))
 	require.Equal(t, []byte{0x08, 0x00}, data[24:26])
 	require.Equal(t, byte(3), data[32])
 	require.Contains(t, string(data[32:]), "A:")
+	require.Contains(t, string(data[32:]), "N\x00T\x00F\x00S\x00")
+}
+
+func TestMakeTreeConnectIPC(t *testing.T) {
+	header := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  0x75,
+		Flags:    0x18,
+		Flags2:   [2]byte{0x03, 0xc0},
+		UID:      [2]byte{0x01, 0x00},
+	}
+	rh, data, err := MakeTreeConnectAndXResponse(header, 0x01, "ipc$")
+	require.NoError(t, err)
+	require.Equal(t, uint16(0x01), binary.LittleEndian.Uint16(rh.TID[:]))
+	require.Equal(t, byte(3), data[32])
+	body := data[32:]
+	require.Contains(t, string(body), "IPC\x00")
+	require.NotContains(t, string(body), "A:")
+	require.NotContains(t, string(body), "N\x00T\x00F\x00S\x00")
+	// Service "IPC\0" then empty Unicode NativeFileSystem ("\0\0").
+	require.True(t, bytes.Contains(body, []byte("IPC\x00\x00\x00")))
+}
+
+func TestTreeConnectShareFromEvent(t *testing.T) {
+	// Tree Connect AndX from ochi event ebd8306b: \\192.168.56.20\IPC$
+	raw, err := hex.DecodeString(
+		"0000005cff534d4275000000001807c0" +
+			"0000000000000000000000000000fffe" +
+			"0100400004ff005c00080001003100" +
+			"005c005c003100390032002e0031003600" +
+			"38002e00350036002e00320030005c00" +
+			"490050004300240000003f3f3f3f3f00")
+	require.NoError(t, err)
+
+	buf, err := ValidateData(raw)
+	require.NoError(t, err)
+	header := SMBHeader{}
+	require.NoError(t, ParseHeader(buf, &header))
+	share := TreeConnectShare(header, buf.Bytes())
+	require.Equal(t, "IPC$", share)
+	require.True(t, IsIPCShare(share))
+}
+
+func TestTrans2SetupSessionSetup(t *testing.T) {
+	// Trans2 with Setup 0x000e (TRANS2_SESSION_SETUP) from ochi event ebd8306b.
+	raw, err := hex.DecodeString(
+		"0000004eff534d4232000000001807c0" +
+			"0000000000000000000000000100fffe" +
+			"010041000f0c00000001000000000000" +
+			"000134ee0000000c00420000004e0001" +
+			"000e000d0000000000000000000000000000")
+	require.NoError(t, err)
+
+	buf, err := ValidateData(raw)
+	require.NoError(t, err)
+	header := SMBHeader{}
+	require.NoError(t, ParseHeader(buf, &header))
+	setup, ok := Trans2Setup(buf.Bytes())
+	require.True(t, ok)
+	require.Equal(t, uint16(Trans2SessionSetup), setup)
+
+	rh, data, err := MakeComTransaction2Reply(header, setup, ok)
+	require.NoError(t, err)
+	require.Equal(t, uint32(statusNotImplemented), binary.LittleEndian.Uint32(rh.Status[:]))
+	require.Equal(t, byte(0x00), data[32])           // WordCount 0 error body
+	require.NotContains(t, string(data), "\x2e\x00") // no FIND_FIRST2 "." entry
+}
+
+func TestMakeComTransaction2FindFirst2(t *testing.T) {
+	header := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  0x32,
+		Flags:    0x18,
+		Flags2:   [2]byte{0x03, 0xc0},
+	}
+	rh, data, err := MakeComTransaction2Reply(header, Trans2FindFirst2, true)
+	require.NoError(t, err)
+	require.Equal(t, [4]byte{0, 0, 0, 0}, rh.Status)
+	require.Equal(t, byte(0x0A), data[32]) // WordCount of FIND_FIRST2 success
 }
 
 func TestMakeComTransactionResponseMS17010(t *testing.T) {

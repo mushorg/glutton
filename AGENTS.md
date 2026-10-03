@@ -144,7 +144,7 @@ func HandleX(ctx context.Context, conn net.Conn, md connection.Metadata, logger 
    - assert exactly one produced event, its protocol name, and the full `[]parsedX` slice;
    - cover malformed input / early disconnect so the deferred produce path is exercised;
    - unit-test pure parsing/response functions separately (see `protocols/tcp/smb/smb_test.go`).
-5. Docs in the same PR: handler key list in `docs/configuration.md`, decoded shape in `docs/logging.md`, handler notes in `.cursor/skills/analyze-glutton-events/reference.md` if the event shape is non-obvious.
+5. Docs in the same PR: handler key list in `docs/configuration.md`, decoded shape in `docs/logging.md` 
 
 ## Verify
 

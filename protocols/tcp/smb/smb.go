@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"strings"
 	"time"
 	"unicode/utf16"
 )
@@ -26,8 +27,20 @@ const (
 	nativeOS         = "Windows 5.1"
 	nativeLanMan     = "Windows 5.1"
 	primaryDomain    = "WORKGROUP"
+	serverName       = "SERVER"
 	ntLMDialect      = "NT LM 0.12"
+	// TRANS2 subcommands (MS-CIFS 2.2.6).
+	trans2FindFirst2   = 0x0001
+	trans2SessionSetup = 0x000e
+	// STATUS_NOT_IMPLEMENTED — plausible for unsupported Trans2 subcommands.
+	statusNotImplemented = 0xc0000002
 )
+
+// Trans2FindFirst2 is the TRANS2_FIND_FIRST2 subcommand (0x0001).
+const Trans2FindFirst2 = trans2FindFirst2
+
+// Trans2SessionSetup is the TRANS2_SESSION_SETUP subcommand (0x000e).
+const Trans2SessionSetup = trans2SessionSetup
 
 type SMBHeader struct {
 	Protocol         [4]byte
@@ -178,6 +191,96 @@ func encodeString(s string, unicode bool) []byte {
 	return out
 }
 
+func decodeOEMString(b []byte) (string, int) {
+	n := bytes.IndexByte(b, 0)
+	if n < 0 {
+		return string(b), len(b)
+	}
+	return string(b[:n]), n + 1
+}
+
+func decodeUnicodeString(b []byte) (string, int) {
+	var runes []uint16
+	i := 0
+	for i+1 < len(b) {
+		v := binary.LittleEndian.Uint16(b[i:])
+		i += 2
+		if v == 0 {
+			break
+		}
+		runes = append(runes, v)
+	}
+	return string(utf16.Decode(runes)), i
+}
+
+// TreeConnectShare extracts the share name from an SMB_COM_TREE_CONNECT_ANDX
+// request body positioned after the 32-byte SMB header. Returns "" on failure.
+func TreeConnectShare(header SMBHeader, body []byte) string {
+	unicode := flags2(header)&flags2Unicode != 0
+	// WordCount(1) + AndXCommand(1) + AndXReserved(1) + AndXOffset(2) +
+	// Flags(2) + PasswordLength(2) + ByteCount(2) = 11 bytes of fixed prefix.
+	const fixed = 11
+	if len(body) < fixed {
+		return ""
+	}
+	passLen := int(binary.LittleEndian.Uint16(body[7:9]))
+	off := fixed + passLen
+	if off > len(body) {
+		return ""
+	}
+	// Unicode Path is aligned to a 2-byte boundary relative to the SMB header
+	// start (32 + off must be even).
+	if unicode && (32+off)%2 != 0 {
+		off++
+		if off > len(body) {
+			return ""
+		}
+	}
+	var path string
+	if unicode {
+		path, _ = decodeUnicodeString(body[off:])
+	} else {
+		path, _ = decodeOEMString(body[off:])
+	}
+	return shareFromPath(path)
+}
+
+func shareFromPath(path string) string {
+	path = strings.ReplaceAll(path, "/", `\`)
+	parts := strings.Split(path, `\`)
+	for i := len(parts) - 1; i >= 0; i-- {
+		if parts[i] != "" {
+			return parts[i]
+		}
+	}
+	return ""
+}
+
+// IsIPCShare reports whether share is the IPC$ named-pipe share.
+func IsIPCShare(share string) bool {
+	return strings.EqualFold(share, "IPC$")
+}
+
+// Trans2Setup returns the first Setup word from an SMB_COM_TRANSACTION2 request
+// body positioned after the 32-byte SMB header. ok is false if the body is short.
+func Trans2Setup(body []byte) (setup uint16, ok bool) {
+	// WordCount(1) + 26 bytes of fixed words through DataOffset, then
+	// SetupCount(1) + Reserved3(1) + Setup words.
+	const setupCountOff = 1 + 26
+	if len(body) < setupCountOff+1 {
+		return 0, false
+	}
+	setupCount := int(body[setupCountOff])
+	if setupCount < 1 {
+		return 0, false
+	}
+	setupOff := setupCountOff + 2
+	if len(body) < setupOff+2 {
+		return 0, false
+	}
+	return binary.LittleEndian.Uint16(body[setupOff:]), true
+}
+
 func replyHeader(req SMBHeader) SMBHeader {
 	h := req
 	h.Status = [4]byte{0, 0, 0, 0}
@@ -185,7 +288,8 @@ func replyHeader(req SMBHeader) SMBHeader {
 	// Clear security features on replies; keep client's PID/MID/TID/UID unless overridden.
 	h.SecurityFeatures = [8]byte{}
 	h.Reserved = [2]byte{}
-	f2 := flags2(req) | flags2NTStatus
+	const flags2ExtendedSecurity uint16 = 0x0800
+	f2 := (flags2(req) | flags2NTStatus) &^ flags2ExtendedSecurity
 	binary.LittleEndian.PutUint16(h.Flags2[:], f2)
 	return h
 }
@@ -252,9 +356,12 @@ func MakeNegotiateProtocolResponse(header SMBHeader, dialectBytes []byte) (SMBHe
 		return h, nil, err
 	}
 
-	unicode := flags2(h)&flags2Unicode != 0
-	domain := encodeString(primaryDomain, unicode)
-	server := encodeString("GLUTTON", unicode)
+	// Non-extended negotiate Domain/Server are UTF-16 in practice; nmap's
+	// smb.lua always decodes them as UTF-16 regardless of the client's Flags2.
+	f2 := flags2(h) | flags2Unicode
+	binary.LittleEndian.PutUint16(h.Flags2[:], f2)
+	domain := encodeString(primaryDomain, true)
+	server := encodeString(serverName, true)
 
 	var body bytes.Buffer
 	body.WriteByte(17) // WordCount
@@ -313,15 +420,23 @@ func MakeSessionSetupAndXResponse(header SMBHeader, uid uint16) (SMBHeader, []by
 }
 
 // MakeTreeConnectAndXResponse builds an SMB1 Tree Connect AndX success reply
-// assigning tid to the client.
-func MakeTreeConnectAndXResponse(header SMBHeader, tid uint16) (SMBHeader, []byte, error) {
+// assigning tid to the client. For IPC$ shares the Service is "IPC" with an
+// empty NativeFileSystem; other shares get disk Service "A:" and "NTFS".
+func MakeTreeConnectAndXResponse(header SMBHeader, tid uint16, share string) (SMBHeader, []byte, error) {
 	h := replyHeader(header)
 	h.Command = cmdTreeConnect
 	binary.LittleEndian.PutUint16(h.TID[:], tid)
 
 	unicode := flags2(h)&flags2Unicode != 0
-	service := append([]byte("A:"), 0) // disk share
-	fs := encodeString("NTFS", unicode)
+	var service []byte
+	var fs []byte
+	if IsIPCShare(share) {
+		service = append([]byte("IPC"), 0)
+		fs = encodeString("", unicode)
+	} else {
+		service = append([]byte("A:"), 0) // disk share
+		fs = encodeString("NTFS", unicode)
+	}
 	byteCount := len(service) + len(fs)
 
 	var body bytes.Buffer
@@ -382,6 +497,16 @@ func MakeComTransaction2Response(header SMBHeader) (SMBHeader, []byte, error) {
 	return smb.Header, data, err
 }
 
+// MakeComTransaction2Reply chooses a Trans2 response from the request Setup
+// subcommand. TRANS2_FIND_FIRST2 gets the FIND_FIRST2-style success body;
+// unsupported subcommands (including TRANS2_SESSION_SETUP) get an NT error.
+func MakeComTransaction2Reply(header SMBHeader, setup uint16, setupOK bool) (SMBHeader, []byte, error) {
+	if setupOK && setup == trans2FindFirst2 {
+		return MakeComTransaction2Response(header)
+	}
+	return MakeComTransaction2Error(header)
+}
+
 // MakeComTransactionResponse builds an SMB_COM_TRANSACTION reply that reports
 // STATUS_INSUFF_SERVER_RESOURCES, the NT status MS17-010 scanners treat as vulnerable.
 func MakeComTransactionResponse(header SMBHeader) (SMBHeader, []byte, error) {
@@ -399,7 +524,8 @@ func MakeComTransactionResponse(header SMBHeader) (SMBHeader, []byte, error) {
 func MakeComTransaction2Error(header SMBHeader) (SMBHeader, []byte, error) {
 	smb := ComTransaction2Error{}
 	smb.Header = replyHeader(header)
-	smb.Header.Status = [4]byte{0x02, 0x00, 0x00, 0xc0}
+	smb.Header.Command = header.Command
+	binary.LittleEndian.PutUint32(smb.Header.Status[:], statusNotImplemented)
 	smb.WordCount = 0x00
 	smb.ByteCount = [2]byte{}
 

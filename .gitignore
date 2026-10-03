@@ -1,53 +1,29 @@
-# Compiled Object files, Static and Dynamic libs (Shared Objects)
+# Build
+/bin/
+/server
+*.exe
+*.test
 *.o
 *.a
 *.so
-server
-
-# Folders
-_obj
-_test
-build
-vendor
-bin
-
-# Architecture specific extensions/prefixes
-*.[568vq]
-[568vq].out
-
-*.cgo1.go
-*.cgo2.c
-_cgo_defun.c
-_cgo_gotypes.go
-_cgo_export.*
-
-_testmain.go
-
-*.exe
-*.test
 *.prof
+*.deb
+vendor/
 
-# Artifacts
+# Runtime artifacts
 glutton.log*
 payloads/
 samples/
 events/
 
-# PoCs
-poc/
-
-# Dev
-.vscode
-.cache/
-.codex/
-.env.deploy
-
-docs/engineering-guidelines.md
-docs/roadmap.md
-openspec/
-*.deb
-.cursor/
-
 # Spicy generated files
 protocols/spicy/*.cc
 protocols/spicy/parsers/*.h
+
+# Local / secrets
+.env.deploy
+.vscode/
+.cache/
+
+# Agents
+.cursor/
