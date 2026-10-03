@@ -31,7 +31,7 @@ Producer events follow the `producer.Event` schema:
 | `scanner` | Scanner classification from `scanner.IsScanner(...)`. |
 | `decoded` | Handler-specific decoded data. |
 
-Events are emitted only when (1) `producers.enabled` is true so a producer object exists, (2) a handler calls `ProduceTCP(...)` or `ProduceUDP(...)`, and (3) at least one sink is enabled. Before output, configured `addresses` values are scrubbed from the payload and replaced with `1.2.3.4`.
+Events are emitted only when (1) `producers.enabled` is true so a producer object exists, (2) a handler calls `ProduceTCP(...)` or `ProduceUDP(...)`, (3) the matched rule does not set `produce: false`, and (4) at least one sink is enabled. Before output, configured `addresses` values are scrubbed from the payload and replaced with `1.2.3.4`.
 
 Example shape:
 

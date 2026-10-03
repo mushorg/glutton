@@ -44,6 +44,7 @@ rules:
   - match: tcp dst port 443
     type: proxy_tcp
     target: 127.0.0.1:443
+    produce: false
   - match: tcp dst port 9889
     type: proxy_tcp
     target: 127.0.0.1:9889

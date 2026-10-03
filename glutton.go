@@ -348,6 +348,9 @@ func (g *Glutton) sanitizePayload(payload []byte) []byte {
 }
 
 func (g *Glutton) ProduceTCP(handler string, conn net.Conn, md connection.Metadata, payload []byte, decoded interface{}) error {
+	if md.Rule != nil && !md.Rule.ShouldProduce() {
+		return nil
+	}
 	if g.Producer != nil {
 		payload = g.sanitizePayload(payload)
 		return g.Producer.LogTCP(handler, conn, md, payload, decoded)
@@ -356,6 +359,9 @@ func (g *Glutton) ProduceTCP(handler string, conn net.Conn, md connection.Metada
 }
 
 func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md connection.Metadata, payload []byte, decoded interface{}) error {
+	if md.Rule != nil && !md.Rule.ShouldProduce() {
+		return nil
+	}
 	if g.Producer != nil {
 		payload = g.sanitizePayload(payload)
 		return g.Producer.LogUDP(handler, srcAddr, md, payload, decoded)

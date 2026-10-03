@@ -61,15 +61,20 @@ rules:
     match: tcp dst port 23 or port 2323 or port 23231
     type: conn_handler
     target: telnet
+  - match: tcp dst port 443
+    type: proxy_tcp
+    target: 127.0.0.1:443
+    produce: false
 ```
 
 
-| Field    | Required | Description                                                                          |
-| -------- | -------- | ------------------------------------------------------------------------------------ |
-| `name`   | no       | Human-readable label. `Rule.String()` returns the `match` expression, not this name. |
-| `match`  | yes      | BPF expression compiled with `pcap.NewBPF(...)`.                                     |
-| `type`   | yes      | `conn_handler` or `proxy_tcp`.                                                       |
-| `target` | yes      | Handler key for `conn_handler`; `host:port` upstream for `proxy_tcp`.                |
+| Field     | Required | Description                                                                          |
+| --------- | -------- | ------------------------------------------------------------------------------------ |
+| `name`    | no       | Human-readable label. `Rule.String()` returns the `match` expression, not this name. |
+| `match`   | yes      | BPF expression compiled with `pcap.NewBPF(...)`.                                     |
+| `type`    | yes      | `conn_handler` or `proxy_tcp`.                                                       |
+| `target`  | yes      | Handler key for `conn_handler`; `host:port` upstream for `proxy_tcp`.                |
+| `produce` | no       | When `false`, matching sessions are not sent to producers. Defaults to `true`.       |
 
 
 ### Rule types

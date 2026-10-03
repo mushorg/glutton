@@ -28,16 +28,26 @@ type Config struct {
 }
 
 type Rule struct {
-	Match  string `yaml:"match"`
-	Type   string `yaml:"type"`
-	Target string `yaml:"target,omitempty"`
-	Name   string `yaml:"name,omitempty"`
+	Match   string `yaml:"match"`
+	Type    string `yaml:"type"`
+	Target  string `yaml:"target,omitempty"`
+	Name    string `yaml:"name,omitempty"`
+	Produce *bool  `yaml:"produce,omitempty"` // nil/omitted means true
 
 	isInit      bool
 	RuleType    RuleType
 	ProxyTarget *ProxyTarget `yaml:"-"`
 	index       int
 	matcher     *pcap.BPF
+}
+
+// ShouldProduce reports whether matching sessions should be sent to producers.
+// Omitted or nil produce defaults to true.
+func (r *Rule) ShouldProduce() bool {
+	if r == nil || r.Produce == nil {
+		return true
+	}
+	return *r.Produce
 }
 
 type ProxyTarget struct {

@@ -125,6 +125,36 @@ func TestInitProxyTCPRuleParsesTarget(t *testing.T) {
 	require.Equal(t, "127.0.0.1:9889", rules[0].ProxyTarget.DialAddress)
 }
 
+func TestShouldProduce(t *testing.T) {
+	require.True(t, (*Rule)(nil).ShouldProduce())
+	require.True(t, (&Rule{}).ShouldProduce())
+
+	produceTrue := true
+	require.True(t, (&Rule{Produce: &produceTrue}).ShouldProduce())
+
+	produceFalse := false
+	require.False(t, (&Rule{Produce: &produceFalse}).ShouldProduce())
+}
+
+func TestInitRuleProduceFlag(t *testing.T) {
+	rules, err := Init(strings.NewReader(`rules:
+  - match: tcp dst port 443
+    type: proxy_tcp
+    target: 127.0.0.1:443
+    produce: false
+  - match: tcp dst port 80
+    type: proxy_tcp
+    target: 127.0.0.1:80
+`))
+	require.NoError(t, err)
+	require.Len(t, rules, 2)
+	require.False(t, rules[0].ShouldProduce())
+	require.NotNil(t, rules[0].Produce)
+	require.False(t, *rules[0].Produce)
+	require.True(t, rules[1].ShouldProduce())
+	require.Nil(t, rules[1].Produce)
+}
+
 func TestInitProxyTCPRuleRejectsInvalidTarget(t *testing.T) {
 	_, err := Init(strings.NewReader(`rules:
   - match: tcp dst port 9889
