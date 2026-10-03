@@ -35,7 +35,10 @@ const (
 	trans2FindFirst2   = 0x0001
 	trans2SessionSetup = 0x000e
 	// STATUS_NOT_IMPLEMENTED — plausible for unsupported Trans2 subcommands.
-	statusNotImplemented = 0xc0000002
+	statusNotImplemented  = 0xc0000002
+	fileOpened            = 0x00000001
+	fileTypeMessagePipe   = 0x0002
+	ntCreateAndXWordCount = 34
 )
 
 // Trans2FindFirst2 is the TRANS2_FIND_FIRST2 subcommand (0x0001).
@@ -263,6 +266,35 @@ func IsIPCShare(share string) bool {
 	return strings.EqualFold(share, "IPC$")
 }
 
+// NtCreateAndXName extracts the filename from an SMB_COM_NT_CREATE_ANDX
+// request body positioned after the 32-byte SMB header. Returns "" on failure.
+func NtCreateAndXName(header SMBHeader, body []byte) string {
+	// WordCount(1) + 24 words (48 bytes) + ByteCount(2).
+	const fixed = 1 + 24*2 + 2
+	if len(body) < fixed {
+		return ""
+	}
+	unicode := flags2(header)&flags2Unicode != 0
+	nameLen := int(binary.LittleEndian.Uint16(body[6:8]))
+	off := fixed
+	if unicode && (32+off)%2 != 0 {
+		off++
+		if off > len(body) {
+			return ""
+		}
+	}
+	nameBytes := body[off:]
+	if nameLen > 0 && off+nameLen <= len(body) {
+		nameBytes = body[off : off+nameLen]
+	}
+	if unicode {
+		s, _ := decodeUnicodeString(nameBytes)
+		return s
+	}
+	s, _ := decodeOEMString(nameBytes)
+	return s
+}
+
 // Trans2Setup returns the first Setup word from an SMB_COM_TRANSACTION2 request
 // body positioned after the 32-byte SMB header. ok is false if the body is short.
 func Trans2Setup(body []byte) (setup uint16, ok bool) {
@@ -450,6 +482,41 @@ func MakeTreeConnectAndXResponse(header SMBHeader, tid uint16, share string) (SM
 	putUint16(&body, uint16(byteCount))
 	body.Write(service)
 	body.Write(fs)
+
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	return h, append(hb, body.Bytes()...), nil
+}
+
+// MakeNtCreateAndXResponse builds an SMB_COM_NT_CREATE_ANDX success reply
+// (WordCount 34, AndX none, FILE_OPENED) assigning fid. Named-pipe fields are
+// filled so clients opening IPC$ pipes such as \svcctl keep the session open.
+func MakeNtCreateAndXResponse(header SMBHeader, fid uint16) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	h.Command = CmdNtCreateAndX
+
+	var body bytes.Buffer
+	body.WriteByte(ntCreateAndXWordCount)
+	body.WriteByte(0xff) // AndXCommand: none
+	body.WriteByte(0)    // AndXReserved
+	putUint16(&body, 0)  // AndXOffset
+	body.WriteByte(0)    // OpLockLevel: none
+	putUint16(&body, fid)
+	putUint32(&body, fileOpened) // CreateAction: FILE_OPENED
+	var zeros8 [8]byte
+	body.Write(zeros8[:]) // CreateTime
+	body.Write(zeros8[:]) // LastAccessTime
+	body.Write(zeros8[:]) // LastWriteTime
+	body.Write(zeros8[:]) // ChangeTime
+	putUint32(&body, 0)   // ExtFileAttributes
+	body.Write(zeros8[:]) // AllocationSize
+	body.Write(zeros8[:]) // EndOfFile
+	putUint16(&body, fileTypeMessagePipe)
+	putUint16(&body, 0x00c5) // NMPipeStatus: message-mode, connected
+	body.WriteByte(0)        // Directory: false
+	putUint16(&body, 0)      // ByteCount
 
 	hb, err := headerBytes(h)
 	if err != nil {

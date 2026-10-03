@@ -13,6 +13,7 @@ const (
 	CmdTreeConnectAndX      = 0x75
 	CmdNtTransact           = 0xa0
 	CmdNtTransactSecondary  = 0xa1
+	CmdNtCreateAndX         = 0xa2
 )
 
 var smb1CommandNames = map[byte]string{
@@ -26,6 +27,7 @@ var smb1CommandNames = map[byte]string{
 	CmdTreeConnectAndX:      "SMB_COM_TREE_CONNECT_ANDX",
 	CmdNtTransact:           "SMB_COM_NT_TRANSACT",
 	CmdNtTransactSecondary:  "SMB_COM_NT_TRANSACT_SECONDARY",
+	CmdNtCreateAndX:         "SMB_COM_NT_CREATE_ANDX",
 }
 
 // CommandName returns the SMB1 command mnemonic, or SMB_COM_0xNN for unknowns.

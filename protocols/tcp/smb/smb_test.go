@@ -88,6 +88,9 @@ func TestMakeResponses(t *testing.T) {
 		{name: "MakeTreeConnectAndXResponse", cmd: 0x75, run: func(h SMBHeader) (SMBHeader, []byte, error) {
 			return MakeTreeConnectAndXResponse(h, 1, "C$")
 		}},
+		{name: "MakeNtCreateAndXResponse", cmd: CmdNtCreateAndX, run: func(h SMBHeader) (SMBHeader, []byte, error) {
+			return MakeNtCreateAndXResponse(h, 1)
+		}},
 		{name: "MakeComTransaction2Response", cmd: 0x32, run: MakeComTransaction2Response},
 		{name: "MakeComTransactionResponse", cmd: 0x25, run: MakeComTransactionResponse},
 		{name: "MakeComTransaction2Error", cmd: 0x32, run: MakeComTransaction2Error},
@@ -277,6 +280,55 @@ func TestMakeComTransaction2FindFirst2(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [4]byte{0, 0, 0, 0}, rh.Status)
 	require.Equal(t, byte(0x0A), data[32]) // WordCount of FIND_FIRST2 success
+}
+
+func TestMakeNtCreateAndXResponse(t *testing.T) {
+	header := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  CmdNtCreateAndX,
+		Flags:    0x18,
+		Flags2:   [2]byte{0x01, 0x48},
+		TID:      [2]byte{0x01, 0x00},
+		PIDLow:   [2]byte{0x6c, 0x15},
+		UID:      [2]byte{0x01, 0x00},
+		MID:      [2]byte{0x00, 0x00},
+	}
+	rh, data, err := MakeNtCreateAndXResponse(header, 0x0041)
+	require.NoError(t, err)
+	require.Equal(t, [4]byte{}, rh.Status)
+	require.Equal(t, byte(CmdNtCreateAndX), rh.Command)
+	require.Equal(t, header.TID, rh.TID)
+	require.Equal(t, header.UID, rh.UID)
+	require.Equal(t, header.MID, rh.MID)
+	require.Equal(t, header.PIDLow, rh.PIDLow)
+	require.Equal(t, byte(0x98), rh.Flags)
+	require.Equal(t, 32+1+34*2+2, len(data))
+	require.Equal(t, byte(34), data[32])
+	require.Equal(t, byte(0xff), data[33]) // AndX none
+	require.Equal(t, uint16(0x0041), binary.LittleEndian.Uint16(data[38:40]))
+	require.Equal(t, uint32(fileOpened), binary.LittleEndian.Uint32(data[40:44]))
+	require.Equal(t, uint16(fileTypeMessagePipe), binary.LittleEndian.Uint16(data[96:98]))
+	require.Equal(t, []byte{0x00, 0x00}, data[len(data)-2:])
+	require.Equal(t, "SMB_COM_NT_CREATE_ANDX", CommandName(CmdNtCreateAndX))
+}
+
+func TestNtCreateAndXNameFromEvent(t *testing.T) {
+	// NT Create AndX \svcctl from ochi event be40479e (OEM, pysmb).
+	raw, err := hex.DecodeString(
+		"0000005bff534d42a200000000180148" +
+			"00000000000000000000000001006c15" +
+			"0100000018ff00000000070016000000" +
+			"00000000030000000000000000000000" +
+			"80000000010000000100000040000000" +
+			"020000000008005c73766363746c00")
+	require.NoError(t, err)
+
+	buf, err := ValidateData(raw)
+	require.NoError(t, err)
+	header := SMBHeader{}
+	require.NoError(t, ParseHeader(buf, &header))
+	require.Equal(t, byte(CmdNtCreateAndX), header.Command)
+	require.Equal(t, `\svcctl`, NtCreateAndXName(header, buf.Bytes()))
 }
 
 func TestMakeComTransactionResponseMS17010(t *testing.T) {

@@ -26,6 +26,7 @@ type parsedSMB struct {
 	Direction string        `json:"direction,omitempty"`
 	Header    smb.SMBHeader `json:"header,omitempty"`
 	Command   string        `json:"command,omitempty"`
+	Path      string        `json:"path,omitempty"`
 	Payload   []byte        `json:"payload,omitempty"`
 	Truncated bool          `json:"truncated,omitempty"`
 }
@@ -35,6 +36,7 @@ type smbServer struct {
 	conn   net.Conn
 	uid    uint16
 	tid    uint16
+	fid    uint16
 }
 
 type smbFrame struct {
@@ -98,6 +100,11 @@ func (ss *smbServer) nextUID() uint16 {
 func (ss *smbServer) nextTID() uint16 {
 	ss.tid++
 	return ss.tid
+}
+
+func (ss *smbServer) nextFID() uint16 {
+	ss.fid++
+	return ss.fid
 }
 
 func smbPDU(frame smbFrame) []byte {
@@ -178,10 +185,15 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 		return nil
 	}
 
+	path := ""
+	if header.Command == smb.CmdNtCreateAndX {
+		path = smb.NtCreateAndXName(header, smbBuf.Bytes())
+	}
 	ss.events = append(ss.events, parsedSMB{
 		Direction: "read",
 		Header:    header,
 		Command:   smb.CommandName(header.Command),
+		Path:      path,
 		Payload:   frame.payload,
 		Truncated: frame.truncated,
 	})
@@ -204,6 +216,8 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 	case smb.CmdTreeConnectAndX:
 		share := smb.TreeConnectShare(header, smbBuf.Bytes())
 		responseHeader, resp, err = smb.MakeTreeConnectAndXResponse(header, ss.nextTID(), share)
+	case smb.CmdNtCreateAndX:
+		responseHeader, resp, err = smb.MakeNtCreateAndXResponse(header, ss.nextFID())
 	case smb.CmdTreeDisconnect, smb.CmdLogoffAndX:
 		responseHeader, resp, err = smb.MakeHeaderResponse(header)
 	case smb.CmdTransaction2:

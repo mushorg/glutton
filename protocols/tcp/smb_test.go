@@ -187,6 +187,109 @@ func encodeSMBPath(path string) []byte {
 	return append(out, 0, 0)
 }
 
+func smbHandshakeIPC(t *testing.T, client net.Conn) (uid, tid uint16) {
+	t.Helper()
+	negBody := []byte{0x00, 0x0c, 0x00}
+	negBody = append(negBody, []byte("\x02NT LM 0.12\x00")...)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x72, 0, 0, 1)), negBody...))
+	_ = readSMBFrame(t, client)
+
+	ssBody := []byte{
+		0x0d, 0xff, 0x00, 0x00, 0x00,
+		0xff, 0xff, 0x02, 0x00, 0x01, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00,
+	}
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x73, 0, 0, 2)), ssBody...))
+	ssResp := readSMBFrame(t, client)
+	uid = binary.LittleEndian.Uint16(ssResp[28:30])
+	require.NotZero(t, uid)
+
+	path := encodeSMBPath(`\\127.0.0.1\IPC$`)
+	service := []byte("?????\x00")
+	dataBytes := append([]byte{0x00}, path...)
+	dataBytes = append(dataBytes, service...)
+	tcBody := []byte{
+		0x04, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+	}
+	binary.LittleEndian.PutUint16(tcBody[9:11], uint16(len(dataBytes)))
+	tcBody = append(tcBody, dataBytes...)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x75, 0, uid, 3)), tcBody...))
+	tcResp := readSMBFrame(t, client)
+	tid = binary.LittleEndian.Uint16(tcResp[24:26])
+	require.NotZero(t, tid)
+	return uid, tid
+}
+
+func ntCreateAndXBody(name string) []byte {
+	encoded := encodeSMBPath(name)
+	words := make([]byte, 48)
+	words[0] = 0xff
+	binary.LittleEndian.PutUint16(words[5:7], uint16(len(encoded)))
+	body := append([]byte{0x18}, words...)
+	var bc [2]byte
+	binary.LittleEndian.PutUint16(bc[:], uint16(len(encoded)))
+	// Unicode Name is aligned to a 2-byte boundary relative to the SMB header.
+	off := 1 + 48 + 2
+	if (32+off)%2 != 0 {
+		body = append(body, bc[:]...)
+		body = append(body, 0)
+		body = append(body, encoded...)
+		binary.LittleEndian.PutUint16(body[1+48:1+50], uint16(1+len(encoded)))
+		return body
+	}
+	body = append(body, bc[:]...)
+	body = append(body, encoded...)
+	return body
+}
+
+func TestHandleSMBNtCreateAndXPipe(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+	uid, tid := smbHandshakeIPC(t, client)
+
+	body := ntCreateAndXBody(`\svcctl`)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdNtCreateAndX, tid, uid, 4)), body...))
+	createResp := readSMBFrame(t, client)
+	require.Equal(t, byte(smb.CmdNtCreateAndX), createResp[4])
+	require.Equal(t, [4]byte{}, [4]byte(createResp[5:9]))
+	require.Equal(t, byte(34), createResp[32])
+	fid := binary.LittleEndian.Uint16(createResp[38:40])
+	require.NotZero(t, fid)
+	require.Equal(t, uint32(1), binary.LittleEndian.Uint32(createResp[40:44]), "FILE_OPENED")
+
+	// Follow-on read still possible after a protocol-valid Create AndX.
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x71, tid, uid, 5)), 0x00, 0x00, 0x00))
+	tdResp := readSMBFrame(t, client)
+	require.Equal(t, byte(0x71), tdResp[4])
+	require.Equal(t, [4]byte{}, [4]byte(tdResp[5:9]))
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames, ok := ev.decoded.([]parsedSMB)
+	require.True(t, ok)
+
+	var sawCreateRead, sawCreateWrite bool
+	for _, f := range frames {
+		if f.Direction == "read" && f.Header.Command == smb.CmdNtCreateAndX {
+			require.Equal(t, "SMB_COM_NT_CREATE_ANDX", f.Command)
+			require.Equal(t, `\svcctl`, f.Path)
+			sawCreateRead = true
+		}
+		if f.Direction == "write" && f.Header.Command == smb.CmdNtCreateAndX {
+			require.Equal(t, "SMB_COM_NT_CREATE_ANDX", f.Command)
+			require.Equal(t, byte(34), f.Payload[4+32])
+			gotFID := binary.LittleEndian.Uint16(f.Payload[4+38 : 4+40])
+			require.Equal(t, fid, gotFID)
+			require.NotZero(t, gotFID)
+			sawCreateWrite = true
+		}
+	}
+	require.True(t, sawCreateRead, "expected NT Create AndX read")
+	require.True(t, sawCreateWrite, "expected NT Create AndX write with WordCount 34")
+}
+
 func startHandleSMB(t *testing.T) (client net.Conn, hp *fakeHoneypot, done chan error) {
 	t.Helper()
 	var serverConn net.Conn
