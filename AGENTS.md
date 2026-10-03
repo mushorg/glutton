@@ -128,7 +128,7 @@ func HandleX(ctx context.Context, conn net.Conn, md connection.Metadata, logger 
 | `protocols/tcp/smb.go` | binary, header-aware | Parsing/response code in `protocols/tcp/smb/`; tracks UID/TID state on the server struct. |
 | `protocols/tcp/ftp.go` | line-oriented text | Opens a data connection, stores uploads with `helpers.Store`. |
 | `protocols/tcp/smtp.go` | line-oriented text | `Command` verb per read frame; DATA body aggregated into one frame; injectable sleep. |
-| `protocols/tcp/mongodb.go` | length-prefixed binary | `io.ReadFull` header then body; opcode names in decoded frames. |
+| `protocols/tcp/mongodb.go` | length-prefixed binary | `io.ReadFull` header then body; opcode names and BSON `command` in decoded frames; replies in `protocols/tcp/mongodb/`. |
 | `protocols/tcp/telnet.go` | interactive text | Multi-step prompt flow, fetches samples asynchronously. |
 | `protocols/tcp/tcp.go` | catch-all | Reads up to `max_tcp_payload`, replies with random bytes. |
 | `protocols/tcp/mcp.go` | HTTP JSON-RPC session | Streamable HTTP MCP; keeps session past `initialize`. |

@@ -15,10 +15,8 @@ import (
 )
 
 type parsedModbus struct {
-	Direction string         `json:"direction,omitempty"`
-	Header    mongoMsgHeader `json:"header,omitempty"`
-	Payload   []byte         `json:"payload,omitempty"`
-	OpCodeStr string         `json:"opcode_str,omitempty"`
+	Direction string `json:"direction,omitempty"`
+	Payload   []byte `json:"payload,omitempty"`
 }
 
 type modbusServer struct {
