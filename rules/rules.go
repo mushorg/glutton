@@ -19,6 +19,7 @@ type RuleType int
 const (
 	UserConnHandler RuleType = iota
 	ProxyTCP
+	ProxyUDP
 	Drop
 )
 
@@ -81,16 +82,18 @@ func (rule *Rule) init(idx int) error {
 		rule.RuleType = UserConnHandler
 	case "proxy_tcp":
 		rule.RuleType = ProxyTCP
+	case "proxy_udp":
+		rule.RuleType = ProxyUDP
 	case "drop":
 		rule.RuleType = Drop
 	default:
 		return fmt.Errorf("unknown rule type: %s", rule.Type)
 	}
 
-	if rule.RuleType == ProxyTCP {
+	if rule.RuleType == ProxyTCP || rule.RuleType == ProxyUDP {
 		target, err := parseProxyTarget(rule.Target)
 		if err != nil {
-			return fmt.Errorf("invalid proxy_tcp target: %w", err)
+			return fmt.Errorf("invalid %s target: %w", rule.Type, err)
 		}
 		rule.ProxyTarget = target
 	}

@@ -150,7 +150,7 @@ func (g *Glutton) udpListen(wg *sync.WaitGroup) {
 	defer func() {
 		wg.Done()
 	}()
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, 65535)
 	for {
 		select {
 		case <-g.ctx.Done():
@@ -167,6 +167,7 @@ func (g *Glutton) udpListen(wg *sync.WaitGroup) {
 				continue
 			}
 			g.Logger.Error("Failed to read UDP packet", producer.ErrAttr(err))
+			continue
 		}
 
 		rule, err := g.applyRules("udp", srcAddr, dstAddr)
@@ -181,8 +182,16 @@ func (g *Glutton) udpListen(wg *sync.WaitGroup) {
 			g.Logger.Error("Failed to register UDP packet", producer.ErrAttr(err))
 		}
 
-		if hfunc, ok := g.udpProtocolHandlers[rule.Target]; ok {
-			data := buffer[:n]
+		var handlerName string
+		switch rule.Type {
+		case "proxy_udp":
+			handlerName = rule.Type
+		default:
+			handlerName = rule.Target
+		}
+
+		if hfunc, ok := g.udpProtocolHandlers[handlerName]; ok {
+			data := append([]byte(nil), buffer[:n]...)
 			go func() {
 				if err := hfunc(g.ctx, srcAddr, dstAddr, data, md); err != nil {
 					g.Logger.Error("Failed to handle UDP payload", producer.ErrAttr(err))

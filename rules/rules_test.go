@@ -125,6 +125,53 @@ func TestInitProxyTCPRuleParsesTarget(t *testing.T) {
 	require.Equal(t, "127.0.0.1:9889", rules[0].ProxyTarget.DialAddress)
 }
 
+func TestInitProxyUDPRuleParsesTarget(t *testing.T) {
+	rules, err := Init(strings.NewReader(`rules:
+  - match: udp dst port 443
+    type: proxy_udp
+    target: 127.0.0.1:443
+    produce: false
+`))
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	require.Equal(t, ProxyUDP, rules[0].RuleType)
+	require.NotNil(t, rules[0].ProxyTarget)
+	require.Equal(t, "127.0.0.1:443", rules[0].ProxyTarget.DialAddress)
+	require.False(t, rules[0].ShouldProduce())
+}
+
+func TestInitProxyUDPRuleRejectsInvalidTarget(t *testing.T) {
+	_, err := Init(strings.NewReader(`rules:
+  - match: udp dst port 443
+    type: proxy_udp
+    target: tcp://127.0.0.1:443
+`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid proxy_udp target")
+}
+
+func TestRunMatchProxyUDP(t *testing.T) {
+	rules, err := Init(strings.NewReader(`rules:
+  - match: udp dst port 443
+    type: proxy_udp
+    target: 127.0.0.1:443
+  - match: udp
+    type: conn_handler
+    target: udp
+`))
+	require.NoError(t, err)
+
+	srcAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 50000}
+	dstAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 443}
+
+	match, err := rules.Match("udp", srcAddr, dstAddr)
+	require.NoError(t, err)
+	require.NotNil(t, match)
+	require.Equal(t, "proxy_udp", match.Type)
+	require.NotNil(t, match.ProxyTarget)
+	require.Equal(t, "127.0.0.1:443", match.ProxyTarget.DialAddress)
+}
+
 func TestShouldProduce(t *testing.T) {
 	require.True(t, (*Rule)(nil).ShouldProduce())
 	require.True(t, (&Rule{}).ShouldProduce())

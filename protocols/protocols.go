@@ -37,6 +37,9 @@ func MapUDPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 	protocolHandlers["l2tp"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
 		return udp.HandleL2TP(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
+	protocolHandlers["proxy_udp"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
+		return udp.HandleProxyUDP(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
 	protocolHandlers["udp"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
 		return udp.HandleUDP(ctx, srcAddr, dstAddr, data, md, log, h)
 	}

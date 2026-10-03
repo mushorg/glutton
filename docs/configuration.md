@@ -38,10 +38,10 @@ Source: `config/config.yaml`. Keys you'll most often touch:
 | `producers.http.remote`                                              | `https://localhost:9000` | HTTP endpoint. Userinfo in the URL supplies basic auth.                                                                                                                             |
 | `producers.hpfeeds.enabled`                                          | `false`                  | Enables hpfeeds output.                                                                                                                                                             |
 | `producers.hpfeeds.host` / `.port` / `.ident` / `.auth` / `.channel` | —                        | hpfeeds broker connection.                                                                                                                                                          |
-| `conn_timeout`                                                       | `45`                     | Connection deadline in seconds (also the `proxy_tcp` idle I/O timeout).                                                                                                             |
-| `max_tcp_payload`                                                    | `4096`                   | Generic TCP handler threshold and `proxy_tcp` per-direction capture cap.                                                                                                            |
-| `dial_timeout`                                                       | `5`                      | Outbound `proxy_tcp` dial timeout in seconds.                                                                                                                                       |
-| `capture_traffic.enabled`                                            | `false`                  | Enables raw payload capture in `proxy_tcp` logs and produced events. Proxying still forwards traffic when disabled.                                                                 |
+| `conn_timeout`                                                       | `45`                     | Connection deadline in seconds (also the `proxy_tcp` / `proxy_udp` idle I/O timeout).                                                                                               |
+| `max_tcp_payload`                                                    | `4096`                   | Generic TCP handler threshold and `proxy_tcp` / `proxy_udp` per-direction capture cap.                                                                                              |
+| `dial_timeout`                                                       | `5`                      | Outbound `proxy_tcp` / `proxy_udp` dial timeout in seconds.                                                                                                                         |
+| `capture_traffic.enabled`                                            | `false`                  | Enables raw payload capture in `proxy_tcp` / `proxy_udp` logs and produced events. Proxying still forwards traffic when disabled.                                                   |
 | `spicy.enabled`                                                      | `true`                   | Initializes Spicy/HILTI and enables Spicy-backed paths (HTTP parsing, TCP-payload protocol detection). Set `false` if you build without Spicy or want the Spicy-free dispatch path. |
 
 
@@ -65,6 +65,10 @@ rules:
     type: proxy_tcp
     target: 127.0.0.1:443
     produce: false
+  - match: udp dst port 443
+    type: proxy_udp
+    target: 127.0.0.1:443
+    produce: false
 ```
 
 
@@ -72,16 +76,18 @@ rules:
 | --------- | -------- | ------------------------------------------------------------------------------------ |
 | `name`    | no       | Human-readable label. `Rule.String()` returns the `match` expression, not this name. |
 | `match`   | yes      | BPF expression compiled with `pcap.NewBPF(...)`.                                     |
-| `type`    | yes      | `conn_handler` or `proxy_tcp`.                                                       |
-| `target`  | yes      | Handler key for `conn_handler`; `host:port` upstream for `proxy_tcp`.                |
+| `type`    | yes      | `conn_handler`, `proxy_tcp`, or `proxy_udp`.                                         |
+| `target`  | yes      | Handler key for `conn_handler`; `host:port` upstream for `proxy_tcp` / `proxy_udp`.  |
 | `produce` | no       | When `false`, matching sessions are not sent to producers. Defaults to `true`.       |
 
 
 ### Rule types
 
-`**conn_handler**` — `target` is a handler key. Current TCP keys: `smtp`, `rdp`, `smb`, `ftp`, `sip`, `rfb`, `telnet`, `mqtt`, `iscsi`, `bittorrent`, `memcache`, `jabber`, `adb`, `mongodb`, `http`, `mcp`, `modbus`, `proxy_tcp`, `tcp`. UDP keys: `sip`, `openvpn`, `mdns`, `l2tp`, `udp`. If the target isn't registered, the listener accepts the connection but no handler runs.
+`**conn_handler**` — `target` is a handler key. Current TCP keys: `smtp`, `rdp`, `smb`, `ftp`, `sip`, `rfb`, `telnet`, `mqtt`, `iscsi`, `bittorrent`, `memcache`, `jabber`, `adb`, `mongodb`, `http`, `mcp`, `modbus`, `proxy_tcp`, `tcp`. UDP keys: `sip`, `openvpn`, `mdns`, `l2tp`, `proxy_udp`, `udp`. If the target isn't registered, the listener accepts the connection but no handler runs.
 
 `**proxy_tcp**` — forwards a matched TCP connection to an upstream `host:port`. The address is parsed at rule-load time and stored in rule metadata; at dispatch the proxy handler dials it and pipes bytes both directions. Tunable via `dial_timeout`, `conn_timeout`, `max_tcp_payload`, and `capture_traffic.enabled` in the main config.
+
+`**proxy_udp**` — forwards matched UDP datagrams to an upstream `host:port`, keeping a short-lived flow (keyed by client and original destination) so multi-packet protocols such as QUIC/HTTP3 work. Replies are sent back via TPROXY-sourced `ReplyUDP`. Uses the same `dial_timeout`, `conn_timeout`, `max_tcp_payload`, and `capture_traffic.enabled` knobs as `proxy_tcp` for dial/idle timing and optional sample capture.
 
 ### Catch-all interaction with Spicy
 
