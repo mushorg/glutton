@@ -200,7 +200,7 @@ func TestHandleMCPCensusScannerPayload(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, mcpSessionID, headers.Get("Mcp-Session-Id"))
 	require.Contains(t, string(respBody), `"protocolVersion":"2025-06-18"`)
-	require.Contains(t, string(respBody), `"name":"glutton-mcp"`)
+	require.Contains(t, string(respBody), `"name":"`+mcpServerName+`"`)
 
 	require.NoError(t, client.Close())
 	select {
