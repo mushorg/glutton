@@ -13,21 +13,39 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/spf13/viper"
 )
 
 const (
 	maxMCPRequests = 50
 	maxMCPBody     = 1 << 20 // 1 MiB
-	mcpSessionID   = "mcp-session"
 	mcpServerName  = "mcp"
 	mcpServerVer   = "1.0.0"
 	mcpProtoVer    = "2025-06-18"
 )
+
+// mcpSessionIdle overrides the session flush delay in tests. When zero,
+// production uses conn_timeout (default 45s) so follow-up requests on new
+// connections can still append to the same produced event.
+var mcpSessionIdle time.Duration
+
+func mcpSessionIdleDuration() time.Duration {
+	if mcpSessionIdle > 0 {
+		return mcpSessionIdle
+	}
+	if secs := viper.GetInt("conn_timeout"); secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return 45 * time.Second
+}
 
 var mcpContentLenRE = regexp.MustCompile(`(?i)Content-Length:\s*(\d+)`)
 
@@ -36,22 +54,160 @@ type parsedMCP struct {
 	Direction string `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
 	Command   string `json:"command,omitempty"`   // JSON-RPC method, or HTTP verb when no JSON body
 	Path      string `json:"path,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 	Payload   []byte `json:"payload,omitempty"` // raw HTTP request or response bytes
 }
 
-type mcpServer struct {
+// mcpSession aggregates frames across TCP connections that share an MCP session id.
+type mcpSession struct {
+	mu        sync.Mutex
+	id        string
+	key       string
 	events    []parsedMCP
+	md        connection.Metadata
+	remote    net.Addr
+	h         interfaces.Honeypot
+	logger    interfaces.Logger
+	refs      int
+	idleTimer *time.Timer
+	produced  bool
+}
+
+type mcpSessionTable struct {
+	mu       sync.Mutex
+	sessions map[string]*mcpSession
+}
+
+var mcpSessions = &mcpSessionTable{sessions: map[string]*mcpSession{}}
+
+func mcpSessionKey(srcHost, sessionID string) string {
+	return srcHost + "|" + sessionID
+}
+
+func (t *mcpSessionTable) get(key string) *mcpSession {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.sessions[key]
+}
+
+func (t *mcpSessionTable) put(s *mcpSession) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sessions[s.key] = s
+}
+
+func (t *mcpSessionTable) remove(key string, expected *mcpSession) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current, ok := t.sessions[key]; ok && current == expected {
+		delete(t.sessions, key)
+	}
+}
+
+// remoteAddrConn exposes a stored remote address for ProduceTCP after the real conn closed.
+type remoteAddrConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (c *remoteAddrConn) RemoteAddr() net.Addr { return c.remote }
+
+func (s *mcpSession) append(frames ...parsedMCP) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.produced {
+		return
+	}
+	for i := range frames {
+		frames[i].SessionID = s.id
+	}
+	s.events = append(s.events, frames...)
+	s.stopIdleLocked()
+}
+
+func (s *mcpSession) acquire() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refs++
+	s.stopIdleLocked()
+}
+
+func (s *mcpSession) release() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refs > 0 {
+		s.refs--
+	}
+	if s.refs == 0 && !s.produced {
+		s.armIdleLocked()
+	}
+}
+
+func (s *mcpSession) stopIdleLocked() {
+	if s.idleTimer != nil {
+		s.idleTimer.Stop()
+		s.idleTimer = nil
+	}
+}
+
+func (s *mcpSession) armIdleLocked() {
+	s.stopIdleLocked()
+	s.idleTimer = time.AfterFunc(mcpSessionIdleDuration(), s.produce)
+}
+
+func (s *mcpSession) produce() {
+	s.mu.Lock()
+	if s.produced {
+		s.mu.Unlock()
+		return
+	}
+	s.produced = true
+	s.stopIdleLocked()
+	events := append([]parsedMCP(nil), s.events...)
+	md := s.md
+	remote := s.remote
+	h := s.h
+	logger := s.logger
+	key := s.key
+	s.mu.Unlock()
+
+	mcpSessions.remove(key, s)
+
+	if len(events) == 0 || h == nil {
+		return
+	}
+	conn := &remoteAddrConn{remote: remote}
+	if err := h.ProduceTCP("mcp", conn, md, helpers.FirstOrEmpty[parsedMCP](events).Payload, events); err != nil {
+		logger.Error("Failed to produce message", slog.String("protocol", "mcp"), producer.ErrAttr(err))
+	}
+}
+
+func (s *mcpSession) endNow() {
+	s.mu.Lock()
+	s.refs = 0
+	s.mu.Unlock()
+	s.produce()
+}
+
+type mcpServer struct {
+	local     []parsedMCP
+	session   *mcpSession
 	conn      net.Conn
 	bufin     *bufio.Reader
 	sessionID string
+	srcHost   string
+	md        connection.Metadata
+	logger    interfaces.Logger
+	h         interfaces.Honeypot
 }
 
 func newMCPServer(conn net.Conn) *mcpServer {
+	srcHost, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 	return &mcpServer{
-		events:    []parsedMCP{},
-		conn:      conn,
-		bufin:     bufio.NewReader(conn),
-		sessionID: mcpSessionID,
+		local:   []parsedMCP{},
+		conn:    conn,
+		bufin:   bufio.NewReader(conn),
+		srcHost: srcHost,
 	}
 }
 
@@ -92,11 +248,63 @@ func LooksLikeMCP(snip []byte) bool {
 		bytes.Contains(lower, []byte(" /sse?"))
 }
 
+func (s *mcpServer) bindSession(id string) {
+	if id == "" {
+		return
+	}
+	if s.session != nil && s.session.id == id {
+		s.sessionID = id
+		return
+	}
+	if s.session != nil {
+		s.session.release()
+		s.session = nil
+	}
+
+	key := mcpSessionKey(s.srcHost, id)
+	sess := mcpSessions.get(key)
+	if sess == nil {
+		sess = &mcpSession{
+			id:     id,
+			key:    key,
+			events: []parsedMCP{},
+			md:     s.md,
+			remote: s.conn.RemoteAddr(),
+			h:      s.h,
+			logger: s.logger,
+		}
+		mcpSessions.put(sess)
+	}
+	sess.acquire()
+	if len(s.local) > 0 {
+		sess.append(s.local...)
+		s.local = nil
+	}
+	s.session = sess
+	s.sessionID = id
+}
+
+func (s *mcpServer) ensureSession() {
+	if s.session != nil {
+		return
+	}
+	s.bindSession(uuid.NewString())
+}
+
+func (s *mcpServer) record(frame parsedMCP) {
+	frame.SessionID = s.sessionID
+	if s.session != nil {
+		s.session.append(frame)
+		return
+	}
+	s.local = append(s.local, frame)
+}
+
 func (s *mcpServer) write(data []byte) error {
 	if _, err := s.conn.Write(data); err != nil {
 		return err
 	}
-	s.events = append(s.events, parsedMCP{
+	s.record(parsedMCP{
 		Direction: "write",
 		Payload:   data,
 	})
@@ -104,7 +312,7 @@ func (s *mcpServer) write(data []byte) error {
 }
 
 func (s *mcpServer) recordRead(command, path string, payload []byte) {
-	s.events = append(s.events, parsedMCP{
+	s.record(parsedMCP{
 		Direction: "read",
 		Command:   command,
 		Path:      path,
@@ -284,6 +492,7 @@ func (s *mcpServer) handleJSONRPC(rawReq mcpJSONRPC) ([]byte, error) {
 
 	switch rawReq.Method {
 	case "initialize":
+		s.ensureSession()
 		body, err := mcpResult(rawReq.ID, mcpInitializeResult(clientProtocolVersion(rawReq.Params)))
 		if err != nil {
 			return nil, err
@@ -355,6 +564,10 @@ func (s *mcpServer) handleRequest(raw []byte) error {
 	path := req.URL.EscapedPath()
 	body, _ := io.ReadAll(req.Body)
 
+	if sid := strings.TrimSpace(req.Header.Get("Mcp-Session-Id")); sid != "" {
+		s.bindSession(sid)
+	}
+
 	command := strings.ToUpper(req.Method)
 	var rpc mcpJSONRPC
 	if len(body) > 0 && json.Unmarshal(body, &rpc) == nil && rpc.Method != "" {
@@ -387,27 +600,48 @@ func (s *mcpServer) handleRequest(raw []byte) error {
 		return s.write([]byte(sse))
 
 	case http.MethodDelete:
-		return s.write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
+		err := s.write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
+		if s.session != nil {
+			s.session.endNow()
+			s.session = nil
+		}
+		return err
 
 	default:
 		return s.write(mcpHTTPResponse(http.StatusMethodNotAllowed, nil, []byte(`{"error":"method not allowed"}`)))
 	}
 }
 
+func (s *mcpServer) closeAndProduce() {
+	if s.session != nil {
+		s.session.release()
+		s.session = nil
+		return
+	}
+	if len(s.local) == 0 || s.h == nil {
+		return
+	}
+	if err := s.h.ProduceTCP("mcp", s.conn, s.md, helpers.FirstOrEmpty[parsedMCP](s.local).Payload, s.local); err != nil {
+		s.logger.Error("Failed to produce message", slog.String("protocol", "mcp"), producer.ErrAttr(err))
+	}
+}
+
 // HandleMCP speaks MCP over Streamable HTTP (JSON-RPC), keeping the connection
 // alive past initialize so scanners can continue with tools/list and related calls.
+// Frames from connections that share an Mcp-Session-Id (per source host) are
+// grouped into one produced event when the session idles out or is deleted.
 func HandleMCP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	return handleMCP(ctx, newMCPServer(conn), md, logger, h)
 }
 
 func handleMCP(ctx context.Context, server *mcpServer, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	conn := server.conn
+	server.md = md
+	server.logger = logger
+	server.h = h
+
 	defer func() {
-		if len(server.events) > 0 {
-			if err := h.ProduceTCP("mcp", conn, md, helpers.FirstOrEmpty[parsedMCP](server.events).Payload, server.events); err != nil {
-				logger.Error("Failed to produce message", slog.String("protocol", "mcp"), producer.ErrAttr(err))
-			}
-		}
+		server.closeAndProduce()
 		if err := conn.Close(); err != nil {
 			logger.Debug("Failed to close MCP connection", slog.String("protocol", "mcp"), producer.ErrAttr(err))
 		}
