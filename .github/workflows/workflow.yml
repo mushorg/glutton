@@ -43,11 +43,7 @@ jobs:
       - name: Basic Dependencies
         run: |
           sudo apt-get update
-<<<<<<< Updated upstream
-          sudo apt-get install -y libpcap-dev iptables zlib1g-dev build-essential
-=======
           sudo apt-get install -y libpcap-dev iptables nftables zlib1g-dev build-essential clang-17
->>>>>>> Stashed changes
 
       - name: Install spicyc
         run: |
