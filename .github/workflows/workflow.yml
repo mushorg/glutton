@@ -6,51 +6,66 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  SPICY_VERSION: "1.16.0"
+  SPICY_DEB: spicy_linux_ubuntu24.deb
+
 jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
+      # Checkout first so setup-go can hash go.sum for module caching.
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # setup-go caches GOMODCACHE only; GOCACHE speeds up cgo/spicy rebuilds.
+      - name: Cache Go build
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-go-build-${{ hashFiles('go.sum', '**/*.go', 'protocols/spicy/**/*.spicy', 'protocols/spicy/Makefile') }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-
+
+      - name: Cache Spicy package
+        id: spicy-deb
+        uses: actions/cache@v6
+        with:
+          path: /tmp/${{ env.SPICY_DEB }}
+          key: spicy-${{ env.SPICY_VERSION }}-ubuntu24
+
       - name: Basic Dependencies
         run: |
           sudo apt-get update
+<<<<<<< Updated upstream
           sudo apt-get install -y libpcap-dev iptables zlib1g-dev build-essential
+=======
+          sudo apt-get install -y libpcap-dev iptables nftables zlib1g-dev build-essential clang-17
+>>>>>>> Stashed changes
 
       - name: Install spicyc
         run: |
-          wget https://github.com/zeek/spicy/releases/download/v1.16.0/spicy_linux_ubuntu24.deb
-          sudo dpkg --install spicy_linux_ubuntu24.deb
-          sudo apt-get install -f -y # pulling in any missing deps
-          rm spicy_linux_ubuntu24.deb
+          if [ ! -f "/tmp/${SPICY_DEB}" ]; then
+            wget -O "/tmp/${SPICY_DEB}" \
+              "https://github.com/zeek/spicy/releases/download/v${SPICY_VERSION}/${SPICY_DEB}"
+          fi
+          sudo dpkg --install "/tmp/${SPICY_DEB}"
+          sudo apt-get install -f -y
 
       - name: Add Spicy CLI to PATH
         run: echo "/opt/spicy/bin" >> $GITHUB_PATH
 
-      - name: Install clang17
-        run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 17
-
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: "^1.26"
-
       - name: Build Spicy generated files
-        run: |
-          make spicy
-
-      - name: Build
-        env:
-          CC: clang-17
-          CXX: clang++-17
-        run: go build -v ./...
+        run: make spicy
 
       - name: Test
         env:
           CC: clang-17
           CXX: clang++-17
-        run: go test -v ./...
+        run: go test ./...
