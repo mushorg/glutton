@@ -6,7 +6,7 @@ BUILDDATE := $(shell date -u -Iseconds)
 
 LDFLAGS := "-X \"main.VERSION=$(VERSIONSTRING)\" -X \"main.BUILDDATE=$(BUILDDATE)\""
 
-.PHONY: all test clean build
+.PHONY: all test clean build deploy deploy-helper
 
 .PHONY: tag
 tag:
@@ -29,6 +29,22 @@ spicy:
 static:
 	go build --ldflags '-extldflags "-static"' -o bin/server app/server.go
 	upx -1 bin/server
+
+# Local-only deploy target; see .env.deploy.example (file is gitignored).
+-include .env.deploy
+
+.require-deploy-host:
+	@test -n "$(DEPLOY_HOST)" || (echo 'DEPLOY_HOST unset; copy .env.deploy.example to .env.deploy' >&2; exit 1)
+
+# One-time: install scripts/redeploy-glutton.sh on the honeypot host.
+deploy-helper: .require-deploy-host
+	scp scripts/redeploy-glutton.sh $(DEPLOY_HOST):/opt/glutton/redeploy-glutton.sh
+	ssh $(DEPLOY_HOST) 'chmod +x /opt/glutton/redeploy-glutton.sh'
+
+# Build, upload to /tmp (avoids ETXTBSY), then restart the screen session.
+deploy: build .require-deploy-host
+	scp bin/server $(DEPLOY_HOST):/tmp/glutton.new
+	ssh $(DEPLOY_HOST) /opt/glutton/redeploy-glutton.sh
 
 clean:
 	rm -rf bin/

@@ -40,6 +40,8 @@ poc/
 .vscode
 .cache/
 .codex/
+.env.deploy
+
 docs/engineering-guidelines.md
 docs/roadmap.md
 openspec/
