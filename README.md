@@ -74,6 +74,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | RFB/VNC                     | remote framebuffer auth                  |
 | Telnet                      | interactive login attempts               |
 | MQTT                        | IoT pub/sub messages                     |
+| CoAP                        | UDP IoT GET/POST/PUT/DELETE probes       |
 | iSCSI                       | block-storage target probes              |
 | BitTorrent                  | peer handshake traffic                   |
 | Memcache                    | key-value cache commands                 |

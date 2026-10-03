@@ -73,6 +73,9 @@ rules:
   - match: udp dst port 88
     type: conn_handler
     target: kerberos
+  - match: udp dst port 5683
+    type: conn_handler
+    target: coap
   - match: udp
     type: conn_handler
     target: udp

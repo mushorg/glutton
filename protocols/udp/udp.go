@@ -27,6 +27,9 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	if looksLikeKerberos(data) {
 		return HandleKerberos(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
+	if looksLikeCoAP(data) {
+		return HandleCoAP(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
 
 	payload := make([]byte, min(len(data), maxUDPPayload))
 	copy(payload, data[:len(payload)])
