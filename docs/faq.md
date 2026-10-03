@@ -6,7 +6,7 @@ No. Glutton sits in the low-interaction range: handlers emulate enough protocol 
 
 ## Which protocols are registered?
 
-TCP: SMTP, RDP, SMB, FTP, SIP, RFB/VNC, Telnet, MQTT, iSCSI, BitTorrent, Memcache, Jabber, ADB, MongoDB, HTTP, generic TCP, plus `proxy_tcp` forwarding. UDP: SIP, OpenVPN, mDNS, L2TP, `proxy_udp` forwarding, and a generic UDP catch-all.
+TCP: SMTP, RDP, SMB, FTP, SIP, RFB/VNC, Telnet, MQTT, iSCSI, BitTorrent, Memcache, Jabber, ADB, MongoDB, HTTP, generic TCP, plus `proxy_tcp` forwarding. UDP: SIP, OpenVPN, mDNS, L2TP, RakNet, Kerberos, `proxy_udp` forwarding, and a generic UDP catch-all.
 
 The HTTP handler also dispatches a handful of nested, payload-driven mini-handlers once a request is parsed:
 

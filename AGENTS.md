@@ -12,7 +12,7 @@ canonical shape of a handler so new or refactored handlers stay consistent.
 | --- | --- |
 | `protocols/tcp/*.go` | One file per TCP protocol handler (`HandleSMTP`, `HandleSMB`, ...). |
 | `protocols/tcp/<proto>/` | Optional sub-package with pure parsing / response-building code (e.g. `protocols/tcp/smb/`, `protocols/tcp/rdp/`). |
-| `protocols/udp/*.go` | UDP handlers (`HandleUDP` catch-all, `HandleSIP`, `HandleOpenVPN`, `HandleMDNS`, `HandleL2TP`, …). |
+| `protocols/udp/*.go` | UDP handlers (`HandleUDP` catch-all, `HandleSIP`, `HandleOpenVPN`, `HandleMDNS`, `HandleL2TP`, `HandleKerberos`, …). |
 | `protocols/protocols.go` | Handler registry: maps rule `target` names to handler funcs. |
 | `protocols/interfaces/` | `Logger` and `Honeypot` interfaces every handler receives. |
 | `protocols/helpers/` | `FirstOrEmpty`, `Store` (content-addressed file storage). |
@@ -134,6 +134,7 @@ func HandleX(ctx context.Context, conn net.Conn, md connection.Metadata, logger 
 | `protocols/tcp/http.go` | keep-alive HTTP | Groups frames by `session` cookie across TCP connections into one produced event; `/mcp`/`/sse` hand off to MCP. Shares [`protocols/tcp/session.go`](protocols/tcp/session.go) with MCP. |
 | `protocols/tcp/mcp.go` | HTTP JSON-RPC session | Streamable HTTP MCP; groups frames by `Mcp-Session-Id` across TCP connections into one produced event. Shares [`protocols/tcp/session.go`](protocols/tcp/session.go) with HTTP. |
 | `protocols/tcp/proxy_tcp.go` | transparent proxy | Per-direction capture with byte caps and `truncated` flag. |
+| `protocols/udp/kerberos.go` | parse-only UDP | DER AS-REQ/TGS-REQ tagging; no KRB-ERROR/AS-REP. Generic `udp` peeks APPLICATION 10/12. |
 
 ## Checklist for a new or changed handler
 

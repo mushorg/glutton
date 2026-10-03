@@ -83,7 +83,7 @@ rules:
 
 ### Rule types
 
-`**conn_handler**` — `target` is a handler key. Current TCP keys: `smtp`, `rdp`, `smb`, `ftp`, `sip`, `rfb`, `telnet`, `mqtt`, `iscsi`, `bittorrent`, `memcache`, `jabber`, `adb`, `mongodb`, `http`, `mcp`, `modbus`, `proxy_tcp`, `tcp`. UDP keys: `sip`, `openvpn`, `mdns`, `l2tp`, `raknet`, `proxy_udp`, `udp`. If the target isn't registered, the listener accepts the connection but no handler runs.
+`**conn_handler**` — `target` is a handler key. Current TCP keys: `smtp`, `rdp`, `smb`, `ftp`, `sip`, `rfb`, `telnet`, `mqtt`, `iscsi`, `bittorrent`, `memcache`, `jabber`, `adb`, `mongodb`, `http`, `mcp`, `modbus`, `proxy_tcp`, `tcp`. UDP keys: `sip`, `openvpn`, `mdns`, `l2tp`, `raknet`, `kerberos`, `proxy_udp`, `udp`. If the target isn't registered, the listener accepts the connection but no handler runs.
 
 `**proxy_tcp**` — forwards a matched TCP connection to an upstream `host:port`. The address is parsed at rule-load time and stored in rule metadata; at dispatch the proxy handler dials it and pipes bytes both directions. Tunable via `dial_timeout`, `conn_timeout`, `max_tcp_payload`, and `capture_traffic.enabled` in the main config.
 
@@ -93,4 +93,4 @@ rules:
 
 The default rules end with `match: tcp` → `target: tcp`, the generic TCP handler peeks at the initial bytes and uses the spicy parser to detect HTTP, RDP, or MongoDB payloads, if detected traffic is routed to a specific handler otherwise it fallback to generic TCP handler. HTTP request lines targeting `/mcp` or `/sse` are routed to the `mcp` handler (Streamable HTTP JSON-RPC) so sessions can continue past `initialize`.
 
-UDP catch-all (`match: udp` → `target: udp`) peeks for the RakNet offline magic (`00ffff00fefefefefdfdfdfd12345678`) and routes matching datagrams to `raknet` regardless of destination port. A dedicated `udp dst port 19132` rule also maps to `raknet` before the catch-all.
+UDP catch-all (`match: udp` → `target: udp`) peeks for the RakNet offline magic (`00ffff00fefefefefdfdfdfd12345678`) and routes matching datagrams to `raknet` regardless of destination port. A dedicated `udp dst port 19132` rule also maps to `raknet` before the catch-all. The same catch-all peeks DER APPLICATION 10/12 (AS-REQ/TGS-REQ) and routes those datagrams to `kerberos`; `udp dst port 88` maps to `kerberos` before the catch-all.
