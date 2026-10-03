@@ -38,16 +38,24 @@ func (s *tcpServer) sendRandom(conn net.Conn) error {
 	if _, err := rand.Read(randomBytes); err != nil {
 		return err
 	}
+	if _, err := conn.Write(randomBytes); err != nil {
+		return err
+	}
 	sum := sha256.Sum256(randomBytes)
 	s.events = append(s.events, parsedTCP{
 		Direction:   "write",
 		PayloadHash: hex.EncodeToString(sum[:]),
 		Payload:     randomBytes,
 	})
-	if _, err := conn.Write(randomBytes); err != nil {
-		return err
-	}
 	return nil
+}
+
+func (s *tcpServer) captureRead(data []byte, payloadHash string) {
+	s.events = append(s.events, parsedTCP{
+		Direction:   "read",
+		PayloadHash: payloadHash,
+		Payload:     data,
+	})
 }
 
 // HandleTCP takes a net.Conn and peeks at the data send
@@ -61,40 +69,18 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		return fmt.Errorf("faild to split remote address: %w", err)
 	}
 
-	msgLength := 0
-	data := []byte{}
-	buffer := make([]byte, maxBufferSize)
-
 	defer func() {
-		if msgLength > 0 {
-			payloadHash, err := helpers.Store(data, "payloads")
-			if err != nil {
-				logger.Error("Failed to store payload", slog.String("handler", "tcp"), producer.ErrAttr(err))
-			}
-			logger.Info(
-				"Packet got handled by TCP handler",
-				slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-				slog.String("src_ip", host),
-				slog.String("src_port", port),
-				slog.String("handler", "tcp"),
-				slog.String("payload_hash", payloadHash),
-			)
-			logger.Info(fmt.Sprintf("TCP payload:\n%s", hex.Dump(data[:msgLength%1024])))
-
-			server.events = append(server.events, parsedTCP{
-				Direction:   "read",
-				PayloadHash: payloadHash,
-				Payload:     data[:msgLength%1024],
-			})
-		}
-
-		if err := h.ProduceTCP("tcp", conn, md, helpers.FirstOrEmpty[parsedTCP](server.events).Payload, server.events); err != nil {
+		if err := h.ProduceTCP("tcp", conn, md, helpers.FirstOrEmpty(server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "tcp"), producer.ErrAttr(err))
 		}
 		if err := conn.Close(); err != nil {
 			logger.Error("Failed to close TCP connection", slog.String("handler", "tcp"), producer.ErrAttr(err))
 		}
 	}()
+
+	msgLength := 0
+	data := []byte{}
+	buffer := make([]byte, maxBufferSize)
 
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
@@ -107,7 +93,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 		msgLength += n
 		data = append(data, buffer[:n]...)
-		if n < 1024 {
+		if n < maxBufferSize {
 			break
 		}
 		if msgLength > viper.GetInt("max_tcp_payload") {
@@ -116,7 +102,27 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 	}
 
-	// sending some random data
+	if len(data) > 0 {
+		payloadHash, err := helpers.Store(data, "payloads")
+		if err != nil {
+			logger.Error("Failed to store payload", slog.String("handler", "tcp"), producer.ErrAttr(err))
+		}
+		logger.Info(
+			"Packet got handled by TCP handler",
+			slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+			slog.String("src_ip", host),
+			slog.String("src_port", port),
+			slog.String("handler", "tcp"),
+			slog.String("payload_hash", payloadHash),
+		)
+		dumpLen := len(data)
+		if dumpLen > 1024 {
+			dumpLen = 1024
+		}
+		logger.Info(fmt.Sprintf("TCP payload:\n%s", hex.Dump(data[:dumpLen])))
+		server.captureRead(data, payloadHash)
+	}
+
 	if err := server.sendRandom(conn); err != nil {
 		logger.Error("write error", slog.String("handler", "tcp"), producer.ErrAttr(err))
 	}
