@@ -73,6 +73,8 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		copy(raw, buffer[:n])
 		logger.Debug(fmt.Sprintf("rdp \n%s", hex.Dump(raw)))
 
+		header := rdp.ParseTKIPHeader(raw)
+
 		// After Connection Confirm selects TLS|CredSSP, the client speaks TLS on
 		// the same TCP connection. Answer with a stub handshake instead of another X.224 CC.
 		if rdp.IsTLSRecord(raw) {
@@ -93,26 +95,39 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			return nil
 		}
 
-		pdu, err := rdp.ParseCRPDU(raw)
-		if err != nil {
-			return err
-		}
 		server.events = append(server.events, parsedRDP{
 			Direction: "read",
-			Header:    pdu.Header,
+			Header:    header,
 			Payload:   raw,
 		})
-		logger.Debug(fmt.Sprintf("rdp req pdu: %+v", pdu))
-		if len(pdu.Data) > 0 {
-			logger.Debug(fmt.Sprintf("rdp data: %s", string(pdu.Data)))
-		}
-		header, resp, err := rdp.ConnectionConfirm(pdu.TPDU)
-		if err != nil {
-			return err
-		}
-		logger.Debug(fmt.Sprintf("rdp resp pdu: %+v", resp))
-		if err := server.write(header, resp); err != nil {
-			return err
+
+		switch {
+		case rdp.IsConnectionRequest(raw):
+			pdu, err := rdp.ParseCRPDU(raw)
+			if err != nil {
+				return err
+			}
+			logger.Debug(fmt.Sprintf("rdp req pdu: %+v", pdu))
+			if len(pdu.Data) > 0 {
+				logger.Debug(fmt.Sprintf("rdp data: %s", string(pdu.Data)))
+			}
+			ccHeader, resp, err := rdp.ConnectionConfirm(pdu.TPDU, rdp.HasRDPNegReq(pdu))
+			if err != nil {
+				return err
+			}
+			logger.Debug(fmt.Sprintf("rdp resp pdu: %+v", resp))
+			if err := server.write(ccHeader, resp); err != nil {
+				return err
+			}
+		case rdp.IsMCSConnectInitial(raw):
+			logger.Debug("rdp MCS Connect-Initial", slog.String("protocol", "rdp"), slog.Int("bytes", len(raw)))
+			mcsHeader, resp := rdp.MCSConnectResponse()
+			if err := server.write(mcsHeader, resp); err != nil {
+				return err
+			}
+			return nil
+		default:
+			logger.Debug("rdp ignoring non-CR TPDU", slog.String("protocol", "rdp"), slog.Int("tpdu", int(rdp.TPDUType(raw))))
 		}
 	}
 }

@@ -1,6 +1,7 @@
 package tcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/hex"
@@ -88,6 +89,120 @@ func TestHandleRDPNegotiationAndTLSStub(t *testing.T) {
 	require.Equal(t, "write", events[3].Direction)
 	require.Equal(t, byte(0x16), events[3].Payload[0], "TLS stub ServerHello flight")
 	require.NotEqual(t, events[1].Payload, events[3].Payload, "must not re-send Connection Confirm")
+}
+
+// 11-byte X.224 CR from ochi.mushmush.org/events/b4baa7aa-2d18-4e6e-83db-847c038a993e
+var rdpCRStandard = mustDecodeHex("0300000b06e00000000000")
+
+// TPKT + X.224 DT + MCS Connect-Initial (412 bytes) from the same event.
+var rdpMCSConnectInitial = mustDecodeHex("0300019c02f0807f658201900401010401010101ff30190201220201020201000201010201000201010202ffff020102301902010102010102010102010102010002010102020420020102301c0202ffff0202fc170202ffff0201010201000201010202ffff0201020482012f000500147c00018126000800100001c00044756361811801c0d400040008000005200301ca03aa09080000280a000045004d0050002d004c00410050002d003000300031003400000000000000000004000000000000000c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001ca010000000000100007000100370036003400380037002d004f0045004d002d0030003000310031003900300033002d0030003000310030003700000000000000000000000000000000000000000004c00c00090000000000000002c00c00100000000000000003c02c0003000000726470647200000000008080636c6970726472000000a0c0726470736e640000000000c0")
+
+func TestHandleRDPStandardCRNoNegRsp(t *testing.T) {
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleRDP(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	_, err := client.Write(rdpCRStandard)
+	require.NoError(t, err)
+
+	cc := make([]byte, 11)
+	_, err = io.ReadFull(client, cc)
+	require.NoError(t, err)
+	require.Equal(t, byte(0x03), cc[0])
+	require.Equal(t, byte(0x0b), cc[3])
+	require.Equal(t, byte(0x06), cc[4], "X.224 LI=6, no rdpNegData")
+	require.Equal(t, byte(0xd0), cc[5])
+	require.Equal(t, 11, len(cc))
+	require.NoError(t, client.Close())
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "rdp", produced.protocol)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+
+	events := produced.decoded.([]parsedRDP)
+	require.Len(t, events, 2)
+	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, rdpCRStandard, events[0].Payload)
+	require.Equal(t, "write", events[1].Direction)
+	require.Equal(t, cc, events[1].Payload)
+	require.NotContains(t, events[1].Payload, []byte{0x02, 0x00, 0x08, 0x00})
+}
+
+func TestHandleRDPMCSConnectInitialNoSecondCC(t *testing.T) {
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleRDP(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	_, err := client.Write(rdpCRStandard)
+	require.NoError(t, err)
+
+	cc := make([]byte, 11)
+	_, err = io.ReadFull(client, cc)
+	require.NoError(t, err)
+	require.Equal(t, byte(0xd0), cc[5])
+	require.Equal(t, 11, len(cc))
+
+	require.Len(t, rdpMCSConnectInitial, 412)
+	_, err = client.Write(rdpMCSConnectInitial)
+	require.NoError(t, err)
+
+	mcsBuf := make([]byte, 512)
+	n, err := client.Read(mcsBuf)
+	require.NoError(t, err)
+	mcsResp := mcsBuf[:n]
+	require.Greater(t, len(mcsResp), 11)
+	require.Equal(t, byte(0xf0), mcsResp[5], "MCS reply is X.224 DT, not a second CC")
+	require.NotEqual(t, byte(0xd0), mcsResp[5])
+	require.True(t, bytes.Contains(mcsResp, []byte{0x7f, 0x66}))
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "rdp", produced.protocol)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+
+	events := produced.decoded.([]parsedRDP)
+	require.Len(t, events, 4)
+	require.Equal(t, rdpCRStandard, events[0].Payload)
+	require.Equal(t, cc, events[1].Payload)
+	require.Equal(t, "read", events[2].Direction)
+	require.Equal(t, rdpMCSConnectInitial, events[2].Payload)
+	require.Equal(t, byte(3), events[2].Header.Version)
+	require.Equal(t, "write", events[3].Direction)
+	require.Equal(t, byte(0xf0), events[3].Payload[5])
+	require.NotEqual(t, byte(0xd0), events[3].Payload[5])
 }
 
 func TestHandleRDPPayloadNotOverwritten(t *testing.T) {

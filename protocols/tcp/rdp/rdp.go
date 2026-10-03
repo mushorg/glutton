@@ -57,7 +57,67 @@ type ConnectionConfirmPDU struct {
 	Response NegotiationResponse
 }
 
-func ConnectionConfirm(cr CRTPDU) (TKIPHeader, []byte, error) {
+const (
+	// X.224 TPDU type in the high nibble of the byte after LI (ITU-T X.224).
+	TPDUConnectionRequest    = 0xe0
+	TPDUConnectionConfirm    = 0xd0
+	TPDUData                 = 0xf0
+	tpduTypeMask             = 0xf0
+	rdpNegReqType            = 0x01
+	rdpNegRspType            = 0x02
+	rdpNegSelectedTLSCredSSP = 0x03
+)
+
+// ParseTKIPHeader reads the 4-byte TPKT header. It is safe on short slices.
+func ParseTKIPHeader(data []byte) TKIPHeader {
+	var header TKIPHeader
+	if len(data) >= 1 {
+		header.Version = data[0]
+	}
+	if len(data) >= 2 {
+		header.Reserved = data[1]
+	}
+	if len(data) >= 4 {
+		copy(header.Length[:], data[2:4])
+	}
+	return header
+}
+
+// TPDUType returns the X.224 TPDU type/credit byte, or 0 if the slice is too short.
+func TPDUType(data []byte) byte {
+	if len(data) < 6 {
+		return 0
+	}
+	return data[5]
+}
+
+// IsConnectionRequest reports an X.224 Connection Request TPDU (type 0xE).
+func IsConnectionRequest(data []byte) bool {
+	return TPDUType(data)&tpduTypeMask == TPDUConnectionRequest
+}
+
+// IsDataTPDU reports an X.224 Data TPDU (type 0xF).
+func IsDataTPDU(data []byte) bool {
+	return TPDUType(data)&tpduTypeMask == TPDUData
+}
+
+// HasRDPNegReq reports whether the CR carried TYPE_RDP_NEG_REQ (0x01).
+func HasRDPNegReq(pdu ConnectionRequestPDU) bool {
+	return pdu.RDPNegReq.Type == rdpNegReqType
+}
+
+func ConnectionConfirm(cr CRTPDU, includeNegRsp bool) (TKIPHeader, []byte, error) {
+	if !includeNegRsp {
+		// MS-RDPBCGR 2.2.1.2: 11-byte CC, X.224 LI=6, no rdpNegData.
+		cc := []byte{
+			0x03, 0x00, 0x00, 0x0b,
+			0x06, TPDUConnectionConfirm,
+			cr.SrcRef[0], cr.SrcRef[1],
+			0x00, 0x00,
+			0x00,
+		}
+		return ParseTKIPHeader(cc), cc, nil
+	}
 	cc := ConnectionConfirmPDU{
 		Header: TKIPHeader{
 			Version: 3,
@@ -66,12 +126,12 @@ func ConnectionConfirm(cr CRTPDU) (TKIPHeader, []byte, error) {
 			// LI excludes itself: 6-byte fixed CC header plus the 8-byte RDP_NEG_RSP.
 			// MS-RDPBCGR 2.2.1.2: 14 when rdpNegData is present, 6 when it is not.
 			Length: 14,
-			CCCDT:  0xd0, // 1101 0000: Connection Confirm, CDT 0
+			CCCDT:  TPDUConnectionConfirm,
 			DstRef: cr.SrcRef,
 		},
 		Response: NegotiationResponse{
-			Type:             0x02, // TYPE_RDP_NEG_RSP
-			SelectedProtocol: [4]byte{0x3},
+			Type:             rdpNegRspType,
+			SelectedProtocol: [4]byte{rdpNegSelectedTLSCredSSP},
 		},
 	}
 	binary.LittleEndian.PutUint16(cc.Response.Length[:], 8)
@@ -101,28 +161,13 @@ func ParseCRPDU(data []byte) (ConnectionRequestPDU, error) {
 		return pdu, err
 	}
 
-	// Not sure if this is the best way to get the offset...
-	offset := bytes.Index(data, []byte("\r\n"))
-	switch {
-	case offset < 4:
-		return pdu, nil
-	case offset < 4+7:
-		if offset-4 == 0 {
-			return pdu, nil
-		}
-		pdu.Data = make([]byte, offset-4)
-	default:
-		if offset-4-7 <= 0 {
-			return pdu, nil
-		}
-		pdu.Data = make([]byte, offset-4-7)
+	rest := buffer.Bytes()
+	if i := bytes.Index(rest, []byte("\r\n")); i >= 0 {
+		pdu.Data = append([]byte(nil), rest[:i]...)
+		rest = rest[i+2:]
 	}
-
-	if err := binary.Read(buffer, binary.LittleEndian, &pdu.Data); err != nil {
-		return pdu, err
-	}
-	if buffer.Len() >= 8 {
-		if err := binary.Read(buffer, binary.LittleEndian, &pdu.RDPNegReq); err != nil {
+	if len(rest) >= 8 && rest[0] == rdpNegReqType {
+		if err := binary.Read(bytes.NewReader(rest[:8]), binary.LittleEndian, &pdu.RDPNegReq); err != nil {
 			return pdu, err
 		}
 	}
