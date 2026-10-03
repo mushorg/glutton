@@ -61,13 +61,11 @@ func readHTTPResponse(t *testing.T, client net.Conn) (status int, headers http.H
 
 func withMCPSessionIdle(t *testing.T, idle time.Duration) {
 	t.Helper()
-	prev := mcpSessionIdle
-	mcpSessionIdle = idle
+	prev := sessionIdle
+	sessionIdle = idle
 	t.Cleanup(func() {
-		mcpSessionIdle = prev
-		mcpSessions.mu.Lock()
-		mcpSessions.sessions = map[string]*mcpSession{}
-		mcpSessions.mu.Unlock()
+		sessionIdle = prev
+		mcpSessions.reset()
 	})
 }
 

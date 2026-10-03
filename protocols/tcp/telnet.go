@@ -35,6 +35,7 @@ var miraiCom = map[string][]string{
 	"sh":                                 {"$"},
 	"sh || shell":                        {"$"},
 	"enable\x00":                         {"-bash: enable: command not found"},
+	"linuxshell\x00":                     {"-bash: linuxshell: command not found"},
 	"system\x00":                         {"-bash: system: command not found"},
 	"shell\x00":                          {"-bash: shell: command not found"},
 	"sh\x00":                             {"$"},
@@ -255,6 +256,7 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 			logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
 			return nil
 		}
+		skipPrompt := false
 		for _, cmd := range strings.Split(msg, ";") {
 			if strings.Contains(strings.Trim(cmd, " "), "wget http") {
 				go func() {
@@ -286,8 +288,13 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 				if err != nil {
 					return err
 				}
-				if err := s.write(resp[n.Int64()] + "\r\n"); err != nil {
+				reply := resp[n.Int64()]
+				if err := s.write(reply + "\r\n"); err != nil {
 					return err
+				}
+				// sh already emits a prompt; do not append "> " after it.
+				if reply == "$" {
+					skipPrompt = true
 				}
 			} else {
 				// /bin/busybox YDKBI
@@ -303,6 +310,9 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 					}
 				}
 			}
+		}
+		if skipPrompt {
+			continue
 		}
 		if err := s.write("> "); err != nil {
 			return err

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -20,6 +21,32 @@ import (
 
 // Identical implementation of the original Go HTTP handler, but using Spicy for parsing
 // I've tried to keep the logs and responses as close to the original as possible
+
+// decodedHTTP is the producer event shape. It omits Host and other request
+// headers so the sensor address is not published (the Go HTTP handler does
+// the same). Payload is the request body only.
+type decodedHTTP struct {
+	Method string `json:"method,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Path   string `json:"path,omitempty"`
+	Query  string `json:"query,omitempty"`
+}
+
+// requestPathAndQuery returns path and query without scheme or host, so
+// absolute-form targets like http://<sensor-ip>/foo do not leak the sensor IP.
+func requestPathAndQuery(uriRaw, path, query string) (string, string) {
+	if u, err := url.ParseRequestURI(uriRaw); err == nil && u.Host != "" {
+		p := u.EscapedPath()
+		if p == "" {
+			p = "/"
+		}
+		return p, u.RawQuery
+	}
+	if path == "" {
+		path = uriRaw
+	}
+	return path, query
+}
 
 func sendJSON(conn net.Conn, b []byte) error {
 	_, err := conn.Write(
@@ -152,7 +179,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 	parsed, err := spicy.Parse("http", payload) // parse the HTTP request using Spicy
 	if err != nil {
 		log.Error("spicy parse error", producer.ErrAttr(err))
-		_ = hp.ProduceTCP("spicy-http-failed", conn, md, payload,
+		_ = hp.ProduceTCP("spicy-http-failed", conn, md, nil,
 			map[string]string{"error": err.Error()})
 		return err
 	}
@@ -161,10 +188,8 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 	method = strings.ToUpper(method)
 	uriRaw, _ := parsed.Fields["uri.raw"].(string)
 	path, _ := parsed.Fields["uri.path"].(string)
-	if path == "" {
-		path = uriRaw
-	}
 	query, _ := parsed.Fields["uri.query"].(string)
+	path, query = requestPathAndQuery(uriRaw, path, query)
 	version, _ := parsed.Fields["version.number"].(string)
 
 	if tcp.IsMCPPath(path) {
@@ -200,7 +225,12 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 		log.Info("HTTP payload:\n" + hex.Dump(body[:max]))
 	}
 
-	_ = hp.ProduceTCP("http", conn, md, payload, parsed)
+	_ = hp.ProduceTCP("http", conn, md, body, decodedHTTP{
+		Method: method,
+		URL:    path,
+		Path:   path,
+		Query:  query,
+	})
 
 	handled := false
 	switch method {

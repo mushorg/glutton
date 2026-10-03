@@ -165,19 +165,71 @@ func TestHandleHTTPWithBody(t *testing.T) {
 func TestHandleHTTPMalformedRequest(t *testing.T) {
 	ensureSpicyInitialized()
 
-	malformedRequest := "GET /path\r\nHost: test\r\n\r\n"
+	malformedRequest := "GET /path\r\nHost: 203.0.113.50\r\n\r\n"
 	conn := newMockConn(malformedRequest)
 
 	logger := createMockLogger()
 	honeypot := &mocks.MockHoneypot{}
-	honeypot.EXPECT().ProduceTCP("spicy-http-failed", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	var gotPayload []byte
+	honeypot.EXPECT().ProduceTCP("spicy-http-failed", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ string, _ net.Conn, _ connection.Metadata, payload []byte, _ interface{}) {
+			gotPayload = payload
+		}).
+		Return(nil)
 
 	md := connection.Metadata{TargetPort: 80}
-	ctx := context.Background()
-
-	err := HandleHTTP(ctx, conn, md, logger, honeypot)
+	err := HandleHTTP(context.Background(), conn, md, logger, honeypot)
 	require.Error(t, err)
 	require.True(t, conn.closed)
+	require.Nil(t, gotPayload)
+
+	logger.AssertExpectations(t)
+	honeypot.AssertExpectations(t)
+}
+
+func TestRequestPathAndQueryStripsHost(t *testing.T) {
+	path, query := requestPathAndQuery("http://203.0.113.50/wallet?x=1", "http://203.0.113.50/wallet", "x=1")
+	require.Equal(t, "/wallet", path)
+	require.Equal(t, "x=1", query)
+	require.NotContains(t, path, "203.0.113.50")
+}
+
+func TestHandleHTTPDoesNotProduceSensorAddress(t *testing.T) {
+	ensureSpicyInitialized()
+
+	sensorIP := "203.0.113.50"
+	request := fmt.Sprintf("GET http://%s/test/path?x=1 HTTP/1.1\r\nHost: %s\r\nX-Forwarded-For: %s\r\n\r\n", sensorIP, sensorIP, sensorIP)
+
+	conn := newMockConn(request)
+	logger := createMockLogger()
+	honeypot := &mocks.MockHoneypot{}
+	md := connection.Metadata{
+		TargetPort: 80,
+		Rule:       &rules.Rule{Target: "http"},
+	}
+
+	var gotPayload []byte
+	var gotDecoded interface{}
+	honeypot.EXPECT().ProduceTCP("http", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ string, _ net.Conn, _ connection.Metadata, payload []byte, decoded interface{}) {
+			gotPayload = append([]byte(nil), payload...)
+			gotDecoded = decoded
+		}).
+		Return(nil)
+
+	err := HandleHTTP(context.Background(), conn, md, logger, honeypot)
+	require.NoError(t, err)
+
+	require.NotContains(t, string(gotPayload), sensorIP)
+	require.NotContains(t, fmt.Sprintf("%v", gotDecoded), sensorIP)
+
+	decoded, ok := gotDecoded.(decodedHTTP)
+	require.True(t, ok)
+	require.Equal(t, "GET", decoded.Method)
+	require.Equal(t, "/test/path", decoded.Path)
+	require.Equal(t, "/test/path", decoded.URL)
+	require.Equal(t, "x=1", decoded.Query)
+	require.NotContains(t, decoded.Path, sensorIP)
 
 	logger.AssertExpectations(t)
 	honeypot.AssertExpectations(t)

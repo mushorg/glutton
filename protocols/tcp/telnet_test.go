@@ -65,6 +65,7 @@ func TestHandleTelnetMiraiFlow(t *testing.T) {
 	expect("> ")
 
 	send("linuxshell\x00\r\n")
+	expect("-bash: linuxshell: command not found\r\n")
 	expect("> ")
 
 	send("system\x00\r\n")
@@ -77,7 +78,6 @@ func TestHandleTelnetMiraiFlow(t *testing.T) {
 
 	send("sh\x00\r\n")
 	expect("$\r\n")
-	expect("> ")
 
 	send("/bin/busybox UNSTABLE\x00\r\n")
 	expect("UNSTABLE: applet not found\r\n")
@@ -116,6 +116,7 @@ func TestHandleTelnetMiraiFlow(t *testing.T) {
 		{Direction: "write", Message: "-bash: enable: command not found\r\n"},
 		{Direction: "write", Message: "> "},
 		{Direction: "read", Message: "linuxshell\x00\r\n"},
+		{Direction: "write", Message: "-bash: linuxshell: command not found\r\n"},
 		{Direction: "write", Message: "> "},
 		{Direction: "read", Message: "system\x00\r\n"},
 		{Direction: "write", Message: "-bash: system: command not found\r\n"},
@@ -125,7 +126,6 @@ func TestHandleTelnetMiraiFlow(t *testing.T) {
 		{Direction: "write", Message: "> "},
 		{Direction: "read", Message: "sh\x00\r\n"},
 		{Direction: "write", Message: "$\r\n"},
-		{Direction: "write", Message: "> "},
 		{Direction: "read", Message: "/bin/busybox UNSTABLE\x00\r\n"},
 		{Direction: "write", Message: "UNSTABLE: applet not found\r\n"},
 		{Direction: "write", Message: busyboxBanner},

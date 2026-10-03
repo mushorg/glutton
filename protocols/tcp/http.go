@@ -7,17 +7,26 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"strconv"
 	"strings"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
+	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 )
+
+const (
+	maxHTTPRequests   = 50
+	maxHTTPBody       = 1 << 20 // 1 MiB
+	httpSessionCookie = "session"
+)
+
+var httpSessions = newSessionTable[parsedHTTP]()
 
 // formatRequest generates ascii representation of a request
 func formatRequest(r *http.Request) string {
@@ -46,20 +55,18 @@ func formatRequest(r *http.Request) string {
 	return strings.Join(request, "\n")
 }
 
-func sendJSON(data []byte, conn net.Conn) error {
-	_, err := conn.Write(append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(data))), data...))
-	return err
+func httpOKJSON(data []byte) []byte {
+	return append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(data))), data...)
 }
 
-func handlePOST(req *http.Request, conn net.Conn, buf *bytes.Buffer, logger interfaces.Logger) error {
-	body := buf.Bytes()
+func handlePOST(req *http.Request, body []byte, logger interfaces.Logger) ([]byte, error) {
 	// Ethereum RPC call
 	if strings.Contains(string(body), "eth_blockNumber") {
 		data, err := handleEthereumRPC(body)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return sendJSON(data, conn)
+		return httpOKJSON(data), nil
 	}
 	// Hadoop YARN hack
 	if strings.Contains(req.RequestURI, "cluster/apps/new-application") {
@@ -79,21 +86,17 @@ func handlePOST(req *http.Request, conn net.Conn, buf *bytes.Buffer, logger inte
 			},
 		)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		logger.Info("sending hadoop yarn hack response")
-		return sendJSON(resp, conn)
+		return httpOKJSON(resp), nil
 	}
-	return nil
+	return nil, nil
 }
 
 // scanning attempts for CVE-2019-19781
 // based on https://github.com/x1sec/citrix-honeypot/
-func smbHandler(conn net.Conn, _ *http.Request) error {
-	// if strings.ContainsRune(r.URL.RawPath, '%') {
-	// with IDS evasion."
-	// }
-
+func smbHandler(_ *http.Request) []byte {
 	headers := `Server: Apache
 X-Frame-Options: SAMEORIGIN
 Last-Modified: Thu, 28 Nov 2019 20:19:22 GMT
@@ -105,83 +108,120 @@ X-Content-Type-Options: nosniff
 Content-Type: text/plain; charset=UTF-8`
 
 	smbConfig := "\r\n\r\n[global]\r\n\tencrypt passwords = yes\r\n\tname resolve order = lmhosts wins host bcast\r\n"
-	_, err := conn.Write([]byte("HTTP/1.1 200 OK\r\n" + headers + smbConfig))
-	return err
+	return []byte("HTTP/1.1 200 OK\r\n" + headers + smbConfig)
 }
 
-type decodedHTTP struct {
-	Method string `json:"method,omitempty"`
-	URL    string `json:"url,omitempty"`
-	Path   string `json:"path,omitempty"`
-	Query  string `json:"query,omitempty"`
+type parsedHTTP struct {
+	Direction string `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
+	Command   string `json:"command,omitempty"`   // HTTP method
+	Path      string `json:"path,omitempty"`
+	Query     string `json:"query,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Payload   []byte `json:"payload,omitempty"` // raw HTTP request or response bytes
 }
 
-// HandleHTTP takes a net.Conn and does basic HTTP communication
-func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
-	handoff := false
-	defer func() {
-		if handoff {
-			return
-		}
-		err := conn.Close()
-		if err != nil {
-			logger.Error("Failed to close the HTTP connection", producer.ErrAttr(err))
-		}
-	}()
+func stampHTTP(frame *parsedHTTP, id string) {
+	frame.SessionID = id
+}
 
-	req, err := http.ReadRequest(bufio.NewReader(conn))
-	if err != nil {
-		return fmt.Errorf("failed to read the HTTP request: %w", err)
+func httpPayload(events []parsedHTTP) []byte {
+	return helpers.FirstOrEmpty(events).Payload
+}
+
+type httpServer struct {
+	sessionTracker[parsedHTTP]
+	conn  net.Conn
+	bufin *bufio.Reader
+}
+
+func newHTTPServer(conn net.Conn) *httpServer {
+	srcHost, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
+	return &httpServer{
+		sessionTracker: sessionTracker[parsedHTTP]{
+			local:   []parsedHTTP{},
+			srcHost: srcHost,
+			table:   httpSessions,
+			spec: sessionSpec[parsedHTTP]{
+				protocol: "http",
+				payload:  httpPayload,
+				stamp:    stampHTTP,
+			},
+			remote: conn.RemoteAddr(),
+		},
+		conn:  conn,
+		bufin: bufio.NewReader(conn),
+	}
+}
+
+func addHeaderAfterStatus(resp []byte, name, value string) []byte {
+	needle := []byte("\r\n" + strings.ToLower(name) + ":")
+	if bytes.Contains(bytes.ToLower(resp), needle) {
+		return resp
+	}
+	idx := bytes.Index(resp, []byte("\r\n"))
+	if idx < 0 {
+		return resp
+	}
+	header := []byte(fmt.Sprintf("%s: %s\r\n", name, value))
+	out := make([]byte, 0, len(resp)+len(header))
+	out = append(out, resp[:idx+2]...)
+	out = append(out, header...)
+	out = append(out, resp[idx+2:]...)
+	return out
+}
+
+func (s *httpServer) write(data []byte) error {
+	if s.sessionID != "" {
+		data = addHeaderAfterStatus(data, "Set-Cookie", httpSessionCookie+"="+s.sessionID)
+	}
+	if _, err := s.conn.Write(data); err != nil {
+		return err
+	}
+	s.record(parsedHTTP{
+		Direction: "write",
+		Payload:   data,
+	})
+	return nil
+}
+
+func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw []byte, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+	defer req.Body.Close()
+	path := req.URL.EscapedPath()
+	query := req.URL.Query().Encode()
+	body, _ := io.ReadAll(req.Body)
+
+	if c, err := req.Cookie(httpSessionCookie); err == nil && strings.TrimSpace(c.Value) != "" {
+		s.bind(strings.TrimSpace(c.Value))
+	} else {
+		s.ensure()
 	}
 
-	if IsMCPPath(req.URL.EscapedPath()) {
-		raw, dumpErr := httputil.DumpRequest(req, true)
-		if dumpErr != nil {
-			return fmt.Errorf("failed to dump MCP HTTP request: %w", dumpErr)
+	s.record(parsedHTTP{
+		Direction: "read",
+		Command:   req.Method,
+		Path:      path,
+		Query:     query,
+		Payload:   raw,
+	})
+
+	if len(body) > 0 {
+		n := len(body)
+		if n > 1024 {
+			n = 1024
 		}
-		handoff = true
-		return HandleMCP(ctx, PrependConn(conn, raw), md, logger, h)
-	}
-
-	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
-	if err != nil {
-		return fmt.Errorf("failed to split the host: %w", err)
-	}
-
-	logger.Info(
-		fmt.Sprintf("HTTP %s request handled: %s", req.Method, req.URL.EscapedPath()),
-		slog.String("handler", "http"),
-		slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-		slog.String("src_ip", host),
-		slog.String("src_port", port),
-		slog.String("path", req.URL.EscapedPath()),
-		slog.String("method", req.Method),
-		slog.String("query", req.URL.Query().Encode()),
-	)
-
-	buf := &bytes.Buffer{}
-	if req.ContentLength > 0 {
-		defer req.Body.Close()
-		buf = bytes.NewBuffer(make([]byte, 0, req.ContentLength))
-		length, err := buf.ReadFrom(req.Body)
-		if err != nil {
-			return fmt.Errorf("failed to read the HTTP body: %w", err)
-		}
-		logger.Info(fmt.Sprintf("HTTP payload:\n%s", hex.Dump(buf.Bytes()[:length%1024])))
-	}
-
-	if err := h.ProduceTCP("http", conn, md, buf.Bytes(), decodedHTTP{
-		Method: req.Method,
-		URL:    req.URL.EscapedPath(),
-		Path:   req.URL.EscapedPath(),
-		Query:  req.URL.Query().Encode(),
-	}); err != nil {
-		logger.Error("Failed to produce message", slog.String("protocol", "http"), producer.ErrAttr(err))
+		logger.Info(fmt.Sprintf("HTTP payload:\n%s", hex.Dump(body[:n])))
 	}
 
 	switch req.Method {
 	case http.MethodPost:
-		return handlePOST(req, conn, buf, logger)
+		resp, err := handlePOST(req, body, logger)
+		if err != nil {
+			return err
+		}
+		if resp != nil {
+			return s.write(resp)
+		}
+		return nil
 	}
 
 	if strings.Contains(req.RequestURI, "wallet") {
@@ -189,8 +229,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 			"HTTP wallet request",
 			slog.String("handler", "http"),
 		)
-		_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length:20\r\n\r\n[[\"\"]]\r\n\r\n"))
-		return err
+		return s.write([]byte("HTTP/1.1 200 OK\r\nContent-Length:6\r\n\r\n[[\"\"]]"))
 	}
 
 	if strings.Contains(req.RequestURI, "/v1.16/version") {
@@ -198,33 +237,98 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 		if err != nil {
 			return fmt.Errorf("failed to read embedded file: %w", err)
 		}
-		_, err = conn.Write(append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(data))), data...))
-		return err
+		return s.write(httpOKJSON(data))
 	}
 
 	if strings.HasPrefix(req.RequestURI, "/vpn/") {
-		return smbHandler(conn, req)
+		return s.write(smbHandler(req))
 	}
 
 	// Handler for VMWare Attack
 	if strings.Contains(req.RequestURI, "hyper/send") {
-		body := string(buf.Bytes()[:])
-		parts := strings.Split(body, " ")
+		parts := strings.Split(string(body), " ")
 		if len(parts) >= 11 {
-			conn, err := net.Dial("tcp", parts[9]+":"+parts[10])
+			vconn, err := net.Dial("tcp", parts[9]+":"+parts[10])
 			if err != nil {
 				return err
 			}
 			go func() {
-				if err := HandleTCP(ctx, conn, md, logger, h); err != nil {
+				if err := HandleTCP(ctx, vconn, md, logger, h); err != nil {
 					logger.Error("Failed to handle vmware attack", producer.ErrAttr(err))
 				}
 			}()
 		}
 	}
-	_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
-	if err != nil {
+	if err := s.write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")); err != nil {
 		return fmt.Errorf("failed to send HTTP response: %w", err)
+	}
+	return nil
+}
+
+// HandleHTTP takes a net.Conn and does basic HTTP communication
+func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+	return handleHTTP(ctx, newHTTPServer(conn), md, logger, h)
+}
+
+func handleHTTP(ctx context.Context, server *httpServer, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+	conn := server.conn
+	server.md = md
+	server.logger = logger
+	server.h = h
+
+	handoff := false
+	defer func() {
+		if handoff {
+			return
+		}
+		server.closeAndProduce(conn)
+		if err := conn.Close(); err != nil {
+			logger.Debug("Failed to close the HTTP connection", slog.String("protocol", "http"), producer.ErrAttr(err))
+		}
+	}()
+
+	srcHost, srcPort, _ := net.SplitHostPort(conn.RemoteAddr().String())
+
+	for i := 0; i < maxHTTPRequests; i++ {
+		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			logger.Debug("Failed to set connection timeout", slog.String("protocol", "http"), producer.ErrAttr(err))
+			return nil
+		}
+
+		raw, err := readHTTPMessage(server.bufin, maxHTTPBody)
+		if len(raw) > 0 {
+			req, parseErr := http.ReadRequest(bufio.NewReader(bytes.NewReader(raw)))
+			if parseErr != nil {
+				logger.Debug("Failed to read the HTTP request", slog.String("protocol", "http"), producer.ErrAttr(parseErr))
+				server.record(parsedHTTP{Direction: "read", Payload: append([]byte(nil), raw...)})
+				break
+			}
+
+			if i == 0 && IsMCPPath(req.URL.EscapedPath()) {
+				handoff = true
+				return HandleMCP(ctx, PrependConn(conn, raw), md, logger, h)
+			}
+
+			logger.Info(
+				fmt.Sprintf("HTTP %s request handled: %s", req.Method, req.URL.EscapedPath()),
+				slog.String("handler", "http"),
+				slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+				slog.String("src_ip", srcHost),
+				slog.String("src_port", srcPort),
+				slog.String("path", req.URL.EscapedPath()),
+				slog.String("method", req.Method),
+				slog.String("query", req.URL.Query().Encode()),
+			)
+
+			if handleErr := server.handleRequest(ctx, req, raw, md, logger, h); handleErr != nil {
+				logger.Debug("Failed to handle HTTP request", slog.String("protocol", "http"), producer.ErrAttr(handleErr))
+				return nil
+			}
+		}
+		if err != nil {
+			logger.Debug("Failed to read data", slog.String("protocol", "http"), producer.ErrAttr(err))
+			break
+		}
 	}
 	return nil
 }
