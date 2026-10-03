@@ -39,6 +39,7 @@ type Glutton struct {
 	ctx                 context.Context
 	cancel              context.CancelFunc
 	publicAddrs         []net.IP
+	redirector          tproxyRedirector
 }
 
 //go:embed config/rules.yaml
@@ -48,6 +49,7 @@ var defaultRules []byte
 var defaultConfig []byte
 
 func (g *Glutton) initConfig() error {
+	viper.SetDefault("redirector", redirectorIPTables)
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(viper.GetString("confpath"))
@@ -262,12 +264,19 @@ func (g *Glutton) tcpListen() {
 func (g *Glutton) Start() error {
 	g.startMonitor()
 
-	sshPort := viper.GetUint32("ports.ssh")
-	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), sshPort); err != nil {
+	backend := viper.GetString("redirector")
+	redirector, err := newTProxyRedirector(backend)
+	if err != nil {
 		return err
 	}
-
-	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), sshPort); err != nil {
+	g.redirector = redirector
+	g.Logger.Info("Installing TPROXY rules", slog.String("redirector", backend), slog.String("interface", viper.GetString("interface")))
+	if err := g.redirector.Apply(tproxyRedirect{
+		Interface: viper.GetString("interface"),
+		SSHPort:   uint16(viper.GetUint32("ports.ssh")),
+		TCPPort:   uint16(g.Server.tcpPort),
+		UDPPort:   uint16(g.Server.udpPort),
+	}); err != nil {
 		return err
 	}
 
@@ -396,13 +405,11 @@ func (g *Glutton) ReplyUDP(srcAddr, dstAddr *net.UDPAddr, payload []byte) error 
 func (g *Glutton) Shutdown() {
 	g.cancel() // close all connection
 
-	g.Logger.Info("Flushing TCP iptables")
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
-		g.Logger.Error("Failed to drop tcp iptables", producer.ErrAttr(err))
-	}
-	g.Logger.Info("Flushing UDP iptables")
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
-		g.Logger.Error("Failed to drop udp iptables", producer.ErrAttr(err))
+	if g.redirector != nil {
+		g.Logger.Info("Flushing TPROXY rules")
+		if err := g.redirector.Flush(); err != nil {
+			g.Logger.Error("Failed to flush TPROXY rules", producer.ErrAttr(err))
+		}
 	}
 	if viper.GetBool("spicy.enabled") {
 		g.Logger.Info("Cleaning up and shutting down Spicy and HILTI runtimes")

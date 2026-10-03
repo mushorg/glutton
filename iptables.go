@@ -1,11 +1,34 @@
 package glutton
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/coreos/go-iptables/iptables"
 )
+
+type iptablesRedirector struct {
+	cfg tproxyRedirect
+}
+
+func (r *iptablesRedirector) Apply(cfg tproxyRedirect) error {
+	r.cfg = cfg
+	if err := setTProxyIPTables(cfg.Interface, "", "tcp", uint32(cfg.TCPPort), uint32(cfg.SSHPort)); err != nil {
+		return fmt.Errorf("failed to set TCP TPROXY iptables rule: %w", err)
+	}
+	if err := setTProxyIPTables(cfg.Interface, "", "udp", uint32(cfg.UDPPort), uint32(cfg.SSHPort)); err != nil {
+		return fmt.Errorf("failed to set UDP TPROXY iptables rule: %w", err)
+	}
+	return nil
+}
+
+func (r *iptablesRedirector) Flush() error {
+	return errors.Join(
+		flushTProxyIPTables(r.cfg.Interface, "", "tcp", uint32(r.cfg.TCPPort), uint32(r.cfg.SSHPort)),
+		flushTProxyIPTables(r.cfg.Interface, "", "udp", uint32(r.cfg.UDPPort), uint32(r.cfg.SSHPort)),
+	)
+}
 
 var (
 	// iptables -t mangle -I PREROUTING -p tcp ! --dport 22 -m state ! --state ESTABLISHED,RELATED -j TPROXY --on-port 5000 --on-ip 127.0.0.1

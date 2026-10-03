@@ -1,6 +1,6 @@
 # build container
 FROM golang:1.26-alpine AS build-env
-RUN set -ex && apk add --no-cache gcc musl-dev git make iptables-dev libpcap-dev
+RUN set -ex && apk add --no-cache gcc musl-dev git make iptables-dev libpcap-dev nftables
 
 RUN mkdir -p /opt/glutton
 WORKDIR /opt/glutton
@@ -17,7 +17,7 @@ RUN make build
 # run container
 FROM alpine:3.21
 
-RUN apk add iptables iptables-dev libpcap-dev
+RUN apk add iptables iptables-dev libpcap-dev nftables
 WORKDIR /opt/glutton
 
 COPY --from=build-env /opt/glutton/bin/server /opt/glutton/bin/server

@@ -1,11 +1,14 @@
 # Architecture
 
-Glutton is built around four moving parts: transparent redirection, rule-based dispatch, protocol handlers, and optional producer output. It does not bind every public service port directly — it installs iptables TPROXY rules that redirect matching TCP and UDP traffic to local listener ports, then reconstructs enough metadata to pick a handler.
+Glutton is built around four moving parts: transparent redirection, rule-based dispatch, protocol handlers, and optional producer output. It does not bind every public service port directly — it installs TPROXY rules (iptables by default, nftables as an opt-in backend) that redirect matching TCP and UDP traffic to local listener ports, then reconstructs enough metadata to pick a handler.
 
 ```mermaid
 flowchart TD
-    Net[Incoming TCP/UDP traffic] --> IPT[iptables mangle PREROUTING TPROXY]
-    IPT --> Listen[127.0.0.1 TCP/UDP listeners]
+    Net["Incoming TCP/UDP traffic"] --> Pick["redirector iptables or nftables"]
+    Pick --> IPT["iptables mangle PREROUTING TPROXY"]
+    Pick --> NFT["nft table ip glutton prerouting TPROXY"]
+    IPT --> Listen["127.0.0.1 TCP/UDP listeners"]
+    NFT --> Listen
     Listen --> Rules[Rule matching]
     Rules --> Meta[connection.Metadata]
     Meta --> Dispatch[Protocol handler registry]
@@ -26,7 +29,7 @@ flowchart TD
 | --- | --- | --- |
 | CLI + runtime | `app/server.go`, `glutton.go` | Flags, init, listeners, rule load, dispatch, signal handling. |
 | Listener | `server.go` | Local TCP/UDP TPROXY listeners on `127.0.0.1`. |
-| iptables integration | `iptables.go` | Append/remove mangle PREROUTING TPROXY rules. |
+| TPROXY redirector | `iptables.go`, `nftables.go` | Installs and removes TPROXY rules. `redirector: iptables` (default) writes mangle PREROUTING rules; `redirector: nftables` owns a dedicated `ip` table named `glutton`. |
 | Rules engine | `rules/rules.go` | Compiles BPF expressions, returns the first matching rule. |
 | Handler registry | `protocols/protocols.go` | Maps rule targets (`smtp`, `http`, `proxy_tcp`, `tcp`, …) to handler funcs. |
 | TCP/UDP handlers | `protocols/tcp/`, `protocols/udp/` | Protocol interaction, logging, producer calls, fake responses. |
@@ -39,7 +42,7 @@ flowchart TD
 1. `app/server.go` parses flags and binds them into Viper.
 2. `glutton.New(...)` builds the connection table, reads or writes the sensor ID under `--var-dir`, creates the logger, loads config and rules.
 3. `glutton.Init()` resolves public addresses for `interface`, starts the local TCP/UDP listeners, initializes optional producers, builds the handler maps, and initializes Spicy if `spicy.enabled` is true.
-4. `glutton.Start()` installs the iptables TPROXY rules and starts the listener loops.
+4. `glutton.Start()` installs TPROXY rules via the configured redirector (`iptables` or `nftables`) and starts the listener loops.
 
 The sensor ID is stored as binary UUID data in `<var-dir>/glutton.id`. Default `--var-dir` is `/var/lib/glutton`.
 

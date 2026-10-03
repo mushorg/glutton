@@ -1,6 +1,6 @@
 # Getting started
 
-Glutton is a Go-based, multi-protocol honeypot. It uses Linux iptables and TPROXY to transparently redirect TCP and UDP traffic to local listeners, dispatches connections through a BPF-style rule engine, runs protocol-specific handlers (or forwards to an upstream via `proxy_tcp`, or falls back to generic capture), and writes structured JSON logs and optional producer events.
+Glutton is a Go-based, multi-protocol honeypot. It uses Linux TPROXY (via iptables by default, or nftables as an opt-in backend) to transparently redirect TCP and UDP traffic to local listeners, dispatches connections through a BPF-style rule engine, runs protocol-specific handlers (or forwards to an upstream via `proxy_tcp`, or falls back to generic capture), and writes structured JSON logs and optional producer events.
 
 ## Spicy
 
@@ -8,13 +8,14 @@ Glutton also includes an emerging Spicy parser path. Spicy is the parser-definit
 
 ## Requirements
 
-Glutton is a Linux-only Go binary that depends on iptables, libpcap, a C/C++ toolchain, and Spicy/HILTI. Treat it as hostile-facing infrastructure once it's running: it receives unsolicited traffic, records attacker-controlled payloads, and manages network redirection rules.
+Glutton is a Linux-only Go binary that depends on iptables (and optionally nftables), libpcap, a C/C++ toolchain, and Spicy/HILTI. Treat it as hostile-facing infrastructure once it's running: it receives unsolicited traffic, records attacker-controlled payloads, and manages network redirection rules.
 
 | Requirement                     | Source of truth                                                                                                          |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | Go 1.26+                        | `go.mod` declares `go 1.26.5`; CI uses `^1.26`.                                                                          |
 | libpcap                         | Required by `github.com/google/gopacket/pcap`.                                                                           |
-| iptables                        | TPROXY rule management.                                                                                                  |
+| iptables                        | Default TPROXY rule management (`xt_TPROXY`).                                                                            |
+| nftables                        | Optional TPROXY backend (`nft_tproxy`); install even if you stay on iptables so the binary can be switched later.       |
 | zlib + build-essential          | Spicy and cgo builds.                                                                                                    |
 | clang-17 / clang++-17           | `Makefile` uses `CC=clang-17 CXX=clang++-17`; CI installs clang 17. Unversioned `clang` on Ubuntu 22.04 is often too old. |
 | Spicy 1.16.0 under `/opt/spicy` | The cgo flags in `protocols/spicy/parser.go` expect headers under `/opt/spicy/include` and libraries under `/opt/spicy/lib`. |
@@ -25,7 +26,7 @@ CI runs on Ubuntu 24.04 (`ubuntu-latest`). Other distros need equivalent package
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y libpcap-dev iptables zlib1g-dev build-essential clang-17
+sudo apt-get install -y libpcap-dev iptables nftables zlib1g-dev build-essential clang-17
 
 # Pick the deb for your Ubuntu release (example: 24.04 / CI):
 wget https://github.com/zeek/spicy/releases/download/v1.16.0/spicy_linux_ubuntu24.deb
@@ -45,7 +46,7 @@ make build
 
 ## Run
 
-Glutton modifies iptables rules and needs root (or `CAP_NET_ADMIN`).
+Glutton modifies TPROXY redirection rules and needs root (or `CAP_NET_ADMIN`).
 
 ```bash
 sudo bin/server --interface eth0 --confpath config/ --logpath /var/log/glutton.log
@@ -58,7 +59,7 @@ docker build -t glutton .
 docker run --rm --network host --cap-add=NET_ADMIN -it glutton
 ```
 
-Without `--network host` the container installs TPROXY rules on the docker bridge and never sees external traffic. The host kernel must have iptables `mangle` and `xt_TPROXY` available.
+Without `--network host` the container installs TPROXY rules on the docker bridge and never sees external traffic. The host kernel must have iptables `mangle` and `xt_TPROXY` (default backend) or `nft_tproxy` (`redirector: nftables`).
 
 ### Verify
 
@@ -73,7 +74,7 @@ Prints the banner and version string and exits without initializing the runtime.
 Glutton needs permission to:
 
 - read from TPROXY sockets
-- add and remove iptables mangle PREROUTING rules
+- add and remove iptables mangle PREROUTING rules, or create and delete `table ip glutton` when `redirector: nftables`
 - bind local TCP and UDP listener ports
 - write its sensor ID under `--var-dir` (default `/var/lib/glutton`)
 - write the configured log file
@@ -91,7 +92,7 @@ Glutton is a sensor, not a containment boundary. Use network isolation around it
 
 ## Operational hazards
 
-- iptables state can be left behind if the process is killed without a clean shutdown.
+- iptables mangle rules or `table ip glutton` can be left behind if the process is killed without a clean shutdown.
 - Captured payloads are attacker-controlled. Handle them as untrusted in any downstream pipeline.
 - Some handlers send fake service responses. Don't route real internal clients through the sensor.
 - Legal and privacy obligations vary by jurisdiction. Get local review before collecting or sharing payloads.

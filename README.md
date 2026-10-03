@@ -24,7 +24,7 @@ Out of the box, Glutton ships handlers that capture exploit probes targeting Cit
 
 ## Quick start
 
-Glutton requires Linux, root privileges for iptables, and a build toolchain compatible with the [CI workflow](.github/workflows/workflow.yml) — currently Go 1.26+, Spicy 1.16.0, clang 17, libpcap, iptables, and zlib1g.
+Glutton requires Linux, root privileges for TPROXY redirection, and a build toolchain compatible with the [CI workflow](.github/workflows/workflow.yml) — currently Go 1.26+, Spicy 1.16.0, clang 17, libpcap, iptables, nftables, and zlib1g.
 
 ```bash
 git clone https://github.com/mushorg/glutton.git
@@ -38,7 +38,7 @@ make build
 sudo bin/server -i eth0 -c config/ -l /var/log/glutton.log
 ```
 
-> **SSH safety:** Glutton's iptables rule excludes one TCP port from TPROXY redirection so your SSH session survives. Both `ports.ssh` (`config/config.yaml`) and the CLI flag `-s/--ssh` (`app/server.go`) default to `2222`. If your sshd listens on a different port (the typical `22`, for example), set `ports.ssh` in your config or pass `-s <port>` explicitly to the port your sshd actually listens on before exposing the sensor, or you will lock yourself out.
+> **SSH safety:** Glutton's TPROXY rule excludes one TCP port from redirection so your SSH session survives. Both `ports.ssh` (`config/config.yaml`) and the CLI flag `-s/--ssh` (`app/server.go`) default to `2222`. If your sshd listens on a different port (the typical `22`, for example), set `ports.ssh` in your config or pass `-s <port>` explicitly to the port your sshd actually listens on before exposing the sensor, or you will lock yourself out.
 
 Edit `config/config.yaml` before deployment. Set `addresses` to your host's public IPs and review `ports.`*, `producers.`*, `capture_traffic.enabled`, `dial_timeout`, and the rules in `config/rules.yaml`. Full reference in [docs/configuration.md](docs/configuration.md).
 
@@ -53,7 +53,7 @@ docker build -t glutton .
 docker run --rm --network host --cap-add=NET_ADMIN -it glutton
 ```
 
-This requires the host kernel to support iptables `mangle` and the `xt_TPROXY` module. Without `--network host` the container will install rules inside the container network namespace and never see external traffic.
+This requires the host kernel to support TPROXY. The default `redirector: iptables` needs iptables `mangle` and `xt_TPROXY`; `redirector: nftables` needs `nft_tproxy`. Without `--network host` the container will install rules inside the container network namespace and never see external traffic.
 
 For full Docker, privileges, and host-placement guidance, see [docs/setup.md](docs/setup.md).
 
