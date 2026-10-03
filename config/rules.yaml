@@ -67,6 +67,9 @@ rules:
   - match: udp dst port 1701
     type: conn_handler
     target: l2tp
+  - match: udp dst port 19132
+    type: conn_handler
+    target: raknet
   - match: udp
     type: conn_handler
     target: udp

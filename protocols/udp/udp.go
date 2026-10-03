@@ -13,6 +13,9 @@ import (
 )
 
 func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, log interfaces.Logger, h interfaces.Honeypot) error {
+	if looksLikeRakNet(data) {
+		return HandleRakNet(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
 	log.Info(fmt.Sprintf("UDP payload:\n%s", hex.Dump(data[:min(len(data), 1024)])))
 	if _, err := helpers.Store(data[:min(len(data), 1024)], "payloads"); err != nil {
 		log.Error("failed to store UDP payload", producer.ErrAttr(err))

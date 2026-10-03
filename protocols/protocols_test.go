@@ -40,6 +40,7 @@ func TestMapUDPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "openvpn", "expected OpenVPN UDP handler")
 	require.Contains(t, m, "mdns", "expected mDNS UDP handler")
 	require.Contains(t, m, "l2tp", "expected L2TP UDP handler")
+	require.Contains(t, m, "raknet", "expected RakNet UDP handler")
 	require.Contains(t, m, "proxy_udp", "expected proxy_udp handler")
 	ctx := context.Background()
 	err := m["udp"](ctx, &net.UDPAddr{}, &net.UDPAddr{}, []byte{}, connection.Metadata{})
