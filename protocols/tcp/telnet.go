@@ -20,6 +20,9 @@ import (
 	"github.com/mushorg/glutton/protocols/interfaces"
 )
 
+// busyboxBanner is the BusyBox ash greeting Mirai checks for after applet probes.
+const busyboxBanner = "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-in shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n"
+
 // Mirai botnet  - https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
 // Hajime botnet - https://security.rapiditynetworks.com/publications/2016-10-16/hajime.pdf
 var miraiCom = map[string][]string{
@@ -36,7 +39,7 @@ var miraiCom = map[string][]string{
 	"shell\x00":                          {"-bash: shell: command not found"},
 	"sh\x00":                             {"$"},
 	//	"fgrep XDVR /mnt/mtd/dep2.sh\x00":		   {"cd /mnt/mtd && ./XDVRStart.hisi ./td3500 &"},
-	"busybox": {"BusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-it shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n"},
+	"busybox": {busyboxBanner},
 	"echo -ne '\\x48\\x6f\\x6c\\x6c\\x61\\x46\\x6f\\x72\\x41\\x6c\\x6c\\x61\\x68\\x0a'\r\n": {"\x48\x6f\x6c\x6c\x61\x46\x6f\x72\x41\x6c\x6c\x61\x68\x0arn"},
 	"cat | sh": {""},
 	"echo -e \\x6b\\x61\\x6d\\x69/dev > /dev/.nippon": {""},
@@ -66,26 +69,94 @@ type parsedTelnet struct {
 
 type telnetServer struct {
 	events []parsedTelnet
+	conn   net.Conn
+	reader *bufio.Reader
 	client *http.Client
 }
 
+func newTelnetServer(conn net.Conn) *telnetServer {
+	return &telnetServer{
+		events: []parsedTelnet{},
+		conn:   conn,
+		reader: bufio.NewReader(conn),
+		client: &http.Client{
+			Timeout: 5 * time.Second,
+		},
+	}
+}
+
 // write writes a telnet message to the connection
-func (s *telnetServer) write(conn net.Conn, msg string) error {
-	if _, err := conn.Write([]byte(msg)); err != nil {
+func (s *telnetServer) write(msg string) error {
+	if _, err := s.conn.Write([]byte(msg)); err != nil {
 		return err
 	}
 	s.events = append(s.events, parsedTelnet{Direction: "write", Message: msg})
 	return nil
 }
 
-// read reads a telnet message from a connection
-func (s *telnetServer) read(conn net.Conn) (string, error) {
-	msg, err := bufio.NewReader(conn).ReadString('\n')
-	if err != nil {
-		return msg, err
+// stripTelnetIAC removes telnet negotiation sequences from data.
+// Negotiation octets are returned separately so they can be recorded as their own frames.
+func stripTelnetIAC(data []byte) (cleaned, negotiation []byte) {
+	cleaned = make([]byte, 0, len(data))
+	for i := 0; i < len(data); {
+		if data[i] != 0xff {
+			cleaned = append(cleaned, data[i])
+			i++
+			continue
+		}
+		if i+1 >= len(data) {
+			negotiation = append(negotiation, data[i])
+			break
+		}
+		cmd := data[i+1]
+		switch cmd {
+		case 0xff: // escaped 0xff data byte
+			cleaned = append(cleaned, 0xff)
+			i += 2
+		case 251, 252, 253, 254: // WILL / WONT / DO / DONT + option
+			end := i + 3
+			if end > len(data) {
+				end = len(data)
+			}
+			negotiation = append(negotiation, data[i:end]...)
+			i = end
+		case 250: // SB ... IAC SE
+			start := i
+			i += 2
+			for i < len(data) {
+				if data[i] == 0xff && i+1 < len(data) && data[i+1] == 240 {
+					i += 2
+					break
+				}
+				i++
+			}
+			negotiation = append(negotiation, data[start:i]...)
+		default: // two-byte IAC command
+			end := i + 2
+			if end > len(data) {
+				end = len(data)
+			}
+			negotiation = append(negotiation, data[i:end]...)
+			i = end
+		}
 	}
-	s.events = append(s.events, parsedTelnet{Direction: "read", Message: msg})
-	return msg, nil
+	return cleaned, negotiation
+}
+
+// read reads a telnet message from a connection
+func (s *telnetServer) read() (string, error) {
+	msg, err := s.reader.ReadString('\n')
+	if len(msg) > 0 {
+		cleaned, negotiation := stripTelnetIAC([]byte(msg))
+		if len(negotiation) > 0 {
+			s.events = append(s.events, parsedTelnet{Direction: "read", Message: string(negotiation)})
+		}
+		if len(cleaned) > 0 {
+			s.events = append(s.events, parsedTelnet{Direction: "read", Message: string(cleaned)})
+		}
+		return string(cleaned), err
+	}
+	return msg, err
 }
 
 func (s *telnetServer) getSample(cmd string, logger interfaces.Logger) error {
@@ -130,22 +201,20 @@ func (s *telnetServer) getSample(cmd string, logger interfaces.Logger) error {
 
 // HandleTelnet handles telnet communication on a connection
 func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
-	s := &telnetServer{
-		events: []parsedTelnet{},
-		client: &http.Client{
-			Timeout: time.Duration(5 * time.Second),
-		},
-	}
+	return handleTelnet(ctx, newTelnetServer(conn), md, logger, h)
+}
+
+func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer func() {
-		if err := h.ProduceTCP("telnet", conn, md, []byte(helpers.FirstOrEmpty[parsedTelnet](s.events).Message), s.events); err != nil {
-			logger.Error("Failed to produce message", producer.ErrAttr(err))
+		if err := h.ProduceTCP("telnet", s.conn, md, []byte(helpers.FirstOrEmpty(s.events).Message), s.events); err != nil {
+			logger.Error("Failed to produce message", slog.String("protocol", "telnet"), producer.ErrAttr(err))
 		}
-		if err := conn.Close(); err != nil {
-			logger.Debug("Failed to close telnet connection", producer.ErrAttr(err))
+		if err := s.conn.Close(); err != nil {
+			logger.Debug("Failed to close telnet connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
 		}
 	}()
 
-	if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+	if err := h.UpdateConnectionTimeout(ctx, s.conn); err != nil {
 		logger.Debug("Failed to set connection timeout", slog.String("protocol", "telnet"), producer.ErrAttr(err))
 		return nil
 	}
@@ -153,35 +222,38 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 	// TODO (glaslos): Add device banner
 
 	// telnet window size negotiation response
-	if err := s.write(conn, "\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27"); err != nil {
+	if err := s.write("\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27"); err != nil {
 		return err
 	}
 
 	// User name prompt
-	if err := s.write(conn, "Username: "); err != nil {
+	if err := s.write("Username: "); err != nil {
 		return err
 	}
-	if _, err := s.read(conn); err != nil {
+	if _, err := s.read(); err != nil {
 		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
 		return nil
 	}
-	if err := s.write(conn, "Password: "); err != nil {
+	if err := s.write("Password: "); err != nil {
 		return err
 	}
-	if _, err := s.read(conn); err != nil {
-		return err
+	if _, err := s.read(); err != nil {
+		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
+		return nil
 	}
-	if err := s.write(conn, "welcome\r\n> "); err != nil {
+	if err := s.write("welcome\r\n> "); err != nil {
 		return err
 	}
 
 	for {
-		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
-			return err
+		if err := h.UpdateConnectionTimeout(ctx, s.conn); err != nil {
+			logger.Debug("Failed to set connection timeout", slog.String("protocol", "telnet"), producer.ErrAttr(err))
+			return nil
 		}
-		msg, err := s.read(conn)
+		msg, err := s.read()
 		if err != nil {
-			return err
+			logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
+			return nil
 		}
 		for _, cmd := range strings.Split(msg, ";") {
 			if strings.Contains(strings.Trim(cmd, " "), "wget http") {
@@ -199,11 +271,11 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 				continue
 			}
 			if strings.TrimRight(cmd, "\r\n") == "cd /dev/" {
-				if err := s.write(conn, "ECCHI: applet not found\r\n"); err != nil {
+				if err := s.write("ECCHI: applet not found\r\n"); err != nil {
 					return err
 				}
 
-				if err := s.write(conn, "\r\nBusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-it shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n"); err != nil {
+				if err := s.write(busyboxBanner); err != nil {
 					return err
 				}
 				continue
@@ -214,7 +286,7 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 				if err != nil {
 					return err
 				}
-				if err := s.write(conn, resp[n.Int64()]+"\r\n"); err != nil {
+				if err := s.write(resp[n.Int64()] + "\r\n"); err != nil {
 					return err
 				}
 			} else {
@@ -222,17 +294,17 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 				re := regexp.MustCompile(`\/bin\/busybox (?P<applet>[A-Za-z]+)`)
 				match := re.FindStringSubmatch(cmd)
 				if len(match) > 1 {
-					if err := s.write(conn, match[1]+": applet not found\r\n"); err != nil {
+					if err := s.write(match[1] + ": applet not found\r\n"); err != nil {
 						return err
 					}
 
-					if err := s.write(conn, "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-in shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n"); err != nil {
+					if err := s.write(busyboxBanner); err != nil {
 						return err
 					}
 				}
 			}
 		}
-		if err := s.write(conn, "> "); err != nil {
+		if err := s.write("> "); err != nil {
 			return err
 		}
 	}
