@@ -127,6 +127,49 @@ func TestMakeNegotiateSelectsNTLM(t *testing.T) {
 	require.Contains(t, string(data), string(encodeString(serverName, true)))
 }
 
+func TestReplyHeaderClearsExtendedSecurity(t *testing.T) {
+	// Flags2 0xc853 includes Unicode, NT status, and EXTENDED_SECURITY (0x0800).
+	req := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  0x74, // LOGOFF_ANDX
+		Flags:    0x18,
+		Flags2:   [2]byte{0x53, 0xc8},
+		MID:      [2]byte{0x01, 0x00},
+	}
+	rh, data, err := MakeHeaderResponse(req)
+	require.NoError(t, err)
+	f2 := binary.LittleEndian.Uint16(rh.Flags2[:])
+	require.Equal(t, uint16(0), f2&flags2ExtendedSecurity, "EXTENDED_SECURITY must be cleared")
+	require.NotEqual(t, uint16(0), f2&flags2NTStatus, "NT status bit must stay set")
+	require.Equal(t, f2, binary.LittleEndian.Uint16(data[10:12]))
+	require.Equal(t, byte(0x74), rh.Command)
+	require.Equal(t, []byte{0x00, 0x00, 0x00}, data[32:35]) // WordCount=0, ByteCount=0
+}
+
+func TestMakeNegotiateUTF16AndFlags2(t *testing.T) {
+	// Client advertises EXTENDED_SECURITY; negotiate must clear it and force Unicode
+	// Domain/Server names (nmap smb.lua always UTF-16-decodes them).
+	header := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  0x72,
+		Flags:    0x18,
+		Flags2:   [2]byte{0x53, 0xc8}, // 0xc853
+	}
+	rh, data, err := MakeNegotiateProtocolResponse(header, []byte("\x02NT LM 0.12\x00"))
+	require.NoError(t, err)
+	f2 := binary.LittleEndian.Uint16(rh.Flags2[:])
+	require.Equal(t, uint16(0), f2&flags2ExtendedSecurity)
+	require.NotEqual(t, uint16(0), f2&flags2Unicode)
+	require.Equal(t, f2, binary.LittleEndian.Uint16(data[10:12]))
+
+	domainUTF16 := encodeString(primaryDomain, true)
+	serverUTF16 := encodeString(serverName, true)
+	require.Contains(t, string(data), string(domainUTF16))
+	require.Contains(t, string(data), string(serverUTF16))
+	// Must not appear as OEM (NUL-terminated ASCII) after the challenge.
+	require.NotContains(t, string(data), primaryDomain+"\x00"+serverName+"\x00")
+}
+
 func TestMakeSessionSetupAssignsUID(t *testing.T) {
 	header := SMBHeader{
 		Protocol: [4]byte{0xff, 'S', 'M', 'B'},

@@ -11,24 +11,26 @@ import (
 )
 
 const (
-	cmdNegotiate     = 0x72
-	cmdSessionSetup  = 0x73
-	cmdTreeConnect   = 0x75
-	flagsReply       = 0x80
-	flags2Unicode    = 0x8000
-	flags2NTStatus   = 0x4000
-	capUnicode       = 0x00000004
-	capNTSMBs        = 0x00000010
-	capStatus32      = 0x00000040
-	capLevel2Oplocks = 0x00000080
-	capNTFind        = 0x00000200
-	capLargeFiles    = 0x00000008
-	capNTLM          = capUnicode | capLargeFiles | capNTSMBs | capStatus32 | capLevel2Oplocks | capNTFind
-	nativeOS         = "Windows 5.1"
-	nativeLanMan     = "Windows 5.1"
-	primaryDomain    = "WORKGROUP"
-	serverName       = "SERVER"
-	ntLMDialect      = "NT LM 0.12"
+	cmdNegotiate    = 0x72
+	cmdSessionSetup = 0x73
+	cmdTreeConnect  = 0x75
+	flagsReply      = 0x80
+	flags2Unicode   = 0x8000
+	flags2NTStatus  = 0x4000
+	// SMB_FLAGS2_EXTENDED_SECURITY — do not advertise unless NTLMSSP Session Setup is implemented.
+	flags2ExtendedSecurity = 0x0800
+	capUnicode             = 0x00000004
+	capNTSMBs              = 0x00000010
+	capStatus32            = 0x00000040
+	capLevel2Oplocks       = 0x00000080
+	capNTFind              = 0x00000200
+	capLargeFiles          = 0x00000008
+	capNTLM                = capUnicode | capLargeFiles | capNTSMBs | capStatus32 | capLevel2Oplocks | capNTFind
+	nativeOS               = "Windows 5.1"
+	nativeLanMan           = "Windows 5.1"
+	primaryDomain          = "WORKGROUP"
+	serverName             = "SERVER"
+	ntLMDialect            = "NT LM 0.12"
 	// TRANS2 subcommands (MS-CIFS 2.2.6).
 	trans2FindFirst2   = 0x0001
 	trans2SessionSetup = 0x000e
@@ -288,7 +290,7 @@ func replyHeader(req SMBHeader) SMBHeader {
 	// Clear security features on replies; keep client's PID/MID/TID/UID unless overridden.
 	h.SecurityFeatures = [8]byte{}
 	h.Reserved = [2]byte{}
-	const flags2ExtendedSecurity uint16 = 0x0800
+	// Clear EXTENDED_SECURITY so clients use basic Session Setup (not NTLMSSP).
 	f2 := (flags2(req) | flags2NTStatus) &^ flags2ExtendedSecurity
 	binary.LittleEndian.PutUint16(h.Flags2[:], f2)
 	return h

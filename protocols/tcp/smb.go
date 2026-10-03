@@ -137,6 +137,16 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			if err != nil {
 				return err
 			}
+		case 0x71: // SMB_COM_TREE_DISCONNECT
+			responseHeader, resp, err = smb.MakeHeaderResponse(header)
+			if err != nil {
+				return err
+			}
+		case 0x74: // SMB_COM_LOGOFF_ANDX
+			responseHeader, resp, err = smb.MakeHeaderResponse(header)
+			if err != nil {
+				return err
+			}
 		case 0x32: // SMB_COM_TRANSACTION2
 			setup, setupOK := smb.Trans2Setup(smbBuf.Bytes())
 			responseHeader, resp, err = smb.MakeComTransaction2Reply(header, setup, setupOK)
