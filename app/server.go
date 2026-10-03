@@ -41,6 +41,7 @@ func main() {
 	pflag.BoolP("debug", "d", false, "Enable debug mode")
 	pflag.Bool("version", false, "Print version")
 	pflag.String("var-dir", "/var/lib/glutton", "Set var-dir")
+	pflag.String("redirector", "iptables", "TPROXY backend: iptables or nftables")
 
 	pflag.Parse()
 	viper.BindPFlags(pflag.CommandLine)

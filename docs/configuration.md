@@ -17,7 +17,8 @@ CLI flags override the matching keys in `config.yaml`.
 | `--confpath`  | `-c`  | `config/`          | Directory holding `config.yaml` and `rules.yaml`.                            |
 | `--debug`     | `-d`  | `false`            | Parsed and bound, but not yet wired into `slog.HandlerOptions`.              |
 | `--version`   | —     | `false`            | Prints version and exits before runtime init.                                |
-| `--var-dir`   | —     | `/var/lib/glutton` | Directory for `glutton.id`.                                                  |
+| `--var-dir`    | —     | `/var/lib/glutton` | Directory for `glutton.id`.                                                  |
+| `--redirector` | —     | `iptables`         | TPROXY backend: `iptables` (default) or `nftables`. Overrides `redirector`.  |
 
 
 ## Main config
@@ -33,6 +34,7 @@ Source: `config/config.yaml`. Keys you'll most often touch:
 | `rules_path`                                                         | `config/rules.yaml`      | Path to the rules file.                                                                                                                                                             |
 | `addresses`                                                          | `["1.2.3.4", "5.4.3.2"]` | Public addresses used for payload sanitization.                                                                                                                                     |
 | `interface`                                                          | `eth0`                   | Interface used for public IP discovery and TPROXY rule installation.                                                                                                                |
+| `redirector`                                                         | `iptables`               | TPROXY backend: `iptables` (mangle PREROUTING) or `nftables` (dedicated `table ip glutton`). Unknown values are rejected at start.                                                  |
 | `producers.enabled`                                                  | `false`                  | Creates the producer object.                                                                                                                                                        |
 | `producers.http.enabled`                                             | `false`                  | Enables HTTP producer POSTs.                                                                                                                                                        |
 | `producers.http.remote`                                              | `https://localhost:9000` | HTTP endpoint. Userinfo in the URL supplies basic auth.                                                                                                                             |
@@ -47,7 +49,15 @@ Source: `config/config.yaml`. Keys you'll most often touch:
 
 ### SSH exclusion
 
-`ports.ssh` is the destination port iptables skips when redirecting traffic into the honeypot, so your management SSH session survives. Both `ports.ssh` (default `2222`) and the CLI flag `--ssh` (default `2222`) need to match the port your sshd actually listens on. If your sshd is on `22`, pass `--ssh 22` or set `ports.ssh: 22` before exposing the sensor — otherwise the management port will be redirected into the honeypot and you'll lock yourself out.
+`ports.ssh` is the destination port the TPROXY redirector skips when redirecting traffic into the honeypot, so your management SSH session survives. Both `ports.ssh` (default `2222`) and the CLI flag `--ssh` (default `2222`) need to match the port your sshd actually listens on. If your sshd is on `22`, pass `--ssh 22` or set `ports.ssh: 22` before exposing the sensor — otherwise the management port will be redirected into the honeypot and you'll lock yourself out.
+
+### TPROXY backends
+
+`redirector` selects how Glutton installs the TPROXY rules. `iptables` (the default) appends mangle `PREROUTING` rules using `xt_TPROXY`. `nftables` creates a dedicated `table ip glutton` with a prerouting filter chain (priority mangle) using `nft_tproxy`. Listeners stay on `127.0.0.1`; only the rule installer changes.
+
+Startup recreates that table so an unclean kill does not stack duplicate rules. Clean shutdown deletes the table. If the process is killed hard, leftover state is `table ip glutton` (`nft list table ip glutton`; `nft delete table ip glutton` to remove it). iptables leftovers are the usual mangle PREROUTING TPROXY lines.
+
+`iptables-nft` and native nftables can coexist, but mixing Glutton's iptables backend with a host that already uses nftables for firewall policy is more fragile than using `redirector: nftables` on nftables-native hosts.
 
 ## Rules
 

@@ -9,6 +9,8 @@ addresses: ["1.2.3.4", "5.4.3.2"]
 
 interface: eth0
 
+redirector: iptables  # iptables (default) or nftables
+
 producers:
   enabled: false
   http:

@@ -25,4 +25,4 @@ No. Current grammar files are `http.spicy` and `tcp.spicy`. Spicy is used for se
 
 ## Why does Glutton require Linux?
 
-Glutton is built on Linux-only kernel facilities and tooling like TPROXY, iptables and libpcap. On macOS or Windows you can edit the Go code, but the binary will not redirect traffic, manage iptables, or load the Spicy runtime. Use a Linux VM, container, or remote host for anything beyond static analysis.
+Glutton is built on Linux-only kernel facilities and tooling like TPROXY, iptables or nftables, and libpcap. On macOS or Windows you can edit the Go code, but the binary will not redirect traffic, manage firewall rules, or load the Spicy runtime. Use a Linux VM, container, or remote host for anything beyond static analysis.
