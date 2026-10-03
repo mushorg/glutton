@@ -66,6 +66,7 @@ Example shape:
 | `http` (Go) | Array of per-direction frames: `direction`, `command`, `path`, `query`, `session_id`, `payload` | Keep-alive HTTP. `command` is the HTTP method. Responses set a `session` cookie; frames that share that cookie (per source host) are grouped into one produced event when the session idles out (`conn_timeout`). Shares the idle session table with `mcp`. |
 | `http` (Spicy) | `{method, url, path, query}` | Request body is the event payload. |
 | `tcp` | Array of per-direction frames: `direction`, `payload`, `payload_hash` | Catch-all. Client bytes are one `read` frame (capped by `max_tcp_payload`); the honeypot replies with random bytes as a `write` frame. |
+| `udp` | Array of read frames: `direction`, `payload` | Catch-all. One datagram per event (capped at 1024 bytes). The handler does not reply. Datagrams with RakNet offline magic are rerouted to `raknet`. |
 | `proxy_tcp`, `proxy_udp` | Per-direction entries: `direction`, `payload`, `payload_hash`, `bytes`, `truncated` | Only when `capture_traffic.enabled` is true. Samples are capped by `max_tcp_payload`; `truncated` is whether more bytes were forwarded than captured. `proxy_udp` emits one event per flow when the flow idles out or closes. |
 | `sip` (TCP/UDP) | Array of per-direction frames: `direction`, `payload`, `message` | UDP OPTIONS probes get a `write` frame with the `200 OK` response. |
 | `openvpn` (UDP) | Array of read frames: `direction`, `opcode`, `opcode_name`, `key_id`, `session_id` (hex), `payload` | The handler does not reply. |
