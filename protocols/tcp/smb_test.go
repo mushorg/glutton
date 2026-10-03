@@ -186,3 +186,133 @@ func encodeSMBPath(path string) []byte {
 	}
 	return append(out, 0, 0)
 }
+
+func startHandleSMB(t *testing.T) (client net.Conn, hp *fakeHoneypot, done chan error) {
+	t.Helper()
+	var serverConn net.Conn
+	client, serverConn = net.Pipe()
+	hp = newFakeHoneypot()
+	done = make(chan error, 1)
+	go func() {
+		done <- HandleSMB(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+	t.Cleanup(func() {
+		_ = client.Close()
+	})
+	return client, hp, done
+}
+
+func finishHandleSMB(t *testing.T, client net.Conn, done <-chan error, hp *fakeHoneypot) producedTCP {
+	t.Helper()
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleSMB did not finish")
+	}
+	ev := waitProduced(t, hp)
+	require.Equal(t, "smb", ev.protocol)
+	return ev
+}
+
+func TestHandleSMBReassemblesSplitFrame(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+
+	negBody := []byte{0x00, 0x0c, 0x00}
+	negBody = append(negBody, []byte("\x02NT LM 0.12\x00")...)
+	pdu := append(smbHeaderBytes(t, smbReqHeader(0x72, 0, 0, 1)), negBody...)
+	framed := smb.WrapSessionMessage(pdu)
+	require.NoError(t, client.SetWriteDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write(framed[:2])
+	require.NoError(t, err)
+	_, err = client.Write(framed[2:])
+	require.NoError(t, err)
+
+	negResp := readSMBFrame(t, client)
+	require.Equal(t, byte(0x72), negResp[4])
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames, ok := ev.decoded.([]parsedSMB)
+	require.True(t, ok)
+	require.GreaterOrEqual(t, len(frames), 2)
+	require.Equal(t, "SMB_COM_NEGOTIATE", frames[0].Command)
+}
+
+func TestHandleSMBCapturesLargeNtTransact(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+
+	const body = 8192
+	pdu := make([]byte, body)
+	copy(pdu, smbHeaderBytes(t, smbReqHeader(smb.CmdNtTransact, 1, 1, 1)))
+	writeSMBFrame(t, client, pdu)
+	resp := readSMBFrame(t, client)
+	require.Equal(t, byte(smb.CmdNtTransact), resp[4])
+	require.Equal(t, [4]byte{}, [4]byte(resp[5:9]), "NT Transact stub must be success, not MS17-010 fingerprint")
+	require.Equal(t, byte(18), resp[32])
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames, ok := ev.decoded.([]parsedSMB)
+	require.True(t, ok)
+	var sawRead, sawWrite bool
+	for _, f := range frames {
+		if f.Direction == "read" && f.Header.Command == smb.CmdNtTransact {
+			require.Equal(t, "SMB_COM_NT_TRANSACT", f.Command)
+			require.False(t, f.Truncated)
+			require.Equal(t, 4+body, len(f.Payload))
+			sawRead = true
+		}
+		if f.Direction == "write" && f.Header.Command == smb.CmdNtTransact {
+			sawWrite = true
+		}
+	}
+	require.True(t, sawRead, "expected stored NT_TRANSACT read larger than 1024")
+	require.True(t, sawWrite, "expected NT_TRANSACT stub write")
+}
+
+func TestHandleSMBTruncatesOversizedMessage(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+
+	n := maxSMBMessage + 64
+	pdu := make([]byte, n)
+	copy(pdu, smbHeaderBytes(t, smbReqHeader(smb.CmdNtTransact, 1, 1, 1)))
+	writeSMBFrame(t, client, pdu)
+	_ = readSMBFrame(t, client)
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames, ok := ev.decoded.([]parsedSMB)
+	require.True(t, ok)
+	var sawTrunc bool
+	for _, f := range frames {
+		if f.Direction == "read" && f.Header.Command == smb.CmdNtTransact {
+			require.True(t, f.Truncated)
+			require.Equal(t, 4+maxSMBMessage, len(f.Payload))
+			sawTrunc = true
+		}
+	}
+	require.True(t, sawTrunc, "expected truncated NT_TRANSACT read")
+}
+
+func TestHandleSMBStoresSMB2WithoutAbort(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+
+	pdu := make([]byte, 64)
+	pdu[0] = 0xfe
+	copy(pdu[1:4], []byte("SMB"))
+	binary.LittleEndian.PutUint16(pdu[4:6], 64)
+	writeSMBFrame(t, client, pdu)
+	resp := readSMBFrame(t, client)
+	require.Equal(t, byte(0xfe), resp[0])
+	require.Equal(t, "SMB", string(resp[1:4]))
+	flags := binary.LittleEndian.Uint32(resp[16:20])
+	require.Equal(t, uint32(0x1), flags&0x1, "SMB2_FLAGS_SERVER_TO_REDIR")
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames, ok := ev.decoded.([]parsedSMB)
+	require.True(t, ok)
+	require.GreaterOrEqual(t, len(frames), 2)
+	require.Equal(t, "SMB2_NEGOTIATE", frames[0].Command)
+	require.Equal(t, "read", frames[0].Direction)
+	require.Equal(t, "SMB2_NEGOTIATE", frames[1].Command)
+	require.Equal(t, "write", frames[1].Direction)
+}

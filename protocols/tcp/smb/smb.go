@@ -523,6 +523,22 @@ func MakeComTransactionResponse(header SMBHeader) (SMBHeader, []byte, error) {
 	return smb.Header, data, err
 }
 
+// MakeComNtTransactionResponse builds an empty SMB_COM_NT_TRANSACT success
+// reply so clients keep sending secondary / overflow fragments. This is not
+// the MS17-010 STATUS_INSUFF_SERVER_RESOURCES fingerprint (that stays on 0x25).
+func MakeComNtTransactionResponse(header SMBHeader) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	h.Command = CmdNtTransact
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	// WordCount=18 (no Setup), 18 zero words, ByteCount=0.
+	body := make([]byte, 1+18*2+2)
+	body[0] = 18
+	return h, append(hb, body...), nil
+}
+
 func MakeComTransaction2Error(header SMBHeader) (SMBHeader, []byte, error) {
 	smb := ComTransaction2Error{}
 	smb.Header = replyHeader(header)

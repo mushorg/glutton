@@ -1,8 +1,11 @@
 package tcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
+	"io"
 	"log/slog"
 	"net"
 
@@ -13,10 +16,18 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/smb"
 )
 
+const (
+	maxSMBMessage    = 256 * 1024
+	maxSMBMessages   = 128
+	maxSMBClaimedLen = 16 * 1024 * 1024
+)
+
 type parsedSMB struct {
 	Direction string        `json:"direction,omitempty"`
 	Header    smb.SMBHeader `json:"header,omitempty"`
+	Command   string        `json:"command,omitempty"`
 	Payload   []byte        `json:"payload,omitempty"`
+	Truncated bool          `json:"truncated,omitempty"`
 }
 
 type smbServer struct {
@@ -26,15 +37,54 @@ type smbServer struct {
 	tid    uint16
 }
 
+type smbFrame struct {
+	payload   []byte
+	truncated bool
+}
+
+func (ss *smbServer) read() (smbFrame, error) {
+	var hdr [4]byte
+	if _, err := io.ReadFull(ss.conn, hdr[:]); err != nil {
+		return smbFrame{}, err
+	}
+	n := int(hdr[1])<<16 | int(hdr[2])<<8 | int(hdr[3])
+	if n <= 0 || n > maxSMBClaimedLen {
+		return smbFrame{}, fmt.Errorf("invalid SMB message length: %d", n)
+	}
+	store := n
+	truncated := false
+	if store > maxSMBMessage {
+		store = maxSMBMessage
+		truncated = true
+	}
+	body := make([]byte, store)
+	if _, err := io.ReadFull(ss.conn, body); err != nil {
+		return smbFrame{}, err
+	}
+	if truncated {
+		if _, err := io.CopyN(io.Discard, ss.conn, int64(n-store)); err != nil {
+			return smbFrame{}, err
+		}
+	}
+	payload := make([]byte, 4+store)
+	copy(payload[:4], hdr[:])
+	copy(payload[4:], body)
+	return smbFrame{payload: payload, truncated: truncated}, nil
+}
+
 func (ss *smbServer) write(header smb.SMBHeader, data []byte) error {
+	return ss.writePDU(smb.CommandName(header.Command), header, data)
+}
+
+func (ss *smbServer) writePDU(command string, header smb.SMBHeader, data []byte) error {
 	framed := smb.WrapSessionMessage(data)
-	_, err := ss.conn.Write(framed)
-	if err != nil {
+	if _, err := ss.conn.Write(framed); err != nil {
 		return err
 	}
 	ss.events = append(ss.events, parsedSMB{
 		Direction: "write",
 		Header:    header,
+		Command:   command,
 		Payload:   framed,
 	})
 	return nil
@@ -48,6 +98,13 @@ func (ss *smbServer) nextUID() uint16 {
 func (ss *smbServer) nextTID() uint16 {
 	ss.tid++
 	return ss.tid
+}
+
+func smbPDU(frame smbFrame) []byte {
+	if len(frame.payload) <= 4 {
+		return nil
+	}
+	return frame.payload[4:]
 }
 
 // HandleSMB takes a net.Conn and does basic SMB communication
@@ -66,104 +123,120 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 	}()
 
-	buffer := make([]byte, maxBufferSize)
-	for {
+	for i := 0; i < maxSMBMessages; i++ {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "smb"), producer.ErrAttr(err))
 			return nil
 		}
-		n, err := conn.Read(buffer)
+		frame, err := server.read()
 		if err != nil {
 			logger.Debug("Failed to read data", slog.String("protocol", "smb"), producer.ErrAttr(err))
 			break
 		}
-		if n <= 0 || n >= maxBufferSize {
-			continue
+		pdu := smbPDU(frame)
+		if len(pdu) > 0 && len(pdu) <= 2048 {
+			logger.Debug("SMB Payload", slog.String("payload", hex.Dump(pdu)), slog.String("protocol", "smb"))
 		}
 
-		raw := make([]byte, n)
-		copy(raw, buffer[:n])
-		logger.Debug("SMB Payload", slog.String("payload", hex.Dump(raw)), slog.String("protocol", "smb"))
-
-		frameStart := smb.FrameOffset(raw)
-		frame := append([]byte(nil), raw[frameStart:]...)
-
-		smbBuf, err := smb.ValidateData(raw)
-		if err != nil {
-			return err
-		}
-		// Snapshot full SMB PDU before ParseHeader consumes the 32-byte header.
-		smbPDU := append([]byte(nil), smbBuf.Bytes()...)
-
-		header := smb.SMBHeader{}
-		if err := smb.ParseHeader(smbBuf, &header); err != nil {
-			return err
-		}
-
-		payload := frame
-		if len(payload) < len(smbPDU) {
-			payload = smbPDU
-		}
-		server.events = append(server.events, parsedSMB{
-			Direction: "read",
-			Header:    header,
-			Payload:   payload,
-		})
-
-		logger.Debug("SMB Header", slog.Any("header", header), slog.String("protocol", "smb"))
-
-		var (
-			responseHeader smb.SMBHeader
-			resp           []byte
-		)
-		switch header.Command {
-		case 0x72: // SMB_COM_NEGOTIATE
-			var dialects []byte
-			if req, err := smb.ParseNegotiateProtocolRequest(smbBuf, header); err == nil {
-				dialects = req.Data.DialectString
-			}
-			responseHeader, resp, err = smb.MakeNegotiateProtocolResponse(header, dialects)
-			if err != nil {
+		switch {
+		case bytes.HasPrefix(pdu, []byte("\xffSMB")):
+			if err := server.handleSMB1(frame, pdu, logger); err != nil {
 				return err
 			}
-		case 0x73: // SMB_COM_SESSION_SETUP_ANDX
-			responseHeader, resp, err = smb.MakeSessionSetupAndXResponse(header, server.nextUID())
-			if err != nil {
+		case bytes.HasPrefix(pdu, []byte("\xfeSMB")):
+			if err := server.handleSMB2(frame, pdu); err != nil {
 				return err
 			}
-		case 0x75: // SMB_COM_TREE_CONNECT_ANDX
-			share := smb.TreeConnectShare(header, smbBuf.Bytes())
-			responseHeader, resp, err = smb.MakeTreeConnectAndXResponse(header, server.nextTID(), share)
-			if err != nil {
-				return err
-			}
-		case 0x71: // SMB_COM_TREE_DISCONNECT
-			responseHeader, resp, err = smb.MakeHeaderResponse(header)
-			if err != nil {
-				return err
-			}
-		case 0x74: // SMB_COM_LOGOFF_ANDX
-			responseHeader, resp, err = smb.MakeHeaderResponse(header)
-			if err != nil {
-				return err
-			}
-		case 0x32: // SMB_COM_TRANSACTION2
-			setup, setupOK := smb.Trans2Setup(smbBuf.Bytes())
-			responseHeader, resp, err = smb.MakeComTransaction2Reply(header, setup, setupOK)
-			if err != nil {
-				return err
-			}
-		case 0x25: // SMB_COM_TRANSACTION
-			responseHeader, resp, err = smb.MakeComTransactionResponse(header)
-			if err != nil {
-				return err
-			}
+		case bytes.HasPrefix(pdu, []byte("\xfdSMB")):
+			server.events = append(server.events, parsedSMB{
+				Direction: "read",
+				Command:   "SMB3_TRANSFORM",
+				Payload:   frame.payload,
+				Truncated: frame.truncated,
+			})
 		default:
-			continue
-		}
-		if err := server.write(responseHeader, resp); err != nil {
-			return err
+			server.events = append(server.events, parsedSMB{
+				Direction: "read",
+				Payload:   frame.payload,
+				Truncated: frame.truncated,
+			})
 		}
 	}
 	return nil
+}
+
+func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Logger) error {
+	smbBuf := bytes.NewBuffer(pdu)
+	header := smb.SMBHeader{}
+	if err := smb.ParseHeader(smbBuf, &header); err != nil {
+		ss.events = append(ss.events, parsedSMB{
+			Direction: "read",
+			Payload:   frame.payload,
+			Truncated: frame.truncated,
+		})
+		logger.Debug("Failed to parse SMB header", slog.String("protocol", "smb"), producer.ErrAttr(err))
+		return nil
+	}
+
+	ss.events = append(ss.events, parsedSMB{
+		Direction: "read",
+		Header:    header,
+		Command:   smb.CommandName(header.Command),
+		Payload:   frame.payload,
+		Truncated: frame.truncated,
+	})
+	logger.Debug("SMB Header", slog.Any("header", header), slog.String("protocol", "smb"))
+
+	var (
+		responseHeader smb.SMBHeader
+		resp           []byte
+		err            error
+	)
+	switch header.Command {
+	case smb.CmdNegotiate:
+		var dialects []byte
+		if req, err := smb.ParseNegotiateProtocolRequest(smbBuf, header); err == nil {
+			dialects = req.Data.DialectString
+		}
+		responseHeader, resp, err = smb.MakeNegotiateProtocolResponse(header, dialects)
+	case smb.CmdSessionSetupAndX:
+		responseHeader, resp, err = smb.MakeSessionSetupAndXResponse(header, ss.nextUID())
+	case smb.CmdTreeConnectAndX:
+		share := smb.TreeConnectShare(header, smbBuf.Bytes())
+		responseHeader, resp, err = smb.MakeTreeConnectAndXResponse(header, ss.nextTID(), share)
+	case smb.CmdTreeDisconnect, smb.CmdLogoffAndX:
+		responseHeader, resp, err = smb.MakeHeaderResponse(header)
+	case smb.CmdTransaction2:
+		setup, setupOK := smb.Trans2Setup(smbBuf.Bytes())
+		responseHeader, resp, err = smb.MakeComTransaction2Reply(header, setup, setupOK)
+	case smb.CmdTransaction:
+		responseHeader, resp, err = smb.MakeComTransactionResponse(header)
+	case smb.CmdNtTransact:
+		responseHeader, resp, err = smb.MakeComNtTransactionResponse(header)
+	case smb.CmdNtTransactSecondary, smb.CmdTransactionSecondary:
+		return nil
+	default:
+		responseHeader, resp, err = smb.MakeHeaderResponse(header)
+	}
+	if err != nil {
+		return err
+	}
+	return ss.write(responseHeader, resp)
+}
+
+func (ss *smbServer) handleSMB2(frame smbFrame, pdu []byte) error {
+	name, resp, ok := smb.MakeSMB2Reply(pdu)
+	if name == "" {
+		name = "SMB2"
+	}
+	ss.events = append(ss.events, parsedSMB{
+		Direction: "read",
+		Command:   name,
+		Payload:   frame.payload,
+		Truncated: frame.truncated,
+	})
+	if !ok {
+		return nil
+	}
+	return ss.writePDU(name, smb.SMBHeader{}, resp)
 }

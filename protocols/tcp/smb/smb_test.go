@@ -318,3 +318,41 @@ func TestMakeComTransaction2SetsReplyFlag(t *testing.T) {
 	require.Equal(t, byte(0x98), rh.Flags)
 	require.Equal(t, byte(0x98), data[9])
 }
+
+func TestMakeComNtTransactionResponse(t *testing.T) {
+	header := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  CmdNtTransact,
+		Flags:    0x18,
+		TID:      [2]byte{0x01, 0x00},
+		UID:      [2]byte{0x01, 0x00},
+		MID:      [2]byte{0x02, 0x00},
+	}
+	rh, data, err := MakeComNtTransactionResponse(header)
+	require.NoError(t, err)
+	require.Equal(t, [4]byte{}, rh.Status)
+	require.Equal(t, byte(CmdNtTransact), rh.Command)
+	require.Equal(t, byte(0x98), rh.Flags)
+	require.GreaterOrEqual(t, len(data), 32+1+18*2+2)
+	require.Equal(t, byte(18), data[32])
+	require.Equal(t, []byte{0x00, 0x00}, data[len(data)-2:])
+}
+
+func TestMakeSMB2ReplyNegotiate(t *testing.T) {
+	req := make([]byte, 64)
+	req[0] = 0xfe
+	copy(req[1:4], []byte("SMB"))
+	binary.LittleEndian.PutUint16(req[4:6], 64)
+	name, pdu, ok := MakeSMB2Reply(req)
+	require.True(t, ok)
+	require.Equal(t, "SMB2_NEGOTIATE", name)
+	require.GreaterOrEqual(t, len(pdu), 64+64)
+	require.Equal(t, byte(0xfe), pdu[0])
+	require.Equal(t, uint32(1), binary.LittleEndian.Uint32(pdu[16:20])&1)
+	require.Equal(t, uint16(0x0202), binary.LittleEndian.Uint16(pdu[64+4:64+6]))
+}
+
+func TestMakeSMB2ReplyTooShort(t *testing.T) {
+	_, _, ok := MakeSMB2Reply([]byte{0xfe, 'S', 'M', 'B'})
+	require.False(t, ok)
+}
