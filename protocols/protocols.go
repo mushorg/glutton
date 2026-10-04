@@ -22,139 +22,110 @@ type TCPHandlerFunc func(ctx context.Context, conn net.Conn, md connection.Metad
 
 type UDPHandlerFunc func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error
 
+type tcpHandler func(context.Context, net.Conn, connection.Metadata, interfaces.Logger, interfaces.Honeypot) error
+
+type udpHandler func(context.Context, *net.UDPAddr, *net.UDPAddr, []byte, connection.Metadata, interfaces.Logger, interfaces.Honeypot) error
+
+func bindTCP(fn tcpHandler, log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
+	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		return fn(ctx, conn, md, log, h)
+	}
+}
+
+func bindUDP(fn udpHandler, log interfaces.Logger, h interfaces.Honeypot) UDPHandlerFunc {
+	return func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
+		return fn(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
+}
+
 // MapUDPProtocolHandlers map protocol handlers to corresponding protocol
 func MapUDPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[string]UDPHandlerFunc {
-	protocolHandlers := map[string]UDPHandlerFunc{}
-	protocolHandlers["sip"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
-		return udp.HandleSIP(ctx, srcAddr, dstAddr, data, md, log, h)
+	return map[string]UDPHandlerFunc{
+		"sip":       bindUDP(udp.HandleSIP, log, h),
+		"openvpn":   bindUDP(udp.HandleOpenVPN, log, h),
+		"mdns":      bindUDP(udp.HandleMDNS, log, h),
+		"l2tp":      bindUDP(udp.HandleL2TP, log, h),
+		"raknet":    bindUDP(udp.HandleRakNet, log, h),
+		"kerberos":  bindUDP(udp.HandleKerberos, log, h),
+		"coap":      bindUDP(udp.HandleCoAP, log, h),
+		"proxy_udp": bindUDP(udp.HandleProxyUDP, log, h),
+		"udp":       bindUDP(udp.HandleUDP, log, h),
 	}
-	protocolHandlers["openvpn"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
-		return udp.HandleOpenVPN(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	protocolHandlers["mdns"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
-		return udp.HandleMDNS(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	protocolHandlers["l2tp"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
-		return udp.HandleL2TP(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	protocolHandlers["raknet"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
-		return udp.HandleRakNet(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	protocolHandlers["kerberos"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
-		return udp.HandleKerberos(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	protocolHandlers["coap"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
-		return udp.HandleCoAP(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	protocolHandlers["proxy_udp"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
-		return udp.HandleProxyUDP(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	protocolHandlers["udp"] = func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata) error {
-		return udp.HandleUDP(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	return protocolHandlers
 }
 
 // MapTCPProtocolHandlers map protocol handlers to corresponding protocol
 func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[string]TCPHandlerFunc {
-	protocolHandlers := map[string]TCPHandlerFunc{}
-	protocolHandlers["smtp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleSMTP(ctx, conn, md, log, h)
+	return map[string]TCPHandlerFunc{
+		"smtp":       bindTCP(tcp.HandleSMTP, log, h),
+		"rdp":        bindTCP(tcp.HandleRDP, log, h),
+		"smb":        bindTCP(tcp.HandleSMB, log, h),
+		"ftp":        bindTCP(tcp.HandleFTP, log, h),
+		"sip":        bindTCP(tcp.HandleSIP, log, h),
+		"rfb":        bindTCP(tcp.HandleRFB, log, h),
+		"telnet":     bindTCP(tcp.HandleTelnet, log, h),
+		"mqtt":       bindTCP(tcp.HandleMQTT, log, h),
+		"iscsi":      bindTCP(tcp.HandleISCSI, log, h),
+		"bittorrent": bindTCP(tcp.HandleBittorrent, log, h),
+		"memcache":   bindTCP(tcp.HandleMemcache, log, h),
+		"jabber":     bindTCP(tcp.HandleJabber, log, h),
+		"adb":        bindTCP(tcp.HandleADB, log, h),
+		"mongodb":    bindTCP(tcp.HandleMongoDB, log, h),
+		"http":       bindTCP(tcp.HandleHTTP, log, h),
+		"mcp":        bindTCP(tcp.HandleMCP, log, h),
+		"modbus":     bindTCP(tcp.HandleModbus, log, h),
+		"opcua":      bindTCP(tcp.HandleOPCUA, log, h),
+		"proxy_tcp":  bindTCP(tcp.HandleProxyTCP, log, h),
+		"tcp":        catchAllTCP(log, h),
 	}
-	protocolHandlers["rdp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleRDP(ctx, conn, md, log, h)
-	}
-	protocolHandlers["smb"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleSMB(ctx, conn, md, log, h)
-	}
-	protocolHandlers["ftp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleFTP(ctx, conn, md, log, h)
-	}
-	protocolHandlers["sip"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleSIP(ctx, conn, md, log, h)
-	}
-	protocolHandlers["rfb"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleRFB(ctx, conn, md, log, h)
-	}
-	protocolHandlers["telnet"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleTelnet(ctx, conn, md, log, h)
-	}
-	protocolHandlers["mqtt"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleMQTT(ctx, conn, md, log, h)
-	}
-	protocolHandlers["iscsi"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleISCSI(ctx, conn, md, log, h)
-	}
-	protocolHandlers["bittorrent"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleBittorrent(ctx, conn, md, log, h)
-	}
-	protocolHandlers["memcache"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleMemcache(ctx, conn, md, log, h)
-	}
-	protocolHandlers["jabber"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleJabber(ctx, conn, md, log, h)
-	}
-	protocolHandlers["adb"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleADB(ctx, conn, md, log, h)
-	}
-	protocolHandlers["mongodb"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleMongoDB(ctx, conn, md, log, h)
-	}
-	protocolHandlers["http"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleHTTP(ctx, conn, md, log, h)
-	}
-	protocolHandlers["mcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleMCP(ctx, conn, md, log, h)
-	}
-	protocolHandlers["modbus"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleModbus(ctx, conn, md, log, h)
-	}
-	protocolHandlers["proxy_tcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		return tcp.HandleProxyTCP(ctx, conn, md, log, h)
-	}
-	protocolHandlers["tcp"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-		snip, bufConn, err := Peek(conn, 4)
+}
+
+func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
+	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		snip, bufConn, err := peekOrClose(conn, conn, 4, log)
 		if err != nil {
-			if err := conn.Close(); err != nil {
-				log.Error("failed to close connection", producer.ErrAttr(err))
-			}
-			log.Debug("failed to peek connection", producer.ErrAttr(err))
 			return nil
 		}
-
-		// Uses a basic spicy parser to detect application protocol from tcp payload
 		if viper.GetBool("spicy.enabled") {
 			if protocol, ok := parseTCPProtocol(snip, log); ok {
 				switch protocol {
 				case "http":
-					reqLine, httpConn, peekErr := Peek(bufConn, mcpRequestLinePeek)
-					if peekErr == nil && tcp.LooksLikeMCP(reqLine) {
-						return tcp.HandleMCP(ctx, httpConn, md, log, h)
-					}
-					if peekErr == nil {
-						bufConn = httpConn
-					}
-					return spicyHandlers.HandleHTTP(ctx, bufConn, md, log, h)
+					return handleDetectedHTTP(ctx, bufConn, md, log, h)
 				case "rdp":
 					return tcp.HandleRDP(ctx, bufConn, md, log, h)
 				}
 			}
-			moreSample, bufConn, err := Peek(bufConn, 16)
+			more, bufConn, err := peekOrClose(conn, bufConn, 16, log)
 			if err != nil {
-				if err := conn.Close(); err != nil {
-					log.Error("failed to close connection", producer.ErrAttr(err))
-				}
-				log.Debug("failed to peek connection", producer.ErrAttr(err))
 				return nil
 			}
-			if protocol, ok := parseTCPProtocol(moreSample, log); ok && protocol == "mongodb" {
+			if protocol, ok := parseTCPProtocol(more, log); ok && protocol == "mongodb" {
 				return tcp.HandleMongoDB(ctx, bufConn, md, log, h)
 			}
 		}
-		// fallback TCP handler
 		return tcp.HandleTCP(ctx, bufConn, md, log, h)
 	}
-	return protocolHandlers
+}
+
+func handleDetectedHTTP(ctx context.Context, bufConn BufferedConn, md connection.Metadata, log interfaces.Logger, h interfaces.Honeypot) error {
+	reqLine, httpConn, peekErr := Peek(bufConn, mcpRequestLinePeek)
+	if peekErr == nil && tcp.LooksLikeMCP(reqLine) {
+		return tcp.HandleMCP(ctx, httpConn, md, log, h)
+	}
+	if peekErr == nil {
+		bufConn = httpConn
+	}
+	return spicyHandlers.HandleHTTP(ctx, bufConn, md, log, h)
+}
+
+func peekOrClose(orig net.Conn, conn net.Conn, n int, log interfaces.Logger) ([]byte, BufferedConn, error) {
+	snip, bufConn, err := Peek(conn, n)
+	if err != nil {
+		if cerr := orig.Close(); cerr != nil {
+			log.Error("failed to close connection", producer.ErrAttr(cerr))
+		}
+		log.Debug("failed to peek connection", producer.ErrAttr(err))
+	}
+	return snip, bufConn, err
 }
 
 func parseTCPProtocol(sample []byte, log interfaces.Logger) (string, bool) {
@@ -163,7 +134,6 @@ func parseTCPProtocol(sample []byte, log interfaces.Logger) (string, bool) {
 		log.Error("spicy tcp protocol parse error", producer.ErrAttr(err))
 		return "", false
 	}
-
 	protocol, ok := parsed.Fields["protocol"].(string)
 	protocol = strings.ToLower(strings.TrimSpace(protocol))
 	return protocol, ok && protocol != ""

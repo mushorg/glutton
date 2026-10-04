@@ -61,12 +61,10 @@ Style references in-tree: `protocols/tcp/http.go`, `protocols/tcp/tcp.go`, `prot
 
 ## 3. Register the handler
 
-In `protocols/protocols.go`, add to `MapTCPProtocolHandlers(...)`:
+In `protocols/protocols.go`, add to the map in `MapTCPProtocolHandlers(...)`:
 
 ```go
-protocolHandlers["example"] = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
-	return tcp.HandleExample(ctx, conn, md, log, h)
-}
+"example": bindTCP(tcp.HandleExample, log, h),
 ```
 
 UDP handlers register through `MapUDPProtocolHandlers(...)` instead.

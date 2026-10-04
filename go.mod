@@ -9,6 +9,7 @@ require (
 	github.com/glaslos/lsof v0.0.0-20230723212405-b3baf9409e4b
 	github.com/google/gopacket v1.1.19
 	github.com/google/uuid v1.6.0
+	github.com/gopcua/opcua v0.9.1
 	github.com/seud0nym/tproxy-go v0.0.0-20250208031739-d6105fbee268
 	github.com/spf13/pflag v1.0.6
 	github.com/spf13/viper v1.20.1
