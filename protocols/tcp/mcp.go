@@ -37,6 +37,7 @@ type parsedMCP struct {
 	Direction string `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
 	Command   string `json:"command,omitempty"`   // JSON-RPC method, or HTTP verb when no JSON body
 	Path      string `json:"path,omitempty"`
+	Status    string `json:"status,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	Payload   []byte `json:"payload,omitempty"` // raw HTTP request or response bytes
 }
@@ -117,6 +118,7 @@ func (s *mcpServer) write(data []byte) error {
 	}
 	s.record(parsedMCP{
 		Direction: "write",
+		Status:    httpStatusCode(data),
 		Payload:   data,
 	})
 	return nil
@@ -445,7 +447,9 @@ func handleMCP(ctx context.Context, server *mcpServer, md connection.Metadata, l
 	server.logger = logger
 	server.h = h
 
+	endReason := connection.EndHandlerClose
 	defer func() {
+		server.md.EndReason = endReason
 		server.closeAndProduce()
 		if err := conn.Close(); err != nil {
 			logger.Debug("Failed to close MCP connection", slog.String("protocol", "mcp"), producer.ErrAttr(err))
@@ -460,9 +464,11 @@ func handleMCP(ctx context.Context, server *mcpServer, md connection.Metadata, l
 		slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
 	)
 
-	for i := 0; i < maxMCPRequests; i++ {
+	i := 0
+	for ; i < maxMCPRequests; i++ {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "mcp"), producer.ErrAttr(err))
+			endReason = connection.EndTimeout
 			return nil
 		}
 
@@ -470,13 +476,18 @@ func handleMCP(ctx context.Context, server *mcpServer, md connection.Metadata, l
 		if len(raw) > 0 {
 			if handleErr := server.handleRequest(raw); handleErr != nil {
 				logger.Debug("Failed to handle MCP request", slog.String("protocol", "mcp"), producer.ErrAttr(handleErr))
+				endReason = connection.EndWriteError
 				return nil
 			}
 		}
 		if err != nil {
 			logger.Debug("Failed to read data", slog.String("protocol", "mcp"), producer.ErrAttr(err))
+			endReason = connection.EndReasonFromRead(err)
 			break
 		}
+	}
+	if i >= maxMCPRequests {
+		endReason = connection.EndMaxFrames
 	}
 	return nil
 }

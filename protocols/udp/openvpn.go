@@ -29,11 +29,13 @@ var openVPNOpcodeNames = map[uint8]string{
 
 type parsedOpenVPN struct {
 	Direction  string `json:"direction,omitempty"`
+	Command    string `json:"command,omitempty"`
 	Opcode     uint8  `json:"opcode,omitempty"`
 	OpcodeName string `json:"opcode_name,omitempty"`
 	KeyID      uint8  `json:"key_id,omitempty"`
 	SessionID  string `json:"session_id,omitempty"`
 	Payload    []byte `json:"payload,omitempty"`
+	Truncated  bool   `json:"truncated,omitempty"`
 }
 
 func parseOpenVPNHeader(data []byte) parsedOpenVPN {
@@ -48,6 +50,7 @@ func parseOpenVPNHeader(data []byte) parsedOpenVPN {
 	} else {
 		frame.OpcodeName = "UNKNOWN"
 	}
+	frame.Command = frame.OpcodeName
 	if len(data) >= 9 {
 		frame.SessionID = hex.EncodeToString(data[1:9])
 	}
@@ -61,7 +64,9 @@ func HandleOpenVPN(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []by
 	copy(payload, data[:len(payload)])
 
 	events := []parsedOpenVPN{}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceUDP("openvpn", srcAddr, dstAddr, md, helpers.FirstOrEmpty[parsedOpenVPN](events).Payload, events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "openvpn"), producer.ErrAttr(err))
 		}
@@ -72,6 +77,7 @@ func HandleOpenVPN(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []by
 	}
 
 	frame := parseOpenVPNHeader(payload)
+	frame.Truncated = len(data) > maxOpenVPNPayload
 	events = append(events, frame)
 
 	if len(payload) < 9 {

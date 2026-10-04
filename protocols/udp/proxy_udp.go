@@ -151,6 +151,9 @@ func (f *udpFlow) closeAndProduce() {
 	_ = f.conn.Close()
 
 	payload := helpers.FirstOrEmpty(events).Payload
+	if f.md.EndReason == "" {
+		f.md.EndReason = connection.EndHandlerClose
+	}
 	if err := f.h.ProduceUDP(proxyUDPHandler, f.srcAddr, f.dstAddr, f.md, payload, events); err != nil {
 		f.logger.Error("failed to produce proxy_udp message", proxyUDPLogAttrs(
 			slog.String("function", "closeAndProduce"),
@@ -183,6 +186,7 @@ func (f *udpFlow) readLoop(ctx context.Context) {
 					slog.String("source", f.srcAddr.String()),
 					slog.String("target", f.conn.RemoteAddr().String()),
 				)...)
+				f.md.EndReason = connection.EndTimeout
 				return
 			}
 			if !errors.Is(err, net.ErrClosed) && !errors.Is(err, context.Canceled) {
@@ -191,6 +195,7 @@ func (f *udpFlow) readLoop(ctx context.Context) {
 					producer.ErrAttr(err),
 				)...)
 			}
+			f.md.EndReason = connection.EndReasonFromRead(err)
 			return
 		}
 		if n == 0 {
@@ -204,6 +209,7 @@ func (f *udpFlow) readLoop(ctx context.Context) {
 				slog.String("function", "readLoop"),
 				producer.ErrAttr(err),
 			)...)
+			f.md.EndReason = connection.EndWriteError
 			return
 		}
 	}
@@ -310,6 +316,7 @@ func HandleProxyUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []b
 			slog.String("function", "HandleProxyUDP"),
 			producer.ErrAttr(err),
 		)...)
+		flow.md.EndReason = connection.EndWriteError
 		flow.closeAndProduce()
 		return nil
 	}

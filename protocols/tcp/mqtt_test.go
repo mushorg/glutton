@@ -115,6 +115,7 @@ func TestHandleMQTTConnectPing(t *testing.T) {
 		require.True(t, ok)
 		require.GreaterOrEqual(t, len(events), 4)
 		require.Equal(t, "CONNECT", events[0].Packet)
+		require.Equal(t, "CONNECT", events[0].Command)
 		require.Equal(t, "sensor-1", events[0].ClientID)
 		require.Equal(t, "user", events[0].Username)
 		require.Equal(t, "CONNACK", events[1].Packet)

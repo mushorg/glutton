@@ -9,16 +9,35 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
+	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 )
 
-func readRFB(conn net.Conn, logger interfaces.Logger) error {
-	msg, err := bufio.NewReader(conn).ReadString('\n')
-	if err != nil {
+type parsedRFB struct {
+	Direction string `json:"direction,omitempty"`
+	Command   string `json:"command,omitempty"`
+	Payload   []byte `json:"payload,omitempty"`
+}
+
+type rfbServer struct {
+	events []parsedRFB
+	conn   net.Conn
+}
+
+func (s *rfbServer) write(command string, data []byte) error {
+	if _, err := s.conn.Write(data); err != nil {
 		return err
 	}
-	logger.Debug("RFB message", slog.String("msg", msg), slog.String("protocol", "rfb"))
+	s.events = append(s.events, parsedRFB{Direction: "write", Command: command, Payload: data})
 	return nil
+}
+
+func (s *rfbServer) read(command string) error {
+	msg, err := bufio.NewReader(s.conn).ReadString('\n')
+	if len(msg) > 0 {
+		s.events = append(s.events, parsedRFB{Direction: "read", Command: command, Payload: []byte(msg)})
+	}
+	return err
 }
 
 // PixelFormat represents a RFB communication unit
@@ -34,23 +53,38 @@ type PixelFormat struct {
 
 // HandleRFB takes a net.Conn and does basic RFB/VNC communication
 func HandleRFB(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+	server := &rfbServer{conn: conn}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
+		if err := h.ProduceTCP("rfb", conn, md, helpers.FirstOrEmpty[parsedRFB](server.events).Payload, server.events); err != nil {
+			logger.Error("Failed to produce message", slog.String("protocol", "rfb"), producer.ErrAttr(err))
+		}
 		if err := conn.Close(); err != nil {
 			logger.Debug("Failed to close RFB connection", slog.String("protocol", "rfb"), producer.ErrAttr(err))
 		}
 	}()
 
-	if _, err := conn.Write([]byte("RFB 003.008\n")); err != nil {
+	if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+		logger.Debug("Failed to set connection timeout", slog.String("protocol", "rfb"), producer.ErrAttr(err))
+		endReason = connection.EndTimeout
+		return nil
+	}
+
+	if err := server.write("ProtocolVersion", []byte("RFB 003.008\n")); err != nil {
+		endReason = connection.EndWriteError
 		return err
 	}
-	if err := readRFB(conn, logger); err != nil {
+	if err := server.read("ProtocolVersion"); err != nil {
 		logger.Debug("Failed to read RFB", slog.String("protocol", "rfb"), producer.ErrAttr(err))
+		endReason = connection.EndReasonFromRead(err)
 		return nil
 	}
 	var authNone uint32 = 1
 	bs := make([]byte, 4)
 	binary.LittleEndian.PutUint32(bs, authNone)
-	if _, err := conn.Write(bs); err != nil {
+	if err := server.write("Security", bs); err != nil {
+		endReason = connection.EndWriteError
 		return err
 	}
 
@@ -73,7 +107,15 @@ func HandleRFB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		ServerNameLength: lenName,
 	}
 	if err := binary.Write(conn, binary.LittleEndian, f); err != nil {
+		endReason = connection.EndWriteError
 		return err
 	}
-	return readRFB(conn, logger)
+	// PixelFormat is written without going through write(); record it.
+	server.events = append(server.events, parsedRFB{Direction: "write", Command: "ServerInit"})
+	if err := server.read("ClientInit"); err != nil {
+		logger.Debug("Failed to read RFB", slog.String("protocol", "rfb"), producer.ErrAttr(err))
+		endReason = connection.EndReasonFromRead(err)
+		return nil
+	}
+	return nil
 }

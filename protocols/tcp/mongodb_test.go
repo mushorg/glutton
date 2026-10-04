@@ -136,7 +136,8 @@ func TestHandleMongoDBHelloIsMasterBuildInfo(t *testing.T) {
 		require.Equal(t, wantReadOps[i], read.Header.OpCode)
 		require.Equal(t, requests[i], read.Payload)
 		require.Equal(t, "write", write.Direction)
-		require.Empty(t, write.Command)
+		require.Equal(t, wantCmds[i], write.Command)
+		require.Equal(t, "ok", write.Status)
 		require.Equal(t, wantWriteOps[i], write.Header.OpCode)
 		require.Equal(t, requests[i][4:8], write.Payload[8:12]) // ResponseTo == request RequestID
 	}

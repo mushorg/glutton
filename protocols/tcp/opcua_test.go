@@ -117,9 +117,12 @@ func TestHandleOPCUAHelloACK(t *testing.T) {
 	require.GreaterOrEqual(t, len(frames), 2)
 	require.Equal(t, "read", frames[0].Direction)
 	require.Equal(t, "HEL", frames[0].MessageType)
+	require.Equal(t, "Hello", frames[0].Command)
 	require.Equal(t, "opc.tcp://203.0.113.10:4840", frames[0].EndpointURL)
+	require.Equal(t, "opc.tcp://203.0.113.10:4840", frames[0].Path)
 	require.Equal(t, "write", frames[1].Direction)
 	require.Equal(t, "ACK", frames[1].MessageType)
+	require.Equal(t, "Acknowledge", frames[1].Command)
 }
 
 func TestHandleOPCUAGetEndpoints(t *testing.T) {

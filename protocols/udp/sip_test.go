@@ -12,9 +12,10 @@ import (
 )
 
 type producedUDP struct {
-	handler string
-	payload []byte
-	decoded interface{}
+	handler   string
+	payload   []byte
+	decoded   interface{}
+	endReason string
 }
 
 type recordingHoneypot struct {
@@ -30,7 +31,7 @@ func (h *recordingHoneypot) ProduceTCP(string, net.Conn, connection.Metadata, []
 func (h *recordingHoneypot) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md connection.Metadata, payload []byte, decoded interface{}) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.produced = append(h.produced, producedUDP{handler: handler, payload: append([]byte(nil), payload...), decoded: decoded})
+	h.produced = append(h.produced, producedUDP{handler: handler, payload: append([]byte(nil), payload...), decoded: decoded, endReason: md.EndReason})
 	return nil
 }
 
@@ -88,8 +89,11 @@ func TestHandleSIPOptions(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, events, 2)
 	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, "OPTIONS", events[0].Command)
 	require.Equal(t, "write", events[1].Direction)
+	require.Equal(t, "200", events[1].Status)
 	require.Contains(t, string(events[1].Payload), "SIP/2.0 200")
+	require.Equal(t, connection.EndHandlerClose, h.produced[0].endReason)
 
 	require.Len(t, h.replies, 1)
 	require.Contains(t, string(h.replies[0]), "SIP/2.0 200")
@@ -116,6 +120,7 @@ func TestHandleSIPRegisterNoReply(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, events, 1)
 	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, "REGISTER", events[0].Command)
 }
 
 func TestHandleSIPMalformedStillProduces(t *testing.T) {

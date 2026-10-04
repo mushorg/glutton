@@ -38,6 +38,8 @@ func TestHandleMDNSServicesBrowse(t *testing.T) {
 	require.Equal(t, "read", events[0].Direction)
 	require.Equal(t, payload, events[0].Payload)
 	require.Len(t, events[0].Questions, 1)
+	require.Equal(t, "PTR", events[0].Command)
+	require.Equal(t, "_services._dns-sd._udp.local", events[0].Path)
 	require.Equal(t, "_services._dns-sd._udp.local", events[0].Questions[0].QName)
 	require.Equal(t, uint16(12), events[0].Questions[0].QType)
 	require.Equal(t, "PTR", events[0].Questions[0].QTypeName)

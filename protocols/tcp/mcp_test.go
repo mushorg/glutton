@@ -168,6 +168,7 @@ func TestHandleMCPInitializeAndToolsList(t *testing.T) {
 	require.True(t, bytes.Contains(events[0].Payload, []byte("initialize")))
 
 	require.Equal(t, "write", events[1].Direction)
+	require.Equal(t, "200", events[1].Status)
 	require.Equal(t, sessionID, events[1].SessionID)
 	require.True(t, bytes.Contains(events[1].Payload, []byte(mcpServerName)))
 

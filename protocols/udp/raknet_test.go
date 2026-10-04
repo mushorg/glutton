@@ -45,6 +45,7 @@ func TestHandleRakNetOCR1(t *testing.T) {
 	require.Equal(t, "read", events[0].Direction)
 	require.Equal(t, uint8(0x05), events[0].PacketID)
 	require.Equal(t, "OPEN_CONNECTION_REQUEST_1", events[0].PacketName)
+	require.Equal(t, "OPEN_CONNECTION_REQUEST_1", events[0].Command)
 	require.Equal(t, uint8(9), events[0].Protocol)
 	require.True(t, events[0].MagicOK)
 	require.Equal(t, 1024, events[0].MTU)

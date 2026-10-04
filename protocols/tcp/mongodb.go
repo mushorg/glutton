@@ -38,6 +38,7 @@ type parsedMongoDB struct {
 	Payload   []byte         `json:"payload,omitempty"`
 	OpCodeStr string         `json:"opcode_str,omitempty"`
 	Command   string         `json:"command,omitempty"`
+	Status    string         `json:"status,omitempty"`
 }
 
 type mongoDBServer struct {
@@ -70,7 +71,7 @@ func (s *mongoDBServer) read() ([]byte, error) {
 	return fullMessage, nil
 }
 
-func (s *mongoDBServer) write(header mongodb.Header, data []byte) error {
+func (s *mongoDBServer) write(header mongodb.Header, data []byte, command string) error {
 	if _, err := s.conn.Write(data); err != nil {
 		return err
 	}
@@ -80,6 +81,8 @@ func (s *mongoDBServer) write(header mongodb.Header, data []byte) error {
 		Header:    header,
 		Payload:   data,
 		OpCodeStr: opCodeNames[header.OpCode],
+		Command:   command,
+		Status:    "ok",
 	})
 
 	return nil
@@ -91,7 +94,9 @@ func HandleMongoDB(ctx context.Context, conn net.Conn, md connection.Metadata, l
 		conn:   conn,
 	}
 
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceTCP("mongodb", conn, md, helpers.FirstOrEmpty[parsedMongoDB](server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce MongoDB event", producer.ErrAttr(err), slog.String("protocol", "mongodb"))
 		}
@@ -103,9 +108,11 @@ func HandleMongoDB(ctx context.Context, conn net.Conn, md connection.Metadata, l
 
 	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
-	for i := 0; i < maxMongoMessages; i++ {
+	i := 0
+	for ; i < maxMongoMessages; i++ {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to update connection timeout", producer.ErrAttr(err), slog.String("protocol", "mongodb"))
+			endReason = connection.EndTimeout
 			return nil
 		}
 
@@ -114,6 +121,7 @@ func HandleMongoDB(ctx context.Context, conn net.Conn, md connection.Metadata, l
 			if err != io.EOF {
 				logger.Debug("Failed to read MongoDB message", producer.ErrAttr(err), slog.String("protocol", "mongodb"))
 			}
+			endReason = connection.EndReasonFromRead(err)
 			break
 		}
 
@@ -152,10 +160,14 @@ func HandleMongoDB(ctx context.Context, conn net.Conn, md connection.Metadata, l
 			break
 		}
 
-		if err := server.write(responseHeader, response); err != nil {
+		if err := server.write(responseHeader, response, command); err != nil {
 			logger.Error("Failed to write MongoDB response", producer.ErrAttr(err), slog.String("protocol", "mongodb"))
+			endReason = connection.EndWriteError
 			break
 		}
+	}
+	if i >= maxMongoMessages {
+		endReason = connection.EndMaxFrames
 	}
 
 	return nil

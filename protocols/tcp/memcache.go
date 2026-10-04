@@ -25,6 +25,7 @@ const maxMemcacheBody = 1024
 type parsedMemcache struct {
 	Direction string `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
 	Command   string `json:"command,omitempty"`   // verb for client command frames (stats, get, set, ...)
+	Status    string `json:"status,omitempty"`    // STORED / END / ERROR / CLIENT_ERROR / VERSION on writes
 	Payload   []byte `json:"payload,omitempty"`   // raw bytes as seen on the wire
 }
 
@@ -44,12 +45,26 @@ func newMemcacheServer(conn net.Conn) *memcacheServer {
 	}
 }
 
+func memcacheWriteStatus(data []byte) string {
+	s := strings.TrimRight(string(data), "\r\n")
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	last := strings.TrimRight(lines[len(lines)-1], "\r")
+	if idx := strings.IndexByte(last, ' '); idx >= 0 {
+		return last[:idx]
+	}
+	return last
+}
+
 func (s *memcacheServer) write(data []byte) error {
 	if _, err := s.conn.Write(data); err != nil {
 		return err
 	}
 	s.events = append(s.events, parsedMemcache{
 		Direction: "write",
+		Status:    memcacheWriteStatus(data),
 		Payload:   data,
 	})
 	return nil
@@ -119,7 +134,9 @@ func HandleMemcache(ctx context.Context, conn net.Conn, md connection.Metadata, 
 
 func handleMemcache(ctx context.Context, server *memcacheServer, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	conn := server.conn
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		// No greeting is sent, so a connect-only probe leaves events empty.
 		// Skip producing those — they show up in Ochi as a useless `[]`.
 		if len(server.events) > 0 {
@@ -132,9 +149,11 @@ func handleMemcache(ctx context.Context, server *memcacheServer, md connection.M
 		}
 	}()
 
-	for i := 0; i < maxMemcacheCommands; i++ {
+	i := 0
+	for ; i < maxMemcacheCommands; i++ {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "memcache"), producer.ErrAttr(err))
+			endReason = connection.EndTimeout
 			return nil
 		}
 
@@ -146,6 +165,7 @@ func handleMemcache(ctx context.Context, server *memcacheServer, md connection.M
 			done, handleErr := server.handleCommand(line)
 			if handleErr != nil {
 				logger.Debug("Failed to write response", slog.String("protocol", "memcache"), producer.ErrAttr(handleErr))
+				endReason = connection.EndWriteError
 				return nil
 			}
 			if done {
@@ -154,8 +174,12 @@ func handleMemcache(ctx context.Context, server *memcacheServer, md connection.M
 		}
 		if err != nil {
 			logger.Debug("Failed to read data", slog.String("protocol", "memcache"), producer.ErrAttr(err))
+			endReason = connection.EndReasonFromRead(err)
 			break
 		}
+	}
+	if i >= maxMemcacheCommands {
+		endReason = connection.EndMaxFrames
 	}
 	return nil
 }

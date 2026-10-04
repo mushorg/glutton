@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
@@ -20,8 +21,24 @@ const maxSIPPayload = 1024
 
 type parsedSIP struct {
 	Direction string      `json:"direction,omitempty"`
+	Command   string      `json:"command,omitempty"`
+	Status    string      `json:"status,omitempty"`
 	Payload   []byte      `json:"payload,omitempty"`
 	Message   sip.Message `json:"message,omitempty"`
+}
+
+func sipDecoded(direction string, msg sip.Message, payload []byte) parsedSIP {
+	frame := parsedSIP{Direction: direction, Message: msg, Payload: payload}
+	if msg == nil {
+		return frame
+	}
+	switch m := msg.(type) {
+	case sip.Request:
+		frame.Command = string(m.Method())
+	case sip.Response:
+		frame.Status = strconv.Itoa(int(m.StatusCode()))
+	}
+	return frame
 }
 
 // HandleSIP parses a UDP SIP datagram, answers OPTIONS with 200 OK, and emits
@@ -31,7 +48,9 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	copy(payload, data[:len(payload)])
 
 	events := []parsedSIP{}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceUDP("sip", srcAddr, dstAddr, md, helpers.FirstOrEmpty[parsedSIP](events).Payload, events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "sip"), producer.ErrAttr(err))
 		}
@@ -51,16 +70,13 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	pp := parser.NewPacketParser(log.NewDefaultLogrusLogger())
 	msg, err := pp.ParseMessage(payload)
 	if err != nil {
-		events = append(events, parsedSIP{Direction: "read", Payload: payload})
+		events = append(events, sipDecoded("read", nil, payload))
 		logger.Debug("Failed to parse SIP message", slog.String("protocol", "sip"), producer.ErrAttr(err))
+		endReason = connection.EndReadError
 		return err
 	}
 
-	events = append(events, parsedSIP{
-		Direction: "read",
-		Message:   msg,
-		Payload:   payload,
-	})
+	events = append(events, sipDecoded("read", msg, payload))
 
 	req, ok := msg.(sip.Request)
 	if !ok {
@@ -82,13 +98,10 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 			"",
 		)
 		respBytes := []byte(resp.String())
-		events = append(events, parsedSIP{
-			Direction: "write",
-			Message:   resp,
-			Payload:   respBytes,
-		})
+		events = append(events, sipDecoded("write", resp, respBytes))
 		if err := h.ReplyUDP(srcAddr, dstAddr, respBytes); err != nil {
 			logger.Error("Failed to reply to SIP OPTIONS", slog.String("protocol", "sip"), producer.ErrAttr(err))
+			endReason = connection.EndWriteError
 			return err
 		}
 	}

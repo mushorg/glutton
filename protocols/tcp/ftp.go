@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"path/filepath"
@@ -37,6 +36,9 @@ const (
 
 type parsedFTP struct {
 	Direction   string `json:"direction,omitempty"`
+	Command     string `json:"command,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Status      string `json:"status,omitempty"`
 	Payload     []byte `json:"payload,omitempty"`
 	PayloadHash string `json:"payload_hash,omitempty"`
 }
@@ -51,13 +53,28 @@ type ftpResponse struct {
 	msg  string
 }
 
+func ftpVerbAndPath(msg string) (cmd, path string) {
+	fields := strings.Fields(strings.TrimSpace(msg))
+	if len(fields) == 0 {
+		return "", ""
+	}
+	cmd = strings.ToUpper(fields[0])
+	if len(fields) > 1 && (cmd == "STOR" || cmd == "RETR" || cmd == "CWD") {
+		path = fields[1]
+	}
+	return cmd, path
+}
+
 func (s *ftpServer) read(_ interfaces.Logger, _ interfaces.Honeypot) (string, error) {
 	msg, err := bufio.NewReader(s.conn).ReadString('\n')
 	if err != nil {
 		return msg, err
 	}
+	cmd, path := ftpVerbAndPath(msg)
 	s.events = append(s.events, parsedFTP{
 		Direction: "read",
+		Command:   cmd,
+		Path:      path,
 		Payload:   []byte(msg),
 	})
 	return msg, nil
@@ -71,13 +88,14 @@ func (s *ftpServer) write(resp ftpResponse) error {
 	}
 	s.events = append(s.events, parsedFTP{
 		Direction: "write",
+		Status:    strconv.Itoa(resp.code),
 		Payload:   []byte(msg),
 	})
 	return nil
 
 }
 
-func (s *ftpServer) ftpSTOR(ip string, port int) (ftpResponse, string) {
+func (s *ftpServer) ftpSTOR(ip string, port int, path string) (ftpResponse, string) {
 	dialer := &net.Dialer{Timeout: 2 * time.Second}
 	conn, err := dialer.Dial("tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
 	if err != nil {
@@ -99,6 +117,8 @@ func (s *ftpServer) ftpSTOR(ip string, port int) (ftpResponse, string) {
 
 	s.events = append(s.events, parsedFTP{
 		Direction:   "read",
+		Command:     "STOR",
+		Path:        path,
 		PayloadHash: fileHash,
 		Payload:     buffer,
 	})
@@ -114,7 +134,9 @@ func HandleFTP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	server := ftpServer{
 		conn: conn,
 	}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceTCP("ftp", conn, md, helpers.FirstOrEmpty[parsedFTP](server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce events", slog.String("protocol", "ftp"), producer.ErrAttr(err))
 		}
@@ -123,12 +145,10 @@ func HandleFTP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 	}()
 
-	host, srcPort, err := net.SplitHostPort(conn.RemoteAddr().String())
-	if err != nil {
-		return err
-	}
+	host, srcPort, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
 	if err := server.write(ftpResponse{StatusServiceReady, "Welcome"}); err != nil {
+		endReason = connection.EndWriteError
 		return err
 	}
 	var portParam string
@@ -136,17 +156,19 @@ loop:
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "ftp"), producer.ErrAttr(err))
+			endReason = connection.EndTimeout
 			return nil
 		}
 		msg, err := server.read(logger, h)
-		if err != nil && err != io.EOF {
+		if err != nil {
 			logger.Debug("Failed to read data", slog.String("protocol", "ftp"), producer.ErrAttr(err))
+			endReason = connection.EndReasonFromRead(err)
 			break
 		}
 		if len(msg) < 4 {
 			continue
 		}
-		cmd := strings.ToUpper(msg[:4])
+		cmd, path := ftpVerbAndPath(msg)
 
 		logger.Info(
 			"ftp command received",
@@ -181,9 +203,10 @@ loop:
 
 			port := portByte1<<8 + portByte2
 			if err := server.write(ftpResponse{StatusFileStatusOK, fmt.Sprintf("Connecting to port %d\r\n", port)}); err != nil {
+				endReason = connection.EndWriteError
 				return err
 			}
-			resp, filehash = server.ftpSTOR(ip, port)
+			resp, filehash = server.ftpSTOR(ip, port, path)
 			if filehash != "" {
 				logger.Info(
 					"FTP payload receievd",
@@ -196,6 +219,7 @@ loop:
 			}
 		case "QUIT":
 			if err := server.write(ftpResponse{StatusClosingControlConn, "Goodbye."}); err != nil {
+				endReason = connection.EndWriteError
 				return err
 			}
 			break loop
@@ -206,6 +230,7 @@ loop:
 			resp = ftpResponse{StatusOK, "Ok."}
 		}
 		if err := server.write(resp); err != nil {
+			endReason = connection.EndWriteError
 			return err
 		}
 	}

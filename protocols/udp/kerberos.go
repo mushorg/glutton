@@ -36,6 +36,8 @@ var kerberosMsgNames = map[int]string{
 
 type parsedKerberos struct {
 	Direction string `json:"direction,omitempty"`
+	Command   string `json:"command,omitempty"`
+	Path      string `json:"path,omitempty"`
 	MsgType   int    `json:"msg_type,omitempty"`
 	MsgName   string `json:"msg_name,omitempty"`
 	PVNO      int    `json:"pvno,omitempty"`
@@ -46,6 +48,7 @@ type parsedKerberos struct {
 	From      string `json:"from,omitempty"`
 	Nonce     int    `json:"nonce,omitempty"`
 	Payload   []byte `json:"payload,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 type derValue struct {
@@ -352,20 +355,25 @@ func parseKerberos(data []byte) parsedKerberos {
 	frame := parsedKerberos{Direction: "read", Payload: data}
 	if len(data) == 0 {
 		frame.MsgName = "UNKNOWN"
+		frame.Command = frame.MsgName
 		return frame
 	}
 
 	outer, _, err := parseDER(data)
 	if err != nil || outer.class != asn1ClassApp || !outer.constructed {
 		frame.MsgName = "UNKNOWN"
+		frame.Command = frame.MsgName
 		return frame
 	}
 
 	frame.MsgType = outer.tag
 	frame.MsgName = kerberosMsgName(outer.tag)
+	frame.Command = frame.MsgName
 	if err := parseKDCReq(outer.content, &frame); err != nil {
+		frame.Path = frame.SName
 		return frame
 	}
+	frame.Path = frame.SName
 	return frame
 }
 
@@ -399,7 +407,9 @@ func HandleKerberos(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []b
 	copy(payload, data[:len(payload)])
 
 	events := []parsedKerberos{}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceUDP("kerberos", srcAddr, dstAddr, md, helpers.FirstOrEmpty[parsedKerberos](events).Payload, events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "kerberos"), producer.ErrAttr(err))
 		}
@@ -410,6 +420,7 @@ func HandleKerberos(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []b
 	}
 
 	frame := parseKerberos(payload)
+	frame.Truncated = len(data) > maxKerberosPayload
 	events = append(events, frame)
 
 	if frame.MsgName == "UNKNOWN" {

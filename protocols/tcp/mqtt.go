@@ -54,6 +54,7 @@ var mqttPacketNames = map[uint8]string{
 
 type parsedMQTT struct {
 	Direction string   `json:"direction,omitempty"`
+	Command   string   `json:"command,omitempty"`
 	Packet    string   `json:"packet,omitempty"`
 	ClientID  string   `json:"client_id,omitempty"`
 	Username  string   `json:"username,omitempty"`
@@ -152,7 +153,8 @@ func decodeMQTT(first byte, body []byte) parsedMQTT {
 	packetType := first >> 4
 	flags := first & 0x0f
 	frame := parsedMQTT{
-		Packet: mqttPacketName(packetType),
+		Packet:  mqttPacketName(packetType),
+		Command: mqttPacketName(packetType),
 	}
 	switch packetType {
 	case mqttCONNECT:
@@ -320,10 +322,10 @@ func mqttReply(first byte, body []byte) (raw []byte, frame parsedMQTT, ok bool) 
 	switch packetType {
 	case mqttCONNECT:
 		raw = encodeMQTT(mqttCONNACK, 0, []byte{0x00, 0x00})
-		return raw, parsedMQTT{Packet: "CONNACK"}, true
+		return raw, parsedMQTT{Packet: "CONNACK", Command: "CONNACK"}, true
 	case mqttPINGREQ:
 		raw = encodeMQTT(mqttPINGRESP, 0, nil)
-		return raw, parsedMQTT{Packet: "PINGRESP"}, true
+		return raw, parsedMQTT{Packet: "PINGRESP", Command: "PINGRESP"}, true
 	case mqttSUBSCRIBE:
 		id, okID := mqttPacketID(body)
 		if !okID {
@@ -334,7 +336,7 @@ func mqttReply(first byte, body []byte) (raw []byte, frame parsedMQTT, ok bool) 
 		binary.BigEndian.PutUint16(ackBody[:2], id)
 		copy(ackBody[2:], qos)
 		raw = encodeMQTT(mqttSUBACK, 0, ackBody)
-		return raw, parsedMQTT{Packet: "SUBACK"}, true
+		return raw, parsedMQTT{Packet: "SUBACK", Command: "SUBACK"}, true
 	case mqttUNSUBSCRIBE:
 		id, okID := mqttPacketID(body)
 		if !okID {
@@ -343,7 +345,7 @@ func mqttReply(first byte, body []byte) (raw []byte, frame parsedMQTT, ok bool) 
 		ackBody := make([]byte, 2)
 		binary.BigEndian.PutUint16(ackBody, id)
 		raw = encodeMQTT(mqttUNSUBACK, 0, ackBody)
-		return raw, parsedMQTT{Packet: "UNSUBACK"}, true
+		return raw, parsedMQTT{Packet: "UNSUBACK", Command: "UNSUBACK"}, true
 	case mqttPUBLISH:
 		qos := (flags >> 1) & 0x03
 		if qos == 0 {
@@ -357,10 +359,10 @@ func mqttReply(first byte, body []byte) (raw []byte, frame parsedMQTT, ok bool) 
 		binary.BigEndian.PutUint16(idBody, id)
 		if qos == 1 {
 			raw = encodeMQTT(mqttPUBACK, 0, idBody)
-			return raw, parsedMQTT{Packet: "PUBACK"}, true
+			return raw, parsedMQTT{Packet: "PUBACK", Command: "PUBACK"}, true
 		}
 		raw = encodeMQTT(mqttPUBREC, 0, idBody)
-		return raw, parsedMQTT{Packet: "PUBREC"}, true
+		return raw, parsedMQTT{Packet: "PUBREC", Command: "PUBREC"}, true
 	case mqttPUBREL:
 		id, okID := mqttPacketID(body)
 		if !okID {
@@ -369,7 +371,7 @@ func mqttReply(first byte, body []byte) (raw []byte, frame parsedMQTT, ok bool) 
 		idBody := make([]byte, 2)
 		binary.BigEndian.PutUint16(idBody, id)
 		raw = encodeMQTT(mqttPUBCOMP, 0, idBody)
-		return raw, parsedMQTT{Packet: "PUBCOMP"}, true
+		return raw, parsedMQTT{Packet: "PUBCOMP", Command: "PUBCOMP"}, true
 	default:
 		return nil, parsedMQTT{}, false
 	}
@@ -378,7 +380,9 @@ func mqttReply(first byte, body []byte) (raw []byte, frame parsedMQTT, ok bool) 
 // HandleMQTT takes a net.Conn and does MQTT 3.1.1 communication
 func HandleMQTT(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := &mqttServer{events: []parsedMQTT{}, conn: conn}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceTCP("mqtt", conn, md, helpers.FirstOrEmpty[parsedMQTT](server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "mqtt"), producer.ErrAttr(err))
 		}
@@ -390,9 +394,11 @@ func HandleMQTT(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 	loggedConnect := false
 
-	for i := 0; i < maxMQTTPackets; i++ {
+	i := 0
+	for ; i < maxMQTTPackets; i++ {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "mqtt"), producer.ErrAttr(err))
+			endReason = connection.EndTimeout
 			return nil
 		}
 		first, body, raw, err := server.read()
@@ -400,6 +406,7 @@ func HandleMQTT(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 			if err != io.EOF && err != io.ErrUnexpectedEOF {
 				logger.Debug("Failed to read data", slog.String("protocol", "mqtt"), producer.ErrAttr(err))
 			}
+			endReason = connection.EndReasonFromRead(err)
 			break
 		}
 		frame := server.recordRead(first, body, raw)
@@ -422,8 +429,12 @@ func HandleMQTT(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 		}
 		if err := server.write(reply, writeFrame); err != nil {
 			logger.Error("Failed to write message", slog.String("protocol", "mqtt"), producer.ErrAttr(err))
+			endReason = connection.EndWriteError
 			return err
 		}
+	}
+	if i >= maxMQTTPackets {
+		endReason = connection.EndMaxFrames
 	}
 	return nil
 }

@@ -172,7 +172,10 @@ func TestHandleModbusUnsupportedFunction(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, events, 2)
 	require.Equal(t, "UNKNOWN", events[0].FunctionCode)
+	require.Equal(t, "UNKNOWN", events[0].Command)
 	require.Equal(t, "Exception", events[1].FunctionCode)
+	require.Equal(t, "Exception", events[1].Command)
+	require.Equal(t, "Exception", events[1].Status)
 	require.Equal(t, uint16(0), events[1].Address)
 }
 

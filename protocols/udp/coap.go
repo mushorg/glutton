@@ -66,6 +66,8 @@ var coapCodeNames = map[uint8]string{
 
 type parsedCoAP struct {
 	Direction string  `json:"direction,omitempty"`
+	Command   string  `json:"command,omitempty"`
+	Status    string  `json:"status,omitempty"`
 	Type      string  `json:"type,omitempty"`
 	Code      uint8   `json:"code,omitempty"`
 	CodeName  string  `json:"code_name,omitempty"`
@@ -74,6 +76,7 @@ type parsedCoAP struct {
 	Path      string  `json:"path,omitempty"`
 	Observe   *uint32 `json:"observe,omitempty"`
 	Payload   []byte  `json:"payload,omitempty"`
+	Truncated bool    `json:"truncated,omitempty"`
 }
 
 type coapMessage struct {
@@ -111,7 +114,7 @@ func looksLikeCoAP(data []byte) bool {
 }
 
 func parseCoAP(data []byte) (parsedCoAP, coapMessage, error) {
-	frame := parsedCoAP{Direction: "read", Payload: data, CodeName: "UNKNOWN"}
+	frame := parsedCoAP{Direction: "read", Payload: data, CodeName: "UNKNOWN", Command: "UNKNOWN"}
 	if len(data) < 4 {
 		return frame, coapMessage{}, errCoAPTruncated
 	}
@@ -135,6 +138,7 @@ func parseCoAP(data []byte) (parsedCoAP, coapMessage, error) {
 	frame.Type = coapTypeName(typ)
 	frame.Code = msg.Code
 	frame.CodeName = coapCodeName(msg.Code)
+	frame.Command = frame.CodeName
 	frame.MessageID = msg.MessageID
 	if tkl > 0 {
 		frame.Token = hex.EncodeToString(msg.Token)
@@ -330,6 +334,8 @@ func buildCoAPReply(msg coapMessage) ([]byte, parsedCoAP, bool) {
 	resp := encodeCoAP(respType, code, msg.MessageID, msg.Token, opts, body)
 	frame := parsedCoAP{
 		Direction: "write",
+		Command:   coapCodeName(code),
+		Status:    coapCodeName(code),
 		Type:      coapTypeName(respType),
 		Code:      code,
 		CodeName:  coapCodeName(code),
@@ -350,18 +356,21 @@ func HandleCoAP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte,
 	copy(payload, data[:len(payload)])
 
 	events := []parsedCoAP{}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceUDP("coap", srcAddr, dstAddr, md, helpers.FirstOrEmpty[parsedCoAP](events).Payload, events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "coap"), producer.ErrAttr(err))
 		}
 	}()
 
 	if len(payload) == 0 {
-		events = append(events, parsedCoAP{Direction: "read", Payload: payload, CodeName: "UNKNOWN"})
+		events = append(events, parsedCoAP{Direction: "read", Payload: payload, CodeName: "UNKNOWN", Command: "UNKNOWN"})
 		return nil
 	}
 
 	frame, msg, err := parseCoAP(payload)
+	frame.Truncated = len(data) > maxCoAPPayload
 	events = append(events, frame)
 	if err != nil {
 		logger.Debug("Failed to parse CoAP message",
@@ -389,6 +398,7 @@ func HandleCoAP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte,
 	events = append(events, writeFrame)
 	if err := h.ReplyUDP(srcAddr, dstAddr, resp); err != nil {
 		logger.Error("Failed to reply to CoAP request", slog.String("protocol", "coap"), producer.ErrAttr(err))
+		endReason = connection.EndWriteError
 		return err
 	}
 	return nil

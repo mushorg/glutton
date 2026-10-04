@@ -33,6 +33,7 @@ func TestHandleOpenVPNHardReset(t *testing.T) {
 	require.Equal(t, "read", events[0].Direction)
 	require.Equal(t, uint8(7), events[0].Opcode)
 	require.Equal(t, "P_CONTROL_HARD_RESET_CLIENT_V2", events[0].OpcodeName)
+	require.Equal(t, "P_CONTROL_HARD_RESET_CLIENT_V2", events[0].Command)
 	require.Equal(t, uint8(0), events[0].KeyID)
 	require.Equal(t, "696e7465726e6574", events[0].SessionID)
 	require.Equal(t, payload, events[0].Payload)

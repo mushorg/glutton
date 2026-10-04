@@ -65,6 +65,7 @@ var miraiCom = map[string][]string{
 
 type parsedTelnet struct {
 	Direction string `json:"direction,omitempty"`
+	Command   string `json:"command,omitempty"`
 	Message   string `json:"message,omitempty"`
 }
 
@@ -73,6 +74,7 @@ type telnetServer struct {
 	conn   net.Conn
 	reader *bufio.Reader
 	client *http.Client
+	step   string
 }
 
 func newTelnetServer(conn net.Conn) *telnetServer {
@@ -86,12 +88,35 @@ func newTelnetServer(conn net.Conn) *telnetServer {
 	}
 }
 
+func telnetShellCommand(msg string) string {
+	line := strings.TrimRight(msg, "\r\n\x00")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+	if idx := strings.IndexAny(line, " \t"); idx >= 0 {
+		return line[:idx]
+	}
+	return line
+}
+
+func telnetWriteCommand(msg string) string {
+	switch msg {
+	case "Username: ":
+		return "username"
+	case "Password: ":
+		return "password"
+	default:
+		return ""
+	}
+}
+
 // write writes a telnet message to the connection
 func (s *telnetServer) write(msg string) error {
 	if _, err := s.conn.Write([]byte(msg)); err != nil {
 		return err
 	}
-	s.events = append(s.events, parsedTelnet{Direction: "write", Message: msg})
+	s.events = append(s.events, parsedTelnet{Direction: "write", Command: telnetWriteCommand(msg), Message: msg})
 	return nil
 }
 
@@ -153,7 +178,14 @@ func (s *telnetServer) read() (string, error) {
 			s.events = append(s.events, parsedTelnet{Direction: "read", Message: string(negotiation)})
 		}
 		if len(cleaned) > 0 {
-			s.events = append(s.events, parsedTelnet{Direction: "read", Message: string(cleaned)})
+			cmd := ""
+			switch s.step {
+			case "username", "password":
+				cmd = s.step
+			default:
+				cmd = telnetShellCommand(string(cleaned))
+			}
+			s.events = append(s.events, parsedTelnet{Direction: "read", Command: cmd, Message: string(cleaned)})
 		}
 		return string(cleaned), err
 	}
@@ -206,7 +238,9 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 }
 
 func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceTCP("telnet", s.conn, md, []byte(helpers.FirstOrEmpty(s.events).Message), s.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "telnet"), producer.ErrAttr(err))
 		}
@@ -217,6 +251,7 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 
 	if err := h.UpdateConnectionTimeout(ctx, s.conn); err != nil {
 		logger.Debug("Failed to set connection timeout", slog.String("protocol", "telnet"), producer.ErrAttr(err))
+		endReason = connection.EndTimeout
 		return nil
 	}
 
@@ -224,36 +259,47 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 
 	// telnet window size negotiation response
 	if err := s.write("\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27"); err != nil {
+		endReason = connection.EndWriteError
 		return err
 	}
 
 	// User name prompt
 	if err := s.write("Username: "); err != nil {
+		endReason = connection.EndWriteError
 		return err
 	}
+	s.step = "username"
 	if _, err := s.read(); err != nil {
 		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
+		endReason = connection.EndReasonFromRead(err)
 		return nil
 	}
 	if err := s.write("Password: "); err != nil {
+		endReason = connection.EndWriteError
 		return err
 	}
+	s.step = "password"
 	if _, err := s.read(); err != nil {
 		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
+		endReason = connection.EndReasonFromRead(err)
 		return nil
 	}
 	if err := s.write("welcome\r\n> "); err != nil {
+		endReason = connection.EndWriteError
 		return err
 	}
+	s.step = "shell"
 
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, s.conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "telnet"), producer.ErrAttr(err))
+			endReason = connection.EndTimeout
 			return nil
 		}
 		msg, err := s.read()
 		if err != nil {
 			logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
+			endReason = connection.EndReasonFromRead(err)
 			return nil
 		}
 		skipPrompt := false

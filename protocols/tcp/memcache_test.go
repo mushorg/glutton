@@ -70,8 +70,9 @@ func TestHandleMemcacheStats(t *testing.T) {
 	require.True(t, ok, "decoded should be []parsedMemcache")
 	require.Equal(t, []parsedMemcache{
 		{Direction: "read", Command: "stats", Payload: []byte("stats\r\n")},
-		{Direction: "write", Payload: memcacheStatsResponse()},
+		{Direction: "write", Status: "END", Payload: memcacheStatsResponse()},
 	}, events)
+	require.Equal(t, connection.EndClientClose, produced.endReason)
 }
 
 func TestHandleMemcacheSetGet(t *testing.T) {
@@ -126,11 +127,12 @@ func TestHandleMemcacheSetGet(t *testing.T) {
 
 	require.Equal(t, []parsedMemcache{
 		{Direction: "read", Command: "set", Payload: []byte("set foo 0 0 3\r\nbar\r\n")},
-		{Direction: "write", Payload: []byte("STORED\r\n")},
+		{Direction: "write", Status: "STORED", Payload: []byte("STORED\r\n")},
 		{Direction: "read", Command: "get", Payload: []byte("get foo\r\n")},
-		{Direction: "write", Payload: []byte("VALUE foo 0 3\r\nbar\r\nEND\r\n")},
+		{Direction: "write", Status: "END", Payload: []byte("VALUE foo 0 3\r\nbar\r\nEND\r\n")},
 		{Direction: "read", Command: "quit", Payload: []byte("quit\r\n")},
 	}, events)
+	require.Equal(t, connection.EndHandlerClose, produced.endReason)
 }
 
 func TestHandleMemcacheEarlyDisconnect(t *testing.T) {

@@ -106,32 +106,33 @@ func TestHandleTelnetMiraiFlow(t *testing.T) {
 
 	want := []parsedTelnet{
 		{Direction: "write", Message: negotiate},
-		{Direction: "write", Message: "Username: "},
+		{Direction: "write", Command: "username", Message: "Username: "},
 		{Direction: "read", Message: negotiate},
-		{Direction: "read", Message: "root\r\n"},
-		{Direction: "write", Message: "Password: "},
-		{Direction: "read", Message: "juantech\r\n"},
+		{Direction: "read", Command: "username", Message: "root\r\n"},
+		{Direction: "write", Command: "password", Message: "Password: "},
+		{Direction: "read", Command: "password", Message: "juantech\r\n"},
 		{Direction: "write", Message: "welcome\r\n> "},
-		{Direction: "read", Message: "enable\x00\r\n"},
+		{Direction: "read", Command: "enable", Message: "enable\x00\r\n"},
 		{Direction: "write", Message: "-bash: enable: command not found\r\n"},
 		{Direction: "write", Message: "> "},
-		{Direction: "read", Message: "linuxshell\x00\r\n"},
+		{Direction: "read", Command: "linuxshell", Message: "linuxshell\x00\r\n"},
 		{Direction: "write", Message: "-bash: linuxshell: command not found\r\n"},
 		{Direction: "write", Message: "> "},
-		{Direction: "read", Message: "system\x00\r\n"},
+		{Direction: "read", Command: "system", Message: "system\x00\r\n"},
 		{Direction: "write", Message: "-bash: system: command not found\r\n"},
 		{Direction: "write", Message: "> "},
-		{Direction: "read", Message: "shell\x00\r\n"},
+		{Direction: "read", Command: "shell", Message: "shell\x00\r\n"},
 		{Direction: "write", Message: "-bash: shell: command not found\r\n"},
 		{Direction: "write", Message: "> "},
-		{Direction: "read", Message: "sh\x00\r\n"},
+		{Direction: "read", Command: "sh", Message: "sh\x00\r\n"},
 		{Direction: "write", Message: "$\r\n"},
-		{Direction: "read", Message: "/bin/busybox UNSTABLE\x00\r\n"},
+		{Direction: "read", Command: "/bin/busybox", Message: "/bin/busybox UNSTABLE\x00\r\n"},
 		{Direction: "write", Message: "UNSTABLE: applet not found\r\n"},
 		{Direction: "write", Message: busyboxBanner},
 		{Direction: "write", Message: "> "},
 	}
 	require.Equal(t, want, events)
+	require.Equal(t, connection.EndClientClose, produced.endReason)
 }
 
 func TestHandleTelnetClientDisconnect(t *testing.T) {
@@ -170,6 +171,7 @@ func TestHandleTelnetClientDisconnect(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, []parsedTelnet{
 		{Direction: "write", Message: string(negotiate)},
-		{Direction: "write", Message: "Username: "},
+		{Direction: "write", Command: "username", Message: "Username: "},
 	}, events)
+	require.Equal(t, connection.EndClientClose, produced.endReason)
 }

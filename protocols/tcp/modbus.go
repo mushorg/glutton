@@ -31,10 +31,12 @@ var modbusFunctionNames = map[modbusone.FunctionCode]string{
 
 type parsedModbus struct {
 	Direction    string `json:"direction,omitempty"`
+	Command      string `json:"command,omitempty"`
 	FunctionCode string `json:"function_code,omitempty"`
 	UnitID       uint8  `json:"unit_id,omitempty"`
 	Address      uint16 `json:"address,omitempty"`
 	Quantity     uint16 `json:"quantity,omitempty"`
+	Status       string `json:"status,omitempty"`
 	Payload      []byte `json:"payload,omitempty"`
 }
 
@@ -151,6 +153,10 @@ func parsedFromRequest(direction string, adu []byte, req, wire modbusone.PDU) pa
 		FunctionCode: modbusFunctionName(wire.GetFunctionCode()),
 		Payload:      adu,
 	}
+	frame.Command = frame.FunctionCode
+	if frame.FunctionCode == "Exception" {
+		frame.Status = "Exception"
+	}
 	if len(adu) > modbusone.TCPHeaderLength {
 		frame.UnitID = adu[modbusone.TCPHeaderLength]
 	}
@@ -248,7 +254,9 @@ func newModbusServer(conn net.Conn, logger interfaces.Logger) *modbusServer {
 func HandleModbus(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := newModbusServer(conn, logger)
 
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceTCP("modbus", conn, md, helpers.FirstOrEmpty[parsedModbus](server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "modbus"), producer.ErrAttr(err))
 		}
@@ -259,9 +267,11 @@ func HandleModbus(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 
 	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
-	for i := 0; i < maxModbusMessages; i++ {
+	i := 0
+	for ; i < maxModbusMessages; i++ {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "modbus"), producer.ErrAttr(err))
+			endReason = connection.EndTimeout
 			return nil
 		}
 		data, err := server.read()
@@ -269,6 +279,7 @@ func HandleModbus(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 			if err != io.EOF {
 				logger.Debug("Failed to read data", slog.String("protocol", "modbus"), producer.ErrAttr(err))
 			}
+			endReason = connection.EndReasonFromRead(err)
 			break
 		}
 		if len(data) <= modbusone.MBAPHeaderLength {
@@ -303,6 +314,7 @@ func HandleModbus(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 			}
 			if err := server.write(data, p.MakeReadReply(values)); err != nil {
 				logger.Error("Failed to write to connection", slog.String("protocol", "modbus"), producer.ErrAttr(err))
+				endReason = connection.EndWriteError
 				return nil
 			}
 		case fc.IsWriteToServer():
@@ -317,11 +329,15 @@ func HandleModbus(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 			}
 			if err := server.write(data, p.MakeWriteReply()); err != nil {
 				logger.Error("Failed to write to connection", slog.String("protocol", "modbus"), producer.ErrAttr(err))
+				endReason = connection.EndWriteError
 				return nil
 			}
 		default:
 			server.writeError(data, p, modbusone.EcIllegalFunction)
 		}
+	}
+	if i >= maxModbusMessages {
+		endReason = connection.EndMaxFrames
 	}
 
 	return nil

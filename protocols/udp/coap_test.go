@@ -49,10 +49,13 @@ func TestHandleCoAPWellKnownGET(t *testing.T) {
 	require.Equal(t, "read", events[0].Direction)
 	require.Equal(t, "CON", events[0].Type)
 	require.Equal(t, "GET", events[0].CodeName)
+	require.Equal(t, "GET", events[0].Command)
 	require.Equal(t, coapWellKnownCore, events[0].Path)
 	require.Equal(t, "write", events[1].Direction)
 	require.Equal(t, "ACK", events[1].Type)
 	require.Equal(t, "CONTENT", events[1].CodeName)
+	require.Equal(t, "CONTENT", events[1].Command)
+	require.Equal(t, "CONTENT", events[1].Status)
 	require.Equal(t, h.replies[0], events[1].Payload)
 
 	_, reply, err := parseCoAP(h.replies[0])

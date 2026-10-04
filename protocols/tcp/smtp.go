@@ -26,6 +26,7 @@ type parsedSMTP struct {
 	// Command is the upper-cased SMTP verb for client command lines
 	// (HELO, MAIL, RCPT, DATA, QUIT, ...). It is empty for server replies.
 	Command string `json:"command,omitempty"`
+	Status  string `json:"status,omitempty"` // SMTP reply code on write frames
 	Payload []byte `json:"payload,omitempty"`
 }
 
@@ -59,6 +60,7 @@ func (s *smtpServer) write(msg string) error {
 	}
 	s.events = append(s.events, parsedSMTP{
 		Direction: "write",
+		Status:    smtpStatus(msg),
 		Payload:   []byte(line),
 	})
 	return nil
@@ -123,6 +125,18 @@ func smtpVerb(line string) string {
 	return strings.ToUpper(verb)
 }
 
+func smtpStatus(msg string) string {
+	if len(msg) < 3 {
+		return ""
+	}
+	for i := 0; i < 3; i++ {
+		if msg[i] < '0' || msg[i] > '9' {
+			return ""
+		}
+	}
+	return msg[:3]
+}
+
 func randomSleep() error {
 	// between 0.5 - 1.5 seconds
 	rtime, err := rand.Int(rand.Reader, big.NewInt(1500))
@@ -149,7 +163,9 @@ func HandleSMTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 
 func handleSMTP(ctx context.Context, server *smtpServer, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	conn := server.conn
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceTCP("smtp", conn, md, helpers.FirstOrEmpty[parsedSMTP](server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "smtp"), producer.ErrAttr(err))
 		}
@@ -162,17 +178,20 @@ func handleSMTP(ctx context.Context, server *smtpServer, md connection.Metadata,
 		return err
 	}
 	if err := server.write("220 Welcome!"); err != nil {
+		endReason = connection.EndWriteError
 		return err
 	}
 
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "smtp"), producer.ErrAttr(err))
+			endReason = connection.EndTimeout
 			return nil
 		}
 		data, err := server.read()
 		if err != nil {
 			logger.Debug("Failed to read data", slog.String("protocol", "smtp"), producer.ErrAttr(err))
+			endReason = connection.EndReasonFromRead(err)
 			break
 		}
 		query := strings.Trim(data, "\r\n")
@@ -197,12 +216,14 @@ func handleSMTP(ctx context.Context, server *smtpServer, md connection.Metadata,
 			resp = "250 OK"
 		case query == "DATA":
 			if err := server.write("354 End data with <CRLF>.<CRLF>"); err != nil {
+				endReason = connection.EndWriteError
 				return err
 			}
 			body, err := server.readData()
 			logger.Debug("SMTP Data", slog.String("data", string(body)), slog.String("protocol", "smtp"))
 			if err != nil {
 				logger.Debug("Failed to read data", slog.String("protocol", "smtp"), producer.ErrAttr(err))
+				endReason = connection.EndReasonFromRead(err)
 				return nil
 			}
 			if err := server.sleep(); err != nil {
@@ -211,6 +232,7 @@ func handleSMTP(ctx context.Context, server *smtpServer, md connection.Metadata,
 			resp = "250 OK"
 		case query == "QUIT":
 			if err := server.write("221 Bye"); err != nil {
+				endReason = connection.EndWriteError
 				return err
 			}
 			return nil
@@ -218,6 +240,7 @@ func handleSMTP(ctx context.Context, server *smtpServer, md connection.Metadata,
 			resp = "500 Recheck the command you entered."
 		}
 		if err := server.write(resp); err != nil {
+			endReason = connection.EndWriteError
 			return err
 		}
 	}

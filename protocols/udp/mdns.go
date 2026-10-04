@@ -42,8 +42,11 @@ type dnsQuestion struct {
 
 type parsedMDNS struct {
 	Direction string        `json:"direction,omitempty"`
+	Command   string        `json:"command,omitempty"`
+	Path      string        `json:"path,omitempty"`
 	Questions []dnsQuestion `json:"questions,omitempty"`
 	Payload   []byte        `json:"payload,omitempty"`
+	Truncated bool          `json:"truncated,omitempty"`
 }
 
 func dnsQTypeName(qtype uint16) string {
@@ -140,7 +143,9 @@ func HandleMDNS(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte,
 	copy(payload, data[:len(payload)])
 
 	events := []parsedMDNS{}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceUDP("mdns", srcAddr, dstAddr, md, helpers.FirstOrEmpty[parsedMDNS](events).Payload, events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "mdns"), producer.ErrAttr(err))
 		}
@@ -150,9 +155,13 @@ func HandleMDNS(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte,
 		return nil
 	}
 
-	frame := parsedMDNS{Direction: "read", Payload: payload}
+	frame := parsedMDNS{Direction: "read", Payload: payload, Truncated: len(data) > maxMDNSPayload}
 	questions, err := parseMDNSQuestions(payload)
 	frame.Questions = questions
+	if len(questions) > 0 {
+		frame.Command = questions[0].QTypeName
+		frame.Path = questions[0].QName
+	}
 	events = append(events, frame)
 	if err != nil {
 		logger.Debug("Failed to parse mDNS questions",

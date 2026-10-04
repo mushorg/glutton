@@ -38,6 +38,8 @@ func TestHandleKerberosASReq(t *testing.T) {
 	require.Equal(t, "read", events[0].Direction)
 	require.Equal(t, 10, events[0].MsgType)
 	require.Equal(t, "AS-REQ", events[0].MsgName)
+	require.Equal(t, "AS-REQ", events[0].Command)
+	require.Equal(t, "krbtgt/NM", events[0].Path)
 	require.Equal(t, 5, events[0].PVNO)
 	require.Equal(t, "NM", events[0].Realm)
 	require.Equal(t, "krbtgt/NM", events[0].SName)

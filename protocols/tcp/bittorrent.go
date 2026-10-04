@@ -23,8 +23,10 @@ type bittorrentMsg struct {
 
 type parsedBittorrent struct {
 	Direction string        `json:"direction,omitempty"`
+	Command   string        `json:"command,omitempty"`
 	Message   bittorrentMsg `json:"message,omitempty"`
 	Payload   []byte        `json:"payload,omitempty"`
+	Truncated bool          `json:"truncated,omitempty"`
 }
 
 type bittorrentServer struct {
@@ -36,7 +38,9 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, md connection.Metadata
 	server := bittorrentServer{
 		events: []parsedBittorrent{},
 	}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceTCP("bittorrent", conn, md, helpers.FirstOrEmpty[parsedBittorrent](server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
 		}
@@ -50,28 +54,43 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, md connection.Metadata
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
+			endReason = connection.EndTimeout
 			return nil
 		}
 		n, err := conn.Read(buffer)
 		if err != nil {
 			logger.Debug("Failed to read data", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
+			endReason = connection.EndReasonFromRead(err)
 			break
 		}
 
 		if n <= 0 {
+			endReason = connection.EndClientClose
 			break
 		}
 
+		payload := make([]byte, n)
+		copy(payload, buffer[:n])
+		truncated := n == maxBufferSize
 		msg := bittorrentMsg{}
-		if err := binary.Read(bytes.NewReader(buffer[:n]), binary.BigEndian, &msg); err != nil {
+		if err := binary.Read(bytes.NewReader(payload), binary.BigEndian, &msg); err != nil {
 			logger.Error("Failed to read message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
+			server.events = append(server.events, parsedBittorrent{
+				Direction: "read",
+				Command:   "handshake",
+				Payload:   payload,
+				Truncated: truncated,
+			})
+			endReason = connection.EndReadError
 			break
 		}
 
 		server.events = append(server.events, parsedBittorrent{
 			Direction: "read",
+			Command:   "handshake",
 			Message:   msg,
-			Payload:   buffer[:n],
+			Payload:   payload,
+			Truncated: truncated,
 		})
 
 		logger.Info(
@@ -83,11 +102,13 @@ func HandleBittorrent(ctx context.Context, conn net.Conn, md connection.Metadata
 
 		server.events = append(server.events, parsedBittorrent{
 			Direction: "write",
+			Command:   "handshake",
 			Message:   msg,
-			Payload:   buffer[:n],
+			Payload:   payload,
 		})
 		if err = binary.Write(conn, binary.BigEndian, msg); err != nil {
 			logger.Error("Failed to write message", producer.ErrAttr(err), slog.String("handler", "bittorrent"))
+			endReason = connection.EndWriteError
 			break
 		}
 	}

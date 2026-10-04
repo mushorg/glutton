@@ -94,22 +94,23 @@ func TestHandleSMTP(t *testing.T) {
 	require.True(t, ok, "decoded should be []parsedSMTP")
 
 	want := []parsedSMTP{
-		{Direction: "write", Payload: []byte("220 Welcome!\r\n")},
+		{Direction: "write", Status: "220", Payload: []byte("220 Welcome!\r\n")},
 		{Direction: "read", Command: "HELO", Payload: []byte("HELO example.com\r\n")},
-		{Direction: "write", Payload: []byte("250 Hello! Pleased to meet you.\r\n")},
+		{Direction: "write", Status: "250", Payload: []byte("250 Hello! Pleased to meet you.\r\n")},
 		{Direction: "read", Command: "MAIL", Payload: []byte("MAIL FROM:<alice@example.com>\r\n")},
-		{Direction: "write", Payload: []byte("250 OK\r\n")},
+		{Direction: "write", Status: "250", Payload: []byte("250 OK\r\n")},
 		{Direction: "read", Command: "RCPT", Payload: []byte("RCPT TO:<bob@example.org>\r\n")},
-		{Direction: "write", Payload: []byte("250 OK\r\n")},
+		{Direction: "write", Status: "250", Payload: []byte("250 OK\r\n")},
 		{Direction: "read", Command: "DATA", Payload: []byte("DATA\r\n")},
-		{Direction: "write", Payload: []byte("354 End data with <CRLF>.<CRLF>\r\n")},
+		{Direction: "write", Status: "354", Payload: []byte("354 End data with <CRLF>.<CRLF>\r\n")},
 		{Direction: "read", Command: "DATA", Payload: []byte("Subject: hi\r\n\r\nhello bob\r\n.\r\n")},
-		{Direction: "write", Payload: []byte("250 OK\r\n")},
+		{Direction: "write", Status: "250", Payload: []byte("250 OK\r\n")},
 		{Direction: "read", Command: "QUIT", Payload: []byte("QUIT\r\n")},
-		{Direction: "write", Payload: []byte("221 Bye\r\n")},
+		{Direction: "write", Status: "221", Payload: []byte("221 Bye\r\n")},
 	}
 	require.Equal(t, want, events)
 	require.Equal(t, want[0].Payload, server.events[0].Payload)
+	require.Equal(t, connection.EndHandlerClose, produced.endReason)
 }
 
 func TestHandleSMTPClientDisconnect(t *testing.T) {
@@ -151,4 +152,6 @@ func TestHandleSMTPClientDisconnect(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, events, 3)
 	require.Equal(t, "EHLO", events[1].Command)
+	require.Equal(t, "500", events[2].Status)
+	require.Equal(t, connection.EndClientClose, produced.endReason)
 }

@@ -18,6 +18,8 @@ const maxOpcuaMessages = 64
 
 type parsedOPCUA struct {
 	Direction       string `json:"direction,omitempty"`
+	Command         string `json:"command,omitempty"`
+	Path            string `json:"path,omitempty"`
 	MessageType     string `json:"message_type,omitempty"`
 	Service         string `json:"service,omitempty"`
 	EndpointURL     string `json:"endpoint_url,omitempty"`
@@ -35,8 +37,14 @@ type opcuaServer struct {
 }
 
 func parsedFromFrame(direction string, f opcua.Frame) parsedOPCUA {
+	cmd := f.Service
+	if cmd == "" {
+		cmd = f.MessageType
+	}
 	return parsedOPCUA{
 		Direction:       direction,
+		Command:         cmd,
+		Path:            f.EndpointURL,
 		MessageType:     f.MessageType,
 		Service:         f.Service,
 		EndpointURL:     f.EndpointURL,
@@ -84,7 +92,9 @@ func HandleOPCUA(ctx context.Context, conn net.Conn, md connection.Metadata, log
 		conn:    conn,
 		session: opcua.NewSession(opcuaEndpointURL(conn)),
 	}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceTCP("opcua", conn, md, helpers.FirstOrEmpty[parsedOPCUA](server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "opcua"), producer.ErrAttr(err))
 		}
@@ -95,9 +105,11 @@ func HandleOPCUA(ctx context.Context, conn net.Conn, md connection.Metadata, log
 
 	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
-	for i := 0; i < maxOpcuaMessages; i++ {
+	i := 0
+	for ; i < maxOpcuaMessages; i++ {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "opcua"), producer.ErrAttr(err))
+			endReason = connection.EndTimeout
 			return nil
 		}
 		data, err := server.read()
@@ -105,6 +117,7 @@ func HandleOPCUA(ctx context.Context, conn net.Conn, md connection.Metadata, log
 			if err != io.EOF && err != io.ErrUnexpectedEOF {
 				logger.Debug("Failed to read data", slog.String("protocol", "opcua"), producer.ErrAttr(err))
 			}
+			endReason = connection.EndReasonFromRead(err)
 			break
 		}
 		frame := opcua.Parse(data)
@@ -131,8 +144,12 @@ func HandleOPCUA(ctx context.Context, conn net.Conn, md connection.Metadata, log
 		}
 		if err := server.write(reply); err != nil {
 			logger.Error("Failed to write to connection", slog.String("protocol", "opcua"), producer.ErrAttr(err))
+			endReason = connection.EndWriteError
 			return nil
 		}
+	}
+	if i >= maxOpcuaMessages {
+		endReason = connection.EndMaxFrames
 	}
 	return nil
 }

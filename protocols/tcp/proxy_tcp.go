@@ -466,9 +466,11 @@ func HandleProxyTCP(ctx context.Context, conn net.Conn, md connection.Metadata, 
 	}
 
 	var results []pipeResult
+	endReason := connection.EndHandlerClose
 
 	// capture is enabled, produces one final proxy_tcp event after connection closes.
 	defer func() {
+		md.EndReason = endReason
 		var events []event
 		if session.producer {
 			events = eventsFromResults(results)
@@ -515,6 +517,9 @@ func HandleProxyTCP(ctx context.Context, conn net.Conn, md connection.Metadata, 
 	results = pipeBothWays(conn, targetConn, session, logger)
 	for _, result := range results {
 		logResult(logger, result)
+		if result.err != nil && endReason == connection.EndHandlerClose {
+			endReason = connection.EndReasonFromRead(result.err)
+		}
 	}
 
 	logger.Debug("proxy tcp completed successfully", logAttrs(

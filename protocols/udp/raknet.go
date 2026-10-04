@@ -33,12 +33,14 @@ var raknetPacketNames = map[uint8]string{
 
 type parsedRakNet struct {
 	Direction  string `json:"direction,omitempty"`
+	Command    string `json:"command,omitempty"`
 	PacketID   uint8  `json:"packet_id,omitempty"`
 	PacketName string `json:"packet_name,omitempty"`
 	Protocol   uint8  `json:"protocol,omitempty"`
 	MagicOK    bool   `json:"magic_ok,omitempty"`
 	MTU        int    `json:"mtu,omitempty"`
 	Payload    []byte `json:"payload,omitempty"`
+	Truncated  bool   `json:"truncated,omitempty"`
 }
 
 func raknetPacketName(id uint8) string {
@@ -69,6 +71,7 @@ func parseRakNet(data []byte, datagramLen int) parsedRakNet {
 
 	frame.PacketID = data[0]
 	frame.PacketName = raknetPacketName(frame.PacketID)
+	frame.Command = frame.PacketName
 
 	off := raknetMagicOffset(frame.PacketID)
 	if off >= 0 && off+len(raknetMagic) <= len(data) && bytes.Equal(data[off:off+len(raknetMagic)], raknetMagic) {
@@ -98,7 +101,9 @@ func HandleRakNet(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byt
 	copy(payload, data[:len(payload)])
 
 	events := []parsedRakNet{}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceUDP("raknet", srcAddr, dstAddr, md, helpers.FirstOrEmpty[parsedRakNet](events).Payload, events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "raknet"), producer.ErrAttr(err))
 		}
@@ -109,6 +114,7 @@ func HandleRakNet(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byt
 	}
 
 	frame := parseRakNet(payload, len(data))
+	frame.Truncated = len(data) > maxRakNetPayload
 	events = append(events, frame)
 
 	if !frame.MagicOK {

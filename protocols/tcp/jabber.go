@@ -11,6 +11,7 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
+	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 )
 
@@ -37,50 +38,32 @@ type JabberClient struct {
 	XMLName     xml.Name `xml:"http://etherx.jabber.org/streams stream"`
 }
 
-// parse Jabber client
-func parseJabberClient(conn net.Conn, md connection.Metadata, dataClient []byte, logger interfaces.Logger, h interfaces.Honeypot) error {
-	v := JabberClient{STo: "none", Version: "none"}
-	if err := xml.Unmarshal(dataClient, &v); err != nil {
-		return err
-	}
-
-	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
-	if err != nil {
-		return err
-	}
-
-	if err = h.ProduceTCP("jabber", conn, md, dataClient, v); err != nil {
-		logger.Error("Failed to produce message", producer.ErrAttr(err), slog.String("handler", "jabber"))
-	}
-
-	logger.Info(
-		fmt.Sprintf("STo : %v Version: %v XMLns: %v XMLName: %v", v.STo, v.Version, v.XMLns, v.XMLName),
-		slog.String("handler", "jabber"),
-		slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-		slog.String("src_ip", host),
-		slog.String("src_port", port),
-	)
-	return nil
-}
-
-// read client msg
-func readMsgJabber(conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
-	r := bufio.NewReader(conn)
-	line, _, err := r.ReadLine()
-	if err != nil {
-		logger.Debug("Failed to read line", slog.String("handler", "jabber"), producer.ErrAttr(err))
-		return nil
-	}
-	return parseJabberClient(conn, md, line[:1024], logger, h)
+type parsedJabber struct {
+	Direction string `json:"direction,omitempty"`
+	Command   string `json:"command,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Payload   []byte `json:"payload,omitempty"`
 }
 
 // HandleJabber main handler
 func HandleJabber(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+	events := []parsedJabber{}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
+		if err := h.ProduceTCP("jabber", conn, md, helpers.FirstOrEmpty[parsedJabber](events).Payload, events); err != nil {
+			logger.Error("Failed to produce message", producer.ErrAttr(err), slog.String("handler", "jabber"))
+		}
 		if err := conn.Close(); err != nil {
 			logger.Error("Failed to close connection", slog.String("handler", "jabber"), producer.ErrAttr(err))
 		}
 	}()
+
+	if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+		logger.Debug("Failed to set connection timeout", slog.String("handler", "jabber"), producer.ErrAttr(err))
+		endReason = connection.EndTimeout
+		return nil
+	}
 
 	v := &ServersJabber{Version: "1"}
 	v.Svs = append(v.Svs, serverJabber{"Test_VPN", "127.0.0.1"})
@@ -90,10 +73,39 @@ func HandleJabber(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 		return err
 	}
 	if _, err := conn.Write(output); err != nil {
+		endReason = connection.EndWriteError
 		return err
 	}
-	if err := readMsgJabber(conn, md, logger, h); err != nil {
-		return err
+	events = append(events, parsedJabber{Direction: "write", Command: "servers", Payload: output})
+
+	r := bufio.NewReader(conn)
+	line, _, err := r.ReadLine()
+	if err != nil {
+		logger.Debug("Failed to read line", slog.String("handler", "jabber"), producer.ErrAttr(err))
+		endReason = connection.EndReasonFromRead(err)
+		return nil
+	}
+	if len(line) > 1024 {
+		line = line[:1024]
+	}
+	client := JabberClient{STo: "none", Version: "none"}
+	_ = xml.Unmarshal(line, &client)
+	events = append(events, parsedJabber{
+		Direction: "read",
+		Command:   "stream",
+		Path:      client.STo,
+		Payload:   line,
+	})
+
+	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
+	if err == nil {
+		logger.Info(
+			fmt.Sprintf("STo : %v Version: %v XMLns: %v XMLName: %v", client.STo, client.Version, client.XMLns, client.XMLName),
+			slog.String("handler", "jabber"),
+			slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+			slog.String("src_ip", host),
+			slog.String("src_port", port),
+		)
 	}
 	return nil
 }

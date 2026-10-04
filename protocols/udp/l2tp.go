@@ -59,6 +59,8 @@ var l2tpMessageNames = map[uint16]string{
 
 type parsedL2TP struct {
 	Direction        string `json:"direction,omitempty"`
+	Command          string `json:"command,omitempty"`
+	Status           string `json:"status,omitempty"`
 	MessageType      uint16 `json:"message_type,omitempty"`
 	MessageName      string `json:"message_name,omitempty"`
 	HostName         string `json:"host_name,omitempty"`
@@ -68,6 +70,7 @@ type parsedL2TP struct {
 	Ns               uint16 `json:"ns,omitempty"`
 	Nr               uint16 `json:"nr,omitempty"`
 	Payload          []byte `json:"payload,omitempty"`
+	Truncated        bool   `json:"truncated,omitempty"`
 }
 
 func l2tpMessageName(msgType uint16) string {
@@ -131,6 +134,7 @@ func parseL2TP(data []byte) (parsedL2TP, error) {
 			if len(value) >= 2 {
 				frame.MessageType = binary.BigEndian.Uint16(value[:2])
 				frame.MessageName = l2tpMessageName(frame.MessageType)
+				frame.Command = frame.MessageName
 			}
 		case l2tpAttrHostName:
 			frame.HostName = string(value)
@@ -203,7 +207,9 @@ func HandleL2TP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte,
 	copy(payload, data[:len(payload)])
 
 	events := []parsedL2TP{}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceUDP("l2tp", srcAddr, dstAddr, md, helpers.FirstOrEmpty[parsedL2TP](events).Payload, events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "l2tp"), producer.ErrAttr(err))
 		}
@@ -214,6 +220,7 @@ func HandleL2TP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte,
 	}
 
 	frame, err := parseL2TP(payload)
+	frame.Truncated = len(data) > maxL2TPPayload
 	events = append(events, frame)
 	if err != nil {
 		logger.Debug("Failed to parse L2TP control message",
@@ -241,6 +248,8 @@ func HandleL2TP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte,
 	resp := buildSCCRP(frame.AssignedTunnelID, frame.Ns)
 	events = append(events, parsedL2TP{
 		Direction:        "write",
+		Command:          l2tpMessageName(l2tpMsgSCCRP),
+		Status:           "SCCRP",
 		MessageType:      l2tpMsgSCCRP,
 		MessageName:      l2tpMessageName(l2tpMsgSCCRP),
 		HostName:         l2tpHoneypotHostName,
@@ -253,6 +262,7 @@ func HandleL2TP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte,
 	})
 	if err := h.ReplyUDP(srcAddr, dstAddr, resp); err != nil {
 		logger.Error("Failed to reply to L2TP SCCRQ", slog.String("protocol", "l2tp"), producer.ErrAttr(err))
+		endReason = connection.EndWriteError
 		return err
 	}
 	return nil
