@@ -34,6 +34,7 @@ func httpTestRequest(method, path, sessionID string, body []byte) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s HTTP/1.1\r\n", method, path)
 	b.WriteString("Host: 127.0.0.1\r\n")
+	b.WriteString("User-Agent: test-agent/1.0\r\n")
 	b.WriteString("Connection: keep-alive\r\n")
 	if sessionID != "" {
 		fmt.Fprintf(&b, "Cookie: %s=%s\r\n", httpSessionCookie, sessionID)
@@ -97,8 +98,11 @@ func TestHandleHTTPKeepAliveOneEvent(t *testing.T) {
 	require.Equal(t, "read", events[0].Direction)
 	require.Equal(t, "GET", events[0].Command)
 	require.Equal(t, "/", events[0].Path)
+	require.Equal(t, "127.0.0.1", events[0].Host)
+	require.Equal(t, "test-agent/1.0", events[0].UserAgent)
 	require.Equal(t, sessionID, events[0].SessionID)
 	require.Equal(t, "write", events[1].Direction)
+	require.Equal(t, "200", events[1].Status)
 	require.Equal(t, sessionID, events[1].SessionID)
 	require.Equal(t, "/wallet", events[2].Path)
 }

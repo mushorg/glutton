@@ -58,12 +58,13 @@ func TestNewConnTable(t *testing.T) {
 func TestRegister(t *testing.T) {
 	table := New(context.Background())
 	targetPort := 4321
-	m1, err := table.Register("127.0.0.1", "1234", uint16(targetPort), &rules.Rule{})
+	m1, err := table.Register("127.0.0.1", "1234", uint16(targetPort), "192.0.2.1", &rules.Rule{})
 	require.NoError(t, err)
 	require.NotNil(t, m1)
 	m2 := table.Get(localhost1234Key)
 	require.NotNil(t, m1)
 	require.Equal(t, targetPort, int(m2.TargetPort))
+	require.Equal(t, "192.0.2.1", m2.TargetIP)
 	require.Equal(t, m1, m2)
 }
 
@@ -76,12 +77,15 @@ func TestRegisterConn(t *testing.T) {
 	m := table.Get(ck)
 	require.NotNil(t, m)
 	require.Equal(t, "tcp", m.Rule.Target)
+	host, _, err := net.SplitHostPort(conn.LocalAddr().String())
+	require.NoError(t, err)
+	require.Equal(t, host, md.TargetIP)
 }
 
 func TestFlushOlderThan(t *testing.T) {
 	table := New(context.Background())
 	targetPort := 4321
-	md, err := table.Register("127.0.0.1", "1234", uint16(targetPort), &rules.Rule{})
+	md, err := table.Register("127.0.0.1", "1234", uint16(targetPort), "", &rules.Rule{})
 	require.NoError(t, err)
 	require.NotNil(t, md)
 	table.FlushOlderThan(time.Duration(0))

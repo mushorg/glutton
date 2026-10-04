@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -44,11 +46,39 @@ func NewConnKeyFromNetConn(conn net.Conn) (CKey, error) {
 	return NewConnKeyByString(host, port)
 }
 
+const (
+	EndClientClose  = "client_close"
+	EndTimeout      = "timeout"
+	EndHandlerClose = "handler_close"
+	EndReadError    = "read_error"
+	EndWriteError   = "write_error"
+	EndMaxFrames    = "max_frames"
+)
+
+// EndReasonFromRead maps a read/timeout error to an event endReason.
+func EndReasonFromRead(err error) string {
+	if err == nil {
+		return EndClientClose
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return EndTimeout
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		return EndClientClose
+	}
+	var nerr net.Error
+	if errors.As(err, &nerr) && nerr.Timeout() {
+		return EndTimeout
+	}
+	return EndReadError
+}
+
 type Metadata struct {
 	Added      time.Time
 	Rule       *rules.Rule
 	TargetPort uint16
-	//TargetIP   net.IP
+	TargetIP   string
+	EndReason  string
 }
 
 type ConnTable struct {
@@ -85,7 +115,7 @@ func (t *ConnTable) RegisterConn(conn net.Conn, rule *rules.Rule) (Metadata, err
 		return Metadata{}, fmt.Errorf("failed to split remote address: %w", err)
 	}
 
-	_, dstPort, err := net.SplitHostPort(conn.LocalAddr().String())
+	dstHost, dstPort, err := net.SplitHostPort(conn.LocalAddr().String())
 	if err != nil {
 		return Metadata{}, fmt.Errorf("failed to split local address: %w", err)
 	}
@@ -93,11 +123,11 @@ func (t *ConnTable) RegisterConn(conn net.Conn, rule *rules.Rule) (Metadata, err
 	if err != nil {
 		return Metadata{}, fmt.Errorf("failed to parse dstPort: %w", err)
 	}
-	return t.Register(srcIP, srcPort, uint16(port), rule)
+	return t.Register(srcIP, srcPort, uint16(port), dstHost, rule)
 }
 
 // Register a connection in the table
-func (t *ConnTable) Register(srcIP, srcPort string, dstPort uint16, rule *rules.Rule) (Metadata, error) {
+func (t *ConnTable) Register(srcIP, srcPort string, dstPort uint16, dstHost string, rule *rules.Rule) (Metadata, error) {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
@@ -112,6 +142,7 @@ func (t *ConnTable) Register(srcIP, srcPort string, dstPort uint16, rule *rules.
 	md := Metadata{
 		Added:      time.Now(),
 		TargetPort: dstPort,
+		TargetIP:   dstHost,
 		Rule:       rule,
 	}
 	t.table[ck] = md

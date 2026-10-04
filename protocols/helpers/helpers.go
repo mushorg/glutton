@@ -7,6 +7,11 @@ import (
 	"path/filepath"
 )
 
+func SHA256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
 func FirstOrEmpty[T any](s []T) T {
 	if len(s) > 0 {
 		return s[0]

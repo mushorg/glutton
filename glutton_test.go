@@ -2,6 +2,7 @@ package glutton
 
 import (
 	"context"
+	"net"
 	"testing"
 
 	"github.com/mushorg/glutton/connection"
@@ -30,6 +31,17 @@ func TestProduceTCPSkipsWhenRuleProduceFalse(t *testing.T) {
 		Rule: &rules.Rule{Produce: &produceFalse},
 	}, nil, nil)
 	require.NoError(t, err)
+}
+
+func TestSanitizePayloadUTF16(t *testing.T) {
+	g := &Glutton{publicAddrs: []net.IP{net.ParseIP("192.0.2.10")}}
+	ascii := []byte("unc \\\\192.0.2.10\\share")
+	require.Equal(t, []byte("unc \\\\1.2.3.4\\share"), g.sanitizePayload(ascii))
+
+	u16 := utf16LE("192.0.2.10")
+	in := append([]byte{0xff, 0x00}, append(u16, 0x00, 0x00)...)
+	out := g.sanitizePayload(in)
+	require.Equal(t, append([]byte{0xff, 0x00}, append(utf16LE("1.2.3.4"), 0x00, 0x00)...), out)
 }
 
 func TestProduceUDPSkipsWhenRuleProduceFalse(t *testing.T) {

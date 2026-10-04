@@ -33,32 +33,49 @@ var (
 	}
 )
 
-func IsScanner(ip net.IP) (bool, string, error) {
+// Classify reports a known scanner label (if any) and the first PTR name.
+// CIDR matches do not trigger DNS. PTR lookup runs only when the IP is not
+// in a known scanner prefix, matching IsScanner.
+func Classify(ip net.IP) (scannerName, srcPtr string, err error) {
+	if ip == nil {
+		return "", "", nil
+	}
 	for scanner, subnets := range scannerSubnet {
 		for _, subnet := range subnets {
-			_, net, err := net.ParseCIDR(subnet)
+			_, network, err := net.ParseCIDR(subnet)
 			if err != nil {
-				return false, "", err
+				return "", "", err
 			}
-			if net.Contains(ip) {
-				return true, scanner, nil
+			if network.Contains(ip) {
+				return scanner, "", nil
 			}
 		}
 	}
 	names, err := net.LookupAddr(ip.String())
 	if err != nil {
-		return false, "", nil
+		return "", "", nil
+	}
+	if len(names) > 0 {
+		srcPtr = strings.TrimSuffix(names[0], ".")
 	}
 	for _, name := range names {
 		if strings.HasSuffix(name, "shodan.io.") {
-			return true, "shodan", nil
+			return "shodan", srcPtr, nil
 		}
 		if strings.HasSuffix(name, "binaryedge.ninja.") {
-			return true, "binaryedge", nil
+			return "binaryedge", srcPtr, nil
 		}
 		if strings.HasSuffix(name, "rwth-aachen.de.") {
-			return true, "rwth", nil
+			return "rwth", srcPtr, nil
 		}
 	}
-	return false, "", nil
+	return "", srcPtr, nil
+}
+
+func IsScanner(ip net.IP) (bool, string, error) {
+	name, _, err := Classify(ip)
+	if err != nil {
+		return false, "", err
+	}
+	return name != "", name, nil
 }

@@ -78,16 +78,22 @@ func TestHandleRDPNegotiationAndTLSStub(t *testing.T) {
 	require.Equal(t, "read", events[0].Direction)
 	require.Equal(t, rdpCRHello, events[0].Payload, "first payload must stay the CR (no buffer reuse)")
 	require.Equal(t, byte(3), events[0].Header.Version)
+	require.Equal(t, "ConnectionRequest", events[0].Command)
+	require.Equal(t, "hello", events[0].Cookie)
+	require.Equal(t, "TLS|CredSSP", events[0].Protocols)
 
 	require.Equal(t, "write", events[1].Direction)
 	require.Equal(t, cc, events[1].Payload)
+	require.Equal(t, "ConnectionConfirm", events[1].Command)
 
 	require.Equal(t, "read", events[2].Direction)
 	require.Equal(t, byte(0x16), events[2].Payload[0], "ClientHello")
 	require.Equal(t, byte(0), events[2].Header.Version, "TLS frames have no TPKT header")
+	require.Equal(t, "TLSClientHello", events[2].Command)
 
 	require.Equal(t, "write", events[3].Direction)
 	require.Equal(t, byte(0x16), events[3].Payload[0], "TLS stub ServerHello flight")
+	require.Equal(t, "TLSHandshake", events[3].Command)
 	require.NotEqual(t, events[1].Payload, events[3].Payload, "must not re-send Connection Confirm")
 }
 
@@ -139,8 +145,10 @@ func TestHandleRDPStandardCRNoNegRsp(t *testing.T) {
 	events := produced.decoded.([]parsedRDP)
 	require.Len(t, events, 2)
 	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, "ConnectionRequest", events[0].Command)
 	require.Equal(t, rdpCRStandard, events[0].Payload)
 	require.Equal(t, "write", events[1].Direction)
+	require.Equal(t, "ConnectionConfirm", events[1].Command)
 	require.Equal(t, cc, events[1].Payload)
 	require.NotContains(t, events[1].Payload, []byte{0x02, 0x00, 0x08, 0x00})
 }
@@ -198,9 +206,11 @@ func TestHandleRDPMCSConnectInitialNoSecondCC(t *testing.T) {
 	require.Equal(t, rdpCRStandard, events[0].Payload)
 	require.Equal(t, cc, events[1].Payload)
 	require.Equal(t, "read", events[2].Direction)
+	require.Equal(t, "MCSConnectInitial", events[2].Command)
 	require.Equal(t, rdpMCSConnectInitial, events[2].Payload)
 	require.Equal(t, byte(3), events[2].Header.Version)
 	require.Equal(t, "write", events[3].Direction)
+	require.Equal(t, "MCSConnectResponse", events[3].Command)
 	require.Equal(t, byte(0xf0), events[3].Payload[5])
 	require.NotEqual(t, byte(0xd0), events[3].Payload[5])
 }

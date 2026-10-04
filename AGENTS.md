@@ -47,8 +47,11 @@ package tcp
 type parsedX struct {
 	Direction string   `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
 	Header    x.Header `json:"header,omitempty"`    // optional: parsed protocol header
-	Command   string   `json:"command,omitempty"`   // optional: verb / opcode name for text protocols
+	Command   string   `json:"command,omitempty"`   // leaf operation (verb, opcode, Trans2 setup name, HTTP method)
+	Path      string   `json:"path,omitempty"`      // optional: share, filename, URL path
+	Status    string   `json:"status,omitempty"`    // optional: named write outcome (NT status, HTTP 200)
 	Payload   []byte   `json:"payload,omitempty"`   // raw bytes as seen on the wire
+	Truncated bool     `json:"truncated,omitempty"` // set when a capture cap dropped trailing bytes
 }
 
 type xServer struct {
@@ -120,6 +123,8 @@ func HandleX(ctx context.Context, conn net.Conn, md connection.Metadata, logger 
 - **Parsing boundary**: byte-level parsing and response construction belong in a sub-package (`protocols/tcp/smb/`) or a `.spicy` grammar; connection lifecycle, logging, producer calls, and fake responses stay in the Go handler. Never commit generated Spicy artifacts.
 - **Determinism**: anything that sleeps or randomizes (e.g. `randomSleep` in `smtp.go`) should be injectable so handler tests run instantly.
 - **Do not export** handler internals; only `HandleX` is exported from `protocols/tcp`.
+
+Decoded JSON field names are the contract with Ochi/analysis. Keep `direction` and `payload`. When the handler already parsed it, also set `command` (leaf operation, not only the outer PDU), `path`, `status` on writes, and `truncated` when a capture cap applied. Handler-specific extras (`native_os`, `cookie`, `user_agent`, `nt_status`) are fine beside these. Do not introduce a shared Go frame type.
 
 ## Reference implementations
 

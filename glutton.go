@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,9 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
@@ -127,7 +128,7 @@ func (g *Glutton) Init() error {
 
 	// Initiating log producers
 	if viper.GetBool("producers.enabled") {
-		g.Producer, err = producer.New(g.id.String())
+		g.Producer, err = producer.New(g.id.String(), viper.GetString("sensor_version"))
 		if err != nil {
 			return err
 		}
@@ -177,7 +178,7 @@ func (g *Glutton) udpListen(wg *sync.WaitGroup) {
 		if rule == nil {
 			rule = &rules.Rule{Target: "udp"}
 		}
-		md, err := g.connTable.Register(srcAddr.IP.String(), strconv.Itoa(int(srcAddr.AddrPort().Port())), dstAddr.AddrPort().Port(), rule)
+		md, err := g.connTable.Register(srcAddr.IP.String(), strconv.Itoa(int(srcAddr.AddrPort().Port())), dstAddr.AddrPort().Port(), dstAddr.IP.String(), rule)
 		if err != nil {
 			g.Logger.Error("Failed to register UDP packet", producer.ErrAttr(err))
 		}
@@ -349,9 +350,25 @@ func (g *Glutton) MetadataByConnection(conn net.Conn) (connection.Metadata, erro
 	return md, nil
 }
 
+func utf16LE(s string) []byte {
+	u := utf16.Encode([]rune(s))
+	b := make([]byte, len(u)*2)
+	for i, r := range u {
+		binary.LittleEndian.PutUint16(b[i*2:], r)
+	}
+	return b
+}
+
 func (g *Glutton) sanitizePayload(payload []byte) []byte {
+	if len(payload) == 0 {
+		return payload
+	}
+	replASCII := []byte("1.2.3.4")
+	replUTF16 := utf16LE("1.2.3.4")
 	for _, ip := range g.publicAddrs {
-		payload = []byte(strings.ReplaceAll(string(payload), ip.String(), "1.2.3.4"))
+		s := ip.String()
+		payload = bytes.ReplaceAll(payload, []byte(s), replASCII)
+		payload = bytes.ReplaceAll(payload, utf16LE(s), replUTF16)
 	}
 	return payload
 }
@@ -362,6 +379,7 @@ func (g *Glutton) ProduceTCP(handler string, conn net.Conn, md connection.Metada
 	}
 	if g.Producer != nil {
 		payload = g.sanitizePayload(payload)
+		decoded = producer.SanitizeDecoded(decoded, g.sanitizePayload)
 		return g.Producer.LogTCP(handler, conn, md, payload, decoded)
 	}
 	return nil
@@ -373,7 +391,8 @@ func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md c
 	}
 	if g.Producer != nil {
 		payload = g.sanitizePayload(payload)
-		return g.Producer.LogUDP(handler, srcAddr, md, payload, decoded)
+		decoded = producer.SanitizeDecoded(decoded, g.sanitizePayload)
+		return g.Producer.LogUDP(handler, srcAddr, dstAddr, md, payload, decoded)
 	}
 	return nil
 }

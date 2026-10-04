@@ -116,6 +116,9 @@ type parsedHTTP struct {
 	Command   string `json:"command,omitempty"`   // HTTP method
 	Path      string `json:"path,omitempty"`
 	Query     string `json:"query,omitempty"`
+	Host      string `json:"host,omitempty"`
+	UserAgent string `json:"user_agent,omitempty"`
+	Status    string `json:"status,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	Payload   []byte `json:"payload,omitempty"` // raw HTTP request or response bytes
 }
@@ -170,6 +173,15 @@ func addHeaderAfterStatus(resp []byte, name, value string) []byte {
 	return out
 }
 
+func httpStatusCode(resp []byte) string {
+	line, _, _ := bytes.Cut(resp, []byte("\r\n"))
+	parts := bytes.SplitN(line, []byte(" "), 3)
+	if len(parts) >= 2 && bytes.HasPrefix(parts[0], []byte("HTTP/")) {
+		return string(parts[1])
+	}
+	return ""
+}
+
 func (s *httpServer) write(data []byte) error {
 	if s.sessionID != "" {
 		data = addHeaderAfterStatus(data, "Set-Cookie", httpSessionCookie+"="+s.sessionID)
@@ -179,6 +191,7 @@ func (s *httpServer) write(data []byte) error {
 	}
 	s.record(parsedHTTP{
 		Direction: "write",
+		Status:    httpStatusCode(data),
 		Payload:   data,
 	})
 	return nil
@@ -201,6 +214,8 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 		Command:   req.Method,
 		Path:      path,
 		Query:     query,
+		Host:      req.Host,
+		UserAgent: req.UserAgent(),
 		Payload:   raw,
 	})
 
@@ -277,10 +292,12 @@ func handleHTTP(ctx context.Context, server *httpServer, md connection.Metadata,
 	server.h = h
 
 	handoff := false
+	endReason := connection.EndHandlerClose
 	defer func() {
 		if handoff {
 			return
 		}
+		server.md.EndReason = endReason
 		server.closeAndProduce(conn)
 		if err := conn.Close(); err != nil {
 			logger.Debug("Failed to close the HTTP connection", slog.String("protocol", "http"), producer.ErrAttr(err))
@@ -292,6 +309,7 @@ func handleHTTP(ctx context.Context, server *httpServer, md connection.Metadata,
 	for i := 0; i < maxHTTPRequests; i++ {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "http"), producer.ErrAttr(err))
+			endReason = connection.EndTimeout
 			return nil
 		}
 
@@ -301,6 +319,7 @@ func handleHTTP(ctx context.Context, server *httpServer, md connection.Metadata,
 			if parseErr != nil {
 				logger.Debug("Failed to read the HTTP request", slog.String("protocol", "http"), producer.ErrAttr(parseErr))
 				server.record(parsedHTTP{Direction: "read", Payload: append([]byte(nil), raw...)})
+				endReason = connection.EndReadError
 				break
 			}
 
@@ -322,11 +341,13 @@ func handleHTTP(ctx context.Context, server *httpServer, md connection.Metadata,
 
 			if handleErr := server.handleRequest(ctx, req, raw, md, logger, h); handleErr != nil {
 				logger.Debug("Failed to handle HTTP request", slog.String("protocol", "http"), producer.ErrAttr(handleErr))
+				endReason = connection.EndWriteError
 				return nil
 			}
 		}
 		if err != nil {
 			logger.Debug("Failed to read data", slog.String("protocol", "http"), producer.ErrAttr(err))
+			endReason = connection.EndReasonFromRead(err)
 			break
 		}
 	}

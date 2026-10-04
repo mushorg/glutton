@@ -19,19 +19,30 @@ Producer events follow the `producer.Event` schema:
 
 | JSON field | Meaning |
 | --- | --- |
-| `timestamp` | UTC event timestamp. |
+| `timestamp` | UTC time the event was produced. |
+| `startedAt` | Connection (or datagram) start from the connection table (`md.Added`). |
+| `durationMs` | Milliseconds from `startedAt` to produce time. |
 | `transport` | `tcp` or `udp`. |
 | `srcHost` | Source IP. |
 | `srcPort` | Source port. |
+| `srcPtr` | First reverse-DNS name when a PTR lookup already ran (not on CIDR-matched scanners). |
+| `dstHost` | Original destination IP (TPROXY `LocalAddr` / UDP dest). |
 | `dstPort` | Original destination port from metadata. |
 | `sensorID` | Glutton sensor ID. |
-| `rule` | Rule string when metadata includes a rule. |
+| `sensorVersion` | Build version (`VERSION` / `sensor_version`). |
+| `rule` | Rule match string when metadata includes a rule. |
+| `ruleName` | Optional `name` from `rules.yaml`. |
 | `handler` | Handler name supplied by the protocol handler. |
-| `payload` | Base64-encoded payload bytes. |
-| `scanner` | Scanner classification from `scanner.IsScanner(...)`. |
+| `payload` | Base64-encoded first-frame payload bytes. |
+| `payloadHash` | SHA-256 hex of the (sanitized) top-level payload. |
+| `frameCount` | Number of decoded frames when `decoded` is a slice. |
+| `endReason` | Why the session ended (`client_close`, `timeout`, `handler_close`, `read_error`, `write_error`, `max_frames`). Omitted by handlers that do not set it. |
+| `scanner` | Scanner classification from `scanner.Classify(...)`. |
 | `decoded` | Handler-specific decoded data. |
 
-Events are emitted only when (1) `producers.enabled` is true so a producer object exists, (2) a handler calls `ProduceTCP(...)` or `ProduceUDP(...)`, (3) the matched rule does not set `produce: false`, and (4) at least one sink is enabled. Before output, configured `addresses` values are scrubbed from the payload and replaced with `1.2.3.4`.
+Events are emitted only when (1) `producers.enabled` is true so a producer object exists, (2) a handler calls `ProduceTCP(...)` or `ProduceUDP(...)`, (3) the matched rule does not set `produce: false`, and (4) at least one sink is enabled. Before output, configured `addresses` values are scrubbed from payload bytes (ASCII and UTF-16LE) and replaced with `1.2.3.4`. The same sanitizer runs on each decoded frame `payload` / `path`.
+
+Array-of-frames `decoded` entries share these JSON names when the handler fills them: `direction`, `payload`, `command` (leaf operation), `path`, `status` (writes), `truncated`. Handler-specific fields sit beside them.
 
 Example shape:
 
@@ -41,9 +52,13 @@ Example shape:
   "transport": "tcp",
   "srcHost": "203.0.113.10",
   "srcPort": "54321",
+  "dstHost": "192.0.2.10",
   "dstPort": 80,
   "sensorID": "00000000-0000-0000-0000-000000000000",
+  "sensorVersion": "v0.0.0",
   "rule": "Rule: tcp",
+  "frameCount": 1,
+  "endReason": "client_close",
   "handler": "http",
   "payload": "R0VUIC8gSFRUUC8xLjENCg0K",
   "scanner": "",
@@ -63,10 +78,10 @@ Example shape:
 
 | Handler | `decoded` | Notes |
 | --- | --- | --- |
-| `http` (Go) | Array of per-direction frames: `direction`, `command`, `path`, `query`, `session_id`, `payload` | Keep-alive HTTP. `command` is the HTTP method. Responses set a `session` cookie; frames that share that cookie (per source host) are grouped into one produced event when the session idles out (`conn_timeout`). Shares the idle session table with `mcp`. |
+| `http` (Go) | Array of per-direction frames: `direction`, `command`, `path`, `query`, `host`, `user_agent`, `status`, `session_id`, `payload` | Keep-alive HTTP. `command` is the HTTP method. Writes set `status` (e.g. `200`). Responses set a `session` cookie; frames that share that cookie (per source host) are grouped into one produced event when the session idles out (`conn_timeout`). Shares the idle session table with `mcp`. |
 | `http` (Spicy) | `{method, url, path, query}` | Request body is the event payload. |
 | `tcp` | Array of per-direction frames: `direction`, `payload`, `payload_hash` | Catch-all. Client bytes are one `read` frame (capped by `max_tcp_payload`); the honeypot replies with random bytes as a `write` frame. |
-| `udp` | Array of read frames: `direction`, `payload` | Catch-all. One datagram per event (capped at 1024 bytes). The handler does not reply. Datagrams with RakNet offline magic are rerouted to `raknet`; APPLICATION 10/12 Kerberos AS-REQ/TGS-REQ are rerouted to `kerberos`; CoAP version-1 GET/POST/PUT/DELETE datagrams are rerouted to `coap`. |
+| `udp` | Array of read frames: `direction`, `payload`, `payload_hash`, `truncated` | Catch-all. One datagram per event (capped at 1024 bytes). `truncated` is set when the datagram was longer. The handler does not reply. Datagrams with RakNet offline magic are rerouted to `raknet`; APPLICATION 10/12 Kerberos AS-REQ/TGS-REQ are rerouted to `kerberos`; CoAP version-1 GET/POST/PUT/DELETE datagrams are rerouted to `coap`. |
 | `proxy_tcp`, `proxy_udp` | Per-direction entries: `direction`, `payload`, `payload_hash`, `bytes`, `truncated` | Only when `capture_traffic.enabled` is true. Samples are capped by `max_tcp_payload`; `truncated` is whether more bytes were forwarded than captured. `proxy_udp` emits one event per flow when the flow idles out or closes. |
 | `sip` (TCP/UDP) | Array of per-direction frames: `direction`, `payload`, `message` | UDP OPTIONS probes get a `write` frame with the `200 OK` response. |
 | `openvpn` (UDP) | Array of read frames: `direction`, `opcode`, `opcode_name`, `key_id`, `session_id` (hex), `payload` | The handler does not reply. |
@@ -82,8 +97,8 @@ Example shape:
 | `mongodb` (TCP) | Array of per-direction frames: `direction`, `header`, `opcode_str`, `command`, `payload` | `command` is the BSON command name on read frames (`hello`, `isMaster`, `buildInfo`). OP_QUERY is answered with OP_REPLY and OP_MSG with OP_MSG; `hello`/`isMaster` get a fake handshake document (`ismaster`, `maxWireVersion`, …) and `buildInfo` a fake `version`/`versionArray`. |
 | `mcp` (TCP) | Array of per-direction frames: `direction`, `command`, `path`, `session_id`, `payload` | Streamable HTTP JSON-RPC. `command` is the JSON-RPC method (e.g. `initialize`, `tools/list`) or the HTTP verb. `initialize` gets a JSON-RPC result plus `Mcp-Session-Id`; the connection stays open for further requests. Shares the idle session table with HTTP. |
 | `telnet` (TCP) | Array of per-direction frames: `direction`, `message` | Telnet IAC negotiation is recorded as its own `read` frames so username/password/`message` values stay free of negotiation octets. |
-| `smb` (TCP) | Array of per-direction frames: `direction`, `header`, `command`, `path`, `payload`, `truncated` | Direct TCP (port 445) length-prefixed SMB1 and SMB2. `command` is the opcode name (`SMB_COM_NT_CREATE_ANDX`, `SMB_COM_NT_TRANSACT`, `SMB2_NEGOTIATE`, …). SMB1 NT Create AndX read frames set `path` to the requested filename (e.g. `\svcctl`). `payload` includes the 4-byte session header; `truncated` is set when the PDU exceeded the 256 KiB capture cap. SMB1 `0x25` still returns `STATUS_INSUFF_SERVER_RESOURCES`; `0xA0` NT Transact gets a success stub so large follow-on bodies are stored; `0xA2` NT Create AndX gets WordCount 34 with a FID. See the skill reference. |
-| `rdp` (TCP) | Array of per-direction frames: `direction`, `header`, `payload` | `header` is the TPKT (empty on TLS stub frames). Connection Confirm is 11 bytes with no `RDP_NEG_RSP` when the client Connection Request omitted `RDP_NEG_REQ`, and 19 bytes selecting TLS\|CredSSP when negotiation was requested. MCS Connect-Initial (X.224 DT) is a separate read frame and is answered with MCS Connect-Response, not a second X.224 CC. |
+| `smb` (TCP) | Array of per-direction frames: `direction`, `header`, `command`, `path`, `setup`, `status`, `nt_status`, `account`, `native_os`, `native_lanman`, `payload`, `truncated` | Direct TCP (port 445) length-prefixed SMB1 and SMB2. `command` is the opcode name. Tree Connect sets `path` to the share (`IPC$`); NT Create AndX sets `path` to the filename. Trans2 frames set `setup` (`TRANS2_SESSION_SETUP`, …). Writes set `status` / `nt_status`. Session Setup copies Native OS/LanMan and account (no password). `header` JSON uses numeric tid/uid/mid/pid and hex `flags2`. |
+| `rdp` (TCP) | Array of per-direction frames: `direction`, `command`, `cookie`, `protocols`, `header`, `payload` | `command` is `ConnectionRequest`, `ConnectionConfirm`, `TLSClientHello`, `TLSHandshake`, `MCSConnectInitial`, or `MCSConnectResponse`. `cookie` is `mstshash`; `protocols` is the RDP_NEG bitmask name. `header` is the TPKT (empty on TLS stub frames). |
 
 ## HTTP producer
 

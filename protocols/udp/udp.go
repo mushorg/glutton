@@ -16,8 +16,10 @@ import (
 const maxUDPPayload = 1024
 
 type parsedUDP struct {
-	Direction string `json:"direction,omitempty"`
-	Payload   []byte `json:"payload,omitempty"`
+	Direction   string `json:"direction,omitempty"`
+	Payload     []byte `json:"payload,omitempty"`
+	PayloadHash string `json:"payload_hash,omitempty"`
+	Truncated   bool   `json:"truncated,omitempty"`
 }
 
 func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, log interfaces.Logger, h interfaces.Honeypot) error {
@@ -31,12 +33,19 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 		return HandleCoAP(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
 
+	truncated := len(data) > maxUDPPayload
 	payload := make([]byte, min(len(data), maxUDPPayload))
 	copy(payload, data[:len(payload)])
 
+	hash := ""
+	if len(payload) > 0 {
+		hash = helpers.SHA256Hex(payload)
+	}
 	events := []parsedUDP{{
-		Direction: "read",
-		Payload:   payload,
+		Direction:   "read",
+		Payload:     payload,
+		PayloadHash: hash,
+		Truncated:   truncated,
 	}}
 	defer func() {
 		if err := h.ProduceUDP("udp", srcAddr, dstAddr, md, helpers.FirstOrEmpty[parsedUDP](events).Payload, events); err != nil {

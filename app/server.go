@@ -44,6 +44,7 @@ func main() {
 
 	pflag.Parse()
 	viper.BindPFlags(pflag.CommandLine)
+	viper.Set("sensor_version", VERSION)
 
 	if viper.IsSet("ssh") {
 		viper.Set("ports.ssh", viper.GetInt("ssh"))

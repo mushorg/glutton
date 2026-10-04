@@ -69,7 +69,9 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		return fmt.Errorf("faild to split remote address: %w", err)
 	}
 
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceTCP("tcp", conn, md, helpers.FirstOrEmpty(server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "tcp"), producer.ErrAttr(err))
 		}
@@ -84,11 +86,13 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			endReason = connection.EndTimeout
 			return err
 		}
 		n, err := conn.Read(buffer)
 		if err != nil {
 			logger.Error("read error", slog.String("handler", "tcp"), producer.ErrAttr(err))
+			endReason = connection.EndReasonFromRead(err)
 			break
 		}
 		msgLength += n
@@ -98,6 +102,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 		if msgLength > viper.GetInt("max_tcp_payload") {
 			logger.Debug("max message length reached", slog.String("handler", "tcp"))
+			endReason = connection.EndMaxFrames
 			break
 		}
 	}
@@ -125,6 +130,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 
 	if err := server.sendRandom(conn); err != nil {
 		logger.Error("write error", slog.String("handler", "tcp"), producer.ErrAttr(err))
+		endReason = connection.EndWriteError
 	}
 
 	return nil

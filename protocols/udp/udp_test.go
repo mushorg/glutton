@@ -26,7 +26,11 @@ func TestHandleUDPProducesReadFrame(t *testing.T) {
 
 	events, ok := h.produced[0].decoded.([]parsedUDP)
 	require.True(t, ok)
-	require.Equal(t, []parsedUDP{{Direction: "read", Payload: payload}}, events)
+	require.Len(t, events, 1)
+	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, payload, events[0].Payload)
+	require.NotEmpty(t, events[0].PayloadHash)
+	require.False(t, events[0].Truncated)
 }
 
 func TestHandleUDPEmptyPayload(t *testing.T) {
@@ -64,5 +68,9 @@ func TestHandleUDPCapsOversizedPayload(t *testing.T) {
 
 	events, ok := h.produced[0].decoded.([]parsedUDP)
 	require.True(t, ok)
-	require.Equal(t, []parsedUDP{{Direction: "read", Payload: payload[:maxUDPPayload]}}, events)
+	require.Len(t, events, 1)
+	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, payload[:maxUDPPayload], events[0].Payload)
+	require.True(t, events[0].Truncated)
+	require.NotEmpty(t, events[0].PayloadHash)
 }

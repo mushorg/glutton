@@ -3,6 +3,7 @@ package tcp
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"io"
 	"net"
 	"testing"
@@ -288,6 +289,42 @@ func TestHandleSMBNtCreateAndXPipe(t *testing.T) {
 	}
 	require.True(t, sawCreateRead, "expected NT Create AndX read")
 	require.True(t, sawCreateWrite, "expected NT Create AndX write with WordCount 34")
+}
+
+func TestHandleSMBDecodedShareAndTrans2(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+	uid, tid := smbHandshakeIPC(t, client)
+	trans2, err := hex.DecodeString(
+		"0f0c00000001000000000000000134ee0000000c00420000004e0001000e00" +
+			"0d0000000000000000000000000000")
+	require.NoError(t, err)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdTransaction2, tid, uid, 0x41)), trans2...))
+	resp := readSMBFrame(t, client)
+	require.Equal(t, byte(smb.CmdTransaction2), resp[4])
+	require.Equal(t, [4]byte{0x02, 0x00, 0x00, 0xc0}, [4]byte(resp[5:9]))
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames, ok := ev.decoded.([]parsedSMB)
+	require.True(t, ok)
+	var sawTree, sawTrans2Read, sawTrans2Write bool
+	for _, f := range frames {
+		if f.Direction == "read" && f.Command == "SMB_COM_TREE_CONNECT_ANDX" {
+			require.Equal(t, "IPC$", f.Path)
+			sawTree = true
+		}
+		if f.Direction == "read" && f.Command == "SMB_COM_TRANSACTION2" {
+			require.Equal(t, "TRANS2_SESSION_SETUP", f.Setup)
+			sawTrans2Read = true
+		}
+		if f.Direction == "write" && f.Command == "SMB_COM_TRANSACTION2" {
+			require.Equal(t, "STATUS_NOT_IMPLEMENTED", f.Status)
+			require.Equal(t, uint32(0xc0000002), f.NTStatus)
+			sawTrans2Write = true
+		}
+	}
+	require.True(t, sawTree)
+	require.True(t, sawTrans2Read)
+	require.True(t, sawTrans2Write)
 }
 
 func startHandleSMB(t *testing.T) (client net.Conn, hp *fakeHoneypot, done chan error) {

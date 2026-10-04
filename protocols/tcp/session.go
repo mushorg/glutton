@@ -251,6 +251,9 @@ func (t *sessionTracker[T]) record(frame T) {
 
 func (t *sessionTracker[T]) closeAndProduce(conn net.Conn) {
 	if t.session != nil {
+		t.session.mu.Lock()
+		t.session.md.EndReason = t.md.EndReason
+		t.session.mu.Unlock()
 		t.session.release()
 		t.session = nil
 		return

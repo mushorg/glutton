@@ -23,12 +23,18 @@ const (
 )
 
 type parsedSMB struct {
-	Direction string        `json:"direction,omitempty"`
-	Header    smb.SMBHeader `json:"header,omitempty"`
-	Command   string        `json:"command,omitempty"`
-	Path      string        `json:"path,omitempty"`
-	Payload   []byte        `json:"payload,omitempty"`
-	Truncated bool          `json:"truncated,omitempty"`
+	Direction    string        `json:"direction,omitempty"`
+	Header       smb.SMBHeader `json:"header,omitempty"`
+	Command      string        `json:"command,omitempty"`
+	Path         string        `json:"path,omitempty"`
+	Setup        string        `json:"setup,omitempty"`
+	Status       string        `json:"status,omitempty"`
+	NTStatus     uint32        `json:"nt_status,omitempty"`
+	Account      string        `json:"account,omitempty"`
+	NativeOS     string        `json:"native_os,omitempty"`
+	NativeLanMan string        `json:"native_lanman,omitempty"`
+	Payload      []byte        `json:"payload,omitempty"`
+	Truncated    bool          `json:"truncated,omitempty"`
 }
 
 type smbServer struct {
@@ -87,6 +93,8 @@ func (ss *smbServer) writePDU(command string, header smb.SMBHeader, data []byte)
 		Direction: "write",
 		Header:    header,
 		Command:   command,
+		Status:    smb.StatusName(header),
+		NTStatus:  smb.NTStatus(header),
 		Payload:   framed,
 	})
 	return nil
@@ -120,7 +128,9 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		events: []parsedSMB{},
 		conn:   conn,
 	}
+	endReason := connection.EndHandlerClose
 	defer func() {
+		md.EndReason = endReason
 		if err := h.ProduceTCP("smb", conn, md, helpers.FirstOrEmpty[parsedSMB](server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "smb"), producer.ErrAttr(err))
 		}
@@ -130,14 +140,17 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 	}()
 
-	for i := 0; i < maxSMBMessages; i++ {
+	i := 0
+	for ; i < maxSMBMessages; i++ {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "smb"), producer.ErrAttr(err))
+			endReason = connection.EndTimeout
 			return nil
 		}
 		frame, err := server.read()
 		if err != nil {
 			logger.Debug("Failed to read data", slog.String("protocol", "smb"), producer.ErrAttr(err))
+			endReason = connection.EndReasonFromRead(err)
 			break
 		}
 		pdu := smbPDU(frame)
@@ -148,10 +161,12 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		switch {
 		case bytes.HasPrefix(pdu, []byte("\xffSMB")):
 			if err := server.handleSMB1(frame, pdu, logger); err != nil {
+				endReason = connection.EndWriteError
 				return err
 			}
 		case bytes.HasPrefix(pdu, []byte("\xfeSMB")):
 			if err := server.handleSMB2(frame, pdu); err != nil {
+				endReason = connection.EndWriteError
 				return err
 			}
 		case bytes.HasPrefix(pdu, []byte("\xfdSMB")):
@@ -168,6 +183,9 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 				Truncated: frame.truncated,
 			})
 		}
+	}
+	if i >= maxSMBMessages {
+		endReason = connection.EndMaxFrames
 	}
 	return nil
 }
@@ -186,16 +204,32 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 	}
 
 	path := ""
-	if header.Command == smb.CmdNtCreateAndX {
+	setup := ""
+	account, nativeOS, nativeLanMan := "", "", ""
+	switch header.Command {
+	case smb.CmdNtCreateAndX:
 		path = smb.NtCreateAndXName(header, smbBuf.Bytes())
+	case smb.CmdTreeConnectAndX:
+		path = smb.TreeConnectShare(header, smbBuf.Bytes())
+	case smb.CmdSessionSetupAndX:
+		id := smb.SessionSetupIdentity(header, smbBuf.Bytes())
+		account, nativeOS, nativeLanMan = id.Account, id.NativeOS, id.NativeLanMan
+	case smb.CmdTransaction2:
+		if s, ok := smb.Trans2Setup(smbBuf.Bytes()); ok {
+			setup = smb.Trans2SetupName(s)
+		}
 	}
 	ss.events = append(ss.events, parsedSMB{
-		Direction: "read",
-		Header:    header,
-		Command:   smb.CommandName(header.Command),
-		Path:      path,
-		Payload:   frame.payload,
-		Truncated: frame.truncated,
+		Direction:    "read",
+		Header:       header,
+		Command:      smb.CommandName(header.Command),
+		Path:         path,
+		Setup:        setup,
+		Account:      account,
+		NativeOS:     nativeOS,
+		NativeLanMan: nativeLanMan,
+		Payload:      frame.payload,
+		Truncated:    frame.truncated,
 	})
 	logger.Debug("SMB Header", slog.Any("header", header), slog.String("protocol", "smb"))
 
