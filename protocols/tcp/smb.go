@@ -23,18 +23,19 @@ const (
 )
 
 type parsedSMB struct {
-	Direction    string        `json:"direction,omitempty"`
-	Header       smb.SMBHeader `json:"header,omitempty"`
-	Command      string        `json:"command,omitempty"`
-	Path         string        `json:"path,omitempty"`
-	Setup        string        `json:"setup,omitempty"`
-	Status       string        `json:"status,omitempty"`
-	NTStatus     uint32        `json:"nt_status,omitempty"`
-	Account      string        `json:"account,omitempty"`
-	NativeOS     string        `json:"native_os,omitempty"`
-	NativeLanMan string        `json:"native_lanman,omitempty"`
-	Payload      []byte        `json:"payload,omitempty"`
-	Truncated    bool          `json:"truncated,omitempty"`
+	Direction      string        `json:"direction,omitempty"`
+	Header         smb.SMBHeader `json:"header,omitempty"`
+	Command        string        `json:"command,omitempty"`
+	Path           string        `json:"path,omitempty"`
+	Setup          string        `json:"setup,omitempty"`
+	Status         string        `json:"status,omitempty"`
+	NTStatus       uint32        `json:"nt_status,omitempty"`
+	Account        string        `json:"account,omitempty"`
+	NativeOS       string        `json:"native_os,omitempty"`
+	NativeLanMan   string        `json:"native_lanman,omitempty"`
+	TotalDataCount uint32        `json:"total_data_count,omitempty"`
+	Payload        []byte        `json:"payload,omitempty"`
+	Truncated      bool          `json:"truncated,omitempty"`
 }
 
 type smbServer struct {
@@ -206,6 +207,7 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 	path := ""
 	setup := ""
 	account, nativeOS, nativeLanMan := "", "", ""
+	var totalDataCount uint32
 	switch header.Command {
 	case smb.CmdNtCreateAndX:
 		path = smb.NtCreateAndXName(header, smbBuf.Bytes())
@@ -218,18 +220,21 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 		if s, ok := smb.Trans2Setup(smbBuf.Bytes()); ok {
 			setup = smb.Trans2SetupName(s)
 		}
+	case smb.CmdNtTransact:
+		totalDataCount = smb.NtTransactTotalDataCount(smbBuf.Bytes())
 	}
 	ss.events = append(ss.events, parsedSMB{
-		Direction:    "read",
-		Header:       header,
-		Command:      smb.CommandName(header.Command),
-		Path:         path,
-		Setup:        setup,
-		Account:      account,
-		NativeOS:     nativeOS,
-		NativeLanMan: nativeLanMan,
-		Payload:      frame.payload,
-		Truncated:    frame.truncated,
+		Direction:      "read",
+		Header:         header,
+		Command:        smb.CommandName(header.Command),
+		Path:           path,
+		Setup:          setup,
+		Account:        account,
+		NativeOS:       nativeOS,
+		NativeLanMan:   nativeLanMan,
+		TotalDataCount: totalDataCount,
+		Payload:        frame.payload,
+		Truncated:      frame.truncated,
 	})
 	logger.Debug("SMB Header", slog.Any("header", header), slog.String("protocol", "smb"))
 
@@ -261,8 +266,10 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 		responseHeader, resp, err = smb.MakeComTransactionResponse(header)
 	case smb.CmdNtTransact:
 		responseHeader, resp, err = smb.MakeComNtTransactionResponse(header)
-	case smb.CmdNtTransactSecondary, smb.CmdTransactionSecondary:
+	case smb.CmdNtTransactSecondary, smb.CmdTransactionSecondary, smb.CmdTransaction2Secondary:
 		return nil
+	case smb.CmdEcho:
+		responseHeader, resp, err = smb.MakeEchoResponse(header, smbBuf.Bytes())
 	default:
 		responseHeader, resp, err = smb.MakeHeaderResponse(header)
 	}

@@ -379,6 +379,79 @@ func TestHandleSMBReassemblesSplitFrame(t *testing.T) {
 	require.Equal(t, "SMB_COM_NEGOTIATE", frames[0].Command)
 }
 
+func TestHandleSMBNtTransactAndTrans2Secondary(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+
+	ntBody := make([]byte, 16)
+	ntBody[0] = 19 // WordCount
+	binary.LittleEndian.PutUint32(ntBody[8:12], 0x103d0)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdNtTransact, 1, 1, 1)), ntBody...))
+	resp := readSMBFrame(t, client)
+	require.Equal(t, byte(smb.CmdNtTransact), resp[4])
+	require.Equal(t, [4]byte{}, [4]byte(resp[5:9]))
+
+	secBody := make([]byte, 1+9*2+2)
+	secBody[0] = 9
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdTransaction2Secondary, 1, 1, 2)), secBody...))
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames, ok := ev.decoded.([]parsedSMB)
+	require.True(t, ok)
+
+	var sawNT, sawSec bool
+	for _, f := range frames {
+		if f.Direction == "read" && f.Header.Command == smb.CmdNtTransact {
+			require.Equal(t, "SMB_COM_NT_TRANSACT", f.Command)
+			require.Equal(t, uint32(0x103d0), f.TotalDataCount)
+			sawNT = true
+		}
+		if f.Direction == "read" && f.Header.Command == smb.CmdTransaction2Secondary {
+			require.Equal(t, "SMB_COM_TRANSACTION2_SECONDARY", f.Command)
+			sawSec = true
+		}
+		if f.Direction == "write" && f.Header.Command == smb.CmdTransaction2Secondary {
+			t.Fatal("TRANSACTION2_SECONDARY must not get a reply")
+		}
+	}
+	require.True(t, sawNT, "expected NT_TRANSACT read with TotalDataCount")
+	require.True(t, sawSec, "expected TRANSACTION2_SECONDARY read")
+}
+
+func TestHandleSMBEcho(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+
+	echoData := []byte("JlJmIhClBsr")
+	body := []byte{0x01, 0x01, 0x00} // WordCount=1, EchoCount=1
+	var bc [2]byte
+	binary.LittleEndian.PutUint16(bc[:], uint16(len(echoData)))
+	body = append(body, bc[:]...)
+	body = append(body, echoData...)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdEcho, 1, 1, 1)), body...))
+	resp := readSMBFrame(t, client)
+	require.Equal(t, byte(smb.CmdEcho), resp[4])
+	require.Equal(t, [4]byte{}, [4]byte(resp[5:9]))
+	require.Equal(t, byte(1), resp[32])
+	require.Equal(t, uint16(1), binary.LittleEndian.Uint16(resp[33:35]))
+	require.Equal(t, uint16(len(echoData)), binary.LittleEndian.Uint16(resp[35:37]))
+	require.Equal(t, echoData, resp[37:])
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames, ok := ev.decoded.([]parsedSMB)
+	require.True(t, ok)
+	var sawRead, sawWrite bool
+	for _, f := range frames {
+		if f.Direction == "read" && f.Command == "SMB_COM_ECHO" {
+			sawRead = true
+		}
+		if f.Direction == "write" && f.Command == "SMB_COM_ECHO" {
+			require.Equal(t, "STATUS_SUCCESS", f.Status)
+			sawWrite = true
+		}
+	}
+	require.True(t, sawRead)
+	require.True(t, sawWrite)
+}
+
 func TestHandleSMBCapturesLargeNtTransact(t *testing.T) {
 	client, hp, done := startHandleSMB(t)
 

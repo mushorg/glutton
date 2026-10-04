@@ -315,6 +315,36 @@ func Trans2Setup(body []byte) (setup uint16, ok bool) {
 	return binary.LittleEndian.Uint16(body[setupOff:]), true
 }
 
+// NtTransactTotalDataCount returns TotalDataCount from an SMB_COM_NT_TRANSACT
+// request body positioned after the 32-byte SMB header.
+func NtTransactTotalDataCount(body []byte) uint32 {
+	// WordCount(1) + MaxSetupCount(1) + Reserved1(2) + TotalParameterCount(4)
+	// + TotalDataCount(4).
+	const off = 1 + 1 + 2 + 4
+	if len(body) < off+4 {
+		return 0
+	}
+	return binary.LittleEndian.Uint32(body[off : off+4])
+}
+
+func echoRequestData(body []byte) []byte {
+	// WordCount(1) + EchoCount(2) + ByteCount(2) + data.
+	if len(body) < 5 {
+		return nil
+	}
+	n := int(binary.LittleEndian.Uint16(body[3:5]))
+	rest := body[5:]
+	if n > len(rest) {
+		n = len(rest)
+	}
+	if n <= 0 {
+		return nil
+	}
+	out := make([]byte, n)
+	copy(out, rest[:n])
+	return out
+}
+
 func replyHeader(req SMBHeader) SMBHeader {
 	h := req
 	h.Status = [4]byte{0, 0, 0, 0}
@@ -588,6 +618,29 @@ func MakeComTransactionResponse(header SMBHeader) (SMBHeader, []byte, error) {
 
 	data, err := toBytes(smb)
 	return smb.Header, data, err
+}
+
+// MakeEchoResponse builds an SMB_COM_ECHO reply: WordCount 1, SequenceNumber 1,
+// and the request's echo data copied back.
+func MakeEchoResponse(header SMBHeader, body []byte) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	h.Command = CmdEcho
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	data := echoRequestData(body)
+	out := make([]byte, 0, len(hb)+5+len(data))
+	out = append(out, hb...)
+	out = append(out, 1) // WordCount
+	var seq [2]byte
+	binary.LittleEndian.PutUint16(seq[:], 1)
+	out = append(out, seq[:]...)
+	var bc [2]byte
+	binary.LittleEndian.PutUint16(bc[:], uint16(len(data)))
+	out = append(out, bc[:]...)
+	out = append(out, data...)
+	return h, out, nil
 }
 
 // MakeComNtTransactionResponse builds an empty SMB_COM_NT_TRANSACT success

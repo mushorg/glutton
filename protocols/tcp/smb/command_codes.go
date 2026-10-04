@@ -3,31 +3,35 @@ package smb
 import "fmt"
 
 const (
-	CmdTransaction          = 0x25
-	CmdTransactionSecondary = 0x26
-	CmdTransaction2         = 0x32
-	CmdTreeDisconnect       = 0x71
-	CmdNegotiate            = 0x72
-	CmdSessionSetupAndX     = 0x73
-	CmdLogoffAndX           = 0x74
-	CmdTreeConnectAndX      = 0x75
-	CmdNtTransact           = 0xa0
-	CmdNtTransactSecondary  = 0xa1
-	CmdNtCreateAndX         = 0xa2
+	CmdTransaction           = 0x25
+	CmdTransactionSecondary  = 0x26
+	CmdEcho                  = 0x2b
+	CmdTransaction2          = 0x32
+	CmdTransaction2Secondary = 0x33
+	CmdTreeDisconnect        = 0x71
+	CmdNegotiate             = 0x72
+	CmdSessionSetupAndX      = 0x73
+	CmdLogoffAndX            = 0x74
+	CmdTreeConnectAndX       = 0x75
+	CmdNtTransact            = 0xa0
+	CmdNtTransactSecondary   = 0xa1
+	CmdNtCreateAndX          = 0xa2
 )
 
 var smb1CommandNames = map[byte]string{
-	CmdTransaction:          "SMB_COM_TRANSACTION",
-	CmdTransactionSecondary: "SMB_COM_TRANSACTION_SECONDARY",
-	CmdTransaction2:         "SMB_COM_TRANSACTION2",
-	CmdTreeDisconnect:       "SMB_COM_TREE_DISCONNECT",
-	CmdNegotiate:            "SMB_COM_NEGOTIATE",
-	CmdSessionSetupAndX:     "SMB_COM_SESSION_SETUP_ANDX",
-	CmdLogoffAndX:           "SMB_COM_LOGOFF_ANDX",
-	CmdTreeConnectAndX:      "SMB_COM_TREE_CONNECT_ANDX",
-	CmdNtTransact:           "SMB_COM_NT_TRANSACT",
-	CmdNtTransactSecondary:  "SMB_COM_NT_TRANSACT_SECONDARY",
-	CmdNtCreateAndX:         "SMB_COM_NT_CREATE_ANDX",
+	CmdTransaction:           "SMB_COM_TRANSACTION",
+	CmdTransactionSecondary:  "SMB_COM_TRANSACTION_SECONDARY",
+	CmdEcho:                  "SMB_COM_ECHO",
+	CmdTransaction2:          "SMB_COM_TRANSACTION2",
+	CmdTransaction2Secondary: "SMB_COM_TRANSACTION2_SECONDARY",
+	CmdTreeDisconnect:        "SMB_COM_TREE_DISCONNECT",
+	CmdNegotiate:             "SMB_COM_NEGOTIATE",
+	CmdSessionSetupAndX:      "SMB_COM_SESSION_SETUP_ANDX",
+	CmdLogoffAndX:            "SMB_COM_LOGOFF_ANDX",
+	CmdTreeConnectAndX:       "SMB_COM_TREE_CONNECT_ANDX",
+	CmdNtTransact:            "SMB_COM_NT_TRANSACT",
+	CmdNtTransactSecondary:   "SMB_COM_NT_TRANSACT_SECONDARY",
+	CmdNtCreateAndX:          "SMB_COM_NT_CREATE_ANDX",
 }
 
 // CommandName returns the SMB1 command mnemonic, or SMB_COM_0xNN for unknowns.

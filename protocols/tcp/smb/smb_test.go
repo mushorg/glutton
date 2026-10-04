@@ -390,6 +390,45 @@ func TestMakeComNtTransactionResponse(t *testing.T) {
 	require.Equal(t, []byte{0x00, 0x00}, data[len(data)-2:])
 }
 
+func TestCommandNameEchoAndTrans2Secondary(t *testing.T) {
+	require.Equal(t, "SMB_COM_ECHO", CommandName(CmdEcho))
+	require.Equal(t, "SMB_COM_TRANSACTION2_SECONDARY", CommandName(CmdTransaction2Secondary))
+}
+
+func TestNtTransactTotalDataCount(t *testing.T) {
+	body := make([]byte, 16)
+	body[0] = 19
+	binary.LittleEndian.PutUint32(body[8:12], 0x103d0)
+	require.Equal(t, uint32(0x103d0), NtTransactTotalDataCount(body))
+	require.Equal(t, uint32(0), NtTransactTotalDataCount([]byte{19}))
+}
+
+func TestMakeEchoResponse(t *testing.T) {
+	header := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  CmdEcho,
+		Flags:    0x18,
+		TID:      [2]byte{0x01, 0x00},
+		UID:      [2]byte{0x01, 0x00},
+		MID:      [2]byte{0x03, 0x00},
+	}
+	echoData := []byte("JlJmIhClBsr")
+	body := []byte{0x01, 0x01, 0x00}
+	var bc [2]byte
+	binary.LittleEndian.PutUint16(bc[:], uint16(len(echoData)))
+	body = append(body, bc[:]...)
+	body = append(body, echoData...)
+
+	rh, data, err := MakeEchoResponse(header, body)
+	require.NoError(t, err)
+	require.Equal(t, byte(CmdEcho), rh.Command)
+	require.Equal(t, [4]byte{}, rh.Status)
+	require.Equal(t, byte(0x98), rh.Flags)
+	require.Equal(t, byte(1), data[32])
+	require.Equal(t, uint16(1), binary.LittleEndian.Uint16(data[33:35]))
+	require.Equal(t, echoData, data[37:])
+}
+
 func TestMakeSMB2ReplyNegotiate(t *testing.T) {
 	req := make([]byte, 64)
 	req[0] = 0xfe
