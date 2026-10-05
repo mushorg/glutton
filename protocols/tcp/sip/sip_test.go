@@ -30,26 +30,94 @@ func testResponder() *Responder {
 	return &Responder{Token: func() string { return "0123456789abcdef" }}
 }
 
-func TestReplyInviteChallenge(t *testing.T) {
+func TestReplyInviteAnswered(t *testing.T) {
 	resps := testResponder().Reply(parseRequest(t, pplsipInvite))
-	require.Len(t, resps, 1)
-	require.Equal(t, "SIP/2.0 401 Unauthorized\r\n"+
+	require.Len(t, resps, 3)
+	require.Equal(t, gosip.StatusCode(100), resps[0].StatusCode())
+	to, _ := resps[0].To()
+	require.False(t, to.Params.Has("tag"), "100 Trying carries no To tag")
+	require.Equal(t, gosip.StatusCode(180), resps[1].StatusCode())
+
+	require.Equal(t, "SIP/2.0 200 OK\r\n"+
 		"Via: SIP/2.0/UDP 0.0.0.0:65145;branch=z9hG4bK951917159\r\n"+
 		"From: <sip:14500163172166221:5060@1.2.3.4>;tag=414451770\r\n"+
 		"To: <sip:14500972598112101@1.2.3.4>;tag=0123456789abcdef\r\n"+
 		"Call-ID: 1492163839-465544234-336545636\r\n"+
 		"CSeq: 1 INVITE\r\n"+
 		"Server: Asterisk PBX 18.20.0\r\n"+
-		"WWW-Authenticate: Digest realm=\"asterisk\",nonce=\"0123456789abcdef\",algorithm=MD5,qop=\"auth\"\r\n"+
-		"Content-Length: 0\r\n\r\n", resps[0].String())
+		"Contact: <sip:14500972598112101@1.2.3.4:5060>\r\n"+
+		"Allow: "+allowList+"\r\n"+
+		"Supported: "+supported+"\r\n"+
+		"Content-Type: application/sdp\r\n"+
+		"Content-Length: 217\r\n\r\n"+
+		"v=0\r\n"+
+		"o=- 88743 88745 IN IP4 1.2.3.4\r\n"+
+		"s=Asterisk\r\n"+
+		"c=IN IP4 1.2.3.4\r\n"+
+		"t=0 0\r\n"+
+		"m=audio 17486 RTP/AVP 0 101\r\n"+
+		"a=rtpmap:0 PCMU/8000\r\n"+
+		"a=rtpmap:101 telephone-event/8000\r\n"+
+		"a=fmtp:101 0-16\r\n"+
+		"a=ptime:20\r\n"+
+		"a=maxptime:150\r\n"+
+		"a=sendrecv\r\n", resps[2].String())
+	// 180 and 200 belong to the same dialog
+	ringTo, _ := resps[1].To()
+	okTo, _ := resps[2].To()
+	require.Equal(t, mustParam(t, ringTo.Params, "tag"), mustParam(t, okTo.Params, "tag"))
+}
+
+func TestSDPAnswerCodecs(t *testing.T) {
+	answer := sdpAnswer("v=0\r\nm=audio 4000 RTP/AVP 18 8\r\n", "1.2.3.4", 10000, 1)
+	require.Contains(t, answer, "m=audio 10000 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000\r\n")
+	require.NotContains(t, answer, "telephone-event")
+
+	// late offer (no SDP) gets PCMU
+	answer = sdpAnswer("", "0.0.0.0", 10002, 1)
+	require.Contains(t, answer, "m=audio 10002 RTP/AVP 0\r\n")
+	require.Contains(t, answer, "c=IN IP4 0.0.0.0\r\n")
+}
+
+func TestReplyRegisterAccepted(t *testing.T) {
+	register := func(extra string) gosip.Response {
+		req := parseRequest(t, []byte("REGISTER sip:1.2.3.4:5060 SIP/2.0\r\n"+
+			"Via: SIP/2.0/UDP 185.243.5.243:49618;branch=z9hG4bK-1;rport\r\n"+
+			"From: <sip:100@1.2.3.4>;tag=a\r\n"+
+			"To: <sip:100@1.2.3.4>\r\n"+
+			"Call-ID: 1\r\n"+
+			"CSeq: 1 REGISTER\r\n"+
+			"Contact: <sip:100@185.243.5.243:49618>"+extra+
+			"Content-Length: 0\r\n\r\n"))
+		resps := testResponder().Reply(req)
+		require.Len(t, resps, 1)
+		require.Equal(t, gosip.StatusCode(200), resps[0].StatusCode())
+		return resps[0]
+	}
+
+	out := register("\r\nExpires: 60\r\n").String()
+	require.Contains(t, out, "Contact: <sip:100@185.243.5.243:49618>;expires=60\r\nExpires: 60\r\n")
+
+	out = register(";expires=120\r\n").String()
+	require.Contains(t, out, "Contact: <sip:100@185.243.5.243:49618>;expires=120\r\nExpires: 120\r\n")
+
+	// no expiry requested, or more than allowed: the default
+	require.Contains(t, register("\r\n").String(), "Expires: 3600\r\n")
+	require.Contains(t, register("\r\nExpires: 999999\r\n").String(), "Expires: 3600\r\n")
+
+	// unregister drops the binding
+	out = register("\r\nExpires: 0\r\n").String()
+	require.NotContains(t, out, "Contact:")
+	require.Contains(t, out, "Expires: 0\r\n")
 }
 
 func TestReplyAuthenticatedRejected(t *testing.T) {
+	message := []byte(strings.ReplaceAll(string(pplsipInvite), "INVITE", "MESSAGE"))
 	for _, header := range []string{
 		`Authorization: Digest username="1000",realm="asterisk",nonce="0123456789abcdef",uri="sip:14500972598112101@1.2.3.4",response="d41d8cd98f00b204e9800998ecf8427e",algorithm=MD5`,
 		`Proxy-Authorization: Digest username="1000",realm="asterisk",nonce="x",uri="sip:1.2.3.4",response="00"`,
 	} {
-		req := parseRequest(t, withAuth(pplsipInvite, header))
+		req := parseRequest(t, withAuth(message, header))
 		require.Equal(t, "1000", Credentials(req))
 		resps := testResponder().Reply(req)
 		require.Len(t, resps, 1)
@@ -57,6 +125,14 @@ func TestReplyAuthenticatedRejected(t *testing.T) {
 		require.Equal(t, "Forbidden", resps[0].Reason())
 		require.Empty(t, resps[0].GetHeaders("WWW-Authenticate"))
 	}
+}
+
+func TestReplyRegisterWithCredentialsAccepted(t *testing.T) {
+	register := []byte(strings.ReplaceAll(string(pplsipInvite), "INVITE", "REGISTER"))
+	req := parseRequest(t, withAuth(register, `Authorization: Digest username="1000",realm="asterisk",nonce="x",uri="sip:1.2.3.4",response="00"`))
+	resps := testResponder().Reply(req)
+	require.Len(t, resps, 1)
+	require.Equal(t, gosip.StatusCode(200), resps[0].StatusCode())
 }
 
 func TestReplyOptions(t *testing.T) {
@@ -97,9 +173,9 @@ func mustParam(t *testing.T, p gosip.Params, key string) string {
 func TestReplyMethods(t *testing.T) {
 	cases := map[string]int{
 		"ACK":       0,
-		"BYE":       481,
+		"BYE":       200,
 		"CANCEL":    481,
-		"REGISTER":  401,
+		"REGISTER":  200,
 		"SUBSCRIBE": 401,
 		"MESSAGE":   401,
 	}
@@ -126,9 +202,9 @@ func TestDescribe(t *testing.T) {
 		UserAgent: "pplsip",
 	}, info)
 
-	resp := testResponder().Reply(parseRequest(t, pplsipInvite))[0]
+	resp := testResponder().Reply(parseRequest(t, pplsipInvite))[2]
 	info = Describe(resp)
-	require.Equal(t, 401, info.Status)
+	require.Equal(t, 200, info.Status)
 	require.Equal(t, "Asterisk PBX 18.20.0", info.UserAgent)
 	require.Empty(t, info.Method)
 }

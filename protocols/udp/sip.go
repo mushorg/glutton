@@ -56,8 +56,8 @@ func sipDecoded(direction string, msg sip.Message, payload []byte) parsedSIP {
 // sipResponder builds the UDP SIP replies; tests swap it for deterministic tags and nonces.
 var sipResponder = sipproto.NewResponder()
 
-// HandleSIP parses a UDP SIP datagram, answers it like an Asterisk PBX that
-// requires digest auth (OPTIONS 200, INVITE/REGISTER 401 then 403), and emits
+// HandleSIP parses a UDP SIP datagram, answers it like a misconfigured Asterisk
+// PBX (OPTIONS and REGISTER 200, INVITE 100/180/200 with SDP), and emits
 // one producer event with per-direction decoded frames (same shape as TCP SIP).
 func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	payload := make([]byte, min(len(data), maxSIPPayload))

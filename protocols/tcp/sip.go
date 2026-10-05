@@ -69,8 +69,8 @@ func (s *sipServer) write(resp sip.Response) error {
 	return nil
 }
 
-// HandleSIP takes a net.Conn and answers SIP like an Asterisk PBX that requires
-// digest auth: OPTIONS gets 200, INVITE/REGISTER get a 401 challenge and then 403.
+// HandleSIP takes a net.Conn and answers SIP like a misconfigured Asterisk PBX:
+// OPTIONS and REGISTER get 200, INVITE is answered (100, 180, 200 with SDP).
 func HandleSIP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	return handleSIP(ctx, conn, md, logger, h, sipproto.NewResponder())
 }
