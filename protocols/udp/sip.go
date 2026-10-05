@@ -4,48 +4,65 @@ import (
 	"context"
 	"log/slog"
 	"net"
-	"net/http"
 	"strconv"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	sipproto "github.com/mushorg/glutton/protocols/tcp/sip"
 
 	"github.com/ghettovoice/gosip/log"
 	"github.com/ghettovoice/gosip/sip"
 	"github.com/ghettovoice/gosip/sip/parser"
 )
 
-const maxSIPPayload = 1024
+// maxSIPPayload covers INVITEs with a full SDP offer (often > 1 KiB).
+const maxSIPPayload = 4096
 
 type parsedSIP struct {
-	Direction string      `json:"direction,omitempty"`
-	Command   string      `json:"command,omitempty"`
-	Status    string      `json:"status,omitempty"`
-	Payload   []byte      `json:"payload,omitempty"`
-	Message   sip.Message `json:"message,omitempty"`
+	Direction string `json:"direction,omitempty"`
+	Command   string `json:"command,omitempty"` // request method
+	Path      string `json:"path,omitempty"`    // Request-URI
+	Status    string `json:"status,omitempty"`  // response code on writes
+	From      string `json:"from,omitempty"`
+	To        string `json:"to,omitempty"`
+	CallID    string `json:"call_id,omitempty"`
+	UserAgent string `json:"user_agent,omitempty"` // User-Agent (reads) or Server (writes)
+	Username  string `json:"username,omitempty"`   // digest Authorization username
+	Payload   []byte `json:"payload,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 func sipDecoded(direction string, msg sip.Message, payload []byte) parsedSIP {
-	frame := parsedSIP{Direction: direction, Message: msg, Payload: payload}
+	frame := parsedSIP{Direction: direction, Payload: payload}
 	if msg == nil {
 		return frame
 	}
-	switch m := msg.(type) {
-	case sip.Request:
-		frame.Command = string(m.Method())
-	case sip.Response:
-		frame.Status = strconv.Itoa(int(m.StatusCode()))
+	info := sipproto.Describe(msg)
+	frame.Command = info.Method
+	frame.Path = info.URI
+	if info.Status != 0 {
+		frame.Status = strconv.Itoa(info.Status)
 	}
+	frame.From = info.From
+	frame.To = info.To
+	frame.CallID = info.CallID
+	frame.UserAgent = info.UserAgent
+	frame.Username = info.Username
 	return frame
 }
 
-// HandleSIP parses a UDP SIP datagram, answers OPTIONS with 200 OK, and emits
+// sipResponder builds the UDP SIP replies; tests swap it for deterministic tags and nonces.
+var sipResponder = sipproto.NewResponder()
+
+// HandleSIP parses a UDP SIP datagram, answers it like an Asterisk PBX that
+// requires digest auth (OPTIONS 200, INVITE/REGISTER 401 then 403), and emits
 // one producer event with per-direction decoded frames (same shape as TCP SIP).
 func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	payload := make([]byte, min(len(data), maxSIPPayload))
 	copy(payload, data[:len(payload)])
+	truncated := len(data) > maxSIPPayload
 
 	events := []parsedSIP{}
 	endReason := connection.EndHandlerClose
@@ -70,37 +87,29 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	pp := parser.NewPacketParser(log.NewDefaultLogrusLogger())
 	msg, err := pp.ParseMessage(payload)
 	if err != nil {
-		events = append(events, sipDecoded("read", nil, payload))
+		frame := sipDecoded("read", nil, payload)
+		frame.Truncated = truncated
+		events = append(events, frame)
 		logger.Debug("Failed to parse SIP message", slog.String("protocol", "sip"), producer.ErrAttr(err))
 		endReason = connection.EndReadError
 		return err
 	}
 
-	events = append(events, sipDecoded("read", msg, payload))
+	frame := sipDecoded("read", msg, payload)
+	frame.Truncated = truncated
+	events = append(events, frame)
 
 	req, ok := msg.(sip.Request)
 	if !ok {
 		return nil
 	}
+	logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
 
-	switch req.Method() {
-	case sip.REGISTER:
-		logger.Info("handling SIP register", slog.String("protocol", "sip"))
-	case sip.INVITE:
-		logger.Info("handling SIP invite", slog.String("protocol", "sip"))
-	case sip.OPTIONS:
-		logger.Info("handling SIP options", slog.String("protocol", "sip"))
-		resp := sip.NewResponseFromRequest(
-			req.MessageID(),
-			req,
-			http.StatusOK,
-			"",
-			"",
-		)
+	for _, resp := range sipResponder.Reply(req) {
 		respBytes := []byte(resp.String())
 		events = append(events, sipDecoded("write", resp, respBytes))
 		if err := h.ReplyUDP(srcAddr, dstAddr, respBytes); err != nil {
-			logger.Error("Failed to reply to SIP OPTIONS", slog.String("protocol", "sip"), producer.ErrAttr(err))
+			logger.Error("Failed to send SIP reply", slog.String("protocol", "sip"), producer.ErrAttr(err))
 			endReason = connection.EndWriteError
 			return err
 		}
