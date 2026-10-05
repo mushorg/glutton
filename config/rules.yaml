@@ -88,6 +88,9 @@ rules:
   - match: udp dst port 500 or port 4500
     type: conn_handler
     target: ike
+  - match: udp dst port 27015
+    type: conn_handler
+    target: a2s
   - match: udp
     type: conn_handler
     target: udp

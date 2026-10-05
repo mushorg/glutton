@@ -11,6 +11,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/mushorg/glutton/protocols/udp/a2s"
 	"github.com/mushorg/glutton/protocols/udp/ike"
 )
 
@@ -35,6 +36,9 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	}
 	if ike.LooksLikeIKE(data) {
 		return HandleIKE(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
+	if a2s.LooksLikeA2S(data) {
+		return HandleA2S(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
 
 	truncated := len(data) > maxUDPPayload
