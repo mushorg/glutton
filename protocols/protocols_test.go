@@ -36,6 +36,7 @@ func TestMapUDPProtocolHandlers(t *testing.T) {
 	h.AssertExpectations(t)
 	l.AssertExpectations(t)
 	require.Contains(t, m, "udp", "expected UDP handler")
+	require.Contains(t, m, "ike", "expected IKE handler")
 	require.Contains(t, m, "sip", "expected SIP UDP handler")
 	require.Contains(t, m, "openvpn", "expected OpenVPN UDP handler")
 	require.Contains(t, m, "mdns", "expected mDNS UDP handler")

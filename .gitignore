@@ -27,3 +27,4 @@ protocols/spicy/parsers/*.h
 
 # Agents
 .cursor/
+.claude/

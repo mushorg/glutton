@@ -85,6 +85,9 @@ rules:
   - match: udp dst port 5683
     type: conn_handler
     target: coap
+  - match: udp dst port 500 or port 4500
+    type: conn_handler
+    target: ike
   - match: udp
     type: conn_handler
     target: udp

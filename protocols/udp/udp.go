@@ -11,6 +11,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/mushorg/glutton/protocols/udp/ike"
 )
 
 const maxUDPPayload = 1024
@@ -32,6 +33,9 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	if looksLikeCoAP(data) {
 		return HandleCoAP(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
+	if ike.LooksLikeIKE(data) {
+		return HandleIKE(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
 
 	truncated := len(data) > maxUDPPayload
 	payload := make([]byte, min(len(data), maxUDPPayload))
@@ -48,6 +52,7 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 		Truncated:   truncated,
 	}}
 	defer func() {
+		md.EndReason = connection.EndHandlerClose
 		if err := h.ProduceUDP("udp", srcAddr, dstAddr, md, helpers.FirstOrEmpty[parsedUDP](events).Payload, events); err != nil {
 			log.Error("Failed to produce message", slog.String("protocol", "udp"), producer.ErrAttr(err))
 		}
