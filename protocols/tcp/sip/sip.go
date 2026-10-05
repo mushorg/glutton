@@ -47,7 +47,65 @@ func randomToken() string {
 	return hex.EncodeToString(b)
 }
 
-// Reply returns the responses to send for req, in order. A nil slice means
+// Reply returns the responses to send for req, received from src, in order.
+// A nil slice means no reply. The top Via of each response gets received/rport
+// filled from src as a real proxy or UA would; src may be nil.
+func (r *Responder) Reply(req gosip.Request, src net.Addr) []gosip.Response {
+	resps := r.reply(req)
+	if vias, ok := sourceVia(req, src); ok {
+		for _, res := range resps {
+			res.ReplaceHeaders("Via", vias)
+		}
+	}
+	return resps
+}
+
+// sourceVia returns req's Via headers with the top hop annotated for src:
+// rport gets the source port when the client asked for it (RFC 3581 §4), and
+// received is added when the client asked for rport or its sent-by host is
+// not the packet source (RFC 3261 §18.2.1).
+func sourceVia(req gosip.Request, src net.Addr) ([]gosip.Header, bool) {
+	if src == nil {
+		return nil, false
+	}
+	host, port, err := net.SplitHostPort(src.String())
+	if err != nil {
+		return nil, false
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, false
+	}
+	hs := req.GetHeaders("Via")
+	if len(hs) == 0 {
+		return nil, false
+	}
+	top, ok := hs[0].(gosip.ViaHeader)
+	if !ok || len(top) == 0 {
+		return nil, false
+	}
+	top = top.Clone().(gosip.ViaHeader)
+	hop := top[0]
+	if hop.Params == nil {
+		hop.Params = gosip.NewParams()
+	}
+	rport, wantsRport := hop.Params.Get("rport")
+	changed := false
+	if wantsRport && (rport == nil || rport.String() == "") {
+		hop.Params.Add("rport", gosip.String{Str: port})
+		changed = true
+	}
+	if sentBy := net.ParseIP(hop.Host); wantsRport || sentBy == nil || !sentBy.Equal(ip) {
+		hop.Params.Add("received", gosip.String{Str: ip.String()})
+		changed = true
+	}
+	if !changed {
+		return nil, false
+	}
+	return append([]gosip.Header{top}, hs[1:]...), true
+}
+
+// reply returns the responses to send for req, in order. A nil slice means
 // no reply (ACK, or a request the honeypot ignores).
 //
 // REGISTER is accepted with or without credentials, and INVITE is answered
@@ -56,7 +114,7 @@ func randomToken() string {
 // number. BYE ends that call with 200. Other session-creating requests
 // (SUBSCRIBE, MESSAGE, ...) get a 401 digest challenge when unauthenticated
 // and 403 Forbidden once they carry credentials.
-func (r *Responder) Reply(req gosip.Request) []gosip.Response {
+func (r *Responder) reply(req gosip.Request) []gosip.Response {
 	switch req.Method() {
 	case gosip.ACK:
 		return nil

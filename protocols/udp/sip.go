@@ -105,7 +105,7 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	}
 	logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
 
-	for _, resp := range sipResponder.Reply(req) {
+	for _, resp := range sipResponder.Reply(req, srcAddr) {
 		respBytes := []byte(resp.String())
 		events = append(events, sipDecoded("write", resp, respBytes))
 		if err := h.ReplyUDP(srcAddr, dstAddr, respBytes); err != nil {

@@ -1,6 +1,7 @@
 package sip
 
 import (
+	"net"
 	"strings"
 	"testing"
 
@@ -31,7 +32,7 @@ func testResponder() *Responder {
 }
 
 func TestReplyInviteAnswered(t *testing.T) {
-	resps := testResponder().Reply(parseRequest(t, pplsipInvite))
+	resps := testResponder().Reply(parseRequest(t, pplsipInvite), nil)
 	require.Len(t, resps, 3)
 	require.Equal(t, gosip.StatusCode(100), resps[0].StatusCode())
 	to, _ := resps[0].To()
@@ -89,7 +90,7 @@ func TestReplyRegisterAccepted(t *testing.T) {
 			"CSeq: 1 REGISTER\r\n"+
 			"Contact: <sip:100@185.243.5.243:49618>"+extra+
 			"Content-Length: 0\r\n\r\n"))
-		resps := testResponder().Reply(req)
+		resps := testResponder().Reply(req, nil)
 		require.Len(t, resps, 1)
 		require.Equal(t, gosip.StatusCode(200), resps[0].StatusCode())
 		return resps[0]
@@ -119,7 +120,7 @@ func TestReplyAuthenticatedRejected(t *testing.T) {
 	} {
 		req := parseRequest(t, withAuth(message, header))
 		require.Equal(t, "1000", Credentials(req))
-		resps := testResponder().Reply(req)
+		resps := testResponder().Reply(req, nil)
 		require.Len(t, resps, 1)
 		require.Equal(t, gosip.StatusCode(403), resps[0].StatusCode())
 		require.Equal(t, "Forbidden", resps[0].Reason())
@@ -130,7 +131,7 @@ func TestReplyAuthenticatedRejected(t *testing.T) {
 func TestReplyRegisterWithCredentialsAccepted(t *testing.T) {
 	register := []byte(strings.ReplaceAll(string(pplsipInvite), "INVITE", "REGISTER"))
 	req := parseRequest(t, withAuth(register, `Authorization: Digest username="1000",realm="asterisk",nonce="x",uri="sip:1.2.3.4",response="00"`))
-	resps := testResponder().Reply(req)
+	resps := testResponder().Reply(req, nil)
 	require.Len(t, resps, 1)
 	require.Equal(t, gosip.StatusCode(200), resps[0].StatusCode())
 }
@@ -143,7 +144,7 @@ func TestReplyOptions(t *testing.T) {
 		"Call-ID: 12345\r\n"+
 		"CSeq: 1 OPTIONS\r\n"+
 		"Content-Length: 0\r\n\r\n"))
-	resps := testResponder().Reply(req)
+	resps := testResponder().Reply(req, nil)
 	require.Len(t, resps, 1)
 	out := resps[0].String()
 	require.True(t, strings.HasPrefix(out, "SIP/2.0 200 OK\r\n"), out)
@@ -156,7 +157,7 @@ func TestReplyOptions(t *testing.T) {
 func TestReplyKeepsExistingToTag(t *testing.T) {
 	req := parseRequest(t, []byte(strings.Replace(string(pplsipInvite),
 		"To: <sip:14500972598112101@1.2.3.4>\r\n", "To: <sip:14500972598112101@1.2.3.4>;tag=peer\r\n", 1)))
-	out := testResponder().Reply(req)[0].String()
+	out := testResponder().Reply(req, nil)[0].String()
 	require.Contains(t, out, "To: <sip:14500972598112101@1.2.3.4>;tag=peer\r\n")
 	// the request itself is not mutated
 	to, _ := req.To()
@@ -181,7 +182,7 @@ func TestReplyMethods(t *testing.T) {
 	}
 	for method, want := range cases {
 		data := strings.ReplaceAll(string(pplsipInvite), "INVITE", method)
-		resps := testResponder().Reply(parseRequest(t, []byte(data)))
+		resps := testResponder().Reply(parseRequest(t, []byte(data)), nil)
 		if want == 0 {
 			require.Empty(t, resps, method)
 			continue
@@ -202,7 +203,7 @@ func TestDescribe(t *testing.T) {
 		UserAgent: "pplsip",
 	}, info)
 
-	resp := testResponder().Reply(parseRequest(t, pplsipInvite))[2]
+	resp := testResponder().Reply(parseRequest(t, pplsipInvite), nil)[2]
 	info = Describe(resp)
 	require.Equal(t, 200, info.Status)
 	require.Equal(t, "Asterisk PBX 18.20.0", info.UserAgent)
@@ -212,4 +213,47 @@ func TestDescribe(t *testing.T) {
 func TestCredentialsIgnoresNonDigest(t *testing.T) {
 	req := parseRequest(t, withAuth(pplsipInvite, `Authorization: Basic dXNlcjpwYXNz`))
 	require.Empty(t, Credentials(req))
+}
+
+func TestReplyViaReceivedAndRport(t *testing.T) {
+	request := func(via string) gosip.Request {
+		return parseRequest(t, []byte("OPTIONS sip:100@1.2.3.4 SIP/2.0\r\n"+
+			via+
+			"From: <sip:100@1.2.3.4>;tag=a\r\n"+
+			"To: <sip:100@1.2.3.4>\r\n"+
+			"Call-ID: 1\r\n"+
+			"CSeq: 1 OPTIONS\r\n"+
+			"Content-Length: 0\r\n\r\n"))
+	}
+	udp := &net.UDPAddr{IP: net.ParseIP("203.0.113.10"), Port: 5079}
+	cases := []struct {
+		name string
+		via  string
+		src  net.Addr
+		want string
+	}{
+		{"sent-by matches source", "Via: SIP/2.0/UDP 203.0.113.10:5079;branch=z9hG4bK-1\r\n", udp,
+			"Via: SIP/2.0/UDP 203.0.113.10:5079;branch=z9hG4bK-1\r\n"},
+		{"sent-by differs", "Via: SIP/2.0/UDP 0.0.0.0:5079;branch=z9hG4bK-1\r\n", udp,
+			"Via: SIP/2.0/UDP 0.0.0.0:5079;branch=z9hG4bK-1;received=203.0.113.10\r\n"},
+		{"sent-by is a name", "Via: SIP/2.0/UDP pbx.example:5079;branch=z9hG4bK-1\r\n", udp,
+			"Via: SIP/2.0/UDP pbx.example:5079;branch=z9hG4bK-1;received=203.0.113.10\r\n"},
+		{"rport requested", "Via: SIP/2.0/UDP 203.0.113.10:5079;branch=z9hG4bK-1;rport\r\n", udp,
+			"Via: SIP/2.0/UDP 203.0.113.10:5079;branch=z9hG4bK-1;rport=5079;received=203.0.113.10\r\n"},
+		{"rport behind NAT", "Via: SIP/2.0/UDP 10.0.0.5:5060;rport;branch=z9hG4bK-1\r\n", udp,
+			"Via: SIP/2.0/UDP 10.0.0.5:5060;rport=5079;branch=z9hG4bK-1;received=203.0.113.10\r\n"},
+		{"tcp source", "Via: SIP/2.0/TCP 0.0.0.0:5079;branch=z9hG4bK-1\r\n", &net.TCPAddr{IP: net.ParseIP("203.0.113.10"), Port: 40000},
+			"Via: SIP/2.0/TCP 0.0.0.0:5079;branch=z9hG4bK-1;received=203.0.113.10\r\n"},
+		{"no source", "Via: SIP/2.0/UDP 0.0.0.0:5079;branch=z9hG4bK-1;rport\r\n", nil,
+			"Via: SIP/2.0/UDP 0.0.0.0:5079;branch=z9hG4bK-1;rport\r\n"},
+		{"only the top hop", "Via: SIP/2.0/UDP 0.0.0.0:5079;branch=z9hG4bK-1\r\nVia: SIP/2.0/UDP 198.51.100.7:5060;branch=z9hG4bK-0\r\n", udp,
+			"Via: SIP/2.0/UDP 0.0.0.0:5079;branch=z9hG4bK-1;received=203.0.113.10\r\nVia: SIP/2.0/UDP 198.51.100.7:5060;branch=z9hG4bK-0\r\n"},
+	}
+	for _, c := range cases {
+		req := request(c.via)
+		out := testResponder().Reply(req, c.src)[0].String()
+		require.Contains(t, out, "\r\n"+c.want+"From:", c.name)
+		// the request is not mutated
+		require.NotContains(t, req.String(), "received=", c.name)
+	}
 }

@@ -133,3 +133,61 @@ func TestSanitizeDecodedPayload(t *testing.T) {
 	require.Equal(t, []byte("hit 1.2.3.4 here"), out[0].Payload)
 	require.Contains(t, string(in[0].Payload), "192.0.2.1")
 }
+
+func TestSanitizeDecodedAllFields(t *testing.T) {
+	type header struct {
+		Host  string
+		Hosts []string
+	}
+	type frame struct {
+		Direction string
+		From      string
+		Names     []string
+		Header    header
+		Ptr       *header
+		SPI       [4]byte
+		Count     int
+		Extra     map[string]interface{}
+		private   string
+	}
+	in := []frame{{
+		Direction: "read",
+		From:      "sip:100@192.0.2.1",
+		Names:     []string{"ANY-SCP", "opc.tcp://192.0.2.1:4840"},
+		Header:    header{Host: "192.0.2.1", Hosts: []string{"192.0.2.1"}},
+		Ptr:       &header{Host: "192.0.2.1"},
+		SPI:       [4]byte{1, 2, 3, 4},
+		Count:     7,
+		Extra:     map[string]interface{}{"fields": map[string]interface{}{"host": "192.0.2.1"}, "n": 1},
+		private:   "192.0.2.1",
+	}}
+	out := SanitizeDecoded(in, func(b []byte) []byte {
+		return bytes.ReplaceAll(b, []byte("192.0.2.1"), []byte("1.2.3.4"))
+	}).([]frame)
+
+	require.Equal(t, "read", out[0].Direction)
+	require.Equal(t, "sip:100@1.2.3.4", out[0].From)
+	require.Equal(t, []string{"ANY-SCP", "opc.tcp://1.2.3.4:4840"}, out[0].Names)
+	require.Equal(t, header{Host: "1.2.3.4", Hosts: []string{"1.2.3.4"}}, out[0].Header)
+	require.Equal(t, "1.2.3.4", out[0].Ptr.Host)
+	require.Equal(t, [4]byte{1, 2, 3, 4}, out[0].SPI)
+	require.Equal(t, 7, out[0].Count)
+	require.Equal(t, "1.2.3.4", out[0].Extra["fields"].(map[string]interface{})["host"])
+	require.Equal(t, 1, out[0].Extra["n"])
+
+	// the input is untouched
+	require.Equal(t, "sip:100@192.0.2.1", in[0].From)
+	require.Equal(t, "192.0.2.1", in[0].Names[1][10:19])
+	require.Equal(t, "192.0.2.1", in[0].Header.Hosts[0])
+	require.Equal(t, "192.0.2.1", in[0].Ptr.Host)
+	require.Equal(t, "192.0.2.1", in[0].Extra["fields"].(map[string]interface{})["host"])
+}
+
+func TestSanitizeDecodedNonSlice(t *testing.T) {
+	in := map[string]interface{}{"protocol": "http", "fields": map[string]interface{}{"host": "192.0.2.1"}}
+	out := SanitizeDecoded(in, func(b []byte) []byte {
+		return bytes.ReplaceAll(b, []byte("192.0.2.1"), []byte("1.2.3.4"))
+	}).(map[string]interface{})
+	require.Equal(t, "1.2.3.4", out["fields"].(map[string]interface{})["host"])
+	require.Nil(t, SanitizeDecoded(nil, func(b []byte) []byte { return b }))
+}

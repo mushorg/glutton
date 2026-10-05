@@ -125,8 +125,9 @@ func TestHandleSIPRegisterAccepted(t *testing.T) {
 	err := HandleSIP(context.Background(), src, dst, voipRegisterRead1, connection.Metadata{}, testLogger{}, h)
 	require.NoError(t, err)
 
+	// rport requested: filled with the source port, and received added (RFC 3581)
 	wantReply := "SIP/2.0 200 OK\r\n" +
-		"Via: SIP/2.0/UDP 185.243.5.243:49618;branch=z9hG4bK-d87543-987333414-1--d87543-;rport\r\n" +
+		"Via: SIP/2.0/UDP 185.243.5.243:49618;branch=z9hG4bK-d87543-987333414-1--d87543-;rport=49618;received=185.243.5.243\r\n" +
 		"From: <sip:100@1.2.3.4>;tag=e5f4a9860666e4f7a\r\n" +
 		"To: <sip:100@1.2.3.4>;tag=feedface\r\n" +
 		"Call-ID: e5f4a986066756e4f7a\r\n" +
@@ -180,7 +181,8 @@ func TestHandleSIPInviteAnswered(t *testing.T) {
 	err := HandleSIP(context.Background(), src, dst, pplsipInviteRead1, connection.Metadata{}, testLogger{}, h)
 	require.NoError(t, err)
 
-	dialog := "Via: SIP/2.0/UDP 0.0.0.0:65145;branch=z9hG4bK951917159\r\n" +
+	// sent-by 0.0.0.0 is not the packet source: received is added (RFC 3261 §18.2.1)
+	dialog := "Via: SIP/2.0/UDP 0.0.0.0:65145;branch=z9hG4bK951917159;received=51.75.106.116\r\n" +
 		"From: <sip:14500163172166221:5060@1.2.3.4>;tag=414451770\r\n"
 	tail := "Call-ID: 1492163839-465544234-336545636\r\n" +
 		"CSeq: 1 INVITE\r\n" +
