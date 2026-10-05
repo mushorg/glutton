@@ -11,7 +11,9 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
@@ -22,6 +24,9 @@ import (
 
 // busyboxBanner is the BusyBox ash greeting Mirai checks for after applet probes.
 const busyboxBanner = "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-in shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n"
+
+// maxTelnetSample caps bytes fetched from wget/curl URLs.
+const maxTelnetSample = 10 << 20
 
 // Mirai botnet  - https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
 // Hajime botnet - https://security.rapiditynetworks.com/publications/2016-10-16/hajime.pdf
@@ -64,27 +69,31 @@ var miraiCom = map[string][]string{
 }
 
 type parsedTelnet struct {
-	Direction string `json:"direction,omitempty"`
-	Command   string `json:"command,omitempty"`
-	Message   string `json:"message,omitempty"`
+	Direction   string `json:"direction,omitempty"`
+	Command     string `json:"command,omitempty"`
+	Path        string `json:"path,omitempty"` // wget/curl URL when present
+	Message     string `json:"message,omitempty"`
+	PayloadHash string `json:"payload_hash,omitempty"`
 }
 
 type telnetServer struct {
-	events []parsedTelnet
-	conn   net.Conn
-	reader *bufio.Reader
-	client *http.Client
-	step   string
+	events   []parsedTelnet
+	conn     net.Conn
+	reader   *bufio.Reader
+	client   *http.Client
+	step     string
+	sampleWG sync.WaitGroup
+	sampleMu sync.Mutex
+	samples  map[int]string // event index -> sample hash
 }
 
 func newTelnetServer(conn net.Conn) *telnetServer {
 	return &telnetServer{
-		events: []parsedTelnet{},
-		conn:   conn,
-		reader: bufio.NewReader(conn),
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		events:  []parsedTelnet{},
+		conn:    conn,
+		reader:  bufio.NewReader(conn),
+		client:  &http.Client{Timeout: 5 * time.Second},
+		samples: map[int]string{},
 	}
 }
 
@@ -100,6 +109,10 @@ func telnetShellCommand(msg string) string {
 	return line
 }
 
+func telnetCredential(msg string) string {
+	return strings.TrimRight(msg, "\r\n\x00")
+}
+
 func telnetWriteCommand(msg string) string {
 	switch msg {
 	case "Username: ":
@@ -109,6 +122,30 @@ func telnetWriteCommand(msg string) string {
 	default:
 		return ""
 	}
+}
+
+// telnetDownloadURL extracts an http(s) URL from a wget/curl shell line.
+func telnetDownloadURL(cmd string) (string, bool) {
+	line := strings.TrimRight(cmd, "\r\n\x00")
+	lower := strings.ToLower(line)
+	if !strings.Contains(lower, "wget") && !strings.Contains(lower, "curl") {
+		return "", false
+	}
+	idx := strings.Index(lower, "http://")
+	if idx < 0 {
+		idx = strings.Index(lower, "https://")
+	}
+	if idx < 0 {
+		return "", false
+	}
+	url := line[idx:]
+	if end := strings.IndexAny(url, " \t\r\n;|&\"'"); end >= 0 {
+		url = url[:end]
+	}
+	if url == "" {
+		return "", false
+	}
+	return url, true
 }
 
 // write writes a telnet message to the connection
@@ -192,35 +229,31 @@ func (s *telnetServer) read() (string, error) {
 	return msg, err
 }
 
-func (s *telnetServer) getSample(cmd string, logger interfaces.Logger) error {
-	url := cmd[strings.Index(cmd, "http"):]
-	url = strings.Split(url, " ")[0]
-	url = strings.TrimSpace(url)
+func (s *telnetServer) fetchSample(url string, logger interfaces.Logger) (string, error) {
 	logger.Debug("Fetching sample", slog.String("url", url), slog.String("handler", "telnet"))
 	resp, err := s.client.Get(url)
 	if err != nil {
-		return err
-	}
-	if resp.StatusCode != 200 {
-		return errors.New("failed to fetch sample: " + resp.Status)
+		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.ContentLength <= 0 {
-		return errors.New("content length is 0")
+	if resp.StatusCode != 200 {
+		return "", errors.New("failed to fetch sample: " + resp.Status)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxTelnetSample))
 	if err != nil {
-		return err
+		return "", err
 	}
-
 	if len(data) == 0 {
-		return errors.New("empty response body")
+		return "", errors.New("empty response body")
 	}
 
 	sha256Hash, err := helpers.Store(data, "samples")
 	if err != nil {
-		return err
+		return "", err
+	}
+	if sha256Hash == "" {
+		sha256Hash = helpers.SHA256Hex(data)
 	}
 
 	logger.Info(
@@ -229,7 +262,43 @@ func (s *telnetServer) getSample(cmd string, logger interfaces.Logger) error {
 		slog.String("sample_hash", sha256Hash),
 		slog.String("source", url),
 	)
-	return nil
+	return sha256Hash, nil
+}
+
+func (s *telnetServer) startSampleFetch(eventIdx int, url string, logger interfaces.Logger) {
+	s.sampleWG.Add(1)
+	go func() {
+		defer s.sampleWG.Done()
+		hash, err := s.fetchSample(url, logger)
+		if err != nil {
+			logger.Error("Failed to get sample", slog.String("handler", "telnet"), slog.String("source", url), producer.ErrAttr(err))
+			return
+		}
+		s.sampleMu.Lock()
+		s.samples[eventIdx] = hash
+		s.sampleMu.Unlock()
+	}()
+}
+
+func (s *telnetServer) applySampleHashes() {
+	s.sampleWG.Wait()
+	s.sampleMu.Lock()
+	defer s.sampleMu.Unlock()
+	for idx, hash := range s.samples {
+		if idx >= 0 && idx < len(s.events) {
+			s.events[idx].PayloadHash = hash
+		}
+	}
+}
+
+// lastReadEventIndex returns the index of the most recent non-empty read frame.
+func (s *telnetServer) lastReadEventIndex() int {
+	for i := len(s.events) - 1; i >= 0; i-- {
+		if s.events[i].Direction == "read" && s.events[i].Message != "" {
+			return i
+		}
+	}
+	return -1
 }
 
 // HandleTelnet handles telnet communication on a connection
@@ -240,6 +309,7 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	endReason := connection.EndHandlerClose
 	defer func() {
+		s.applySampleHashes()
 		md.EndReason = endReason
 		if err := h.ProduceTCP("telnet", s.conn, md, []byte(helpers.FirstOrEmpty(s.events).Message), s.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "telnet"), producer.ErrAttr(err))
@@ -248,6 +318,9 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 			logger.Debug("Failed to close telnet connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
 		}
 	}()
+
+	host, srcPort, _ := net.SplitHostPort(s.conn.RemoteAddr().String())
+	destPort := strconv.Itoa(int(md.TargetPort))
 
 	if err := h.UpdateConnectionTimeout(ctx, s.conn); err != nil {
 		logger.Debug("Failed to set connection timeout", slog.String("protocol", "telnet"), producer.ErrAttr(err))
@@ -269,21 +342,34 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 		return err
 	}
 	s.step = "username"
-	if _, err := s.read(); err != nil {
+	userMsg, err := s.read()
+	if err != nil {
 		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
 		endReason = connection.EndReasonFromRead(err)
 		return nil
 	}
+	username := telnetCredential(userMsg)
 	if err := s.write("Password: "); err != nil {
 		endReason = connection.EndWriteError
 		return err
 	}
 	s.step = "password"
-	if _, err := s.read(); err != nil {
+	passMsg, err := s.read()
+	if err != nil {
 		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
 		endReason = connection.EndReasonFromRead(err)
 		return nil
 	}
+	password := telnetCredential(passMsg)
+	logger.Info(
+		"telnet login",
+		slog.String("handler", "telnet"),
+		slog.String("src_ip", host),
+		slog.String("src_port", srcPort),
+		slog.String("dest_port", destPort),
+		slog.String("username", username),
+		slog.String("password", password),
+	)
 	if err := s.write("welcome\r\n> "); err != nil {
 		endReason = connection.EndWriteError
 		return err
@@ -302,16 +388,23 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 			endReason = connection.EndReasonFromRead(err)
 			return nil
 		}
+		logger.Debug(
+			"telnet command",
+			slog.String("handler", "telnet"),
+			slog.String("src_ip", host),
+			slog.String("src_port", srcPort),
+			slog.String("dest_port", destPort),
+			slog.String("command", telnetShellCommand(msg)),
+			slog.String("message", telnetCredential(msg)),
+		)
+		if url, ok := telnetDownloadURL(msg); ok {
+			if idx := s.lastReadEventIndex(); idx >= 0 {
+				s.events[idx].Path = url
+				s.startSampleFetch(idx, url, logger)
+			}
+		}
 		skipPrompt := false
 		for _, cmd := range strings.Split(msg, ";") {
-			if strings.Contains(strings.Trim(cmd, " "), "wget http") {
-				go func() {
-					err := s.getSample(strings.Trim(cmd, " "), logger)
-					if err != nil {
-						logger.Error("Failed to get sample", slog.String("handler", "telnet"), producer.ErrAttr(err))
-					}
-				}()
-			}
 			if strings.TrimRight(cmd, "") == " rm /dev/.t" {
 				continue
 			}

