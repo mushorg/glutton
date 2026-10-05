@@ -47,6 +47,9 @@ rules:
   - match: tcp dst port 9000
     type: conn_handler
     target: mctp
+  - match: tcp dst port 104 or port 11112
+    type: conn_handler
+    target: dicom
   - match: tcp dst port 443
     type: proxy_tcp
     target: 127.0.0.1:443
