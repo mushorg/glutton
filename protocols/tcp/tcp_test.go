@@ -2,11 +2,14 @@ package tcp
 
 import (
 	"context"
+	"io"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/helpers"
+	"github.com/mushorg/glutton/protocols/tcp/banners"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
@@ -79,7 +82,116 @@ func TestHandleTCPCapturesClientPacket(t *testing.T) {
 
 	require.Len(t, events, 2)
 	require.Equal(t, "write", events[1].Direction)
+	require.Equal(t, "random", events[1].Status)
 	require.Equal(t, reply[:n], events[1].Payload)
+}
+
+func startCatchAll(t *testing.T, port uint16) (net.Conn, *fakeHoneypot, chan error) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	previousMaxPayload := viper.Get("max_tcp_payload")
+	viper.Set("max_tcp_payload", 4096)
+	t.Cleanup(func() { viper.Set("max_tcp_payload", previousMaxPayload) })
+
+	client, serverConn := net.Pipe()
+	t.Cleanup(func() { client.Close() })
+	serverConn = connWithRemote{Conn: serverConn, remote: staticAddr{addr: "192.0.2.1:54321"}}
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleTCP(context.Background(), serverConn, connection.Metadata{TargetPort: port}, &recordingLogger{}, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	return client, hp, done
+}
+
+func finishCatchAll(t *testing.T, client net.Conn, hp *fakeHoneypot, done chan error) []parsedTCP {
+	t.Helper()
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	produced := waitProduced(t, hp)
+	require.Equal(t, "tcp", produced.protocol)
+	require.Empty(t, hp.produced, "exactly one event per session")
+	events, ok := produced.decoded.([]parsedTCP)
+	require.True(t, ok)
+	return events
+}
+
+func readAll(t *testing.T, conn net.Conn, n int) []byte {
+	t.Helper()
+	buf := make([]byte, n)
+	_, err := io.ReadFull(conn, buf)
+	require.NoError(t, err)
+	return buf
+}
+
+func TestHandleTCPServerFirstBanner(t *testing.T) {
+	client, hp, done := startCatchAll(t, 22)
+
+	// the banner arrives before the client sends anything
+	want, _ := banners.ForPort(22)
+	banner := readAll(t, client, len(want.Data))
+	require.Equal(t, want.Data, banner)
+
+	clientBanner := []byte("SSH-2.0-libssh_0.9.6\r\n")
+	_, err := client.Write(clientBanner)
+	require.NoError(t, err)
+	// the client banner matches the SSH signature: banner again
+	again := readAll(t, client, len(want.Data))
+	require.Equal(t, want.Data, again)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 3)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "ssh", Payload: banner, PayloadHash: helpers.SHA256Hex(banner)}, events[0])
+	require.Equal(t, "read", events[1].Direction)
+	require.Equal(t, "ssh", events[1].Command)
+	require.Equal(t, clientBanner, events[1].Payload)
+	require.Equal(t, "ssh", events[2].Status)
+}
+
+func TestHandleTCPPortReply(t *testing.T) {
+	client, hp, done := startCatchAll(t, 1433)
+
+	prelogin := []byte{0x12, 0x01, 0x00, 0x2f, 0x00, 0x00, 0x01, 0x00}
+	_, err := client.Write(prelogin)
+	require.NoError(t, err)
+	want, _ := banners.ForPort(1433)
+	reply := readAll(t, client, len(want.Data))
+	require.Equal(t, want.Data, reply)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 2)
+	require.Equal(t, "read", events[0].Direction)
+	require.Empty(t, events[0].Command)
+	require.Equal(t, prelogin, events[0].Payload)
+	require.Equal(t, "mssql-prelogin", events[1].Status)
+}
+
+func TestHandleTCPSignatureBeatsPort(t *testing.T) {
+	// TLS on the AJP port gets a TLS alert, not the AJP response
+	client, hp, done := startCatchAll(t, 8009)
+
+	hello := []byte{0x16, 0x03, 0x01, 0x00, 0x05, 0x01, 0x00, 0x00, 0x01, 0x03}
+	_, err := client.Write(hello)
+	require.NoError(t, err)
+	alert := readAll(t, client, 7)
+	require.Equal(t, []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28}, alert)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 2)
+	require.Equal(t, "tls-alert", events[0].Command)
+	require.Equal(t, "tls-alert", events[1].Status)
+}
+
+func TestHandleTCPSilentClientNoReply(t *testing.T) {
+	client, hp, done := startCatchAll(t, 9999)
+	events := finishCatchAll(t, client, hp, done)
+	require.Empty(t, events)
 }
 
 func TestHandleTCPEarlyDisconnectStillProduces(t *testing.T) {

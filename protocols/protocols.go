@@ -91,6 +91,11 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 
 func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		// server-first ports (SSH, POP3, ...) greet before the client speaks,
+		// so peeking for client bytes would stall them until the timeout
+		if tcp.HasServerBanner(md.TargetPort) {
+			return tcp.HandleTCP(ctx, conn, md, log, h)
+		}
 		snip, bufConn, err := peekOrClose(conn, conn, 4, log)
 		if err != nil {
 			return nil
