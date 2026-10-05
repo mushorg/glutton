@@ -44,6 +44,9 @@ rules:
   - match: tcp dst port 4840
     type: conn_handler
     target: opcua
+  - match: tcp dst port 9000
+    type: conn_handler
+    target: mctp
   - match: tcp dst port 443
     type: proxy_tcp
     target: 127.0.0.1:443

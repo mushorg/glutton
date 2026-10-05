@@ -81,6 +81,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | Jabber/XMPP                 | instant messaging stream                 |
 | ADB                         | Android Debug Bridge probes              |
 | MongoDB                     | wire protocol queries                    |
+| HiSilicon DVR (MCTP)        | `HI_SRDK_*` control calls on tcp/9000    |
 | Hadoop YARN                 | `POST */cluster/apps/new-application`    |
 | Docker Engine API           | `GET /v1.16/version`                     |
 | HTTP                        | generic web requests                     |
