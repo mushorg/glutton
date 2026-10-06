@@ -120,7 +120,9 @@ type parsedHTTP struct {
 	UserAgent string `json:"user_agent,omitempty"`
 	Status    string `json:"status,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
-	Payload   []byte `json:"payload,omitempty"` // raw HTTP request or response bytes
+	DestPort  uint16 `json:"dest_port,omitempty"` // set on reads; sessions can span ports
+	SrcPort   string `json:"src_port,omitempty"`  // set on reads; sessions can span connections
+	Payload   []byte `json:"payload,omitempty"`   // raw HTTP request or response bytes
 }
 
 func stampHTTP(frame *parsedHTTP, id string) {
@@ -145,9 +147,10 @@ func newHTTPServer(conn net.Conn) *httpServer {
 			srcHost: srcHost,
 			table:   httpSessions,
 			spec: sessionSpec[parsedHTTP]{
-				protocol: "http",
-				payload:  httpPayload,
-				stamp:    stampHTTP,
+				protocol:      "http",
+				payload:       httpPayload,
+				stamp:         stampHTTP,
+				groupBySource: true,
 			},
 			remote: conn.RemoteAddr(),
 		},
@@ -209,8 +212,11 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 		s.ensure()
 	}
 
+	_, srcPort, _ := net.SplitHostPort(s.conn.RemoteAddr().String())
 	s.record(parsedHTTP{
 		Direction: "read",
+		DestPort:  md.TargetPort,
+		SrcPort:   srcPort,
 		Command:   req.Method,
 		Path:      path,
 		Query:     query,

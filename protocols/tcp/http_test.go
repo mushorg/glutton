@@ -162,6 +162,85 @@ func TestHandleHTTPSessionGroupsAcrossConnections(t *testing.T) {
 	require.Equal(t, sessionID, events[2].SessionID)
 }
 
+func TestHandleHTTPGroupsCookielessBySourceIP(t *testing.T) {
+	withHTTPSessionIdle(t, 80*time.Millisecond)
+
+	hp := newFakeHoneypot()
+
+	request := func(srcPort int, dstPort uint16, path string) {
+		client, server := net.Pipe()
+		conn := &remoteAddrConn{Conn: server, remote: &net.TCPAddr{IP: net.ParseIP("94.26.0.103"), Port: srcPort}}
+		done := make(chan error, 1)
+		go func() {
+			done <- HandleHTTP(context.Background(), conn, connection.Metadata{TargetPort: dstPort}, &recordingLogger{}, hp)
+		}()
+		_, err := client.Write(httpTestRequest("GET", path, "", nil))
+		require.NoError(t, err)
+		status, _, _ := readHTTPResponse(t, client)
+		require.Equal(t, http.StatusOK, status)
+		require.NoError(t, client.Close())
+		require.NoError(t, <-done)
+	}
+
+	request(44620, 3000, "/a")
+	request(58700, 8080, "/b")
+	request(44624, 3000, "/c")
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "http", produced.protocol)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single session event, got another: %+v", extra)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	events := produced.decoded.([]parsedHTTP)
+	require.Len(t, events, 6)
+	var reads []parsedHTTP
+	for _, e := range events {
+		require.Equal(t, events[0].SessionID, e.SessionID)
+		if e.Direction == "read" {
+			reads = append(reads, e)
+		}
+	}
+	require.Len(t, reads, 3)
+	require.Equal(t, "/a", reads[0].Path)
+	require.Equal(t, uint16(3000), reads[0].DestPort)
+	require.Equal(t, "44620", reads[0].SrcPort)
+	require.Equal(t, "/b", reads[1].Path)
+	require.Equal(t, uint16(8080), reads[1].DestPort)
+	require.Equal(t, "58700", reads[1].SrcPort)
+	require.Equal(t, "/c", reads[2].Path)
+}
+
+func TestHandleHTTPSourceSessionRollsOverWhenFull(t *testing.T) {
+	withHTTPSessionIdle(t, time.Minute)
+
+	tracker := func() *sessionTracker[parsedHTTP] {
+		return &sessionTracker[parsedHTTP]{
+			srcHost: "94.26.0.103",
+			table:   httpSessions,
+			spec:    sessionSpec[parsedHTTP]{protocol: "http", payload: httpPayload, stamp: stampHTTP, groupBySource: true},
+		}
+	}
+	first := tracker()
+	first.ensure()
+	second := tracker()
+	second.ensure()
+	require.Same(t, first.session, second.session)
+
+	for i := 0; i < maxSourceSessionFrames; i++ {
+		first.record(parsedHTTP{Direction: "read"})
+	}
+	third := tracker()
+	third.ensure()
+	require.NotSame(t, first.session, third.session)
+
+	for _, tr := range []*sessionTracker[parsedHTTP]{first, second, third} {
+		tr.session.endNow()
+	}
+}
+
 func TestHandleHTTPEarlyDisconnect(t *testing.T) {
 	withHTTPSessionIdle(t, 50*time.Millisecond)
 
