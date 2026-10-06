@@ -14,7 +14,7 @@ rules:
   - match: tcp dst port 3389
     type: conn_handler
     target: rdp
-  - match: tcp dst port 5900
+  - match: tcp dst portrange 5900-5910
     type: conn_handler
     target: rfb
   - match: tcp dst port 445

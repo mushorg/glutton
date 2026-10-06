@@ -10,6 +10,7 @@ import (
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/tcp/banners"
+	"github.com/mushorg/glutton/protocols/tcp/rfb"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
@@ -152,6 +153,55 @@ func TestHandleTCPServerFirstBanner(t *testing.T) {
 	require.Equal(t, "ssh", events[1].Command)
 	require.Equal(t, clientBanner, events[1].Payload)
 	require.Equal(t, "ssh", events[2].Status)
+}
+
+func TestHandleTCPRFBFollowUp(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		version string
+		want    []byte
+	}{
+		{"3.8", "RFB 003.008\n", []byte{2, 2, 1}},
+		{"3.7", "RFB 003.007\n", []byte{2, 2, 1}},
+		{"3.3", "RFB 003.003\n", []byte{0, 0, 0, 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, hp, done := startCatchAll(t, 5900)
+
+			banner := readAll(t, client, len(rfb.ServerVersion))
+			require.Equal(t, rfb.ServerVersion, banner)
+			_, err := client.Write([]byte(tc.version))
+			require.NoError(t, err)
+			// the security handshake follows instead of random bytes
+			reply := readAll(t, client, len(tc.want))
+			require.Equal(t, tc.want, reply)
+
+			events := finishCatchAll(t, client, hp, done)
+			require.Len(t, events, 3)
+			require.Equal(t, parsedTCP{Direction: "write", Status: "rfb", Payload: banner, PayloadHash: helpers.SHA256Hex(banner)}, events[0])
+			require.Equal(t, "read", events[1].Direction)
+			require.Equal(t, "rfb", events[1].Command)
+			require.Equal(t, []byte(tc.version), events[1].Payload)
+			require.Equal(t, parsedTCP{Direction: "write", Status: "rfb-security", Payload: tc.want, PayloadHash: helpers.SHA256Hex(tc.want)}, events[2])
+		})
+	}
+}
+
+func TestHandleTCPRFBNonVersionGetsRandom(t *testing.T) {
+	client, hp, done := startCatchAll(t, 5900)
+
+	readAll(t, client, len(rfb.ServerVersion))
+	_, err := client.Write([]byte("GET / HTTP/1.0\r\n\r\n"))
+	require.NoError(t, err)
+	// drain the whole reply: the pipe is synchronous and the handler closes after it
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(reply), 12)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 3)
+	require.Empty(t, events[1].Command)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "random", Payload: reply, PayloadHash: helpers.SHA256Hex(reply)}, events[2])
 }
 
 func TestHandleTCPPortReply(t *testing.T) {

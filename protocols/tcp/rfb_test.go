@@ -73,13 +73,10 @@ func finishRFB(t *testing.T, hp *fakeHoneypot, done chan error) producedTCP {
 	return produced
 }
 
-func rfbAuthFailed38() []byte {
-	return rfb.SecurityResult(false, rfb.Version38, "Authentication failed")
-}
-
 func TestHandleRFBVNCAuth38(t *testing.T) {
 	c, hp, done := startRFB(t)
 	response := bytes.Repeat([]byte{0x01}, rfb.ChallengeLen)
+	serverInit := rfb.ServerInit(rfbWidth, rfbHeight, rfb.DefaultPixelFormat, rfbDesktopName)
 
 	c.expect([]byte("RFB 003.008\n"))
 	c.send([]byte("RFB 003.008\n"))
@@ -87,10 +84,13 @@ func TestHandleRFBVNCAuth38(t *testing.T) {
 	c.send([]byte{2})
 	c.expect(rfbTestChallenge)
 	c.send(response)
-	c.expect(rfbAuthFailed38())
+	c.expect([]byte{0, 0, 0, 0}) // auth accepted
+	c.send([]byte{1})            // ClientInit
+	c.expect(serverInit)
+	require.NoError(t, c.conn.Close())
 
 	produced := finishRFB(t, hp, done)
-	require.Equal(t, connection.EndHandlerClose, produced.endReason)
+	require.Equal(t, connection.EndClientClose, produced.endReason)
 	require.Equal(t, []parsedRFB{
 		{Direction: "write", Command: "ProtocolVersion", Version: "3.8", Payload: []byte("RFB 003.008\n")},
 		{Direction: "read", Command: "ProtocolVersion", Version: "3.8", Payload: []byte("RFB 003.008\n")},
@@ -98,27 +98,36 @@ func TestHandleRFBVNCAuth38(t *testing.T) {
 		{Direction: "read", Command: "SecurityType", SecurityType: "VNCAuthentication", Payload: []byte{2}},
 		{Direction: "write", Command: "VNCAuthChallenge", Challenge: strings.Repeat("ab", 16), Payload: rfbTestChallenge},
 		{Direction: "read", Command: "VNCAuthResponse", Response: strings.Repeat("01", 16), Payload: response},
-		{Direction: "write", Command: "SecurityResult", Status: "Failed", Payload: rfbAuthFailed38()},
+		{Direction: "write", Command: "SecurityResult", Status: "OK", Payload: []byte{0, 0, 0, 0}},
+		{Direction: "read", Command: "ClientInit", Payload: []byte{1}},
+		{Direction: "write", Command: "ServerInit", Payload: serverInit},
 	}, produced.decoded)
 }
 
 func TestHandleRFBVNCAuth33(t *testing.T) {
 	c, hp, done := startRFB(t)
 	response := bytes.Repeat([]byte{0x02}, rfb.ChallengeLen)
+	serverInit := rfb.ServerInit(rfbWidth, rfbHeight, rfb.DefaultPixelFormat, rfbDesktopName)
 
 	c.expect([]byte("RFB 003.008\n"))
 	c.send([]byte("RFB 003.003\n"))
 	c.expect([]byte{0, 0, 0, 2})
 	c.expect(rfbTestChallenge)
 	c.send(response)
-	c.expect([]byte{0, 0, 0, 1}) // no reason string before 3.8
+	c.expect([]byte{0, 0, 0, 0}) // auth accepted, no reason string before 3.8
+	c.send([]byte{1})            // ClientInit
+	c.expect(serverInit)
+	require.NoError(t, c.conn.Close())
 
 	produced := finishRFB(t, hp, done)
 	events := produced.decoded.([]parsedRFB)
-	require.Len(t, events, 6)
+	require.Len(t, events, 8)
 	require.Equal(t, "3.3", events[1].Version)
 	require.Equal(t, parsedRFB{Direction: "write", Command: "Security", SecurityType: "VNCAuthentication", Payload: []byte{0, 0, 0, 2}}, events[2])
 	require.Equal(t, strings.Repeat("02", 16), events[4].Response)
+	require.Equal(t, parsedRFB{Direction: "write", Command: "SecurityResult", Status: "OK", Payload: []byte{0, 0, 0, 0}}, events[5])
+	require.Equal(t, "ClientInit", events[6].Command)
+	require.Equal(t, "ServerInit", events[7].Command)
 }
 
 func TestHandleRFBNoneSession(t *testing.T) {

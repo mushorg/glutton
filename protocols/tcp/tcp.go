@@ -15,6 +15,7 @@ import (
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/banners"
+	"github.com/mushorg/glutton/protocols/tcp/rfb"
 
 	"github.com/spf13/viper"
 )
@@ -64,6 +65,23 @@ func (s *tcpServer) captureRead(data []byte, payloadHash, command string) {
 		PayloadHash: payloadHash,
 		Payload:     data,
 	})
+}
+
+// bannerFollowUp answers the client's reply to a server-first banner so the
+// handshake goes one step further instead of getting random bytes. An RFB
+// ProtocolVersion gets the security handshake the rfb handler would send.
+func bannerFollowUp(banner banners.Response, data []byte) (banners.Response, bool) {
+	if banner.Name != "rfb" {
+		return banners.Response{}, false
+	}
+	version, ok := rfb.ParseVersion(data)
+	if !ok {
+		return banners.Response{}, false
+	}
+	if version == rfb.Version33 {
+		return banners.Response{Name: "rfb-security", Data: rfb.SecurityType33(rfb.SecurityVNCAuth)}, true
+	}
+	return banners.Response{Name: "rfb-security", Data: rfb.SecurityTypes(rfbOffered...)}, true
 }
 
 // HasServerBanner reports whether the catch-all greets clients on port before
@@ -160,6 +178,10 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		command := ""
 		if matched {
 			command = sigResp.Name
+		} else if hasPortResp && portResp.ServerFirst {
+			if sigResp, matched = bannerFollowUp(portResp, data); matched {
+				command = portResp.Name
+			}
 		}
 		server.captureRead(data, payloadHash, command)
 

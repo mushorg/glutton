@@ -28,9 +28,10 @@ const (
 	rfbHeight      = 768
 )
 
-// rfbOffered is the 3.7+ security type list. VNC authentication always fails
-// so brute-forcers keep sending responses; None lets open-VNC scanners reach
-// the client message loop.
+// rfbOffered is the 3.7+ security type list. VNC authentication accepts any
+// password so brute-forcers reach the client message loop and reveal what they
+// do next; None lets open-VNC scanners in the same way. The challenge/response
+// pair is still captured before the session proceeds.
 var rfbOffered = []uint8{rfb.SecurityVNCAuth, rfb.SecurityNone}
 
 type parsedRFB struct {
@@ -233,7 +234,8 @@ func (s *rfbServer) serve(ctx context.Context, md connection.Metadata, logger in
 	return connection.EndHandlerClose, nil
 }
 
-// vncAuth sends a challenge, records the response and rejects it.
+// vncAuth sends a challenge, records the response and accepts any password so
+// the client proceeds into the session.
 func (s *rfbServer) vncAuth(timeout func() bool, readEnd func(error) string, logger interfaces.Logger) (string, error) {
 	challenge := make([]byte, rfb.ChallengeLen)
 	if _, err := io.ReadFull(s.rand, challenge); err != nil {
@@ -258,10 +260,10 @@ func (s *rfbServer) vncAuth(timeout func() bool, readEnd func(error) string, log
 		return readEnd(err), nil
 	}
 	logger.Info("rfb auth attempt", slog.String("handler", "rfb"), slog.String("protocol", "rfb"), slog.String("response", frame.Response))
-	if err := s.write(parsedRFB{Command: "SecurityResult", Status: "Failed", Payload: rfb.SecurityResult(false, s.version, "Authentication failed")}); err != nil {
+	if err := s.write(parsedRFB{Command: "SecurityResult", Status: "OK", Payload: rfb.SecurityResult(true, s.version, "")}); err != nil {
 		return connection.EndWriteError, err
 	}
-	return connection.EndHandlerClose, nil
+	return s.session(timeout, readEnd)
 }
 
 // session runs the initialisation phase and records client messages.
