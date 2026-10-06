@@ -257,3 +257,29 @@ func TestReplyViaReceivedAndRport(t *testing.T) {
 		require.NotContains(t, req.String(), "received=", c.name)
 	}
 }
+
+func TestLooksLikeSIP(t *testing.T) {
+	for _, data := range [][]byte{
+		pplsipInvite,
+		[]byte("OPTIONS sip:100@1.2.3.4 SIP/2.0\r\nVia: SIP/2.0/UDP 1.2.3.4\r\n\r\n"),
+		[]byte("REGISTER sips:example.com SIP/2.0\r\n\r\n"),
+		[]byte("INVITE tel:+15551234 SIP/2.0\r\n"),
+		[]byte("SIP/2.0 200 OK\r\nCSeq: 1 OPTIONS\r\n\r\n"),
+	} {
+		require.True(t, LooksLikeSIP(data), "%q", data)
+	}
+	for _, data := range [][]byte{
+		nil,
+		[]byte("INVITE sip:100@1.2.3.4 SIP/2.0"), // no CRLF
+		[]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"),          // HTTP
+		[]byte("GET sip:100@1.2.3.4 HTTP/1.1\r\n"),           // wrong version
+		[]byte("invite sip:100@1.2.3.4 SIP/2.0\r\n"),         // lowercase method
+		[]byte("INVITE http://1.2.3.4/ SIP/2.0\r\n"),         // wrong scheme
+		[]byte("SIP/2.0 OK\r\n"),                             // no status code
+		[]byte("SIP/2.0 999 Nope\r\n"),                       // status out of range
+		append([]byte("INVITE sip:"), make([]byte, 1024)...), // CRLF beyond scan window
+		{0x30, 0x82, 0x01, 0x0a, 0x02, 0x01, 0x05, 0xa1, 0x03, 0x02},
+	} {
+		require.False(t, LooksLikeSIP(data), "%q", data)
+	}
+}

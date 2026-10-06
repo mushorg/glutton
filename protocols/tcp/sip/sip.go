@@ -393,3 +393,41 @@ func Describe(msg gosip.Message) Info {
 	}
 	return info
 }
+
+// maxStartLine bounds how far LooksLikeSIP scans for the end of the start line.
+const maxStartLine = 512
+
+// LooksLikeSIP reports whether data starts with a SIP request line
+// ("METHOD sip:... SIP/2.0") or status line ("SIP/2.0 200 OK"). The generic
+// UDP handler uses it to route SIP sent to non-standard ports.
+func LooksLikeSIP(data []byte) bool {
+	line := data[:min(len(data), maxStartLine)]
+	end := strings.Index(string(line), "\r\n")
+	if end < 0 {
+		return false
+	}
+	start := string(line[:end])
+	if strings.HasPrefix(start, "SIP/2.0 ") {
+		code, _, _ := strings.Cut(start[len("SIP/2.0 "):], " ")
+		n, err := strconv.Atoi(code)
+		return err == nil && len(code) == 3 && n >= 100 && n <= 699
+	}
+	parts := strings.Split(start, " ")
+	if len(parts) != 3 || parts[2] != "SIP/2.0" || !isMethod(parts[0]) {
+		return false
+	}
+	scheme, _, ok := strings.Cut(strings.ToLower(parts[1]), ":")
+	return ok && (scheme == "sip" || scheme == "sips" || scheme == "tel")
+}
+
+func isMethod(s string) bool {
+	if s == "" || len(s) > 16 {
+		return false
+	}
+	for _, c := range s {
+		if c < 'A' || c > 'Z' {
+			return false
+		}
+	}
+	return true
+}

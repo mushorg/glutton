@@ -11,6 +11,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	sipproto "github.com/mushorg/glutton/protocols/tcp/sip"
 	"github.com/mushorg/glutton/protocols/udp/a2s"
 	"github.com/mushorg/glutton/protocols/udp/ike"
 )
@@ -25,6 +26,9 @@ type parsedUDP struct {
 }
 
 func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, log interfaces.Logger, h interfaces.Honeypot) error {
+	if sipproto.LooksLikeSIP(data) {
+		return HandleSIP(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
 	if looksLikeRakNet(data) {
 		return HandleRakNet(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
