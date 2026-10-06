@@ -53,6 +53,9 @@ const (
 	EndReadError    = "read_error"
 	EndWriteError   = "write_error"
 	EndMaxFrames    = "max_frames"
+	// EndEvicted marks a session flushed early because its handler's session
+	// table was full.
+	EndEvicted = "evicted"
 )
 
 // EndReasonFromRead maps a read/timeout error to an event endReason.

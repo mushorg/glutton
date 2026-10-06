@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mushorg/glutton/connection"
 	sipproto "github.com/mushorg/glutton/protocols/tcp/sip"
@@ -174,12 +175,16 @@ func stubSIPResponder(t *testing.T) {
 
 func TestHandleSIPInviteAnswered(t *testing.T) {
 	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
 	h := &recordingHoneypot{}
 	src := &net.UDPAddr{IP: net.ParseIP("51.75.106.116"), Port: 65145}
 	dst := &net.UDPAddr{IP: net.ParseIP("1.2.3.4"), Port: 5060}
 
 	err := HandleSIP(context.Background(), src, dst, pplsipInviteRead1, connection.Metadata{}, testLogger{}, h)
 	require.NoError(t, err)
+	// the INVITE opens a dialog: nothing is produced until it ends
+	require.Empty(t, h.produced)
+	timers.fire(t, time.Minute)
 
 	// sent-by 0.0.0.0 is not the packet source: received is added (RFC 3261 §18.2.1)
 	dialog := "Via: SIP/2.0/UDP 0.0.0.0:65145;branch=z9hG4bK951917159;received=51.75.106.116\r\n" +
@@ -216,7 +221,7 @@ func TestHandleSIPInviteAnswered(t *testing.T) {
 
 	require.Len(t, h.produced, 1)
 	require.Equal(t, pplsipInviteRead1, h.produced[0].payload)
-	require.Equal(t, connection.EndHandlerClose, h.produced[0].endReason)
+	require.Equal(t, connection.EndTimeout, h.produced[0].endReason)
 	write := func(status, payload string) parsedSIP {
 		return parsedSIP{
 			Direction: "write",
@@ -336,4 +341,354 @@ func TestHandleSIPEmptyPayload(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, h.produced, 1)
 	require.Empty(t, h.replies)
+}
+
+type fakeSIPTimer struct {
+	d       time.Duration
+	f       func()
+	stopped bool
+	fired   bool
+}
+
+func (ft *fakeSIPTimer) Stop() bool {
+	ft.stopped = true
+	return !ft.fired
+}
+
+// fakeSIPTimers records dialog timers; tests fire them by hand.
+type fakeSIPTimers struct {
+	mu     sync.Mutex
+	timers []*fakeSIPTimer
+}
+
+func (ts *fakeSIPTimers) afterFunc(d time.Duration, f func()) sipTimer {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	ft := &fakeSIPTimer{d: d, f: f}
+	ts.timers = append(ts.timers, ft)
+	return ft
+}
+
+// pending returns the durations of armed timers, in creation order.
+func (ts *fakeSIPTimers) pending() []time.Duration {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	out := []time.Duration{}
+	for _, ft := range ts.timers {
+		if !ft.stopped && !ft.fired {
+			out = append(out, ft.d)
+		}
+	}
+	return out
+}
+
+// fire runs the oldest armed timer of duration d.
+func (ts *fakeSIPTimers) fire(t *testing.T, d time.Duration) {
+	t.Helper()
+	ts.mu.Lock()
+	var target *fakeSIPTimer
+	for _, ft := range ts.timers {
+		if !ft.stopped && !ft.fired && ft.d == d {
+			target = ft
+			break
+		}
+	}
+	require.NotNil(t, target, "no armed %v timer", d)
+	target.fired = true
+	ts.mu.Unlock()
+	target.f()
+}
+
+// stubSIPDialogs gives the test a fresh dialog table and hand-fired timers;
+// the idle timeout is one minute.
+func stubSIPDialogs(t *testing.T) *fakeSIPTimers {
+	t.Helper()
+	timers := &fakeSIPTimers{}
+	origTable, origAfter, origIdle := sipDialogs, sipAfterFunc, sipIdle
+	sipDialogs = newSIPDialogTable(maxSIPDialogs)
+	sipAfterFunc = timers.afterFunc
+	sipIdle = time.Minute
+	t.Cleanup(func() { sipDialogs, sipAfterFunc, sipIdle = origTable, origAfter, origIdle })
+	return timers
+}
+
+const pplsipCallID = "1492163839-465544234-336545636"
+
+// pplsipInDialog builds an in-dialog request of the pplsip call.
+func pplsipInDialog(method string, seq int, callID string) []byte {
+	return []byte(method + " sip:14500972598112101@1.2.3.4 SIP/2.0\r\n" +
+		"Via: SIP/2.0/UDP 0.0.0.0:65145;branch=z9hG4bK-" + strings.ToLower(method) + "\r\n" +
+		"Max-Forwards: 70\r\n" +
+		"From: <sip:14500163172166221:5060@1.2.3.4>;tag=414451770\r\n" +
+		"To: <sip:14500972598112101@1.2.3.4>;tag=feedface\r\n" +
+		"Call-ID: " + callID + "\r\n" +
+		"CSeq: " + strconv.Itoa(seq) + " " + method + "\r\n" +
+		"User-Agent: pplsip\r\n" +
+		"Content-Length: 0\r\n\r\n")
+}
+
+func inviteWithCallID(callID string) []byte {
+	return []byte(strings.Replace(string(pplsipInviteRead1), pplsipCallID, callID, 1))
+}
+
+type sipFrameSummary struct {
+	direction, command, status, callID string
+	payload                            string
+}
+
+func summarizeSIP(t *testing.T, decoded interface{}) []sipFrameSummary {
+	t.Helper()
+	events, ok := decoded.([]parsedSIP)
+	require.True(t, ok)
+	out := make([]sipFrameSummary, len(events))
+	for i, e := range events {
+		out[i] = sipFrameSummary{e.Direction, e.Command, e.Status, e.CallID, string(e.Payload)}
+	}
+	return out
+}
+
+var (
+	pplsipSrc = &net.UDPAddr{IP: net.ParseIP("51.75.106.116"), Port: 65145}
+	pplsipDst = &net.UDPAddr{IP: net.ParseIP("1.2.3.4"), Port: 5060}
+)
+
+func sendSIP(t *testing.T, h *recordingHoneypot, src *net.UDPAddr, data []byte) {
+	t.Helper()
+	require.NoError(t, HandleSIP(context.Background(), src, pplsipDst, data, connection.Metadata{}, testLogger{}, h))
+}
+
+func TestHandleSIPDialogInviteAckBye(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+	ack := pplsipInDialog("ACK", 1, pplsipCallID)
+	bye := pplsipInDialog("BYE", 2, pplsipCallID)
+
+	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
+	require.Len(t, h.replies, 3)
+	require.Empty(t, h.produced)
+	require.Equal(t, []time.Duration{time.Minute, sipT1}, timers.pending())
+
+	sendSIP(t, h, pplsipSrc, ack)
+	require.Len(t, h.replies, 3)
+	require.Empty(t, h.produced)
+	// the ACK stops the 200 OK resends
+	require.Equal(t, []time.Duration{time.Minute}, timers.pending())
+
+	sendSIP(t, h, pplsipSrc, bye)
+	require.Len(t, h.replies, 4)
+	require.True(t, strings.HasPrefix(string(h.replies[3]), "SIP/2.0 200 OK\r\n"))
+	require.Empty(t, timers.pending())
+
+	require.Len(t, h.produced, 1)
+	require.Equal(t, "sip", h.produced[0].handler)
+	require.Equal(t, connection.EndClientClose, h.produced[0].endReason)
+	require.Equal(t, pplsipInviteRead1, h.produced[0].payload)
+	r := replyStrings(h.replies)
+	require.Equal(t, []sipFrameSummary{
+		{"read", "INVITE", "", pplsipCallID, string(pplsipInviteRead1)},
+		{"write", "", "100", pplsipCallID, r[0]},
+		{"write", "", "180", pplsipCallID, r[1]},
+		{"write", "", "200", pplsipCallID, r[2]},
+		{"read", "ACK", "", pplsipCallID, string(ack)},
+		{"read", "BYE", "", pplsipCallID, string(bye)},
+		{"write", "", "200", pplsipCallID, r[3]},
+	}, summarizeSIP(t, h.produced[0].decoded))
+
+	// a BYE retransmitted after the dialog ended is an event of its own
+	sendSIP(t, h, pplsipSrc, bye)
+	require.Len(t, h.produced, 2)
+	require.Len(t, summarizeSIP(t, h.produced[1].decoded), 2)
+}
+
+func TestHandleSIPDialogIdleTimeoutResendsOK(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+
+	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
+	ok := h.replies[2]
+
+	// T1 doubling up to T2 until 64*T1 has passed (RFC 3261 §13.3.1.4)
+	schedule := []time.Duration{sipT1, 2 * sipT1, 4 * sipT1, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2}
+	for i, d := range schedule {
+		timers.fire(t, d)
+		require.Len(t, h.replies, 4+i, "resend %d", i)
+		require.Equal(t, ok, h.replies[3+i])
+	}
+	// the next firing passes 64*T1: hang up with a BYE like Asterisk/pjsip
+	// and produce right away instead of waiting for the idle timeout
+	timers.fire(t, sipT2)
+	wantBye := "BYE sip:14500163172166221:5060@212.129.10.158:65145 SIP/2.0\r\n" +
+		"Via: SIP/2.0/UDP 1.2.3.4:5060;rport;branch=z9hG4bKPjfeedface\r\n" +
+		"Max-Forwards: 70\r\n" +
+		"From: <sip:14500972598112101@1.2.3.4>;tag=feedface\r\n" +
+		"To: <sip:14500163172166221:5060@1.2.3.4>;tag=414451770\r\n" +
+		"Call-ID: " + pplsipCallID + "\r\n" +
+		"CSeq: 63933 BYE\r\n" +
+		`Reason: SIP ;cause=408 ;text="Request Timeout"` + "\r\n" +
+		"User-Agent: Asterisk PBX 18.20.0\r\n" +
+		"Content-Length: 0\r\n\r\n"
+	require.Len(t, h.replies, 4+len(schedule))
+	require.Equal(t, wantBye, string(h.replies[3+len(schedule)]))
+	require.Empty(t, timers.pending())
+
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndTimeout, h.produced[0].endReason)
+	frames := summarizeSIP(t, h.produced[0].decoded)
+	require.Len(t, frames, 1+3+len(schedule)+1)
+	require.Equal(t, "INVITE", frames[0].command)
+	for _, f := range frames[4 : 4+len(schedule)] {
+		require.Equal(t, sipFrameSummary{"write", "", "200", pplsipCallID, string(ok)}, f)
+	}
+	require.Equal(t, sipFrameSummary{"write", "BYE", "", pplsipCallID, wantBye}, frames[len(frames)-1])
+	require.Empty(t, sipDialogs.dialogs)
+
+	// the caller's 200 OK to our BYE lands after the dialog is gone: it is
+	// a standalone event and gets no reply
+	byeOK := []byte("SIP/2.0 200 OK\r\n" +
+		"Via: SIP/2.0/UDP 1.2.3.4:5060;rport;branch=z9hG4bKPjfeedface\r\n" +
+		"From: <sip:14500972598112101@1.2.3.4>;tag=feedface\r\n" +
+		"To: <sip:14500163172166221:5060@1.2.3.4>;tag=414451770\r\n" +
+		"Call-ID: " + pplsipCallID + "\r\n" +
+		"CSeq: 63933 BYE\r\n" +
+		"Content-Length: 0\r\n\r\n")
+	sendSIP(t, h, pplsipSrc, byeOK)
+	require.Len(t, h.produced, 2)
+	require.Len(t, h.replies, 4+len(schedule))
+	require.Equal(t, []sipFrameSummary{{"read", "", "200", pplsipCallID, string(byeOK)}}, summarizeSIP(t, h.produced[1].decoded))
+}
+
+func TestHandleSIPDialogAckPreventsBye(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+
+	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
+	timers.fire(t, sipT1)
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("ACK", 1, pplsipCallID))
+	// no resend timer left to reach 64*T1, so no BYE
+	require.Equal(t, []time.Duration{time.Minute}, timers.pending())
+
+	timers.fire(t, time.Minute)
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndTimeout, h.produced[0].endReason)
+	for _, r := range h.replies {
+		require.False(t, strings.HasPrefix(string(r), "BYE "))
+	}
+	require.Len(t, h.replies, 4)
+}
+
+func TestHandleSIPDialogInviteRetransmitReplaysOK(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+
+	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
+	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
+	// same 200 OK (same To tag and SDP), not a second 100/180/200
+	require.Len(t, h.replies, 4)
+	require.Equal(t, h.replies[2], h.replies[3])
+
+	timers.fire(t, time.Minute)
+	require.Len(t, h.produced, 1)
+	frames := summarizeSIP(t, h.produced[0].decoded)
+	require.Len(t, frames, 6)
+	require.Equal(t, "INVITE", frames[4].command)
+	require.Equal(t, "200", frames[5].status)
+}
+
+func TestHandleSIPDialogsStaySeparate(t *testing.T) {
+	stubSIPResponder(t)
+	stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+	other := &net.UDPAddr{IP: net.ParseIP("192.0.2.7"), Port: 65145}
+
+	sendSIP(t, h, pplsipSrc, inviteWithCallID("call-a"))
+	sendSIP(t, h, pplsipSrc, inviteWithCallID("call-b"))
+	// same Call-ID from another source is another dialog
+	sendSIP(t, h, other, inviteWithCallID("call-a"))
+	require.Empty(t, h.produced)
+
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("BYE", 2, "call-a"))
+	require.Len(t, h.produced, 1)
+	sendSIP(t, h, other, pplsipInDialog("BYE", 2, "call-a"))
+	require.Len(t, h.produced, 2)
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("BYE", 2, "call-b"))
+	require.Len(t, h.produced, 3)
+
+	for i, callID := range []string{"call-a", "call-a", "call-b"} {
+		frames := summarizeSIP(t, h.produced[i].decoded)
+		require.Len(t, frames, 6, "event %d", i)
+		for _, f := range frames {
+			require.Equal(t, callID, f.callID, "event %d", i)
+		}
+		require.Equal(t, connection.EndClientClose, h.produced[i].endReason)
+	}
+}
+
+func TestHandleSIPDialogCancel(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+
+	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("CANCEL", 1, pplsipCallID))
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndClientClose, h.produced[0].endReason)
+	frames := summarizeSIP(t, h.produced[0].decoded)
+	require.Len(t, frames, 6)
+	require.Equal(t, "CANCEL", frames[4].command)
+	require.Empty(t, timers.pending())
+}
+
+func TestHandleSIPDialogEviction(t *testing.T) {
+	stubSIPResponder(t)
+	stubSIPDialogs(t)
+	sipDialogs = newSIPDialogTable(2)
+	h := &recordingHoneypot{}
+
+	sendSIP(t, h, pplsipSrc, inviteWithCallID("call-a"))
+	sendSIP(t, h, pplsipSrc, inviteWithCallID("call-b"))
+	// activity on call-a makes call-b the least recently active
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("ACK", 1, "call-a"))
+	require.Empty(t, h.produced)
+
+	sendSIP(t, h, pplsipSrc, inviteWithCallID("call-c"))
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndEvicted, h.produced[0].endReason)
+	require.Equal(t, "call-b", summarizeSIP(t, h.produced[0].decoded)[0].callID)
+	require.Len(t, sipDialogs.dialogs, 2)
+}
+
+func TestHandleSIPDialogMaxFrames(t *testing.T) {
+	stubSIPResponder(t)
+	stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+
+	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
+	for seq := 2; len(h.produced) == 0; seq++ {
+		require.Less(t, seq, maxSIPDialogFrames, "dialog never hit the frame cap")
+		sendSIP(t, h, pplsipSrc, pplsipInDialog("OPTIONS", seq, pplsipCallID))
+	}
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndMaxFrames, h.produced[0].endReason)
+	require.Len(t, summarizeSIP(t, h.produced[0].decoded), maxSIPDialogFrames)
+	require.Empty(t, sipDialogs.dialogs)
+}
+
+func TestHandleSIPDialogFlushedOnShutdown(t *testing.T) {
+	stubSIPResponder(t)
+	stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	require.NoError(t, HandleSIP(ctx, pplsipSrc, pplsipDst, pplsipInviteRead1, connection.Metadata{}, testLogger{}, h))
+	cancel()
+	require.Eventually(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.produced) == 1
+	}, time.Second, time.Millisecond)
+	require.Equal(t, connection.EndHandlerClose, h.produced[0].endReason)
 }

@@ -283,3 +283,39 @@ func TestLooksLikeSIP(t *testing.T) {
 		require.False(t, LooksLikeSIP(data), "%q", data)
 	}
 }
+
+func TestAckTimeoutBye(t *testing.T) {
+	r := testResponder()
+	invite := parseRequest(t, pplsipInvite)
+	ok := r.Reply(invite, nil)[2]
+
+	bye := r.AckTimeoutBye(invite, ok)
+	require.NotNil(t, bye)
+	// goes to the caller's Contact; From/To swap sides and keep both tags;
+	// Reason matches pjsip's ACK-timeout BYE
+	require.Equal(t, "BYE sip:14500163172166221:5060@212.129.10.158:65145 SIP/2.0\r\n"+
+		"Via: SIP/2.0/UDP 1.2.3.4:5060;rport;branch=z9hG4bKPj0123456789abcdef\r\n"+
+		"Max-Forwards: 70\r\n"+
+		"From: <sip:14500972598112101@1.2.3.4>;tag=0123456789abcdef\r\n"+
+		"To: <sip:14500163172166221:5060@1.2.3.4>;tag=414451770\r\n"+
+		"Call-ID: 1492163839-465544234-336545636\r\n"+
+		"CSeq: 18059 BYE\r\n"+
+		`Reason: SIP ;cause=408 ;text="Request Timeout"`+"\r\n"+
+		"User-Agent: Asterisk PBX 18.20.0\r\n"+
+		"Content-Length: 0\r\n\r\n", bye.String())
+
+	// building the BYE must not touch the stored INVITE/200 OK
+	to, _ := ok.To()
+	require.Equal(t, "0123456789abcdef", mustParam(t, to.Params, "tag"))
+	from, _ := invite.From()
+	require.Equal(t, "414451770", mustParam(t, from.Params, "tag"))
+}
+
+func TestAckTimeoutByeFallsBackToFrom(t *testing.T) {
+	r := testResponder()
+	invite := parseRequest(t, []byte(strings.Replace(string(pplsipInvite),
+		"Contact: <sip:14500163172166221:5060@212.129.10.158:65145>\r\n", "", 1)))
+	bye := r.AckTimeoutBye(invite, r.Reply(invite, nil)[2])
+	require.NotNil(t, bye)
+	require.Equal(t, "sip:14500163172166221:5060@1.2.3.4", bye.Recipient().String())
+}

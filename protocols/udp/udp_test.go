@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/stretchr/testify/require"
@@ -80,12 +81,15 @@ var sipviciousInviteRead1 = []byte("INVITE sip:100@1.2.3.4 SIP/2.0\r\nVia: SIP/2
 
 func TestHandleUDPPeeksSIP(t *testing.T) {
 	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
 	h := &recordingHoneypot{}
 	src := &net.UDPAddr{IP: net.ParseIP("172.110.223.188"), Port: 5069}
 	dst := &net.UDPAddr{IP: net.ParseIP("1.2.3.4"), Port: 65476}
 
 	err := HandleUDP(context.Background(), src, dst, sipviciousInviteRead1, connection.Metadata{}, testLogger{}, h)
 	require.NoError(t, err)
+	// the INVITE opens a dialog, produced once it goes idle
+	timers.fire(t, time.Minute)
 	require.Len(t, h.produced, 1)
 	require.Equal(t, "sip", h.produced[0].handler)
 	require.Equal(t, sipviciousInviteRead1, h.produced[0].payload)

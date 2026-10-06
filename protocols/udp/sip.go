@@ -56,25 +56,23 @@ func sipDecoded(direction string, msg sip.Message, payload []byte) parsedSIP {
 // sipResponder builds the UDP SIP replies; tests swap it for deterministic tags and nonces.
 var sipResponder = sipproto.NewResponder()
 
-// HandleSIP parses a UDP SIP datagram, answers it like a misconfigured Asterisk
-// PBX (OPTIONS and REGISTER 200, INVITE 100/180/200 with SDP), and emits
-// one producer event with per-direction decoded frames (same shape as TCP SIP).
+func parseSIP(data []byte) (sip.Message, error) {
+	return parser.NewPacketParser(log.NewDefaultLogrusLogger()).ParseMessage(data)
+}
+
+// HandleSIP parses a UDP SIP datagram and answers it like a misconfigured
+// Asterisk PBX (OPTIONS and REGISTER 200, INVITE 100/180/200 with SDP).
+// An INVITE opens a dialog keyed by source IP and Call-ID: later datagrams
+// with that key (ACK, BYE, CANCEL, retransmits) join it, and the dialog is
+// produced as one event when it ends (BYE or CANCEL answered, idle timeout,
+// frame cap or table eviction). Any other datagram is one event of its own.
 func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	payload := make([]byte, min(len(data), maxSIPPayload))
 	copy(payload, data[:len(payload)])
 	truncated := len(data) > maxSIPPayload
 
-	events := []parsedSIP{}
-	endReason := connection.EndHandlerClose
-	defer func() {
-		md.EndReason = endReason
-		if err := h.ProduceUDP("sip", srcAddr, dstAddr, md, helpers.FirstOrEmpty[parsedSIP](events).Payload, events); err != nil {
-			logger.Error("Failed to produce message", slog.String("protocol", "sip"), producer.ErrAttr(err))
-		}
-	}()
-
 	if len(payload) == 0 {
-		return nil
+		return handleSIPDatagram(srcAddr, dstAddr, nil, parsedSIP{}, nil, md, logger, h)
 	}
 
 	logger.Info("SIP UDP packet received",
@@ -84,21 +82,54 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 		slog.Int("dest_port", dstAddr.Port),
 	)
 
-	pp := parser.NewPacketParser(log.NewDefaultLogrusLogger())
-	msg, err := pp.ParseMessage(payload)
-	if err != nil {
-		frame := sipDecoded("read", nil, payload)
-		frame.Truncated = truncated
-		events = append(events, frame)
-		logger.Debug("Failed to parse SIP message", slog.String("protocol", "sip"), producer.ErrAttr(err))
-		endReason = connection.EndReadError
-		return err
-	}
-
+	msg, err := parseSIP(payload)
 	frame := sipDecoded("read", msg, payload)
 	frame.Truncated = truncated
-	events = append(events, frame)
+	if err != nil {
+		logger.Debug("Failed to parse SIP message", slog.String("protocol", "sip"), producer.ErrAttr(err))
+		return handleSIPDatagram(srcAddr, dstAddr, nil, frame, err, md, logger, h)
+	}
 
+	if frame.CallID != "" {
+		key := sipDialogKey(srcAddr, frame.CallID)
+		d := sipDialogs.get(key)
+		if req, ok := msg.(sip.Request); ok && req.Method() == sip.INVITE && d == nil {
+			var evicted *sipDialog
+			d, evicted = sipDialogs.open(key, func() *sipDialog {
+				return newSIPDialog(ctx, key, sipDialogs, srcAddr, dstAddr, md, logger, h)
+			})
+			if evicted != nil {
+				evicted.finish(connection.EndEvicted)
+			}
+		}
+		if d != nil {
+			if handled, err := d.handle(msg, frame); handled {
+				return err
+			}
+		}
+	}
+	return handleSIPDatagram(srcAddr, dstAddr, msg, frame, nil, md, logger, h)
+}
+
+// handleSIPDatagram answers a datagram outside any dialog and produces it as
+// one event. parseErr is the parse failure for an unparsable datagram.
+func handleSIPDatagram(srcAddr, dstAddr *net.UDPAddr, msg sip.Message, frame parsedSIP, parseErr error, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+	events := []parsedSIP{}
+	if frame.Payload != nil {
+		events = append(events, frame)
+	}
+	endReason := connection.EndHandlerClose
+	defer func() {
+		md.EndReason = endReason
+		if err := h.ProduceUDP("sip", srcAddr, dstAddr, md, helpers.FirstOrEmpty[parsedSIP](events).Payload, events); err != nil {
+			logger.Error("Failed to produce message", slog.String("protocol", "sip"), producer.ErrAttr(err))
+		}
+	}()
+
+	if parseErr != nil {
+		endReason = connection.EndReadError
+		return parseErr
+	}
 	req, ok := msg.(sip.Request)
 	if !ok {
 		return nil

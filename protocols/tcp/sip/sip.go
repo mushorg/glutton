@@ -431,3 +431,70 @@ func isMethod(s string) bool {
 	}
 	return true
 }
+
+// ackTimeoutReason is the Reason header pjsip (and so Asterisk chan_pjsip)
+// puts on the BYE it sends when a 2xx to INVITE is never ACKed: the INVITE
+// transaction ends with 408 and add_reason_warning_hdr formats it as
+// "SIP ;cause=%u ;text=\"%s\"" (pjsip-ua/sip_inv.c).
+const ackTimeoutReason = `SIP ;cause=408 ;text="Request Timeout"`
+
+// AckTimeoutBye builds the BYE that tears down a call whose 200 OK (ok, our
+// answer to invite) was never ACKed, as pjsip does after 64*T1. It goes to
+// the caller's Contact, with From/To swapped from the caller's view, a new
+// CSeq and Via branch, and the Via sent-by the caller addressed the
+// honeypot at. It returns nil when invite or ok lacks dialog headers.
+func (r *Responder) AckTimeoutBye(invite gosip.Request, ok gosip.Response) gosip.Request {
+	from, hasFrom := invite.From()
+	to, hasTo := ok.To()
+	callID, hasCallID := invite.CallID()
+	if !hasFrom || !hasTo || !hasCallID || from.Address == nil || to.Address == nil {
+		return nil
+	}
+	target := from.Address
+	if hs := invite.GetHeaders("Contact"); len(hs) > 0 {
+		if contact, isContact := hs[0].(*gosip.ContactHeader); isContact && contact.Address != nil {
+			if uri, isURI := contact.Address.(gosip.Uri); isURI {
+				target = uri
+			}
+		}
+	}
+
+	host, portStr, _ := localTarget(invite)
+	portNum, _ := strconv.Atoi(portStr)
+	port := gosip.Port(portNum)
+	params := gosip.NewParams()
+	params.Add("rport", nil)
+	params.Add("branch", gosip.String{Str: "z9hG4bKPj" + r.Token()})
+	via := gosip.ViaHeader{&gosip.ViaHop{
+		ProtocolName:    "SIP",
+		ProtocolVersion: "2.0",
+		Transport:       "UDP",
+		Host:            host,
+		Port:            &port,
+		Params:          params,
+	}}
+	maxForwards := gosip.MaxForwards(70)
+	localFrom := &gosip.FromHeader{DisplayName: to.DisplayName, Address: to.Address.Clone(), Params: cloneParams(to.Params)}
+	remoteTo := &gosip.ToHeader{DisplayName: from.DisplayName, Address: from.Address.Clone(), Params: cloneParams(from.Params)}
+	cseq := &gosip.CSeq{SeqNo: uint32(tokenValue(r.Token())%0xffff) + 1, MethodName: gosip.BYE}
+
+	bye := gosip.NewRequest("", gosip.BYE, target.Clone(), invite.SipVersion(), []gosip.Header{
+		via,
+		&maxForwards,
+		localFrom,
+		remoteTo,
+		callID,
+		cseq,
+		&gosip.GenericHeader{HeaderName: "Reason", Contents: ackTimeoutReason},
+		&gosip.GenericHeader{HeaderName: "User-Agent", Contents: serverAgent},
+	}, "", invite.Fields())
+	bye.SetBody("", true)
+	return bye
+}
+
+func cloneParams(p gosip.Params) gosip.Params {
+	if p == nil {
+		return nil
+	}
+	return p.Clone()
+}
