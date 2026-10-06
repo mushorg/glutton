@@ -110,7 +110,8 @@ func handleSIP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 
 		payload := make([]byte, n)
 		copy(payload, buffer[:n])
-		msg, err := pp.ParseMessage(payload)
+		// bare-LF lines are accepted; the header end is not guessed on a stream
+		msg, err := pp.ParseMessage(sipproto.NormalizeHeaders(payload, false))
 		if err != nil {
 			server.events = append(server.events, sipDecoded("read", nil, payload))
 			endReason = connection.EndReadError

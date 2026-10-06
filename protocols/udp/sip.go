@@ -56,8 +56,11 @@ func sipDecoded(direction string, msg sip.Message, payload []byte) parsedSIP {
 // sipResponder builds the UDP SIP replies; tests swap it for deterministic tags and nonces.
 var sipResponder = sipproto.NewResponder()
 
-func parseSIP(data []byte) (sip.Message, error) {
-	return parser.NewPacketParser(log.NewDefaultLogrusLogger()).ParseMessage(data)
+// parseSIP parses one datagram, tolerating bare-LF lines. A complete
+// datagram may also omit the empty line after the headers; a truncated one
+// may not, as its end is not the end of the message. data is not modified.
+func parseSIP(data []byte, complete bool) (sip.Message, error) {
+	return parser.NewPacketParser(log.NewDefaultLogrusLogger()).ParseMessage(sipproto.NormalizeHeaders(data, complete))
 }
 
 // HandleSIP parses a UDP SIP datagram and answers it like a misconfigured
@@ -82,7 +85,7 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 		slog.Int("dest_port", dstAddr.Port),
 	)
 
-	msg, err := parseSIP(payload)
+	msg, err := parseSIP(payload, !truncated)
 	frame := sipDecoded("read", msg, payload)
 	frame.Truncated = truncated
 	if err != nil {

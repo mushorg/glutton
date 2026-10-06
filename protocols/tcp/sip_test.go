@@ -115,6 +115,26 @@ func TestHandleSIPTCPRegisterThenCall(t *testing.T) {
 	}, produced.decoded)
 }
 
+func TestHandleSIPTCPRegisterBareLF(t *testing.T) {
+	client, hp, done := startSIP(t)
+	register := []byte(strings.ReplaceAll(string(sipRegisterRead1), "\r\n", "\n"))
+
+	_, err := client.Write(register)
+	require.NoError(t, err)
+	registered := readSIPReply(t, client)
+	require.True(t, strings.HasPrefix(registered, "SIP/2.0 200 OK\r\n"), registered)
+	require.Contains(t, registered, "Contact: <sip:100@185.243.5.243:49618>;expires=3600\r\n")
+	require.NoError(t, client.Close())
+
+	produced := waitSIP(t, hp, done)
+	events, ok := produced.decoded.([]parsedSIP)
+	require.True(t, ok)
+	require.Len(t, events, 2)
+	require.Equal(t, "REGISTER", events[0].Command)
+	require.Equal(t, register, events[0].Payload) // raw wire bytes
+	require.Equal(t, "200", events[1].Status)
+}
+
 func TestHandleSIPTCPEarlyDisconnectStillProduces(t *testing.T) {
 	client, hp, done := startSIP(t)
 	require.NoError(t, client.Close())

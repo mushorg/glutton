@@ -4,6 +4,7 @@
 package sip
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -394,19 +395,55 @@ func Describe(msg gosip.Message) Info {
 	return info
 }
 
+// NormalizeHeaders rewrites the header lines of a SIP message to end in CRLF,
+// so the strict gosip parser accepts clients that end lines with a bare LF
+// (real Asterisk does). The body after the first empty line is kept as is.
+// With terminate set, a message with no empty line has its headers ended at
+// the end of data: a datagram without Content-Length carries its body to the
+// end of the packet (RFC 3261 section 18.3), so it may omit the empty line too.
+// Well-formed CRLF messages come back byte-identical.
+func NormalizeHeaders(data []byte, terminate bool) []byte {
+	if len(data) == 0 {
+		return data
+	}
+	out := make([]byte, 0, len(data)+64)
+	rest := data
+	for len(rest) > 0 {
+		line, tail, found := bytes.Cut(rest, []byte("\n"))
+		if !found {
+			if !terminate {
+				return append(out, rest...)
+			}
+			out = append(out, bytes.TrimSuffix(line, []byte("\r"))...)
+			return append(out, "\r\n\r\n"...)
+		}
+		line = bytes.TrimSuffix(line, []byte("\r"))
+		out = append(append(out, line...), '\r', '\n')
+		rest = tail
+		if len(line) == 0 {
+			return append(out, rest...)
+		}
+	}
+	if terminate {
+		out = append(out, '\r', '\n')
+	}
+	return out
+}
+
 // maxStartLine bounds how far LooksLikeSIP scans for the end of the start line.
 const maxStartLine = 512
 
 // LooksLikeSIP reports whether data starts with a SIP request line
-// ("METHOD sip:... SIP/2.0") or status line ("SIP/2.0 200 OK"). The generic
+// ("METHOD sip:... SIP/2.0") or status line ("SIP/2.0 200 OK"), ended by CRLF
+// or a bare LF. The generic
 // UDP handler uses it to route SIP sent to non-standard ports.
 func LooksLikeSIP(data []byte) bool {
 	line := data[:min(len(data), maxStartLine)]
-	end := strings.Index(string(line), "\r\n")
+	end := bytes.IndexByte(line, '\n')
 	if end < 0 {
 		return false
 	}
-	start := string(line[:end])
+	start := strings.TrimSuffix(string(line[:end]), "\r")
 	if strings.HasPrefix(start, "SIP/2.0 ") {
 		code, _, _ := strings.Cut(start[len("SIP/2.0 "):], " ")
 		n, err := strconv.Atoi(code)

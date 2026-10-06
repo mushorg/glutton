@@ -229,7 +229,7 @@ func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
 // form of data, or nil to re-parse it.
 func (d *sipDialog) writeLocked(data []byte, msg sip.Message) error {
 	if msg == nil {
-		msg, _ = parseSIP(data)
+		msg, _ = parseSIP(data, true)
 	}
 	d.events = append(d.events, sipDecoded("write", msg, data))
 	if err := d.h.ReplyUDP(d.src, d.dst, data); err != nil {

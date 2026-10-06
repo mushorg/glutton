@@ -115,6 +115,20 @@ func TestHandleUDPPeeksSIP(t *testing.T) {
 	}
 }
 
+func TestHandleUDPPeeksBareLFSIP(t *testing.T) {
+	stubSIPResponder(t)
+	h := &recordingHoneypot{}
+	src := &net.UDPAddr{IP: net.ParseIP("162.19.19.234"), Port: 60090}
+	dst := &net.UDPAddr{IP: net.ParseIP("1.2.3.4"), Port: 15060}
+
+	err := HandleUDP(context.Background(), src, dst, lfRegisterRead1, connection.Metadata{}, testLogger{}, h)
+	require.NoError(t, err)
+	require.Len(t, h.produced, 1)
+	require.Equal(t, "sip", h.produced[0].handler)
+	require.Len(t, h.replies, 1)
+	require.Contains(t, string(h.replies[0]), "SIP/2.0 200 OK\r\n")
+}
+
 func TestHandleUDPDoesNotPeekHTTPAsSIP(t *testing.T) {
 	t.Chdir(t.TempDir())
 	h := &recordingHoneypot{}

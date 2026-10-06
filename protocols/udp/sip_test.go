@@ -692,3 +692,104 @@ func TestHandleSIPDialogFlushedOnShutdown(t *testing.T) {
 	}, time.Second, time.Millisecond)
 	require.Equal(t, connection.EndHandlerClose, h.produced[0].endReason)
 }
+
+// read frame 1 of Ochi event a49a5a1a-059e-41b0-a803-b9bee477d99e: bare-LF
+// lines and no empty line after the headers (extension 201 REGISTER probe)
+var lfRegisterRead1 = []byte("REGISTER sip:201@1.2.3.4 SIP/2.0\n" +
+	"To: 201 <sip:201@1.2.3.4>\n" +
+	"From:  <sip:201@1.2.3.4>;tag=0c26cd11\n" +
+	"Via: SIP/2.0/UDP 1.2.3.4:60090;branch=1vh0c2pqk11odh0s8omrmmzl8hp70xtr4st0n847ocn9bg3r854qnyscvg5ats7s4j6fvxg;rport\n" +
+	"Call-ID: 1fae39cf1cb1c99e34205585834dbcba\n" +
+	"CSeq: 1 REGISTER\n" +
+	"Contact: <sip:201@1.2.3.4:60090>\n" +
+	"User-Agent: \n" +
+	"Max-forwards: 70\n" +
+	"Allow: INVITE, ACK, CANCEL, BYE, REFER\n" +
+	"Content-Type: application/sdp\n")
+
+func TestHandleSIPRegisterBareLF(t *testing.T) {
+	stubSIPResponder(t)
+	h := &recordingHoneypot{}
+	src := &net.UDPAddr{IP: net.ParseIP("162.19.19.234"), Port: 60090}
+	dst := &net.UDPAddr{IP: net.ParseIP("1.2.3.4"), Port: 5060}
+	orig := string(lfRegisterRead1)
+
+	err := HandleSIP(context.Background(), src, dst, lfRegisterRead1, connection.Metadata{}, testLogger{}, h)
+	require.NoError(t, err)
+	require.Equal(t, orig, string(lfRegisterRead1))
+
+	// the reply is CRLF even though the request was not
+	wantReply := "SIP/2.0 200 OK\r\n" +
+		"Via: SIP/2.0/UDP 1.2.3.4:60090;branch=1vh0c2pqk11odh0s8omrmmzl8hp70xtr4st0n847ocn9bg3r854qnyscvg5ats7s4j6fvxg;rport=60090;received=162.19.19.234\r\n" +
+		"From: <sip:201@1.2.3.4>;tag=0c26cd11\r\n" +
+		"To: \"201\" <sip:201@1.2.3.4>;tag=feedface\r\n" +
+		"Call-ID: 1fae39cf1cb1c99e34205585834dbcba\r\n" +
+		"CSeq: 1 REGISTER\r\n" +
+		"Server: Asterisk PBX 18.20.0\r\n" +
+		"Contact: <sip:201@1.2.3.4:60090>;expires=3600\r\n" +
+		"Expires: 3600\r\n" +
+		"Content-Length: 0\r\n\r\n"
+	require.Equal(t, [][]byte{[]byte(wantReply)}, h.replies)
+
+	require.Len(t, h.produced, 1)
+	require.Equal(t, "sip", h.produced[0].handler)
+	require.Equal(t, connection.EndHandlerClose, h.produced[0].endReason)
+	require.Equal(t, lfRegisterRead1, h.produced[0].payload)
+	require.Equal(t, []parsedSIP{
+		{
+			Direction: "read",
+			Command:   "REGISTER",
+			Path:      "sip:201@1.2.3.4",
+			From:      "sip:201@1.2.3.4",
+			To:        "sip:201@1.2.3.4",
+			CallID:    "1fae39cf1cb1c99e34205585834dbcba",
+			Payload:   lfRegisterRead1, // raw wire bytes, not the normalized form
+		},
+		{
+			Direction: "write",
+			Status:    "200",
+			From:      "sip:201@1.2.3.4",
+			To:        "sip:201@1.2.3.4",
+			CallID:    "1fae39cf1cb1c99e34205585834dbcba",
+			UserAgent: "Asterisk PBX 18.20.0",
+			Payload:   []byte(wantReply),
+		},
+	}, h.produced[0].decoded)
+}
+
+func TestHandleSIPDialogBareLF(t *testing.T) {
+	stubSIPResponder(t)
+	stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+	lf := func(data []byte) []byte {
+		return []byte(strings.ReplaceAll(string(data), "\r\n", "\n"))
+	}
+	invite := lf(pplsipInviteRead1)
+	ack := lf(pplsipInDialog("ACK", 1, pplsipCallID))
+	bye := lf(pplsipInDialog("BYE", 2, pplsipCallID))
+
+	sendSIP(t, h, pplsipSrc, invite)
+	require.Len(t, h.replies, 3)
+	require.Empty(t, h.produced)
+	sendSIP(t, h, pplsipSrc, ack)
+	sendSIP(t, h, pplsipSrc, bye)
+	require.Len(t, h.replies, 4)
+	for _, r := range h.replies {
+		require.NotContains(t, strings.ReplaceAll(string(r), "\r\n", ""), "\n", "reply must be CRLF: %q", r)
+	}
+	// the SDP answer is still built from the LF-only offer
+	require.Contains(t, string(h.replies[2]), "m=audio ")
+
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndClientClose, h.produced[0].endReason)
+	r := replyStrings(h.replies)
+	require.Equal(t, []sipFrameSummary{
+		{"read", "INVITE", "", pplsipCallID, string(invite)},
+		{"write", "", "100", pplsipCallID, r[0]},
+		{"write", "", "180", pplsipCallID, r[1]},
+		{"write", "", "200", pplsipCallID, r[2]},
+		{"read", "ACK", "", pplsipCallID, string(ack)},
+		{"read", "BYE", "", pplsipCallID, string(bye)},
+		{"write", "", "200", pplsipCallID, r[3]},
+	}, summarizeSIP(t, h.produced[0].decoded))
+}
