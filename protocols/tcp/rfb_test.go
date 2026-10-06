@@ -3,8 +3,10 @@ package tcp
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -271,6 +273,135 @@ func TestHandleRFBEarlyDisconnect(t *testing.T) {
 		{Direction: "write", Command: "ProtocolVersion", Version: "3.8", Payload: []byte("RFB 003.008\n")},
 		{Direction: "read", Command: "ProtocolVersion", Payload: []byte("RFB 00")},
 	}, produced.decoded)
+}
+
+// rfbNoneLogin runs a 3.8 None handshake up to ServerInit.
+func rfbNoneLogin(c rfbClient) {
+	c.t.Helper()
+	c.expect([]byte("RFB 003.008\n"))
+	c.send([]byte("RFB 003.008\n"))
+	c.expect([]byte{2, 2, 1})
+	c.send([]byte{1})
+	c.expect([]byte{0, 0, 0, 0})
+	c.send([]byte{1})
+	c.expect(rfb.ServerInit(rfbWidth, rfbHeight, rfb.DefaultPixelFormat, rfbDesktopName))
+}
+
+// expectNothing asserts the server sends nothing for a short while.
+func (c rfbClient) expectNothing() {
+	c.t.Helper()
+	require.NoError(c.t, c.conn.SetReadDeadline(time.Now().Add(100*time.Millisecond)))
+	n, err := c.conn.Read(make([]byte, 1))
+	require.Zero(c.t, n)
+	require.ErrorIs(c.t, err, os.ErrDeadlineExceeded)
+}
+
+// TestHandleRFBCensysFramebufferUpdate replays the Censys session from
+// https://ochi.mushmush.org/events/3c7ee349-e595-443d-8378-26607dc711fb,
+// which used to hang until timeout after its FramebufferUpdateRequest.
+func TestHandleRFBCensysFramebufferUpdate(t *testing.T) {
+	c, hp, done := startRFB(t)
+	setEncodings := []byte{0x02, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x21}
+	fullRequest := []byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x03, 0x00}
+	incremental := []byte{0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x03, 0x00}
+	update := rfb.FramebufferUpdate(rfb.Rect{Width: rfbWidth, Height: rfbHeight, Encoding: rfb.EncodingRaw, Data: rfb.RenderRaw(rfbDesktop, rfb.DefaultPixelFormat)})
+	require.Len(t, update, 16+rfbWidth*rfbHeight*4)
+
+	rfbNoneLogin(c)
+	c.send(setEncodings)
+	c.send(fullRequest)
+	c.expect(update)
+	c.send(incremental) // nothing changed, so no reply
+	c.expectNothing()
+	require.NoError(t, c.conn.Close())
+
+	produced := finishRFB(t, hp, done)
+	require.Equal(t, connection.EndClientClose, produced.endReason)
+	events := produced.decoded.([]parsedRFB)
+	require.Equal(t, []string{
+		"ProtocolVersion", "ProtocolVersion", "Security", "SecurityType", "SecurityResult", "ClientInit", "ServerInit",
+		"SetEncodings", "FramebufferUpdateRequest", "FramebufferUpdate", "FramebufferUpdateRequest",
+	}, rfbCommands(events))
+	require.Equal(t, []parsedRFB{
+		{Direction: "read", Command: "SetEncodings", Encodings: []int32{0, -223}, Payload: setEncodings},
+		{Direction: "read", Command: "FramebufferUpdateRequest", Payload: fullRequest},
+		{Direction: "write", Command: "FramebufferUpdate", Encodings: []int32{0}, Payload: update[:rfbMaxPayload], Truncated: true},
+		{Direction: "read", Command: "FramebufferUpdateRequest", Payload: incremental},
+	}, events[7:])
+}
+
+func TestHandleRFBIncrementalFirstRRE(t *testing.T) {
+	c, hp, done := startRFB(t)
+	rre := rfb.FramebufferUpdate(rfb.Rect{X: 100, Y: 700, Width: 924, Height: 68, Encoding: rfb.EncodingRRE, Data: rfb.RRE(rfbDesktop, rfb.DefaultPixelFormat, 100, 700, 924, 68)})
+
+	rfbNoneLogin(c)
+	c.send([]byte{2, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0}) // RRE, Raw
+	// incremental, but nothing was sent yet; the rect is clamped to 1024x768
+	c.send([]byte{3, 1, 0, 100, 0x02, 0xbc, 0x10, 0x00, 0x10, 0x00})
+	c.expect(rre)
+	require.NoError(t, c.conn.Close())
+
+	events := finishRFB(t, hp, done).decoded.([]parsedRFB)
+	last := events[len(events)-1]
+	require.Equal(t, parsedRFB{Direction: "write", Command: "FramebufferUpdate", Encodings: []int32{rfb.EncodingRRE}, Payload: rre}, last)
+	require.Equal(t, uint32(1), binary.BigEndian.Uint32(rre[16:20])) // only the panel intersects
+}
+
+func TestHandleRFBSetPixelFormat(t *testing.T) {
+	c, hp, done := startRFB(t)
+	pf := rfb.PixelFormat{BPP: 16, Depth: 16, TrueColour: true, RedMax: 31, GreenMax: 63, BlueMax: 31, RedShift: 11, GreenShift: 5}
+	px := pf.Pixel(rfbDesktop.Background)
+
+	rfbNoneLogin(c)
+	c.send(append([]byte{0, 0, 0, 0}, pf.Bytes()...))
+	c.send([]byte{3, 0, 0, 0, 0, 0, 0, 2, 0, 1}) // 2x1 at the origin, Raw
+	c.expect(rfb.FramebufferUpdate(rfb.Rect{Width: 2, Height: 1, Encoding: rfb.EncodingRaw, Data: append(px, px...)}))
+	require.NoError(t, c.conn.Close())
+
+	events := finishRFB(t, hp, done).decoded.([]parsedRFB)
+	require.Equal(t, []string{"SetPixelFormat", "FramebufferUpdateRequest", "FramebufferUpdate"}, rfbCommands(events[7:]))
+}
+
+func TestHandleRFBUpdateBudget(t *testing.T) {
+	c, hp, done := startRFB(t)
+	full := []byte{3, 0, 0, 0, 0, 0, 0x04, 0x00, 0x03, 0x00}
+	size := 16 + rfbWidth*rfbHeight*4
+	allowed := rfbMaxUpdateBytes / size
+
+	rfbNoneLogin(c)
+	for range allowed {
+		c.send(full)
+		require.NoError(t, c.conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+		_, err := io.CopyN(io.Discard, c.conn, int64(size))
+		require.NoError(t, err)
+	}
+	c.send(full) // over budget: unanswered
+	c.expectNothing()
+	require.NoError(t, c.conn.Close())
+
+	events := finishRFB(t, hp, done).decoded.([]parsedRFB)
+	require.Len(t, events, 7+2*allowed+1)
+	require.Equal(t, "FramebufferUpdateRequest", events[len(events)-1].Command)
+}
+
+func TestHandleRFBDisconnectDuringUpdate(t *testing.T) {
+	c, hp, done := startRFB(t)
+
+	rfbNoneLogin(c)
+	c.send([]byte{3, 0, 0, 0, 0, 0, 0x04, 0x00, 0x03, 0x00})
+	c.expect([]byte{0, 0, 0, 1}) // update header, then hang up mid-frame
+	require.NoError(t, c.conn.Close())
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	produced := waitProduced(t, hp)
+	require.Equal(t, connection.EndWriteError, produced.endReason)
+	events := produced.decoded.([]parsedRFB)
+	require.Equal(t, "FramebufferUpdateRequest", events[len(events)-1].Command)
 }
 
 func rfbCommands(events []parsedRFB) []string {

@@ -240,3 +240,216 @@ func KeysymName(sym uint32) string {
 	}
 	return fmt.Sprintf("0x%04x", sym)
 }
+
+// ParsePixelFormat decodes a SetPixelFormat header (3 padding bytes followed
+// by PIXEL_FORMAT). Only 8, 16 and 32 bpp are valid per RFC 6143 §7.4.
+func ParsePixelFormat(header []byte) (PixelFormat, bool) {
+	if len(header) < 19 {
+		return PixelFormat{}, false
+	}
+	b := header[3:]
+	pf := PixelFormat{
+		BPP: b[0], Depth: b[1], BigEndian: b[2] != 0, TrueColour: b[3] != 0,
+		RedMax:   binary.BigEndian.Uint16(b[4:6]),
+		GreenMax: binary.BigEndian.Uint16(b[6:8]),
+		BlueMax:  binary.BigEndian.Uint16(b[8:10]),
+		RedShift: b[10], GreenShift: b[11], BlueShift: b[12],
+	}
+	switch pf.BPP {
+	case 8, 16, 32:
+		return pf, true
+	}
+	return PixelFormat{}, false
+}
+
+// Colour is an 8-bit-per-channel RGB colour.
+type Colour struct{ R, G, B uint8 }
+
+func scale(v uint8, max uint16) uint32 {
+	return uint32(v) * uint32(max) / 255
+}
+
+// Pixel encodes a colour in the pixel format. Colour-map formats get a
+// BGR233 index; the honeypot never sends SetColourMapEntries, so the colours
+// are wrong but the stream stays in sync.
+func (p PixelFormat) Pixel(c Colour) []byte {
+	var v uint32
+	if p.TrueColour {
+		v = scale(c.R, p.RedMax)<<p.RedShift | scale(c.G, p.GreenMax)<<p.GreenShift | scale(c.B, p.BlueMax)<<p.BlueShift
+	} else {
+		v = uint32(c.B>>6)<<6 | uint32(c.G>>5)<<3 | uint32(c.R>>5)
+	}
+	out := make([]byte, p.BPP/8)
+	switch {
+	case len(out) == 1:
+		out[0] = uint8(v)
+	case len(out) == 2 && p.BigEndian:
+		binary.BigEndian.PutUint16(out, uint16(v))
+	case len(out) == 2:
+		binary.LittleEndian.PutUint16(out, uint16(v))
+	case p.BigEndian:
+		binary.BigEndian.PutUint32(out, v)
+	default:
+		binary.LittleEndian.PutUint32(out, v)
+	}
+	return out
+}
+
+// Fill is a solid-coloured rectangle of a Scene.
+type Fill struct {
+	X, Y, Width, Height uint16
+	Colour              Colour
+}
+
+// Scene is a static desktop: a background with solid fills painted over it in
+// order.
+type Scene struct {
+	Width, Height uint16
+	Background    Colour
+	Fills         []Fill
+}
+
+// RenderRaw renders the whole scene as Raw pixel data, row by row.
+func RenderRaw(s Scene, pf PixelFormat) []byte {
+	bpp := int(pf.BPP / 8)
+	w, h := int(s.Width), int(s.Height)
+	out := make([]byte, w*h*bpp)
+	paint := func(x, y, fw, fh int, c Colour) {
+		px := pf.Pixel(c)
+		for row := y; row < y+fh; row++ {
+			for col := x; col < x+fw; col++ {
+				copy(out[(row*w+col)*bpp:], px)
+			}
+		}
+	}
+	paint(0, 0, w, h, s.Background)
+	for _, f := range s.Fills {
+		if x, y, fw, fh, ok := ClampRect(f.X, f.Y, f.Width, f.Height, s.Width, s.Height); ok {
+			paint(int(x), int(y), int(fw), int(fh), f.Colour)
+		}
+	}
+	return out
+}
+
+// RawRect cuts the Raw data of a rectangle out of a full framebuffer rendered
+// by RenderRaw. The full rectangle returns fb itself without copying.
+func RawRect(fb []byte, pf PixelFormat, fbWidth, x, y, w, h uint16) []byte {
+	bpp := int(pf.BPP / 8)
+	if x == 0 && y == 0 && w == fbWidth && len(fb) == int(fbWidth)*int(h)*bpp {
+		return fb
+	}
+	out := make([]byte, 0, int(w)*int(h)*bpp)
+	for row := int(y); row < int(y)+int(h); row++ {
+		start := (row*int(fbWidth) + int(x)) * bpp
+		out = append(out, fb[start:start+int(w)*bpp]...)
+	}
+	return out
+}
+
+// RRE encodes the part of a scene inside a rectangle as RRE: a subrectangle
+// count, the background pixel, then one pixel and relative x,y,w,h per fill.
+func RRE(s Scene, pf PixelFormat, x, y, w, h uint16) []byte {
+	var subs []byte
+	n := 0
+	for _, f := range s.Fills {
+		fx, fy, fw, fh, ok := ClampRect(f.X, f.Y, f.Width, f.Height, s.Width, s.Height)
+		if !ok {
+			continue
+		}
+		// intersect with the requested rectangle
+		x0, y0 := max(fx, x), max(fy, y)
+		x1, y1 := min(int(fx)+int(fw), int(x)+int(w)), min(int(fy)+int(fh), int(y)+int(h))
+		if int(x0) >= x1 || int(y0) >= y1 {
+			continue
+		}
+		subs = append(subs, pf.Pixel(f.Colour)...)
+		subs = binary.BigEndian.AppendUint16(subs, x0-x)
+		subs = binary.BigEndian.AppendUint16(subs, y0-y)
+		subs = binary.BigEndian.AppendUint16(subs, uint16(x1-int(x0)))
+		subs = binary.BigEndian.AppendUint16(subs, uint16(y1-int(y0)))
+		n++
+	}
+	out := binary.BigEndian.AppendUint32(nil, uint32(n))
+	out = append(out, pf.Pixel(s.Background)...)
+	return append(out, subs...)
+}
+
+// ClampRect clips a rectangle to a width x height framebuffer. ok is false
+// when nothing is left.
+func ClampRect(x, y, w, h, width, height uint16) (uint16, uint16, uint16, uint16, bool) {
+	if x >= width || y >= height || w == 0 || h == 0 {
+		return 0, 0, 0, 0, false
+	}
+	w = uint16(min(int(w), int(width)-int(x)))
+	h = uint16(min(int(h), int(height)-int(y)))
+	return x, y, w, h, true
+}
+
+// UpdateRequest is a decoded FramebufferUpdateRequest.
+type UpdateRequest struct {
+	Incremental         bool
+	X, Y, Width, Height uint16
+}
+
+// ParseUpdateRequest decodes a FramebufferUpdateRequest header.
+func ParseUpdateRequest(header []byte) (UpdateRequest, bool) {
+	if len(header) < 9 {
+		return UpdateRequest{}, false
+	}
+	return UpdateRequest{
+		Incremental: header[0] != 0,
+		X:           binary.BigEndian.Uint16(header[1:3]),
+		Y:           binary.BigEndian.Uint16(header[3:5]),
+		Width:       binary.BigEndian.Uint16(header[5:7]),
+		Height:      binary.BigEndian.Uint16(header[7:9]),
+	}, true
+}
+
+// Encodings the honeypot can send.
+const (
+	EncodingRaw int32 = 0
+	EncodingRRE int32 = 2
+)
+
+// ChooseEncoding picks the first encoding in the client's preference order
+// that the honeypot supports. Raw is always allowed, even if not listed.
+func ChooseEncoding(client []int32) int32 {
+	for _, e := range client {
+		if e == EncodingRaw || e == EncodingRRE {
+			return e
+		}
+	}
+	return EncodingRaw
+}
+
+// Rect is one rectangle of a FramebufferUpdate; Data is its encoded pixels.
+type Rect struct {
+	X, Y, Width, Height uint16
+	Encoding            int32
+	Data                []byte
+}
+
+// Header encodes the 12-byte rectangle header that precedes Data.
+func (r Rect) Header() []byte {
+	out := binary.BigEndian.AppendUint16(nil, r.X)
+	out = binary.BigEndian.AppendUint16(out, r.Y)
+	out = binary.BigEndian.AppendUint16(out, r.Width)
+	out = binary.BigEndian.AppendUint16(out, r.Height)
+	return binary.BigEndian.AppendUint32(out, uint32(r.Encoding))
+}
+
+// FramebufferUpdateHeader builds the 4-byte message header announcing n
+// rectangles: message-type 0, padding, u16 count.
+func FramebufferUpdateHeader(n int) []byte {
+	return binary.BigEndian.AppendUint16([]byte{0, 0}, uint16(n))
+}
+
+// FramebufferUpdate builds a complete FramebufferUpdate message.
+func FramebufferUpdate(rects ...Rect) []byte {
+	out := FramebufferUpdateHeader(len(rects))
+	for _, r := range rects {
+		out = append(out, r.Header()...)
+		out = append(out, r.Data...)
+	}
+	return out
+}

@@ -11,6 +11,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
@@ -20,13 +21,32 @@ import (
 )
 
 const (
-	rfbMaxFrames   = 256     // frames per session; pointer events add up fast
-	rfbMaxPayload  = 4096    // bytes kept per frame; the rest is discarded
-	rfbMaxBody     = 1 << 20 // larger announced bodies end the session
-	rfbDesktopName = "rfb-go"
-	rfbWidth       = 1024
-	rfbHeight      = 768
+	rfbMaxFrames      = 256      // frames per session; pointer events add up fast
+	rfbMaxPayload     = 4096     // bytes kept per frame; the rest is discarded
+	rfbMaxBody        = 1 << 20  // larger announced bodies end the session
+	rfbMaxUpdateBytes = 16 << 20 // framebuffer bytes sent per session; later requests go unanswered
+	rfbDesktopName    = "ubuntu:1 (ubuntu)"
+	rfbWidth          = 1024
+	rfbHeight         = 768
 )
+
+// rfbDesktop is the static screen: a desktop with a terminal window and a
+// bottom panel.
+var rfbDesktop = rfb.Scene{
+	Width: rfbWidth, Height: rfbHeight,
+	Background: rfb.Colour{R: 0x2c, G: 0x3e, B: 0x50},
+	Fills: []rfb.Fill{
+		{X: 160, Y: 120, Width: 640, Height: 400, Colour: rfb.Colour{R: 0x30, G: 0x0a, B: 0x24}},
+		{X: 160, Y: 120, Width: 640, Height: 28, Colour: rfb.Colour{R: 0x3c, G: 0x3c, B: 0x3c}},
+		{X: 0, Y: 736, Width: 1024, Height: 32, Colour: rfb.Colour{R: 0x1e, G: 0x1e, B: 0x1e}},
+	},
+}
+
+// rfbDesktopRaw is the desktop in the default pixel format, rendered once and
+// shared by all sessions.
+var rfbDesktopRaw = sync.OnceValue(func() []byte {
+	return rfb.RenderRaw(rfbDesktop, rfb.DefaultPixelFormat)
+})
 
 // rfbOffered is the 3.7+ security type list. VNC authentication accepts any
 // password so brute-forcers reach the client message loop and reveal what they
@@ -50,15 +70,19 @@ type parsedRFB struct {
 }
 
 type rfbServer struct {
-	events  []parsedRFB
-	conn    net.Conn
-	reader  *bufio.Reader
-	rand    io.Reader
-	version rfb.Version
+	events    []parsedRFB
+	conn      net.Conn
+	reader    *bufio.Reader
+	rand      io.Reader
+	version   rfb.Version
+	pf        rfb.PixelFormat
+	raw       []byte  // desktop rendered in pf, when pf is not the default
+	encodings []int32 // from the client's last SetEncodings
+	sent      int     // framebuffer update bytes written
 }
 
 func newRFBServer(conn net.Conn) *rfbServer {
-	return &rfbServer{events: []parsedRFB{}, conn: conn, reader: bufio.NewReader(conn), rand: rand.Reader}
+	return &rfbServer{events: []parsedRFB{}, conn: conn, reader: bufio.NewReader(conn), rand: rand.Reader, pf: rfb.DefaultPixelFormat}
 }
 
 func (s *rfbServer) write(frame parsedRFB) error {
@@ -73,6 +97,61 @@ func (s *rfbServer) write(frame parsedRFB) error {
 func (s *rfbServer) record(frame parsedRFB) {
 	frame.Direction = "read"
 	s.events = append(s.events, frame)
+}
+
+// writeUpdate sends a FramebufferUpdate given as header and pixel data. The
+// recorded payload keeps the first rfbMaxPayload bytes.
+func (s *rfbServer) writeUpdate(frame parsedRFB, head, data []byte) error {
+	bufs := net.Buffers{head, data}
+	if _, err := bufs.WriteTo(s.conn); err != nil {
+		return err
+	}
+	s.sent += len(head) + len(data)
+	frame.Direction = "write"
+	frame.Payload = append(append([]byte(nil), head...), data[:min(len(data), max(rfbMaxPayload-len(head), 0))]...)
+	frame.Truncated = len(head)+len(data) > len(frame.Payload)
+	s.events = append(s.events, frame)
+	return nil
+}
+
+// update answers a FramebufferUpdateRequest with the desktop in the client's
+// pixel format and preferred encoding. The screen never changes, so an
+// incremental request is only answered while the client has not been sent a
+// frame yet, as idle real servers do. Requests that would exceed
+// rfbMaxUpdateBytes go unanswered.
+func (s *rfbServer) update(req rfb.UpdateRequest) error {
+	if req.Incremental && s.sent > 0 {
+		return nil
+	}
+	x, y, w, h, ok := rfb.ClampRect(req.X, req.Y, req.Width, req.Height, rfbWidth, rfbHeight)
+	if !ok {
+		head := rfb.FramebufferUpdateHeader(0)
+		return s.writeUpdate(parsedRFB{Command: "FramebufferUpdate"}, head, nil)
+	}
+	rect := rfb.Rect{X: x, Y: y, Width: w, Height: h, Encoding: rfb.ChooseEncoding(s.encodings)}
+	if rect.Encoding == rfb.EncodingRRE {
+		rect.Data = rfb.RRE(rfbDesktop, s.pf, x, y, w, h)
+	} else {
+		rect.Data = rfb.RawRect(s.desktopRaw(), s.pf, rfbWidth, x, y, w, h)
+	}
+	head := append(rfb.FramebufferUpdateHeader(1), rect.Header()...)
+	if s.sent+len(head)+len(rect.Data) > rfbMaxUpdateBytes {
+		return nil
+	}
+	return s.writeUpdate(parsedRFB{Command: "FramebufferUpdate", Encodings: []int32{rect.Encoding}}, head, rect.Data)
+}
+
+// desktopRaw returns the full desktop as Raw pixels in the client's format.
+// The default format uses the shared buffer; others are rendered once per
+// session.
+func (s *rfbServer) desktopRaw() []byte {
+	if s.pf == rfb.DefaultPixelFormat {
+		return rfbDesktopRaw()
+	}
+	if s.raw == nil {
+		s.raw = rfb.RenderRaw(rfbDesktop, s.pf)
+	}
+	return s.raw
 }
 
 // readN reads exactly n bytes. On a short read it returns what arrived; a
@@ -309,18 +388,29 @@ func (s *rfbServer) session(timeout func() bool, readEnd func(error) string) (st
 		frame.Payload = append(frame.Payload, body...)
 		frame.Truncated = truncated
 		switch typ[0] {
+		case rfb.MsgSetPixelFormat:
+			// invalid formats are ignored and the current one kept
+			if pf, ok := rfb.ParsePixelFormat(header); ok && pf != s.pf {
+				s.pf, s.raw = pf, nil
+			}
 		case rfb.MsgKeyEvent:
 			if down, sym := rfb.KeyEvent(header); down {
 				frame.Key = rfb.KeysymName(sym)
 			}
 		case rfb.MsgSetEncodings:
 			frame.Encodings = rfb.Encodings(body)
+			s.encodings = frame.Encodings
 		case rfb.MsgClientCutText:
 			frame.Text = string(body)
 		}
 		s.record(frame)
 		if err != nil {
 			return readEnd(err), nil
+		}
+		if req, ok := rfb.ParseUpdateRequest(header); ok && typ[0] == rfb.MsgFramebufferUpdateRequest && len(s.events) < rfbMaxFrames {
+			if err := s.update(req); err != nil {
+				return connection.EndWriteError, err
+			}
 		}
 	}
 	return connection.EndMaxFrames, nil
