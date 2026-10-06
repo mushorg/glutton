@@ -2,15 +2,11 @@ package rdp
 
 import (
 	"bytes"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
-	"crypto/x509"
 	"crypto/x509/pkix"
-	"math/big"
 	"net"
-	"sync"
-	"time"
+
+	"github.com/mushorg/glutton/protocols/helpers"
 )
 
 // IsTLSRecord reports whether data begins with a TLS record header
@@ -27,47 +23,11 @@ func IsTLSRecord(data []byte) bool {
 	}
 }
 
-var (
-	stubTLSOnce sync.Once
-	stubTLSCert tls.Certificate
-	stubTLSErr  error
-)
-
 func stubCertificate() (tls.Certificate, error) {
-	stubTLSOnce.Do(func() {
-		key, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			stubTLSErr = err
-			return
-		}
-		serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
-		if err != nil {
-			stubTLSErr = err
-			return
-		}
-		tmpl := &x509.Certificate{
-			SerialNumber: serial,
-			Subject: pkix.Name{
-				Organization: []string{"Microsoft"},
-				CommonName:   "rdp",
-			},
-			NotBefore:             time.Now().Add(-time.Hour),
-			NotAfter:              time.Now().Add(365 * 24 * time.Hour),
-			KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-			ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-			BasicConstraintsValid: true,
-		}
-		der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-		if err != nil {
-			stubTLSErr = err
-			return
-		}
-		stubTLSCert = tls.Certificate{
-			Certificate: [][]byte{der},
-			PrivateKey:  key,
-		}
+	return helpers.SelfSignedCertificate(pkix.Name{
+		Organization: []string{"Microsoft"},
+		CommonName:   "rdp",
 	})
-	return stubTLSCert, stubTLSErr
 }
 
 type prefixConn struct {
