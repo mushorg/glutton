@@ -17,7 +17,7 @@ if [[ ! -f "$NEW" ]]; then
 fi
 
 chmod 755 "$NEW"
-NEW_VERSION=$("$NEW" --version 2>&1 | head -n 1 || true)
+NEW_VERSION=$("$NEW" --version 2>&1 | grep -m1 "version v" || true)
 echo "new binary: ${NEW_VERSION:-unknown}"
 
 # Stop every running glutton, not just the one in a matching screen session.

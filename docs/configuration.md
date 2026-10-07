@@ -47,6 +47,7 @@ Source: `config/config.yaml`. Keys you'll most often touch:
 | `recall.ttl`                                                         | `604800`                 | Seconds a source is remembered after it was last seen. |
 | `recall.max_sources`                                                 | `65536`                  | Sources kept in memory; the least recently seen is dropped first. |
 | `sip.reject_invites`                                                 | `2`                      | UDP SIP: the first N new INVITE calls in each visit of a source IP get `404 Not Found`, so toll-fraud tools go on to try more dial prefixes. The count is kept in the recall store and starts over when the source returns after `recall.visit_gap`; with `recall.enabled: false` nothing is rejected. `0` answers every call. |
+| `openvpn.reply`                                                      | `false`                  | UDP OpenVPN: reply to a well-formed `P_CONTROL_HARD_RESET_CLIENT_V2` with a `P_CONTROL_HARD_RESET_SERVER_V2` (random session ID, acks the client packet ID; no tls-auth/tls-crypt) so scanners send their follow-up control packets. Malformed resets are never answered. `false` keeps the handler parse-only. |
 | `spicy.enabled`                                                      | `true`                   | Initializes Spicy/HILTI and enables Spicy-backed paths (HTTP parsing, TCP-payload protocol detection). Set `false` if you build without Spicy or want the Spicy-free dispatch path. |
 
 

@@ -35,6 +35,9 @@ recall:   # per-source memory: a source returning after visit_gap gets the next 
   ttl: 604800         # seconds a source is remembered after it was last seen.
   max_sources: 65536  # sources kept; the least recently seen is dropped first.
 
+openvpn:
+  reply: false        # answer well-formed UDP hard resets with P_CONTROL_HARD_RESET_SERVER_V2 (default parse-only).
+
 sip:
   reject_invites: 2   # new INVITE calls per source IP visit (see recall) answered 404 before calls ring; 0 disables.
 
