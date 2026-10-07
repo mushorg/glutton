@@ -14,6 +14,7 @@ import (
 	sipproto "github.com/mushorg/glutton/protocols/tcp/sip"
 	"github.com/mushorg/glutton/protocols/udp/a2s"
 	"github.com/mushorg/glutton/protocols/udp/ddp"
+	"github.com/mushorg/glutton/protocols/udp/dtls"
 	"github.com/mushorg/glutton/protocols/udp/ike"
 	"github.com/mushorg/glutton/protocols/udp/knx"
 	"github.com/mushorg/glutton/protocols/udp/rtps"
@@ -53,6 +54,9 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	}
 	if knx.LooksLikeKNX(data) {
 		return HandleKNX(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
+	if dtls.LooksLikeDTLS(data) {
+		return HandleDTLS(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
 	if rtps.LooksLikeRTPS(data) {
 		return HandleRTPS(ctx, srcAddr, dstAddr, data, md, log, h)

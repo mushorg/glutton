@@ -52,6 +52,7 @@ func TestMapUDPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "ddp", "expected DDP UDP handler")
 	require.Contains(t, m, "rtps", "expected RTPS UDP handler")
 	require.Contains(t, m, "knx", "expected KNX UDP handler")
+	require.Contains(t, m, "dtls", "expected DTLS UDP handler")
 	require.Contains(t, m, "wsdiscovery", "expected WS-Discovery UDP handler")
 	require.Contains(t, m, "proxy_udp", "expected proxy_udp handler")
 	ctx := context.Background()
