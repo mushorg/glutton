@@ -17,6 +17,8 @@ func StatusName(h SMBHeader) string {
 		return "STATUS_SUCCESS"
 	case statusNotImplemented:
 		return "STATUS_NOT_IMPLEMENTED"
+	case statusInvalidParameter:
+		return "STATUS_INVALID_PARAMETER"
 	case binary.LittleEndian.Uint32(statusInsuffServerResources[:]):
 		return "STATUS_INSUFF_SERVER_RESOURCES"
 	default:

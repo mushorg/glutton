@@ -35,10 +35,12 @@ const (
 	trans2FindFirst2   = 0x0001
 	trans2SessionSetup = 0x000e
 	// STATUS_NOT_IMPLEMENTED — plausible for unsupported Trans2 subcommands.
-	statusNotImplemented  = 0xc0000002
-	fileOpened            = 0x00000001
-	fileTypeMessagePipe   = 0x0002
-	ntCreateAndXWordCount = 34
+	statusNotImplemented = 0xc0000002
+	// STATUS_INVALID_PARAMETER — Windows reply when a fragmented NT_TRANSACT completes.
+	statusInvalidParameter = 0xc000000d
+	fileOpened             = 0x00000001
+	fileTypeMessagePipe    = 0x0002
+	ntCreateAndXWordCount  = 34
 )
 
 // Trans2FindFirst2 is the TRANS2_FIND_FIRST2 subcommand (0x0001).
@@ -325,6 +327,39 @@ func NtTransactTotalDataCount(body []byte) uint32 {
 		return 0
 	}
 	return binary.LittleEndian.Uint32(body[off : off+4])
+}
+
+// SecondaryDataRange returns DataDisplacement and DataCount from a secondary
+// transaction request body positioned after the 32-byte SMB header.
+func SecondaryDataRange(command byte, body []byte) (displacement, count uint32, ok bool) {
+	if len(body) < 1 {
+		return 0, 0, false
+	}
+	switch command {
+	case CmdTransactionSecondary:
+		// WC 8: DataCount USHORT at body[11:13], DataDisplacement at body[15:17].
+		if body[0] != 8 || len(body) < 17 {
+			return 0, 0, false
+		}
+		return uint32(binary.LittleEndian.Uint16(body[15:17])),
+			uint32(binary.LittleEndian.Uint16(body[11:13])), true
+	case CmdTransaction2Secondary:
+		// WC 9: same USHORT layout as TRANSACTION_SECONDARY (plus FID after).
+		if body[0] != 9 || len(body) < 17 {
+			return 0, 0, false
+		}
+		return uint32(binary.LittleEndian.Uint16(body[15:17])),
+			uint32(binary.LittleEndian.Uint16(body[11:13])), true
+	case CmdNtTransactSecondary:
+		// WC 18: ULONG DataCount at body[24:28], DataDisplacement at body[32:36].
+		if body[0] != 18 || len(body) < 36 {
+			return 0, 0, false
+		}
+		return binary.LittleEndian.Uint32(body[32:36]),
+			binary.LittleEndian.Uint32(body[24:28]), true
+	default:
+		return 0, 0, false
+	}
 }
 
 func echoRequestData(body []byte) []byte {
@@ -664,6 +699,20 @@ func MakeComTransaction2Error(header SMBHeader) (SMBHeader, []byte, error) {
 	smb.Header = replyHeader(header)
 	smb.Header.Command = header.Command
 	binary.LittleEndian.PutUint32(smb.Header.Status[:], statusNotImplemented)
+	smb.WordCount = 0x00
+	smb.ByteCount = [2]byte{}
+
+	data, err := toBytes(smb)
+	return smb.Header, data, err
+}
+
+// MakeTransactionCompleteResponse builds the STATUS_INVALID_PARAMETER reply
+// Windows sends when a fragmented NT_TRANSACT finishes.
+func MakeTransactionCompleteResponse(header SMBHeader) (SMBHeader, []byte, error) {
+	smb := ComTransaction2Error{}
+	smb.Header = replyHeader(header)
+	smb.Header.Command = header.Command
+	binary.LittleEndian.PutUint32(smb.Header.Status[:], statusInvalidParameter)
 	smb.WordCount = 0x00
 	smb.ByteCount = [2]byte{}
 

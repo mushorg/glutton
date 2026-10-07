@@ -403,6 +403,71 @@ func TestNtTransactTotalDataCount(t *testing.T) {
 	require.Equal(t, uint32(0), NtTransactTotalDataCount([]byte{19}))
 }
 
+func TestSecondaryDataRange(t *testing.T) {
+	trans2Body := make([]byte, 1+9*2)
+	trans2Body[0] = 9
+	binary.LittleEndian.PutUint16(trans2Body[11:13], 0x1000)
+	binary.LittleEndian.PutUint16(trans2Body[15:17], 0x0f00)
+
+	transBody := make([]byte, 1+8*2)
+	transBody[0] = 8
+	binary.LittleEndian.PutUint16(transBody[11:13], 0x200)
+	binary.LittleEndian.PutUint16(transBody[15:17], 0x100)
+
+	ntBody := make([]byte, 1+3+9*4+1)
+	ntBody[0] = 18
+	binary.LittleEndian.PutUint32(ntBody[24:28], 0x103d0)
+	binary.LittleEndian.PutUint32(ntBody[32:36], 0xf00)
+
+	tests := []struct {
+		name    string
+		command byte
+		body    []byte
+		disp    uint32
+		count   uint32
+		ok      bool
+	}{
+		{name: "trans2 secondary", command: CmdTransaction2Secondary, body: trans2Body, disp: 0x0f00, count: 0x1000, ok: true},
+		{name: "transaction secondary", command: CmdTransactionSecondary, body: transBody, disp: 0x100, count: 0x200, ok: true},
+		{name: "nt transact secondary", command: CmdNtTransactSecondary, body: ntBody, disp: 0xf00, count: 0x103d0, ok: true},
+		{name: "short trans2 body", command: CmdTransaction2Secondary, body: []byte{9, 0, 0}, ok: false},
+		{name: "wrong word count", command: CmdTransaction2Secondary, body: append([]byte{8}, make([]byte, 16)...), ok: false},
+		{name: "unknown command", command: CmdEcho, body: trans2Body, ok: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			disp, count, ok := SecondaryDataRange(tt.command, tt.body)
+			require.Equal(t, tt.ok, ok)
+			if !tt.ok {
+				return
+			}
+			require.Equal(t, tt.disp, disp)
+			require.Equal(t, tt.count, count)
+		})
+	}
+}
+
+func TestMakeTransactionCompleteResponse(t *testing.T) {
+	header := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  CmdTransaction2Secondary,
+		Flags:    0x18,
+		TID:      [2]byte{0x01, 0x00},
+		UID:      [2]byte{0x01, 0x00},
+		MID:      [2]byte{0x1b, 0x00},
+	}
+	rh, data, err := MakeTransactionCompleteResponse(header)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x0d, 0x00, 0x00, 0xc0}, data[5:9])
+	require.Equal(t, uint32(statusInvalidParameter), binary.LittleEndian.Uint32(rh.Status[:]))
+	require.Equal(t, byte(0x98), rh.Flags)
+	require.Equal(t, header.Command, rh.Command)
+	require.Equal(t, header.MID, rh.MID)
+	require.Equal(t, "STATUS_INVALID_PARAMETER", StatusName(rh))
+	require.Equal(t, byte(0x00), data[32])
+	require.Equal(t, []byte{0x00, 0x00}, data[33:35])
+}
+
 func TestMakeEchoResponse(t *testing.T) {
 	header := SMBHeader{
 		Protocol: [4]byte{0xff, 'S', 'M', 'B'},

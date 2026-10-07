@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -415,6 +416,84 @@ func TestHandleSMBNtTransactAndTrans2Secondary(t *testing.T) {
 	}
 	require.True(t, sawNT, "expected NT_TRANSACT read with TotalDataCount")
 	require.True(t, sawSec, "expected TRANSACTION2_SECONDARY read")
+}
+
+func smbTrans2SecondaryBody(disp, count uint16) []byte {
+	body := make([]byte, 1+9*2+2)
+	body[0] = 9
+	binary.LittleEndian.PutUint16(body[11:13], count)
+	binary.LittleEndian.PutUint16(body[15:17], disp)
+	return body
+}
+
+func TestHandleSMBNtTransactCompletesOnFinalSecondary(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+
+	const total = 8192
+	ntBody := make([]byte, 16)
+	ntBody[0] = 19
+	binary.LittleEndian.PutUint32(ntBody[8:12], total)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdNtTransact, 1, 1, 1)), ntBody...))
+	ntResp := readSMBFrame(t, client)
+	require.Equal(t, byte(smb.CmdNtTransact), ntResp[4])
+
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdTransaction2Secondary, 1, 1, 2)), smbTrans2SecondaryBody(0, 4096)...))
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(150*time.Millisecond)))
+	var nb [4]byte
+	_, err := io.ReadFull(client, nb[:])
+	require.ErrorIs(t, err, os.ErrDeadlineExceeded, "middle fragment must get no reply")
+	require.NoError(t, client.SetReadDeadline(time.Time{}))
+
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdTransaction2Secondary, 1, 1, 3)), smbTrans2SecondaryBody(4096, 4096)...))
+	secResp := readSMBFrame(t, client)
+	require.Equal(t, byte(smb.CmdTransaction2Secondary), secResp[4])
+	require.Equal(t, []byte{0x0d, 0x00, 0x00, 0xc0}, secResp[5:9])
+
+	echoData := []byte("after")
+	echoBody := []byte{0x01, 0x01, 0x00}
+	var bc [2]byte
+	binary.LittleEndian.PutUint16(bc[:], uint16(len(echoData)))
+	echoBody = append(echoBody, bc[:]...)
+	echoBody = append(echoBody, echoData...)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdEcho, 1, 1, 4)), echoBody...))
+	echoResp := readSMBFrame(t, client)
+	require.Equal(t, byte(smb.CmdEcho), echoResp[4])
+	require.Equal(t, echoData, echoResp[37:])
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames, ok := ev.decoded.([]parsedSMB)
+	require.True(t, ok)
+
+	var completeWrites int
+	for _, f := range frames {
+		if f.Direction == "write" && f.Header.Command == smb.CmdTransaction2Secondary {
+			require.Equal(t, "STATUS_INVALID_PARAMETER", f.Status)
+			completeWrites++
+		}
+	}
+	require.Equal(t, 1, completeWrites, "exactly one completion reply")
+}
+
+func TestHandleSMBSecondaryWithoutNtTransactGetsNoReply(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdTransaction2Secondary, 1, 1, 1)), smbTrans2SecondaryBody(0, 4096)...))
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(150*time.Millisecond)))
+	var nb [4]byte
+	_, err := io.ReadFull(client, nb[:])
+	require.ErrorIs(t, err, os.ErrDeadlineExceeded)
+	require.NoError(t, client.SetReadDeadline(time.Time{}))
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames, ok := ev.decoded.([]parsedSMB)
+	require.True(t, ok)
+	for _, f := range frames {
+		if f.Direction == "write" && f.Header.Command == smb.CmdTransaction2Secondary {
+			t.Fatal("orphan secondary must not get a reply")
+		}
+	}
+	require.Equal(t, "read", frames[0].Direction)
+	require.Equal(t, "SMB_COM_TRANSACTION2_SECONDARY", frames[0].Command)
 }
 
 func TestHandleSMBEcho(t *testing.T) {

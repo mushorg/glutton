@@ -39,11 +39,13 @@ type parsedSMB struct {
 }
 
 type smbServer struct {
-	events []parsedSMB
-	conn   net.Conn
-	uid    uint16
-	tid    uint16
-	fid    uint16
+	events  []parsedSMB
+	conn    net.Conn
+	uid     uint16
+	tid     uint16
+	fid     uint16
+	txTotal uint32
+	txOpen  bool
 }
 
 type smbFrame struct {
@@ -266,8 +268,15 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 		responseHeader, resp, err = smb.MakeComTransactionResponse(header)
 	case smb.CmdNtTransact:
 		responseHeader, resp, err = smb.MakeComNtTransactionResponse(header)
+		ss.txTotal = totalDataCount
+		ss.txOpen = totalDataCount > 0
 	case smb.CmdNtTransactSecondary, smb.CmdTransactionSecondary, smb.CmdTransaction2Secondary:
-		return nil
+		disp, count, ok := smb.SecondaryDataRange(header.Command, smbBuf.Bytes())
+		if !ss.txOpen || !ok || uint64(disp)+uint64(count) < uint64(ss.txTotal) {
+			return nil // middle fragment: no reply
+		}
+		ss.txOpen = false
+		responseHeader, resp, err = smb.MakeTransactionCompleteResponse(header)
 	case smb.CmdEcho:
 		responseHeader, resp, err = smb.MakeEchoResponse(header, smbBuf.Bytes())
 	default:
