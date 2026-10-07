@@ -17,33 +17,64 @@ The `--debug` flag is parsed but not wired into `slog.HandlerOptions`, so it doe
 
 Producer events follow the `producer.Event` schema:
 
-| JSON field | Meaning |
-| --- | --- |
-| `timestamp` | UTC time the event was produced. |
-| `startedAt` | Connection (or datagram) start from the connection table (`md.Added`). |
-| `durationMs` | Milliseconds from `startedAt` to produce time. |
-| `transport` | `tcp` or `udp`. |
-| `srcHost` | Source IP. |
-| `srcPort` | Source port. |
-| `srcPtr` | First reverse-DNS name when a PTR lookup already ran (not on CIDR-matched scanners). |
-| `dstHost` | Original destination IP (TPROXY `LocalAddr` / UDP dest). |
-| `dstPort` | Original destination port from metadata. |
-| `sensorID` | Glutton sensor ID. |
-| `sensorVersion` | Build version (`VERSION` / `sensor_version`). |
-| `rule` | Rule match string when metadata includes a rule. |
-| `ruleName` | Optional `name` from `rules.yaml`. |
-| `handler` | Handler name supplied by the protocol handler. |
-| `payload` | Base64-encoded first-frame payload bytes. |
-| `payloadHash` | SHA-256 hex of the (sanitized) top-level payload. |
-| `frameCount` | Number of decoded frames when `decoded` is a slice. |
-| `endReason` | Why the session ended (`client_close`, `timeout`, `handler_close`, `read_error`, `write_error`, `max_frames`, `evicted`). `evicted` means the handler's session table was full and the least recently active session was flushed early. Omitted by handlers that do not set it. |
-| `tls` | Present only when the sensor terminated TLS (rule `tls: true`, or `tls: auto` and the client opened with a ClientHello): `serverName` (SNI), `alpn` (offered protocols), `version`, `cipher` (empty if the handshake failed), `clientHello` (base64 of the raw ClientHello records, capped at 4 KiB), `truncated`. `decoded` and `payload` then hold the plaintext protocol. |
-| `scanner` | Scanner classification from `scanner.Classify(...)`. |
-| `decoded` | Handler-specific decoded data. |
+| JSON field | Type | Meaning |
+| --- | --- | --- |
+| `timestamp` | string (RFC 3339) | UTC time the event was produced. |
+| `startedAt` | string (RFC 3339) | Connection (or datagram) start from the connection table (`md.Added`). Go does not omit a zero `time.Time`, so an unknown start is `0001-01-01T00:00:00Z`, not absent. |
+| `durationMs` | number, optional | Milliseconds from `startedAt` to produce time. Omitted when 0. |
+| `transport` | string | `tcp` or `udp`. |
+| `srcHost` | string | Source IP. |
+| `srcPort` | **string** | Source port. Unlike `dstPort`, this is a string. |
+| `srcPtr` | string, optional | First reverse-DNS name when a PTR lookup already ran (not on CIDR-matched scanners). |
+| `dstHost` | string, optional | Original destination IP (TPROXY `LocalAddr` / UDP dest). This is the sensor's address; strip it before showing events publicly. |
+| `dstPort` | number | Original destination port from metadata. |
+| `sensorID` | string | Glutton sensor ID. |
+| `sensorVersion` | string, optional | Build version (`VERSION` / `sensor_version`). |
+| `rule` | string, optional | Rule match string when metadata includes a rule. |
+| `ruleName` | string, optional | Optional `name` from `rules.yaml`. |
+| `handler` | string | Handler name supplied by the protocol handler. |
+| `payload` | string (base64), optional | First-frame payload bytes. |
+| `payloadHash` | string (hex), optional | SHA-256 of the (sanitized) top-level payload. |
+| `frameCount` | number, optional | Number of decoded frames when `decoded` is a slice. Omitted when 0. |
+| `endReason` | string, optional | Why the session ended (`client_close`, `timeout`, `handler_close`, `read_error`, `write_error`, `max_frames`, `evicted`). `evicted` means the handler's session table was full and the least recently active session was flushed early. Omitted by handlers that do not set it. |
+| `tls` | object, optional | Present only when the sensor terminated TLS. See [TLS details](#tls-details). |
+| `scanner` | string, optional | Scanner classification from `scanner.Classify(...)`. Omitted when empty. |
+| `decoded` | array, object or `null`, optional | Handler-specific decoded data. See [Decoded data](#decoded-data). |
 
-Events are emitted only when (1) `producers.enabled` is true so a producer object exists, (2) a handler calls `ProduceTCP(...)` or `ProduceUDP(...)`, (3) the matched rule does not set `produce: false`, and (4) at least one sink is enabled. Before output, configured `addresses` values are scrubbed from payload bytes (ASCII and UTF-16LE) and replaced with `1.2.3.4`. The same sanitizer runs on every string and byte slice inside `decoded` (frame fields such as `from`, `to`, `endpoint_url`, nested structs, maps), so the sensor address never appears in decoded output; fixed-size byte arrays are left alone. Events produced before this change only scrubbed `payload` and `path`.
+All optional fields use `omitempty`: an empty string, a zero number or a nil value is left out of the JSON instead of being sent as `""`, `0` or `null`.
 
-Array-of-frames `decoded` entries share these JSON names when the handler fills them: `direction`, `payload`, `command` (leaf operation), `path`, `status` (writes), `truncated`. Handler-specific fields sit beside them.
+Events are emitted only when (1) `producers.enabled` is true so a producer object exists, (2) a handler calls `ProduceTCP(...)` or `ProduceUDP(...)`, (3) the matched rule does not set `produce: false`, and (4) at least one sink is enabled. Before output, configured `addresses` values are scrubbed from payload bytes (ASCII and UTF-16LE) and replaced with `1.2.3.4`. The same sanitizer runs on every string and byte slice inside `decoded` (frame fields such as `from`, `to`, `endpoint_url`, nested structs, maps), so the sensor address never appears in decoded output; fixed-size byte arrays are left alone. Events from sensors built before commit 937dcd8 (after v1.0.1) only scrubbed `payload` and `path`.
+
+### TLS details
+
+`tls` is set when the rule has `tls: true`, or `tls: auto` and the client opened with a ClientHello. `decoded` and `payload` then hold the decrypted plaintext protocol, so a display should say that the session was TLS.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `serverName` | string, optional | SNI from the ClientHello. |
+| `alpn` | array of strings, optional | Protocols offered by the client. |
+| `version` | string, optional | Negotiated TLS version, e.g. `TLS 1.3`. |
+| `cipher` | string, optional | Negotiated cipher suite. Empty (so omitted) when the handshake failed. |
+| `clientHello` | string (base64), optional | Raw ClientHello records, capped at 4 KiB. |
+| `truncated` | boolean, optional | Set when `clientHello` was cut at the cap. |
+
+## Decoded data
+
+Value encodings inside `decoded` follow Go's `encoding/json`:
+
+- Byte slices (`[]byte`) are base64 strings. Frame `payload` fields are always base64.
+- Fields documented as "(hex)" are hex strings produced by the handler (`spi_i`, `spi_r`, `token`, `session_id` on `openvpn`, `challenge`, and so on).
+- Fixed-size byte arrays are JSON arrays of numbers 0–255. Today these are only the `bittorrent` fields `protocol_identifier`, `reserved`, `info_hash` and `peer_id`; show them as hex.
+- Every other array of numbers is a list of IDs, not bytes: `cipher_suites` and `extensions` (`dtls`, uint16), `etypes` (`kerberos`), `encodings` (`rfb`, int32, can be negative). Show these as lists; joining them as hex gives wrong values.
+- Nested objects (`header` on `smb` and `mongodb`, `questions` on `mdns`, `submessages` on `rtps`) are JSON objects or arrays of objects.
+
+Array-of-frames `decoded` entries share these JSON names when the handler fills them: `direction`, `payload`, `command` (leaf operation), `path`, `status` (writes), `truncated`. Handler-specific fields sit beside them. A display that shows only the shared fields hides the most useful data for most handlers, so show every key a frame carries and use the table below to order them. Some fields are easy to miss but matter for reading a session:
+
+- `http`: `dest_port` and `src_port` on reads, because a session can span connections and ports while the top-level `dstPort`/`srcPort` belong to the first connection.
+- `rdp`: `ntlm_domain`, `ntlm_user` and `ntlm_workstation` on the `NTLMAuthenticate` frame.
+- `sip`: `from`, `to`, `call_id`, `username`, and `variant`/`visit` on writes.
+- `jabber`, `smtp`, `opcua`, `mqtt`, `dicom`, `pop3`: `username` (and `password` on `jabber`).
+- `dtls`, `jabber`: `server_name`.
 
 Example shape:
 
@@ -62,7 +93,6 @@ Example shape:
   "endReason": "client_close",
   "handler": "http",
   "payload": "R0VUIC8gSFRUUC8xLjENCg0K",
-  "scanner": "",
   "decoded": [
     {
       "direction": "read",

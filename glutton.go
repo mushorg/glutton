@@ -21,6 +21,7 @@ import (
 	"github.com/mushorg/glutton/protocols"
 	"github.com/mushorg/glutton/protocols/recall"
 	"github.com/mushorg/glutton/protocols/spicy"
+	"github.com/mushorg/glutton/protocols/udpguard"
 	"github.com/mushorg/glutton/rules"
 
 	"github.com/google/uuid"
@@ -41,6 +42,7 @@ type Glutton struct {
 	ctx                 context.Context
 	cancel              context.CancelFunc
 	publicAddrs         []net.IP
+	udpGuard            *udpguard.Guard
 }
 
 //go:embed config/rules.yaml
@@ -136,6 +138,8 @@ func (g *Glutton) Init() error {
 	}
 	// Per-source visit memory for handlers that vary replies to returning sources
 	recall.Shared.Configure(recallConfig())
+	// Reply budgets so spoofed requests cannot use the honeypot as a UDP amplifier
+	g.udpGuard = udpguard.New(udpGuardConfig())
 
 	// Initiating protocol handlers
 	g.tcpProtocolHandlers = protocols.MapTCPProtocolHandlers(g.Logger, g)
@@ -165,6 +169,31 @@ func recallConfig() recall.Config {
 	}
 	if n := viper.GetInt("recall.max_sources"); n > 0 {
 		cfg.Max = n
+	}
+	return cfg
+}
+
+// udpGuardConfig reads the udp_reply_limit block; it is enabled unless set to
+// false, and global_rate 0 disables the global budget.
+func udpGuardConfig() udpguard.Config {
+	cfg := udpguard.DefaultConfig()
+	if viper.IsSet("udp_reply_limit.enabled") {
+		cfg.Enabled = viper.GetBool("udp_reply_limit.enabled")
+	}
+	if n := viper.GetInt("udp_reply_limit.source_rate"); n > 0 {
+		cfg.SourceRate = n
+	}
+	if n := viper.GetInt("udp_reply_limit.source_burst"); n > 0 {
+		cfg.SourceBurst = n
+	}
+	if viper.IsSet("udp_reply_limit.global_rate") {
+		cfg.GlobalRate = max(0, viper.GetInt("udp_reply_limit.global_rate"))
+	}
+	if n := viper.GetInt("udp_reply_limit.global_burst"); n > 0 {
+		cfg.GlobalBurst = n
+	}
+	if n := viper.GetInt("udp_reply_limit.max_sources"); n > 0 {
+		cfg.MaxSources = n
 	}
 	return cfg
 }
@@ -426,9 +455,23 @@ func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md c
 }
 
 // ReplyUDP sends a transparent UDP response to srcAddr, sourced from dstAddr.
+// Replies over the udp_reply_limit budget for srcAddr's IP are dropped and
+// reported as sent: srcAddr may be a spoofed victim, and an error per dropped
+// packet would turn the flood into a log flood.
 func (g *Glutton) ReplyUDP(srcAddr, dstAddr *net.UDPAddr, payload []byte) error {
 	if srcAddr == nil || dstAddr == nil {
 		return fmt.Errorf("nil udp address")
+	}
+	if d := g.udpGuard.Allow(srcAddr.IP, len(payload)); !d.Allowed {
+		if d.First && g.Logger != nil {
+			g.Logger.Warn("Dropping UDP replies over the amplification budget",
+				slog.String("limit", string(d.Limit)),
+				slog.String("src_ip", srcAddr.IP.String()),
+				slog.Int("dest_port", dstAddr.Port),
+				slog.Int("bytes", len(payload)),
+				slog.String("reporter", "glutton"))
+		}
+		return nil
 	}
 	conn, err := tproxy.DialUDP("udp4", dstAddr, srcAddr)
 	if err != nil {

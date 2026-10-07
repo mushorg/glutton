@@ -9,6 +9,7 @@ import (
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/recall"
+	"github.com/mushorg/glutton/protocols/udpguard"
 	"github.com/mushorg/glutton/rules"
 
 	"github.com/spf13/viper"
@@ -77,4 +78,40 @@ func TestRecallConfig(t *testing.T) {
 	viper.Set("recall.ttl", 3600)
 	viper.Set("recall.max_sources", 10)
 	require.Equal(t, recall.Config{Enabled: false, Gap: time.Minute, TTL: time.Hour, Max: 10}, recallConfig())
+}
+
+func TestUDPGuardConfig(t *testing.T) {
+	keys := []string{"udp_reply_limit.enabled", "udp_reply_limit.source_rate", "udp_reply_limit.source_burst",
+		"udp_reply_limit.global_rate", "udp_reply_limit.global_burst", "udp_reply_limit.max_sources"}
+	orig := map[string]any{}
+	for _, k := range keys {
+		orig[k] = viper.Get(k)
+	}
+	t.Cleanup(func() {
+		for k, v := range orig {
+			viper.Set(k, v)
+		}
+	})
+
+	for _, k := range keys {
+		viper.Set(k, nil)
+	}
+	require.Equal(t, udpguard.DefaultConfig(), udpGuardConfig(), "enabled with defaults when unset")
+
+	viper.Set("udp_reply_limit.enabled", false)
+	viper.Set("udp_reply_limit.source_rate", 10)
+	viper.Set("udp_reply_limit.source_burst", 20)
+	viper.Set("udp_reply_limit.global_rate", 0)
+	viper.Set("udp_reply_limit.global_burst", 40)
+	viper.Set("udp_reply_limit.max_sources", 50)
+	require.Equal(t, udpguard.Config{Enabled: false, SourceRate: 10, SourceBurst: 20, GlobalRate: 0, GlobalBurst: 40, MaxSources: 50}, udpGuardConfig())
+}
+
+func TestReplyUDPDropsOverBudget(t *testing.T) {
+	g := &Glutton{udpGuard: udpguard.New(udpguard.Config{Enabled: true, SourceRate: 1, SourceBurst: 64})}
+	src := &net.UDPAddr{IP: net.ParseIP("192.0.2.1"), Port: 40000}
+	dst := &net.UDPAddr{IP: net.ParseIP("198.51.100.1"), Port: 5683}
+	// Over budget: dropped before any socket is opened, and not reported as
+	// a send error.
+	require.NoError(t, g.ReplyUDP(src, dst, make([]byte, 65)))
 }

@@ -35,6 +35,14 @@ recall:   # per-source memory: a source returning after visit_gap gets the next 
   ttl: 604800         # seconds a source is remembered after it was last seen.
   max_sources: 65536  # sources kept; the least recently seen is dropped first.
 
+udp_reply_limit:   # bounds UDP replies per destination IP so spoofed requests cannot use the honeypot as an amplifier.
+  enabled: true
+  source_rate: 512        # reply bytes per second one destination IP may receive.
+  source_burst: 8192      # most reply bytes one destination IP may receive at once; larger replies are never sent.
+  global_rate: 131072     # reply bytes per second to all destinations together; 0 disables.
+  global_burst: 1048576   # most reply bytes to all destinations at once.
+  max_sources: 65536      # destinations tracked; the least recently answered is dropped first.
+
 openvpn:
   reply: false        # answer well-formed UDP hard resets with P_CONTROL_HARD_RESET_SERVER_V2 (default parse-only).
 
