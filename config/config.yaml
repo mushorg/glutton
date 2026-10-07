@@ -49,6 +49,9 @@ openvpn:
 sip:
   reject_invites: 2   # new INVITE calls per source IP visit (see recall) answered 404 before calls ring; 0 disables.
 
+smtp:
+  hostname: mail.localdomain   # server name in the 220 greeting and HELO/EHLO replies.
+
 dnp3:
   address: 10        # outstation link address; REQUEST_LINK_STATUS and TEST_LINK sent to it are answered, other addresses get silence.
 

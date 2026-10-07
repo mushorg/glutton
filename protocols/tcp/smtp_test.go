@@ -3,7 +3,9 @@ package tcp
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,9 +42,9 @@ func TestHandleSMTP(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	expect("220 Welcome!")
+	expect("220 mail.localdomain ESMTP ready")
 	send("HELO example.com")
-	expect("250 Hello! Pleased to meet you.")
+	expect("250 mail.localdomain Hello example.com")
 	send("MAIL FROM:<alice@example.com>")
 	expect("250 OK")
 	send("RCPT TO:<bob@example.org>")
@@ -76,9 +78,9 @@ func TestHandleSMTP(t *testing.T) {
 	require.True(t, ok, "decoded should be []parsedSMTP")
 
 	want := []parsedSMTP{
-		{Direction: "write", Status: "220", Payload: []byte("220 Welcome!\r\n")},
+		{Direction: "write", Status: "220", Payload: []byte("220 mail.localdomain ESMTP ready\r\n")},
 		{Direction: "read", Command: "HELO", Payload: []byte("HELO example.com\r\n")},
-		{Direction: "write", Status: "250", Payload: []byte("250 Hello! Pleased to meet you.\r\n")},
+		{Direction: "write", Status: "250", Payload: []byte("250 mail.localdomain Hello example.com\r\n")},
 		{Direction: "read", Command: "MAIL", Mailbox: "alice@example.com", Payload: []byte("MAIL FROM:<alice@example.com>\r\n")},
 		{Direction: "write", Status: "250", Payload: []byte("250 OK\r\n")},
 		{Direction: "read", Command: "RCPT", Mailbox: "bob@example.org", Payload: []byte("RCPT TO:<bob@example.org>\r\n")},
@@ -112,7 +114,7 @@ func TestHandleSMTPClientDisconnect(t *testing.T) {
 	require.NoError(t, client.SetReadDeadline(time.Now().Add(2*time.Second)))
 	line, err := reader.ReadString('\n')
 	require.NoError(t, err)
-	require.Equal(t, "220 Welcome!\r\n", line)
+	require.Equal(t, "220 mail.localdomain ESMTP ready\r\n", line)
 
 	_, err = client.Write([]byte("XYZZY scanner\r\n"))
 	require.NoError(t, err)
@@ -167,9 +169,9 @@ func TestHandleSMTPExtendedSession(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	expect("220 Welcome!")
+	expect("220 mail.localdomain ESMTP ready")
 	send("ehlo scanner")
-	expect("250-Hello! Pleased to meet you.")
+	expect("250-mail.localdomain Hello scanner")
 	expect("250-PIPELINING")
 	expect("250-SIZE 10240000")
 	expect("250-AUTH PLAIN LOGIN")
@@ -214,9 +216,9 @@ func TestHandleSMTPExtendedSession(t *testing.T) {
 	events, ok := produced.decoded.([]parsedSMTP)
 	require.True(t, ok)
 
-	ehlo := "250-Hello! Pleased to meet you.\r\n250-PIPELINING\r\n250-SIZE 10240000\r\n250-AUTH PLAIN LOGIN\r\n250-8BITMIME\r\n250 HELP\r\n"
+	ehlo := "250-mail.localdomain Hello scanner\r\n250-PIPELINING\r\n250-SIZE 10240000\r\n250-AUTH PLAIN LOGIN\r\n250-8BITMIME\r\n250 HELP\r\n"
 	want := []parsedSMTP{
-		{Direction: "write", Status: "220", Payload: []byte("220 Welcome!\r\n")},
+		{Direction: "write", Status: "220", Payload: []byte("220 mail.localdomain ESMTP ready\r\n")},
 		{Direction: "read", Command: "EHLO", Payload: []byte("ehlo scanner\r\n")},
 		{Direction: "write", Status: "250", Payload: []byte(ehlo)},
 		{Direction: "read", Command: "STARTTLS", Payload: []byte("STARTTLS\r\n")},
@@ -287,4 +289,196 @@ func TestHandleSMTPDisconnectDuringAuth(t *testing.T) {
 	require.Len(t, events, 3)
 	require.Equal(t, "AUTH", events[1].Command)
 	require.Equal(t, connection.EndClientClose, produced.endReason)
+}
+
+// smtpSession drives handleSMTP over net.Pipe and counts calls to sleep.
+type smtpSession struct {
+	t      *testing.T
+	client net.Conn
+	reader *bufio.Reader
+	hp     *fakeHoneypot
+	done   chan error
+	sleeps int
+}
+
+func startSMTPSession(t *testing.T) *smtpSession {
+	t.Helper()
+	client, serverConn := net.Pipe()
+	t.Cleanup(func() { _ = client.Close() })
+	s := &smtpSession{t: t, client: client, reader: bufio.NewReader(client), hp: newFakeHoneypot(), done: make(chan error, 1)}
+	server := newSMTPServer(serverConn)
+	server.sleep = func() error { s.sleeps++; return nil }
+	go func() {
+		s.done <- handleSMTP(context.Background(), server, connection.Metadata{}, &recordingLogger{}, s.hp)
+	}()
+	return s
+}
+
+func (s *smtpSession) expect(want string) {
+	s.t.Helper()
+	require.NoError(s.t, s.client.SetReadDeadline(time.Now().Add(2*time.Second)))
+	line, err := s.reader.ReadString('\n')
+	require.NoError(s.t, err)
+	require.Equal(s.t, want+"\r\n", line)
+}
+
+func (s *smtpSession) send(line string) {
+	s.t.Helper()
+	require.NoError(s.t, s.client.SetWriteDeadline(time.Now().Add(2*time.Second)))
+	_, err := s.client.Write([]byte(line + "\r\n"))
+	require.NoError(s.t, err)
+}
+
+// finish waits for the handler and returns the single produced event's frames.
+func (s *smtpSession) finish() []parsedSMTP {
+	s.t.Helper()
+	select {
+	case err := <-s.done:
+		require.NoError(s.t, err)
+	case <-time.After(2 * time.Second):
+		s.t.Fatal("handler did not finish")
+	}
+	produced := waitProduced(s.t, s.hp)
+	require.Equal(s.t, "smtp", produced.protocol)
+	select {
+	case extra := <-s.hp.produced:
+		s.t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+	events, ok := produced.decoded.([]parsedSMTP)
+	require.True(s.t, ok, "decoded should be []parsedSMTP")
+	return events
+}
+
+func TestHandleSMTPCommandSequence(t *testing.T) {
+	s := startSMTPSession(t)
+	s.expect("220 mail.localdomain ESMTP ready")
+	s.send("HELO User")
+	s.expect("250 mail.localdomain Hello User")
+	s.send("RCPT TO:<bob@example.org>")
+	s.expect("503 5.5.1 Bad sequence of commands")
+	s.send("DATA")
+	s.expect("503 5.5.1 Bad sequence of commands")
+	s.send("MAIL FROM:<alice@example.com>")
+	s.expect("250 OK")
+	s.send("MAIL FROM:<alice@example.com>")
+	s.expect("503 5.5.1 Error: nested MAIL command")
+	s.send("DATA")
+	s.expect("503 5.5.1 Bad sequence of commands")
+	for i := 0; i < maxRecipients; i++ {
+		s.send(fmt.Sprintf("RCPT TO:<rcpt%d@example.org>", i))
+		s.expect("250 OK")
+	}
+	s.send("RCPT TO:<one-too-many@example.org>")
+	s.expect("452 4.5.3 Too many recipients")
+	s.send("DATA")
+	s.expect("354 End data with <CRLF>.<CRLF>")
+	s.send("hi")
+	s.send(".")
+	s.expect("250 OK")
+	// a completed DATA ends the transaction
+	s.send("RCPT TO:<bob@example.org>")
+	s.expect("503 5.5.1 Bad sequence of commands")
+	s.send("MAIL FROM:<alice@example.com>")
+	s.expect("250 OK")
+	s.send("RSET")
+	s.expect("250 OK")
+	s.send("RCPT TO:<bob@example.org>")
+	s.expect("503 5.5.1 Bad sequence of commands")
+	s.send("MAIL FROM:<alice@example.com>")
+	s.expect("250 OK")
+	s.send("EHLO again")
+	for _, line := range []string{"250-mail.localdomain Hello again", "250-PIPELINING", "250-SIZE 10240000", "250-AUTH PLAIN LOGIN", "250-8BITMIME", "250 HELP"} {
+		s.expect(line)
+	}
+	s.send("RCPT TO:<bob@example.org>")
+	s.expect("503 5.5.1 Bad sequence of commands")
+	s.send("QUIT")
+	s.expect("221 Bye")
+
+	events := s.finish()
+	// sleep only runs before the greeting and after the DATA body
+	require.Equal(t, 2, s.sleeps)
+	require.Equal(t, "503", events[4].Status)
+	require.Equal(t, "DATA", events[5].Command)
+	require.Equal(t, "503", events[6].Status)
+}
+
+func TestHandleSMTPDataTruncated(t *testing.T) {
+	s := startSMTPSession(t)
+	s.expect("220 mail.localdomain ESMTP ready")
+	s.send("MAIL FROM:<alice@example.com>")
+	s.expect("250 OK")
+	s.send("RCPT TO:<bob@example.org>")
+	s.expect("250 OK")
+	s.send("DATA")
+	s.expect("354 End data with <CRLF>.<CRLF>")
+	for i := 0; i < maxDataRead+100; i++ {
+		s.send("NOOP body line")
+	}
+	s.send(".")
+	s.expect("250 OK")
+	long := "NOOP " + strings.Repeat("x", 2*maxLineBytes)
+	s.send(long)
+	s.expect("250 OK")
+	s.send("QUIT")
+	s.expect("221 Bye")
+
+	events := s.finish()
+	require.Len(t, events, 13)
+	data := events[7]
+	require.Equal(t, "read", data.Direction)
+	require.Equal(t, "DATA", data.Command)
+	require.True(t, data.Truncated)
+	require.Equal(t, strings.Repeat("NOOP body line\r\n", maxDataRead), string(data.Payload))
+	require.Equal(t, parsedSMTP{Direction: "write", Status: "250", Payload: []byte("250 OK\r\n")}, events[8])
+	require.Equal(t, parsedSMTP{Direction: "read", Command: "NOOP", Payload: []byte(long[:maxLineBytes]), Truncated: true}, events[9])
+	require.Equal(t, "250", events[10].Status)
+	require.Equal(t, "QUIT", events[11].Command)
+}
+
+func TestHandleSMTPDataByteCap(t *testing.T) {
+	s := startSMTPSession(t)
+	s.expect("220 mail.localdomain ESMTP ready")
+	s.send("MAIL FROM:<alice@example.com>")
+	s.expect("250 OK")
+	s.send("RCPT TO:<bob@example.org>")
+	s.expect("250 OK")
+	s.send("DATA")
+	s.expect("354 End data with <CRLF>.<CRLF>")
+	// one overlong body line
+	s.send(strings.Repeat("A", maxLineBytes+10))
+	s.send(".")
+	s.expect("250 OK")
+	s.send("QUIT")
+	s.expect("221 Bye")
+
+	events := s.finish()
+	data := events[7]
+	require.Equal(t, "DATA", data.Command)
+	require.True(t, data.Truncated)
+	require.Equal(t, strings.Repeat("A", maxLineBytes), string(data.Payload))
+	require.Equal(t, "250", events[8].Status)
+}
+
+func TestHandleSMTPDataAtLineCap(t *testing.T) {
+	s := startSMTPSession(t)
+	s.expect("220 mail.localdomain ESMTP ready")
+	s.send("MAIL FROM:<alice@example.com>")
+	s.expect("250 OK")
+	s.send("RCPT TO:<bob@example.org>")
+	s.expect("250 OK")
+	s.send("DATA")
+	s.expect("354 End data with <CRLF>.<CRLF>")
+	for i := 0; i < maxDataRead; i++ {
+		s.send("line")
+	}
+	s.send(".")
+	s.expect("250 OK")
+	s.send("QUIT")
+	s.expect("221 Bye")
+
+	data := s.finish()[7]
+	require.False(t, data.Truncated)
+	require.Equal(t, strings.Repeat("line\r\n", maxDataRead)+".\r\n", string(data.Payload))
 }

@@ -122,6 +122,25 @@ func Reply(code int, lines ...string) string {
 	return b.String()
 }
 
+// maxClientName bounds the HELO/EHLO argument echoed back in a reply.
+const maxClientName = 64
+
+// ClientName returns the HELO/EHLO argument in a form that is safe to echo in
+// a reply: the first word only, printable ASCII, at most maxClientName bytes.
+func ClientName(arg string) string {
+	name, _, _ := strings.Cut(strings.TrimSpace(arg), " ")
+	name = strings.Map(func(r rune) rune {
+		if r <= ' ' || r > '~' {
+			return -1
+		}
+		return r
+	}, name)
+	if len(name) > maxClientName {
+		name = name[:maxClientName]
+	}
+	return name
+}
+
 // DecodeLogin decodes one base64 line of an AUTH LOGIN exchange.
 func DecodeLogin(line string) (string, bool) {
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(line))

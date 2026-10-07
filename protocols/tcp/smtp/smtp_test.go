@@ -1,6 +1,7 @@
 package smtp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -76,4 +77,13 @@ func TestDecodeAuth(t *testing.T) {
 	require.Equal(t, "admin", user)
 	_, ok = DecodeLogin("*")
 	require.False(t, ok)
+}
+
+func TestClientName(t *testing.T) {
+	require.Equal(t, "example.com", ClientName("example.com"))
+	require.Equal(t, "User", ClientName("  User extra words "))
+	require.Equal(t, "ab", ClientName("a\rb\x00"))
+	require.Equal(t, "[1.2.3.4]", ClientName("[1.2.3.4]"))
+	require.Len(t, ClientName(strings.Repeat("x", 200)), maxClientName)
+	require.Equal(t, "", ClientName(""))
 }
