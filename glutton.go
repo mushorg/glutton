@@ -402,6 +402,12 @@ func (g *Glutton) ProduceTCP(handler string, conn net.Conn, md connection.Metada
 	if g.Producer != nil {
 		payload = g.sanitizePayload(payload)
 		decoded = producer.SanitizeDecoded(decoded, g.sanitizePayload)
+		if md.TLS != nil {
+			t := *md.TLS
+			t.ServerName = string(g.sanitizePayload([]byte(t.ServerName)))
+			t.Hello = g.sanitizePayload(t.Hello)
+			md.TLS = &t
+		}
 		return g.Producer.LogTCP(handler, conn, md, payload, decoded)
 	}
 	return nil

@@ -51,6 +51,17 @@ type Event struct {
 	EndReason     string      `json:"endReason,omitempty"`
 	Scanner       string      `json:"scanner,omitempty"`
 	Decoded       interface{} `json:"decoded,omitempty"`
+	TLS           *TLSInfo    `json:"tls,omitempty"`
+}
+
+// TLSInfo is set when the sensor terminated TLS before the handler ran.
+type TLSInfo struct {
+	ServerName  string   `json:"serverName,omitempty"`
+	ALPN        []string `json:"alpn,omitempty"`
+	Version     string   `json:"version,omitempty"`
+	Cipher      string   `json:"cipher,omitempty"`
+	ClientHello string   `json:"clientHello,omitempty"` // base64 of the raw ClientHello records
+	Truncated   bool     `json:"truncated,omitempty"`
 }
 
 // New initializes the producers

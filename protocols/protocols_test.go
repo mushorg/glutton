@@ -2,13 +2,17 @@ package protocols
 
 import (
 	"context"
+	"crypto/tls"
+	"io"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/mocks"
 	"github.com/mushorg/glutton/protocols/spicy"
+	"github.com/mushorg/glutton/rules"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -68,7 +72,7 @@ func TestMapTCPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "mctp", "expected MCTP handler")
 	require.Contains(t, m, "dicom", "expected DICOM handler")
 	require.Contains(t, m, "rfb", "expected RFB handler")
-	require.Contains(t, m, "pop3s", "expected POP3S handler")
+	require.Contains(t, m, "pop3", "expected POP3 handler")
 	require.Contains(t, m, "whois", "expected WHOIS handler")
 	ctx := context.Background()
 	conn, close := testConn(t)
@@ -131,4 +135,64 @@ func TestParseTCPProtocol(t *testing.T) {
 			require.Equal(t, test.protocol, protocol)
 		})
 	}
+}
+
+func TestServeTLS(t *testing.T) {
+	rule := &rules.Rule{Target: "pop3", TLS: true}
+	newHP := func(produced *[]string) *mocks.MockHoneypot {
+		h := &mocks.MockHoneypot{}
+		h.EXPECT().UpdateConnectionTimeout(mock.Anything, mock.Anything).Return(nil)
+		h.EXPECT().ProduceTCP(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			RunAndReturn(func(handler string, _ net.Conn, md connection.Metadata, payload []byte, _ interface{}) error {
+				*produced = append(*produced, handler)
+				return nil
+			})
+		return h
+	}
+	log := &mocks.MockLogger{}
+	log.EXPECT().Debug(mock.Anything, mock.Anything, mock.Anything).Maybe()
+	log.EXPECT().Debug(mock.Anything, mock.Anything).Maybe()
+
+	t.Run("handshake ok runs handler on plaintext", func(t *testing.T) {
+		client, server := net.Pipe()
+		defer client.Close()
+		require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+		var produced []string
+		var gotTLS *connection.TLSInfo
+		var gotRead string
+		fn := func(_ context.Context, c net.Conn, md connection.Metadata, _ interfaces.Logger, _ interfaces.Honeypot) error {
+			gotTLS = md.TLS
+			buf := make([]byte, 5)
+			_, err := io.ReadFull(c, buf)
+			gotRead = string(buf)
+			_ = c.Close()
+			return err
+		}
+		done := make(chan error, 1)
+		go func() {
+			done <- serveTLS(context.Background(), fn, server, connection.Metadata{Rule: rule}, log, newHP(&produced))
+		}()
+		tc := tls.Client(client, &tls.Config{InsecureSkipVerify: true, ServerName: "mail.example.com"})
+		require.NoError(t, tc.Handshake())
+		_, err := tc.Write([]byte("hello"))
+		require.NoError(t, err)
+		require.NoError(t, <-done)
+		require.Equal(t, "hello", gotRead)
+		require.Equal(t, "mail.example.com", gotTLS.ServerName)
+		require.Empty(t, produced, "wrapper must not produce when the handler ran")
+	})
+
+	t.Run("failed handshake produces one event and skips handler", func(t *testing.T) {
+		client, server := net.Pipe()
+		var produced []string
+		called := false
+		fn := func(context.Context, net.Conn, connection.Metadata, interfaces.Logger, interfaces.Honeypot) error {
+			called = true
+			return nil
+		}
+		require.NoError(t, client.Close())
+		require.NoError(t, serveTLS(context.Background(), fn, server, connection.Metadata{Rule: rule}, log, newHP(&produced)))
+		require.False(t, called)
+		require.Equal(t, []string{"pop3"}, produced)
+	})
 }

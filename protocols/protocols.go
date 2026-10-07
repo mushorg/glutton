@@ -2,12 +2,14 @@ package protocols
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"strings"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
+	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/spicy"
 	spicyHandlers "github.com/mushorg/glutton/protocols/spicy/handlers"
@@ -36,8 +38,37 @@ type udpHandler func(context.Context, *net.UDPAddr, *net.UDPAddr, []byte, connec
 
 func bindTCP(fn tcpHandler, log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		if md.Rule != nil && md.Rule.TLS {
+			return serveTLS(ctx, fn, conn, md, log, h)
+		}
 		return fn(ctx, conn, md, log, h)
 	}
+}
+
+// serveTLS terminates TLS for rules with tls: true and runs fn on the
+// decrypted connection. If the handshake fails (a scanner that connects and
+// waits, or a client that is not speaking TLS) fn never runs, so the wrapper
+// produces the single event itself: payload is whatever the client sent.
+func serveTLS(ctx context.Context, fn tcpHandler, conn net.Conn, md connection.Metadata, log interfaces.Logger, h interfaces.Honeypot) error {
+	if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+		log.Debug("Failed to set connection timeout", slog.String("protocol", "tls"), producer.ErrAttr(err))
+		_ = conn.Close()
+		return nil
+	}
+	tlsConn, info, err := helpers.TerminateTLS(conn)
+	md.TLS = info
+	if err != nil {
+		log.Debug("TLS handshake failed", slog.String("protocol", "tls"), producer.ErrAttr(err))
+		md.EndReason = connection.EndReasonFromRead(err)
+		if perr := h.ProduceTCP(md.Rule.Target, conn, md, info.Hello, nil); perr != nil {
+			log.Error("Failed to produce message", slog.String("protocol", "tls"), producer.ErrAttr(perr))
+		}
+		if cerr := conn.Close(); cerr != nil {
+			log.Debug("Failed to close connection", slog.String("protocol", "tls"), producer.ErrAttr(cerr))
+		}
+		return nil
+	}
+	return fn(ctx, tlsConn, md, log, h)
 }
 
 func bindUDP(fn udpHandler, log interfaces.Logger, h interfaces.Honeypot) UDPHandlerFunc {
@@ -79,7 +110,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"bittorrent": bindTCP(tcp.HandleBittorrent, log, h),
 		"memcache":   bindTCP(tcp.HandleMemcache, log, h),
 		"jabber":     bindTCP(tcp.HandleJabber, log, h),
-		"pop3s":      bindTCP(tcp.HandlePOP3S, log, h),
+		"pop3":       bindTCP(tcp.HandlePOP3, log, h),
 		"whois":      bindTCP(tcp.HandleWHOIS, log, h),
 		"adb":        bindTCP(tcp.HandleADB, log, h),
 		"mongodb":    bindTCP(tcp.HandleMongoDB, log, h),

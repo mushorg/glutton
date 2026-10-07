@@ -3,7 +3,6 @@ package tcp
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
 	"net"
 	"testing"
 	"time"
@@ -12,16 +11,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func runPOP3S(t *testing.T, serverConn net.Conn, hp *fakeHoneypot) chan error {
-	t.Helper()
+func runPOP3(serverConn net.Conn, hp *fakeHoneypot) chan error {
 	done := make(chan error, 1)
 	go func() {
-		done <- HandlePOP3S(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
+		done <- HandlePOP3(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
 	}()
 	return done
 }
 
-func waitDone(t *testing.T, done chan error) {
+func requirePOP3Event(t *testing.T, done chan error, hp *fakeHoneypot) []parsedPOP3 {
 	t.Helper()
 	select {
 	case err := <-done:
@@ -29,12 +27,8 @@ func waitDone(t *testing.T, done chan error) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("handler did not finish")
 	}
-}
-
-func requireSingleEvent(t *testing.T, hp *fakeHoneypot) []parsedPOP3 {
-	t.Helper()
 	produced := waitProduced(t, hp)
-	require.Equal(t, "pop3s", produced.protocol)
+	require.Equal(t, "pop3", produced.protocol)
 	select {
 	case extra := <-hp.produced:
 		t.Fatalf("expected a single produced event, got another: %+v", extra)
@@ -45,16 +39,14 @@ func requireSingleEvent(t *testing.T, hp *fakeHoneypot) []parsedPOP3 {
 	return events
 }
 
-func TestHandlePOP3SSession(t *testing.T) {
+func TestHandlePOP3Session(t *testing.T) {
 	client, serverConn := net.Pipe()
 	defer client.Close()
 	hp := newFakeHoneypot()
-	done := runPOP3S(t, serverConn, hp)
+	done := runPOP3(serverConn, hp)
 
 	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
-	tlsClient := tls.Client(client, &tls.Config{InsecureSkipVerify: true, ServerName: "mail.example.com"})
-	require.NoError(t, tlsClient.Handshake())
-	r := bufio.NewReader(tlsClient)
+	r := bufio.NewReader(client)
 	expect := func(want string) {
 		t.Helper()
 		line, err := r.ReadString('\n')
@@ -63,7 +55,7 @@ func TestHandlePOP3SSession(t *testing.T) {
 	}
 	send := func(line string) {
 		t.Helper()
-		_, err := tlsClient.Write([]byte(line))
+		_, err := client.Write([]byte(line))
 		require.NoError(t, err)
 	}
 
@@ -74,13 +66,7 @@ func TestHandlePOP3SSession(t *testing.T) {
 	expect("-ERR [AUTH] Authentication failed.\r\n")
 	send("QUIT\r\n")
 	expect("+OK Logging out.\r\n")
-	waitDone(t, done)
 
-	events := requireSingleEvent(t, hp)
-	require.Len(t, events, 8)
-	require.Equal(t, "tls", events[0].Command)
-	require.Equal(t, "mail.example.com", events[0].ServerName)
-	require.Equal(t, byte(0x16), events[0].Payload[0])
 	require.Equal(t, []parsedPOP3{
 		{Direction: "write", Status: "+OK", Payload: []byte("+OK Dovecot ready.\r\n")},
 		{Direction: "read", Command: "USER", Username: "bob", Payload: []byte("USER bob\r\n")},
@@ -89,30 +75,38 @@ func TestHandlePOP3SSession(t *testing.T) {
 		{Direction: "write", Status: "-ERR", Payload: []byte("-ERR [AUTH] Authentication failed.\r\n")},
 		{Direction: "read", Command: "QUIT", Payload: []byte("QUIT\r\n")},
 		{Direction: "write", Status: "+OK", Payload: []byte("+OK Logging out.\r\n")},
-	}, events[1:])
+	}, requirePOP3Event(t, done, hp))
 }
 
-func TestHandlePOP3SConnectAndClose(t *testing.T) {
+func TestHandlePOP3EarlyDisconnect(t *testing.T) {
 	client, serverConn := net.Pipe()
 	hp := newFakeHoneypot()
-	done := runPOP3S(t, serverConn, hp)
+	done := runPOP3(serverConn, hp)
+	_, err := bufio.NewReader(client).ReadString('\n')
+	require.NoError(t, err)
 	require.NoError(t, client.Close())
-	waitDone(t, done)
-	require.Empty(t, requireSingleEvent(t, hp))
+
+	events := requirePOP3Event(t, done, hp)
+	require.Len(t, events, 1)
+	require.Equal(t, "write", events[0].Direction)
 }
 
-func TestHandlePOP3SNonTLSClient(t *testing.T) {
+func TestHandlePOP3LongLineTruncated(t *testing.T) {
 	client, serverConn := net.Pipe()
 	defer client.Close()
 	hp := newFakeHoneypot()
-	done := runPOP3S(t, serverConn, hp)
+	done := runPOP3(serverConn, hp)
+	go func() {
+		_, _ = bufio.NewReader(client).ReadString('\n')
+		buf := make([]byte, 2*pop3MaxLine)
+		for i := range buf {
+			buf[i] = 'A'
+		}
+		_, _ = client.Write(buf)
+	}()
 
-	go func() { _, _ = client.Write([]byte("USER bob\r\nPASS x\r\n")) }()
-	waitDone(t, done)
-
-	events := requireSingleEvent(t, hp)
-	require.Len(t, events, 1)
-	require.Equal(t, "read", events[0].Direction)
-	require.Equal(t, "tls", events[0].Command)
-	require.Equal(t, []byte("USER bob\r\nPASS x\r\n"), events[0].Payload)
+	events := requirePOP3Event(t, done, hp)
+	require.Len(t, events, 2)
+	require.True(t, events[1].Truncated)
+	require.Len(t, events[1].Payload, pop3MaxLine)
 }

@@ -85,11 +85,12 @@ rules:
 | `type`    | yes      | `conn_handler`, `proxy_tcp`, or `proxy_udp`.                                         |
 | `target`  | yes      | Handler key for `conn_handler`; `host:port` upstream for `proxy_tcp` / `proxy_udp`.  |
 | `produce` | no       | When `false`, matching sessions are not sent to producers. Defaults to `true`.       |
+| `tls`     | no       | `conn_handler` only. When `true`, the sensor terminates TLS (self-signed cert) before the handler runs, so the handler sees plaintext (implicit TLS such as POP3S on 995). A failed handshake produces one event with the raw client bytes as `payload` and the handler is not run. The ClientHello, SNI, ALPN, version and cipher go in the event's `tls` field. |
 
 
 ### Rule types
 
-`**conn_handler**` — `target` is a handler key. Current TCP keys: `smtp`, `rdp`, `smb`, `ftp`, `sip`, `rfb`, `telnet`, `mqtt`, `iscsi`, `bittorrent`, `memcache`, `jabber`, `pop3s`, `whois`, `adb`, `mongodb`, `http`, `mcp`, `modbus`, `opcua`, `mctp`, `dicom`, `proxy_tcp`, `tcp`. UDP keys: `sip`, `openvpn`, `mdns`, `l2tp`, `raknet`, `kerberos`, `coap`, `ike`, `a2s`, `ddp`, `proxy_udp`, `udp`. If the target isn't registered, the listener accepts the connection but no handler runs.
+`**conn_handler**` — `target` is a handler key. Current TCP keys: `smtp`, `rdp`, `smb`, `ftp`, `sip`, `rfb`, `telnet`, `mqtt`, `iscsi`, `bittorrent`, `memcache`, `jabber`, `pop3`, `whois`, `adb`, `mongodb`, `http`, `mcp`, `modbus`, `opcua`, `mctp`, `dicom`, `proxy_tcp`, `tcp`. UDP keys: `sip`, `openvpn`, `mdns`, `l2tp`, `raknet`, `kerberos`, `coap`, `ike`, `a2s`, `ddp`, `proxy_udp`, `udp`. If the target isn't registered, the listener accepts the connection but no handler runs.
 
 `**proxy_tcp**` — forwards a matched TCP connection to an upstream `host:port`. The address is parsed at rule-load time and stored in rule metadata; at dispatch the proxy handler dials it and pipes bytes both directions. Tunable via `dial_timeout`, `conn_timeout`, `max_tcp_payload`, and `capture_traffic.enabled` in the main config.
 

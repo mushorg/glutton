@@ -191,3 +191,29 @@ func TestSanitizeDecodedNonSlice(t *testing.T) {
 	require.Equal(t, "1.2.3.4", out["fields"].(map[string]interface{})["host"])
 	require.Nil(t, SanitizeDecoded(nil, func(b []byte) []byte { return b }))
 }
+
+func TestMakeEventTCPTLS(t *testing.T) {
+	p, err := New("sensor-1", "v9.9.9")
+	require.NoError(t, err)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	conn, err := net.Dial(ln.Addr().Network(), ln.Addr().String())
+	require.NoError(t, err)
+	defer conn.Close()
+
+	plain, err := p.makeEventTCP("pop3", conn, connection.Metadata{}, nil, nil)
+	require.NoError(t, err)
+	require.Nil(t, plain.TLS)
+
+	md := connection.Metadata{TLS: &connection.TLSInfo{
+		ServerName: "mail.example.com", ALPN: []string{"pop3"}, Version: "TLS 1.3",
+		Cipher: "TLS_AES_128_GCM_SHA256", Hello: []byte{0x16, 0x03, 0x01},
+	}}
+	ev, err := p.makeEventTCP("pop3", conn, md, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, &TLSInfo{
+		ServerName: "mail.example.com", ALPN: []string{"pop3"}, Version: "TLS 1.3",
+		Cipher: "TLS_AES_128_GCM_SHA256", ClientHello: "FgMB",
+	}, ev.TLS)
+}

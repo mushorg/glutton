@@ -82,6 +82,8 @@ type Metadata struct {
 	TargetPort uint16
 	TargetIP   string
 	EndReason  string
+	// TLS is set when the sensor terminated TLS (rule option tls) before the handler.
+	TLS *TLSInfo
 }
 
 type ConnTable struct {
@@ -170,4 +172,15 @@ func (t *ConnTable) Get(ck CKey) Metadata {
 	t.mtx.RLock()
 	defer t.mtx.RUnlock()
 	return t.table[ck]
+}
+
+// TLSInfo describes a TLS session terminated by the sensor before the
+// protocol handler ran. Hello holds the raw ClientHello records (capped).
+type TLSInfo struct {
+	ServerName string
+	ALPN       []string
+	Version    string
+	Cipher     string
+	Hello      []byte
+	Truncated  bool
 }

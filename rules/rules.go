@@ -34,6 +34,9 @@ type Rule struct {
 	Target  string `yaml:"target,omitempty"`
 	Name    string `yaml:"name,omitempty"`
 	Produce *bool  `yaml:"produce,omitempty"` // nil/omitted means true
+	// TLS terminates TLS on the connection before a conn_handler runs, so the
+	// handler sees plaintext (implicit TLS such as POP3S).
+	TLS bool `yaml:"tls,omitempty"`
 
 	isInit      bool
 	RuleType    RuleType

@@ -72,6 +72,16 @@ func fillEnvelope(event *Event, md connection.Metadata, payload []byte, decoded 
 		event.Rule = md.Rule.String()
 		event.RuleName = md.Rule.Name
 	}
+	if t := md.TLS; t != nil {
+		event.TLS = &TLSInfo{
+			ServerName:  t.ServerName,
+			ALPN:        t.ALPN,
+			Version:     t.Version,
+			Cipher:      t.Cipher,
+			ClientHello: base64.StdEncoding.EncodeToString(t.Hello),
+			Truncated:   t.Truncated,
+		}
+	}
 }
 
 func (p *Producer) makeEventTCP(handler string, conn net.Conn, md connection.Metadata, payload []byte, decoded interface{}) (*Event, error) {

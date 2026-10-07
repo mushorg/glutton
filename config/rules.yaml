@@ -34,7 +34,8 @@ rules:
     target: jabber
   - match: tcp dst port 995
     type: conn_handler
-    target: pop3s
+    target: pop3
+    tls: true
   - match: tcp dst port 43
     type: conn_handler
     target: whois

@@ -318,3 +318,10 @@ func TestWorkingMatch(t *testing.T) {
 		t.Fatal("didn't match")
 	}
 }
+
+func TestRuleTLSFlag(t *testing.T) {
+	rs, err := Init(strings.NewReader("rules:\n  - match: tcp dst port 995\n    type: conn_handler\n    target: pop3\n    tls: true\n  - match: tcp dst port 110\n    type: conn_handler\n    target: pop3\n"))
+	require.NoError(t, err)
+	require.True(t, rs[0].TLS)
+	require.False(t, rs[1].TLS)
+}
