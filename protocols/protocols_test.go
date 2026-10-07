@@ -68,6 +68,7 @@ func TestMapTCPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "mctp", "expected MCTP handler")
 	require.Contains(t, m, "dicom", "expected DICOM handler")
 	require.Contains(t, m, "rfb", "expected RFB handler")
+	require.Contains(t, m, "pop3s", "expected POP3S handler")
 	ctx := context.Background()
 	conn, close := testConn(t)
 	defer close()
