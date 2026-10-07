@@ -112,6 +112,9 @@ rules:
   - match: udp dst port 7400 or port 7401 or port 7410 or port 7411
     type: conn_handler
     target: rtps
+  - match: udp dst port 3671
+    type: conn_handler
+    target: knx
   - match: udp dst port 3702
     type: conn_handler
     target: wsdiscovery

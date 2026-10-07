@@ -15,6 +15,7 @@ import (
 	"github.com/mushorg/glutton/protocols/udp/a2s"
 	"github.com/mushorg/glutton/protocols/udp/ddp"
 	"github.com/mushorg/glutton/protocols/udp/ike"
+	"github.com/mushorg/glutton/protocols/udp/knx"
 	"github.com/mushorg/glutton/protocols/udp/rtps"
 	"github.com/mushorg/glutton/protocols/udp/wsd"
 )
@@ -49,6 +50,9 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	}
 	if ddp.LooksLikeDDP(data) {
 		return HandleDDP(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
+	if knx.LooksLikeKNX(data) {
+		return HandleKNX(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
 	if rtps.LooksLikeRTPS(data) {
 		return HandleRTPS(ctx, srcAddr, dstAddr, data, md, log, h)
