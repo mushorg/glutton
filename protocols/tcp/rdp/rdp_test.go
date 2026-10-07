@@ -127,3 +127,77 @@ func mustHex(s string) []byte {
 	}
 	return b
 }
+
+func TestWrapAndExtractTSRequest(t *testing.T) {
+	ntlm := make([]byte, 32)
+	copy(ntlm[0:8], "NTLMSSP\x00")
+	binary.LittleEndian.PutUint32(ntlm[8:12], NTLMMsgNegotiate)
+	wrapped := WrapTSRequest(ntlm)
+	require.Equal(t, byte(0x30), wrapped[0], "outer SEQUENCE tag")
+	got := negoTokenFromTSRequest(wrapped)
+	require.Equal(t, ntlm, got, "round-trip must recover original NTLM bytes")
+}
+
+func TestBuildTSRequestChallenge(t *testing.T) {
+	resp, err := BuildTSRequestChallenge()
+	require.NoError(t, err)
+	require.Equal(t, byte(0x30), resp[0], "TSRequest starts with DER SEQUENCE")
+	ntlm := negoTokenFromTSRequest(resp)
+	require.NotNil(t, ntlm)
+	require.Equal(t, ntlmSig, string(ntlm[:8]))
+	require.Equal(t, uint32(NTLMMsgChallenge), binary.LittleEndian.Uint32(ntlm[8:12]))
+}
+
+func TestParseCredSSPNegotiate(t *testing.T) {
+	ntlm := make([]byte, 32)
+	copy(ntlm[0:8], "NTLMSSP\x00")
+	binary.LittleEndian.PutUint32(ntlm[8:12], NTLMMsgNegotiate)
+	binary.LittleEndian.PutUint32(ntlm[12:16], 0x00003207)
+	parsed := ParseCredSSP(WrapTSRequest(ntlm))
+	require.Equal(t, NTLMMsgNegotiate, parsed.NTLMType)
+	require.Empty(t, parsed.Domain)
+	require.Empty(t, parsed.Username)
+}
+
+func TestParseCredSSPAuthenticate(t *testing.T) {
+	domain := "ACME"
+	username := "jsmith"
+	domBytes := utf16LE(domain)
+	userBytes := utf16LE(username)
+	payloadOff := 56 // minimal header: 8+4+8+8+8+8+8+4 = 56, no optional fields
+	domOff := payloadOff
+	userOff := payloadOff + len(domBytes)
+	total := userOff + len(userBytes)
+	ntlm := make([]byte, total)
+	copy(ntlm[0:8], "NTLMSSP\x00")
+	binary.LittleEndian.PutUint32(ntlm[8:12], NTLMMsgAuthenticate)
+	// DomainNameFields at 28
+	binary.LittleEndian.PutUint16(ntlm[28:30], uint16(len(domBytes)))
+	binary.LittleEndian.PutUint16(ntlm[30:32], uint16(len(domBytes)))
+	binary.LittleEndian.PutUint32(ntlm[32:36], uint32(domOff))
+	// UserNameFields at 36
+	binary.LittleEndian.PutUint16(ntlm[36:38], uint16(len(userBytes)))
+	binary.LittleEndian.PutUint16(ntlm[38:40], uint16(len(userBytes)))
+	binary.LittleEndian.PutUint32(ntlm[40:44], uint32(userOff))
+	copy(ntlm[domOff:], domBytes)
+	copy(ntlm[userOff:], userBytes)
+
+	parsed := ParseCredSSP(WrapTSRequest(ntlm))
+	require.Equal(t, NTLMMsgAuthenticate, parsed.NTLMType)
+	require.Equal(t, domain, parsed.Domain)
+	require.Equal(t, username, parsed.Username)
+}
+
+func TestParseCredSSPNoNegoTokens(t *testing.T) {
+	// TSRequest with only a version field (no negoTokens).
+	tsReq := []byte{0x30, 0x05, 0xa0, 0x03, 0x02, 0x01, 0x06}
+	parsed := ParseCredSSP(tsReq)
+	require.Equal(t, 0, parsed.NTLMType)
+	require.Empty(t, parsed.Domain)
+}
+
+func TestParseCredSSPMalformed(t *testing.T) {
+	require.Equal(t, ParsedCredSSP{}, ParseCredSSP(nil))
+	require.Equal(t, ParsedCredSSP{}, ParseCredSSP([]byte{0xff}))
+	require.Equal(t, ParsedCredSSP{}, ParseCredSSP([]byte{0x30, 0x01, 0x00}))
+}

@@ -17,13 +17,16 @@ import (
 )
 
 type parsedRDP struct {
-	Direction string         `json:"direction,omitempty"`
-	Command   string         `json:"command,omitempty"`
-	Cookie    string         `json:"cookie,omitempty"`
-	Protocols string         `json:"protocols,omitempty"`
-	Header    rdp.TKIPHeader `json:"header,omitempty"`
-	Payload   []byte         `json:"payload,omitempty"`
-	Truncated bool           `json:"truncated,omitempty"`
+	Direction       string         `json:"direction,omitempty"`
+	Command         string         `json:"command,omitempty"`
+	Cookie          string         `json:"cookie,omitempty"`
+	Protocols       string         `json:"protocols,omitempty"`
+	NTLMDomain      string         `json:"ntlm_domain,omitempty"`
+	NTLMUser        string         `json:"ntlm_user,omitempty"`
+	NTLMWorkstation string         `json:"ntlm_workstation,omitempty"`
+	Header          rdp.TKIPHeader `json:"header,omitempty"`
+	Payload         []byte         `json:"payload,omitempty"`
+	Truncated       bool           `json:"truncated,omitempty"`
 }
 
 // rdpMaxReceive is larger than maxBufferSize: modern TLS ClientHellos often
@@ -66,6 +69,9 @@ func (rs *rdpServer) write(header rdp.TKIPHeader, data []byte) error {
 func rdpWriteCommand(data []byte) string {
 	if rdp.IsTLSRecord(data) {
 		return rdp.CmdTLSHandshake
+	}
+	if rdp.IsTSRequest(data) {
+		return rdp.CmdNTLMChallenge
 	}
 	if bytes.Contains(data, []byte{0x7f, 0x66}) {
 		return rdp.CmdMCSConnectResponse
@@ -194,13 +200,40 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			}
 			return nil
 		case tlsDone && rdp.IsTSRequest(raw):
-			// CredSSP (NLA) follows TLS when HYBRID was selected. We do not
-			// implement it, so record the client's first TSRequest and stop.
-			fr.Command = rdp.CmdTSRequest
+			parsed := rdp.ParseCredSSP(raw)
 			fr.Header = rdp.TKIPHeader{}
-			server.events = append(server.events, fr)
-			logger.Debug("rdp CredSSP TSRequest received; no reply implemented", slog.String("protocol", "rdp"), slog.Int("bytes", len(raw)))
-			return nil
+			switch parsed.NTLMType {
+			case rdp.NTLMMsgNegotiate:
+				fr.Command = rdp.CmdNTLMNegotiate
+				server.events = append(server.events, fr)
+				logger.Debug("rdp CredSSP NTLM Negotiate", slog.String("protocol", "rdp"), slog.Int("bytes", len(raw)))
+				resp, err := rdp.BuildTSRequestChallenge()
+				if err != nil {
+					endReason = connection.EndWriteError
+					return err
+				}
+				if err := server.write(rdp.TKIPHeader{}, resp); err != nil {
+					endReason = connection.EndWriteError
+					return err
+				}
+			case rdp.NTLMMsgAuthenticate:
+				fr.Command = rdp.CmdNTLMAuthenticate
+				fr.NTLMDomain = parsed.Domain
+				fr.NTLMUser = parsed.Username
+				fr.NTLMWorkstation = parsed.Workstation
+				server.events = append(server.events, fr)
+				logger.Debug("rdp CredSSP NTLM Authenticate",
+					slog.String("protocol", "rdp"),
+					slog.String("domain", parsed.Domain),
+					slog.String("user", parsed.Username),
+				)
+				return nil
+			default:
+				fr.Command = rdp.CmdTSRequest
+				server.events = append(server.events, fr)
+				logger.Debug("rdp CredSSP TSRequest", slog.String("protocol", "rdp"), slog.Int("bytes", len(raw)))
+				return nil
+			}
 		default:
 			server.events = append(server.events, fr)
 			logger.Debug("rdp ignoring non-CR TPDU", slog.String("protocol", "rdp"), slog.Int("tpdu", int(rdp.TPDUType(raw))))

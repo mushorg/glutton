@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"net"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/tcp/rdp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -368,6 +371,107 @@ func TestHandleRDPMCSOverTLS(t *testing.T) {
 	events := waitProduced(t, hp).decoded.([]parsedRDP)
 	require.Equal(t, "MCSConnectInitial", events[4].Command)
 	require.Equal(t, "MCSConnectResponse", events[5].Command)
+}
+
+func TestHandleRDPCredSSPExchange(t *testing.T) {
+	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHello)
+
+	// Send NTLM Negotiate inside a TSRequest.
+	_, err := tlsClient.Write(rdp.WrapTSRequest(makeNTLMNegotiate()))
+	require.NoError(t, err)
+
+	// Read the NTLM Challenge TSRequest reply.
+	buf := make([]byte, 512)
+	n, err := tlsClient.Read(buf)
+	require.NoError(t, err)
+	challengeResp := buf[:n]
+	require.Equal(t, byte(0x30), challengeResp[0], "challenge must be a DER SEQUENCE")
+
+	// Send NTLM Authenticate inside a TSRequest.
+	_, err = tlsClient.Write(rdp.WrapTSRequest(makeNTLMAuthenticate("ACME", "jsmith")))
+	require.NoError(t, err)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	events := produced.decoded.([]parsedRDP)
+	// CR, CC, TLSClientHello, TLSHandshake, NTLMNegotiate, NTLMChallenge, NTLMAuthenticate
+	require.Len(t, events, 7)
+
+	require.Equal(t, "NTLMNegotiate", events[4].Command)
+	require.Equal(t, "read", events[4].Direction)
+	require.Equal(t, byte(0), events[4].Header.Version, "no TPKT header on CredSSP frames")
+
+	require.Equal(t, "NTLMChallenge", events[5].Command)
+	require.Equal(t, "write", events[5].Direction)
+	require.Equal(t, byte(0x30), events[5].Payload[0])
+
+	require.Equal(t, "NTLMAuthenticate", events[6].Command)
+	require.Equal(t, "read", events[6].Direction)
+	require.Equal(t, "ACME", events[6].NTLMDomain)
+	require.Equal(t, "jsmith", events[6].NTLMUser)
+
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+}
+
+// makeNTLMNegotiate builds a minimal NTLM Type 1 Negotiate message.
+func makeNTLMNegotiate() []byte {
+	msg := make([]byte, 32)
+	copy(msg[0:8], "NTLMSSP\x00")
+	binary.LittleEndian.PutUint32(msg[8:12], 1)
+	binary.LittleEndian.PutUint32(msg[12:16], 0x00003207)
+	return msg
+}
+
+// makeNTLMAuthenticate builds a minimal NTLM Type 3 Authenticate with domain and username.
+func makeNTLMAuthenticate(domain, username string) []byte {
+	domBytes := rdpUTF16LE(domain)
+	userBytes := rdpUTF16LE(username)
+	// Minimal header without EncryptedRandomSessionKey or Version: 56 bytes.
+	payloadOff := 56
+	domOff := payloadOff
+	userOff := payloadOff + len(domBytes)
+	total := userOff + len(userBytes)
+	msg := make([]byte, total)
+	copy(msg[0:8], "NTLMSSP\x00")
+	binary.LittleEndian.PutUint32(msg[8:12], 3)
+	// LmChallengeResponse: empty at payloadOff
+	binary.LittleEndian.PutUint32(msg[16:20], uint32(payloadOff))
+	// NtChallengeResponse: empty at payloadOff
+	binary.LittleEndian.PutUint32(msg[24:28], uint32(payloadOff))
+	// DomainNameFields at 28
+	binary.LittleEndian.PutUint16(msg[28:30], uint16(len(domBytes)))
+	binary.LittleEndian.PutUint16(msg[30:32], uint16(len(domBytes)))
+	binary.LittleEndian.PutUint32(msg[32:36], uint32(domOff))
+	// UserNameFields at 36
+	binary.LittleEndian.PutUint16(msg[36:38], uint16(len(userBytes)))
+	binary.LittleEndian.PutUint16(msg[38:40], uint16(len(userBytes)))
+	binary.LittleEndian.PutUint32(msg[40:44], uint32(userOff))
+	// WorkstationFields: empty at total
+	binary.LittleEndian.PutUint32(msg[48:52], uint32(total))
+	// NegotiateFlags
+	binary.LittleEndian.PutUint32(msg[52:56], 0x00000207)
+	copy(msg[domOff:], domBytes)
+	copy(msg[userOff:], userBytes)
+	return msg
+}
+
+func rdpUTF16LE(s string) []byte {
+	u16 := utf16.Encode([]rune(s))
+	b := make([]byte, len(u16)*2)
+	for i, r := range u16 {
+		binary.LittleEndian.PutUint16(b[2*i:], r)
+	}
+	return b
 }
 
 func TestHandleRDPTLSDisconnectAfterClientHello(t *testing.T) {

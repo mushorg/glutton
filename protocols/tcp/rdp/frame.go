@@ -14,6 +14,9 @@ const (
 	CmdMCSConnectInitial  = "MCSConnectInitial"
 	CmdMCSConnectResponse = "MCSConnectResponse"
 	CmdTSRequest          = "TSRequest"
+	CmdNTLMNegotiate      = "NTLMNegotiate"
+	CmdNTLMChallenge      = "NTLMChallenge"
+	CmdNTLMAuthenticate   = "NTLMAuthenticate"
 )
 
 var rdpProtocolBits = []struct {
