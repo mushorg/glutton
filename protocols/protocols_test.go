@@ -3,13 +3,13 @@ package protocols
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
-	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/mocks"
 	"github.com/mushorg/glutton/protocols/spicy"
 	"github.com/mushorg/glutton/rules"
@@ -138,62 +138,152 @@ func TestParseTCPProtocol(t *testing.T) {
 	}
 }
 
-func TestServeTLS(t *testing.T) {
-	rule := &rules.Rule{Target: "pop3", TLS: true}
-	newHP := func(produced *[]string) *mocks.MockHoneypot {
-		h := &mocks.MockHoneypot{}
-		h.EXPECT().UpdateConnectionTimeout(mock.Anything, mock.Anything).Return(nil)
-		h.EXPECT().ProduceTCP(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			RunAndReturn(func(handler string, _ net.Conn, md connection.Metadata, payload []byte, _ interface{}) error {
-				*produced = append(*produced, handler)
-				return nil
-			})
-		return h
-	}
+// tlsTestHoneypot records the handler names of events the TLS wrapper produces.
+func tlsTestHoneypot(produced *[]string) *mocks.MockHoneypot {
+	h := &mocks.MockHoneypot{}
+	h.EXPECT().UpdateConnectionTimeout(mock.Anything, mock.Anything).Return(nil)
+	h.EXPECT().ProduceTCP(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(handler string, _ net.Conn, _ connection.Metadata, _ []byte, _ interface{}) error {
+			*produced = append(*produced, handler)
+			return nil
+		}).Maybe()
+	return h
+}
+
+func tlsTestLogger() *mocks.MockLogger {
 	log := &mocks.MockLogger{}
 	log.EXPECT().Debug(mock.Anything, mock.Anything, mock.Anything).Maybe()
 	log.EXPECT().Debug(mock.Anything, mock.Anything).Maybe()
+	return log
+}
 
-	t.Run("handshake ok runs handler on plaintext", func(t *testing.T) {
-		client, server := net.Pipe()
-		defer client.Close()
-		require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
-		var produced []string
-		var gotTLS *connection.TLSInfo
-		var gotRead string
-		fn := func(_ context.Context, c net.Conn, md connection.Metadata, _ interfaces.Logger, _ interfaces.Honeypot) error {
-			gotTLS = md.TLS
-			buf := make([]byte, 5)
-			_, err := io.ReadFull(c, buf)
-			gotRead = string(buf)
-			_ = c.Close()
+// recordingHandler reads n bytes from the connection it is given and records
+// them along with the TLS metadata.
+type recordingHandler struct {
+	n      int
+	called bool
+	tls    *connection.TLSInfo
+	read   string
+}
+
+func (r *recordingHandler) handle(_ context.Context, c net.Conn, md connection.Metadata) error {
+	r.called = true
+	r.tls = md.TLS
+	if r.n > 0 {
+		buf := make([]byte, r.n)
+		_, err := io.ReadFull(c, buf)
+		r.read = string(buf)
+		if err != nil {
 			return err
 		}
-		done := make(chan error, 1)
-		go func() {
-			done <- serveTLS(context.Background(), fn, server, connection.Metadata{Rule: rule}, log, newHP(&produced))
-		}()
-		tc := tls.Client(client, &tls.Config{InsecureSkipVerify: true, ServerName: "mail.example.com"})
-		require.NoError(t, tc.Handshake())
-		_, err := tc.Write([]byte("hello"))
-		require.NoError(t, err)
-		require.NoError(t, <-done)
-		require.Equal(t, "hello", gotRead)
-		require.Equal(t, "mail.example.com", gotTLS.ServerName)
-		require.Empty(t, produced, "wrapper must not produce when the handler ran")
-	})
+	}
+	return c.Close()
+}
 
-	t.Run("failed handshake produces one event and skips handler", func(t *testing.T) {
-		client, server := net.Pipe()
+func runWithTLS(t *testing.T, mode rules.TLSMode, rh *recordingHandler, produced *[]string, client func(net.Conn)) {
+	t.Helper()
+	clientConn, server := net.Pipe()
+	defer clientConn.Close()
+	require.NoError(t, clientConn.SetDeadline(time.Now().Add(5*time.Second)))
+	md := connection.Metadata{Rule: &rules.Rule{Target: "pop3", TLS: mode}}
+	done := make(chan error, 1)
+	go func() {
+		done <- withTLS(rh.handle, tlsTestLogger(), tlsTestHoneypot(produced))(context.Background(), server, md)
+	}()
+	client(clientConn)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+}
+
+func tlsClientSend(t *testing.T, msg string) func(net.Conn) {
+	return func(c net.Conn) {
+		tc := tls.Client(c, &tls.Config{InsecureSkipVerify: true, ServerName: "mail.example.com"})
+		require.NoError(t, tc.Handshake())
+		_, err := tc.Write([]byte(msg))
+		require.NoError(t, err)
+		// net.Pipe is unbuffered: drain so the server's close_notify does not block
+		go func() { _, _ = io.Copy(io.Discard, tc) }()
+	}
+}
+
+func TestWithTLS(t *testing.T) {
+	for _, mode := range []rules.TLSMode{rules.TLSOn, rules.TLSAuto} {
+		t.Run(fmt.Sprintf("mode %d: TLS client gets plaintext handler", mode), func(t *testing.T) {
+			var produced []string
+			rh := &recordingHandler{n: 5}
+			runWithTLS(t, mode, rh, &produced, tlsClientSend(t, "hello"))
+			require.Equal(t, "hello", rh.read)
+			require.Equal(t, "mail.example.com", rh.tls.ServerName)
+			require.NotEmpty(t, rh.tls.Version)
+			require.Empty(t, produced, "wrapper must not produce when the handler ran")
+		})
+	}
+
+	t.Run("on: closed client produces one event, handler skipped", func(t *testing.T) {
 		var produced []string
-		called := false
-		fn := func(context.Context, net.Conn, connection.Metadata, interfaces.Logger, interfaces.Honeypot) error {
-			called = true
-			return nil
-		}
-		require.NoError(t, client.Close())
-		require.NoError(t, serveTLS(context.Background(), fn, server, connection.Metadata{Rule: rule}, log, newHP(&produced)))
-		require.False(t, called)
+		rh := &recordingHandler{}
+		runWithTLS(t, rules.TLSOn, rh, &produced, func(c net.Conn) { _ = c.Close() })
+		require.False(t, rh.called)
 		require.Equal(t, []string{"pop3"}, produced)
 	})
+
+	t.Run("auto: plaintext client-first goes to handler with bytes intact", func(t *testing.T) {
+		var produced []string
+		rh := &recordingHandler{n: 10}
+		runWithTLS(t, rules.TLSAuto, rh, &produced, func(c net.Conn) {
+			_, err := c.Write([]byte("USER bob\r\n"))
+			require.NoError(t, err)
+		})
+		require.Equal(t, "USER bob\r\n", rh.read)
+		require.Nil(t, rh.tls)
+		require.Empty(t, produced)
+	})
+
+	t.Run("auto: silent client gets the plaintext handler after the wait", func(t *testing.T) {
+		var produced []string
+		rh := &recordingHandler{}
+		start := time.Now()
+		runWithTLS(t, rules.TLSAuto, rh, &produced, func(net.Conn) {})
+		require.True(t, rh.called)
+		require.Nil(t, rh.tls)
+		require.GreaterOrEqual(t, time.Since(start), tlsAutoWait)
+		require.Empty(t, produced)
+	})
+
+	t.Run("auto: 0x16 without a TLS version is plaintext", func(t *testing.T) {
+		var produced []string
+		rh := &recordingHandler{n: 4}
+		// a MongoDB message of length 22 starts 16 00 00 00
+		runWithTLS(t, rules.TLSAuto, rh, &produced, func(c net.Conn) {
+			_, err := c.Write([]byte{0x16, 0x00, 0x00, 0x00})
+			require.NoError(t, err)
+		})
+		require.True(t, rh.called)
+		require.Nil(t, rh.tls)
+		require.Equal(t, string([]byte{0x16, 0x00, 0x00, 0x00}), rh.read)
+	})
+
+	t.Run("off: handler gets the raw connection", func(t *testing.T) {
+		var produced []string
+		rh := &recordingHandler{n: 3}
+		runWithTLS(t, rules.TLSOff, rh, &produced, func(c net.Conn) {
+			_, err := c.Write([]byte("abc"))
+			require.NoError(t, err)
+		})
+		require.Equal(t, "abc", rh.read)
+		require.Nil(t, rh.tls)
+	})
+}
+
+func TestLooksLikeTLSRecord(t *testing.T) {
+	require.True(t, looksLikeTLSRecord([]byte{0x16, 0x03, 0x01}))
+	require.True(t, looksLikeTLSRecord([]byte{0x16, 0x03, 0x03}))
+	require.False(t, looksLikeTLSRecord([]byte{0x16, 0x03, 0x05}))
+	require.False(t, looksLikeTLSRecord([]byte{0x16, 0x00, 0x00}))
+	require.False(t, looksLikeTLSRecord([]byte("GET")))
+	require.False(t, looksLikeTLSRecord([]byte{0x16}))
 }

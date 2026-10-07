@@ -1,6 +1,7 @@
 package helpers
 
 import (
+	"bufio"
 	"crypto/tls"
 	"net"
 	"testing"
@@ -78,4 +79,23 @@ func TestTerminateTLSHelloCap(t *testing.T) {
 	_, info, err := TerminateTLS(server)
 	require.Error(t, err)
 	require.LessOrEqual(t, len(info.Hello), TLSHelloLimit)
+}
+
+func TestTerminateTLSFromBufferedReader(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	require.NoError(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+	br := bufio.NewReader(server)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := br.Peek(1) // a handler peeks before deciding to terminate TLS
+		if err == nil {
+			_, _, err = TerminateTLSFrom(server, br)
+		}
+		done <- err
+	}()
+	require.NoError(t, tls.Client(client, &tls.Config{InsecureSkipVerify: true}).Handshake())
+	require.NoError(t, <-done)
 }

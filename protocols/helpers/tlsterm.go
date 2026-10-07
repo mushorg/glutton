@@ -48,12 +48,19 @@ func (c *recordedConn) Read(b []byte) (int, error) { return c.r.Read(b) }
 // info always holds whatever the client sent (capped at TLSHelloLimit), so a
 // failed handshake still tells the caller what the client wanted.
 func TerminateTLS(conn net.Conn) (net.Conn, *connection.TLSInfo, error) {
+	return TerminateTLSFrom(conn, conn)
+}
+
+// TerminateTLSFrom is TerminateTLS for a connection whose inbound bytes were
+// partly consumed already: handshake reads come from r (for example a
+// bufio.Reader over conn, or a STARTTLS upgrade) and writes go to conn.
+func TerminateTLSFrom(conn net.Conn, r io.Reader) (net.Conn, *connection.TLSInfo, error) {
 	info := &connection.TLSInfo{}
 	cert, err := SelfSignedCertificate(pkix.Name{CommonName: tlsCertName}, tlsCertName)
 	if err != nil {
 		return nil, info, err
 	}
-	rec := &helloRecorder{r: conn, limit: TLSHelloLimit}
+	rec := &helloRecorder{r: r, limit: TLSHelloLimit}
 	tlsConn := tls.Server(&recordedConn{Conn: conn, r: rec}, &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS10,

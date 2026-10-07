@@ -5,11 +5,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/tls"
-	"crypto/x509/pkix"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -31,7 +28,6 @@ const (
 
 var (
 	errJabberFrameTooLarge = errors.New("jabber: frame exceeds capture cap")
-	errJabberCertificate   = errors.New("jabber: TLS certificate unavailable")
 )
 
 type parsedJabber struct {
@@ -77,10 +73,6 @@ func randomStreamID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
-}
-
-func jabberTLSCertificate() (tls.Certificate, error) {
-	return helpers.SelfSignedCertificate(pkix.Name{CommonName: jabberDefaultHost}, jabberDefaultHost)
 }
 
 func (s *jabberServer) recordPartial(data []byte) {
@@ -160,63 +152,21 @@ func (s *jabberServer) write(command, path, status string, data []byte) error {
 	return nil
 }
 
-// peekedConn lets a TLS server consume bytes already buffered by r.
-type peekedConn struct {
-	net.Conn
-	r io.Reader
-}
-
-func (c *peekedConn) Read(b []byte) (int, error) { return c.r.Read(b) }
-
-// cappedRecorder copies up to limit bytes read through it.
-type cappedRecorder struct {
-	r         io.Reader
-	buf       []byte
-	limit     int
-	truncated bool
-}
-
-func (c *cappedRecorder) Read(b []byte) (int, error) {
-	n, err := c.r.Read(b)
-	if n > 0 {
-		room := c.limit - len(c.buf)
-		if n > room {
-			c.truncated = true
-		}
-		c.buf = append(c.buf, b[:max(0, min(n, room))]...)
-	}
-	return n, err
-}
-
 // startTLS runs a server TLS handshake over the current reader and switches
 // the transport to it. The client's handshake bytes are recorded as a frame.
 func (s *jabberServer) startTLS() error {
-	cert, err := jabberTLSCertificate()
-	if err != nil {
-		return fmt.Errorf("%w: %v", errJabberCertificate, err)
-	}
-	rec := &cappedRecorder{r: s.r, limit: jabberMaxFrameSize}
-	var serverName string
-	tlsConn := tls.Server(&peekedConn{Conn: s.conn, r: rec}, &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS10,
-		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-			serverName = hello.ServerName
-			return nil, nil
-		},
-	})
-	hsErr := tlsConn.Handshake()
+	tlsConn, info, err := helpers.TerminateTLSFrom(s.conn, s.r)
 	s.tls = true
 	s.events = append(s.events, parsedJabber{
 		Direction:  "read",
 		Command:    "tls",
 		TLS:        true,
-		ServerName: serverName,
-		Payload:    rec.buf,
-		Truncated:  rec.truncated,
+		ServerName: info.ServerName,
+		Payload:    info.Hello,
+		Truncated:  info.Truncated,
 	})
-	if hsErr != nil {
-		return hsErr
+	if err != nil {
+		return err
 	}
 	s.r = bufio.NewReaderSize(tlsConn, jabberMaxFrameSize)
 	s.w = tlsConn
@@ -249,10 +199,6 @@ func handleJabber(ctx context.Context, server *jabberServer, md connection.Metad
 	}
 
 	tlsErr := func(err error) error {
-		if errors.Is(err, errJabberCertificate) {
-			logger.Error("TLS setup failed", slog.String("protocol", "jabber"), producer.ErrAttr(err))
-			return nil
-		}
 		logger.Debug("TLS handshake failed", slog.String("protocol", "jabber"), producer.ErrAttr(err))
 		endReason = connection.EndReasonFromRead(err)
 		return nil

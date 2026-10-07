@@ -85,7 +85,7 @@ rules:
 | `type`    | yes      | `conn_handler`, `proxy_tcp`, or `proxy_udp`.                                         |
 | `target`  | yes      | Handler key for `conn_handler`; `host:port` upstream for `proxy_tcp` / `proxy_udp`.  |
 | `produce` | no       | When `false`, matching sessions are not sent to producers. Defaults to `true`.       |
-| `tls`     | no       | `conn_handler` only. When `true`, the sensor terminates TLS (self-signed cert) before the handler runs, so the handler sees plaintext (implicit TLS such as POP3S on 995). A failed handshake produces one event with the raw client bytes as `payload` and the handler is not run. The ClientHello, SNI, ALPN, version and cipher go in the event's `tls` field. |
+| `tls`     | no       | `conn_handler` only. `true`: the sensor terminates TLS (self-signed cert) before the handler runs, so the handler sees plaintext (implicit TLS such as POP3S on 995); a failed handshake produces one event with the raw client bytes as `payload` and the handler is not run. `auto`: wait up to 500 ms for the client's first bytes; a TLS handshake record (`16 03 00`–`04`) is terminated as with `true`, anything else (plaintext, or a silent client) goes to the handler unchanged. Use `auto` on client-first ports that carry both (MongoDB, MQTT); on server-first protocols it delays the greeting by up to 500 ms. The ClientHello, SNI, ALPN, version and cipher go in the event's `tls` field. |
 
 
 ### Rule types

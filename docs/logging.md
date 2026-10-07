@@ -37,7 +37,7 @@ Producer events follow the `producer.Event` schema:
 | `payloadHash` | SHA-256 hex of the (sanitized) top-level payload. |
 | `frameCount` | Number of decoded frames when `decoded` is a slice. |
 | `endReason` | Why the session ended (`client_close`, `timeout`, `handler_close`, `read_error`, `write_error`, `max_frames`, `evicted`). `evicted` means the handler's session table was full and the least recently active session was flushed early. Omitted by handlers that do not set it. |
-| `tls` | Present only when the rule sets `tls: true`: `serverName` (SNI), `alpn` (offered protocols), `version`, `cipher` (empty if the handshake failed), `clientHello` (base64 of the raw ClientHello records, capped at 4 KiB), `truncated`. `decoded` and `payload` then hold the plaintext protocol. |
+| `tls` | Present only when the sensor terminated TLS (rule `tls: true`, or `tls: auto` and the client opened with a ClientHello): `serverName` (SNI), `alpn` (offered protocols), `version`, `cipher` (empty if the handshake failed), `clientHello` (base64 of the raw ClientHello records, capped at 4 KiB), `truncated`. `decoded` and `payload` then hold the plaintext protocol. |
 | `scanner` | Scanner classification from `scanner.Classify(...)`. |
 | `decoded` | Handler-specific decoded data. |
 

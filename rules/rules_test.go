@@ -319,9 +319,33 @@ func TestWorkingMatch(t *testing.T) {
 	}
 }
 
-func TestRuleTLSFlag(t *testing.T) {
-	rs, err := Init(strings.NewReader("rules:\n  - match: tcp dst port 995\n    type: conn_handler\n    target: pop3\n    tls: true\n  - match: tcp dst port 110\n    type: conn_handler\n    target: pop3\n"))
+func TestRuleTLSMode(t *testing.T) {
+	rs, err := Init(strings.NewReader(`rules:
+  - match: tcp dst port 995
+    type: conn_handler
+    target: pop3
+    tls: true
+  - match: tcp dst port 110
+    type: conn_handler
+    target: pop3
+  - match: tcp dst port 27017
+    type: conn_handler
+    target: mongodb
+    tls: auto
+  - match: tcp dst port 25
+    type: conn_handler
+    target: smtp
+    tls: false
+`))
 	require.NoError(t, err)
-	require.True(t, rs[0].TLS)
-	require.False(t, rs[1].TLS)
+	require.Equal(t, TLSOn, rs[0].TLS)
+	require.Equal(t, TLSOff, rs[1].TLS)
+	require.Equal(t, TLSAuto, rs[2].TLS)
+	require.Equal(t, TLSOff, rs[3].TLS)
+
+	_, err = Init(strings.NewReader("rules:\n  - match: tcp dst port 1\n    type: conn_handler\n    target: tcp\n    tls: maybe\n"))
+	require.ErrorContains(t, err, "invalid tls mode")
+
+	_, err = Init(strings.NewReader("rules:\n  - match: tcp dst port 443\n    type: proxy_tcp\n    target: 127.0.0.1:443\n    tls: true\n"))
+	require.ErrorContains(t, err, "only supported on conn_handler")
 }

@@ -2,9 +2,10 @@ rules:
   - match: tcp dst port 23 or port 2323 or port 23231
     type: conn_handler
     target: telnet
-  - match: tcp dst port 1883
+  - match: tcp dst port 1883 or port 8883
     type: conn_handler
     target: mqtt
+    tls: auto
   - match: tcp dst port 6969
     type: conn_handler
     target: bittorrent
@@ -48,6 +49,7 @@ rules:
   - match: tcp dst port 27017
     type: conn_handler
     target: mongodb
+    tls: auto
   - match: tcp dst port 502
     type: conn_handler
     target: modbus

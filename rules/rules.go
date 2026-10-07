@@ -35,8 +35,9 @@ type Rule struct {
 	Name    string `yaml:"name,omitempty"`
 	Produce *bool  `yaml:"produce,omitempty"` // nil/omitted means true
 	// TLS terminates TLS on the connection before a conn_handler runs, so the
-	// handler sees plaintext (implicit TLS such as POP3S).
-	TLS bool `yaml:"tls,omitempty"`
+	// handler sees plaintext: true for implicit TLS (POP3S), auto to sniff
+	// for a ClientHello and serve plaintext otherwise.
+	TLS TLSMode `yaml:"tls,omitempty"`
 
 	isInit      bool
 	RuleType    RuleType
@@ -52,6 +53,46 @@ func (r *Rule) ShouldProduce() bool {
 		return true
 	}
 	return *r.Produce
+}
+
+// TLSMode selects TLS termination for a conn_handler rule.
+type TLSMode int
+
+const (
+	// TLSOff passes the connection to the handler unchanged.
+	TLSOff TLSMode = iota
+	// TLSOn always runs a TLS handshake first (implicit TLS).
+	TLSOn
+	// TLSAuto runs a TLS handshake only if the client opens with a TLS
+	// handshake record; any other client gets the plaintext handler.
+	TLSAuto
+)
+
+// UnmarshalYAML accepts tls: true, tls: false, or tls: auto.
+func (m *TLSMode) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var b bool
+	if err := unmarshal(&b); err == nil {
+		*m = TLSOff
+		if b {
+			*m = TLSOn
+		}
+		return nil
+	}
+	var s string
+	if err := unmarshal(&s); err != nil {
+		return err
+	}
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "auto":
+		*m = TLSAuto
+	case "true", "on":
+		*m = TLSOn
+	case "false", "off", "":
+		*m = TLSOff
+	default:
+		return fmt.Errorf("invalid tls mode %q: want true, false or auto", s)
+	}
+	return nil
 }
 
 type ProxyTarget struct {
@@ -91,6 +132,10 @@ func (rule *Rule) init(idx int) error {
 		rule.RuleType = Drop
 	default:
 		return fmt.Errorf("unknown rule type: %s", rule.Type)
+	}
+
+	if rule.TLS != TLSOff && rule.RuleType != UserConnHandler {
+		return fmt.Errorf("tls is only supported on conn_handler rules, not %s", rule.Type)
 	}
 
 	if rule.RuleType == ProxyTCP || rule.RuleType == ProxyUDP {
