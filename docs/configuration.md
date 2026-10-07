@@ -42,6 +42,7 @@ Source: `config/config.yaml`. Keys you'll most often touch:
 | `max_tcp_payload`                                                    | `4096`                   | Generic TCP handler threshold and `proxy_tcp` / `proxy_udp` per-direction capture cap.                                                                                              |
 | `dial_timeout`                                                       | `5`                      | Outbound `proxy_tcp` / `proxy_udp` dial timeout in seconds.                                                                                                                         |
 | `capture_traffic.enabled`                                            | `false`                  | Enables raw payload capture in `proxy_tcp` / `proxy_udp` logs and produced events. Proxying still forwards traffic when disabled.                                                   |
+| `sip.reject_invites`                                                 | `2`                      | UDP SIP: the first N new INVITE calls from a source IP each hour get `404 Not Found`, so toll-fraud tools go on to try more dial prefixes. `0` answers every call.                     |
 | `spicy.enabled`                                                      | `true`                   | Initializes Spicy/HILTI and enables Spicy-backed paths (HTTP parsing, TCP-payload protocol detection). Set `false` if you build without Spicy or want the Spicy-free dispatch path. |
 
 

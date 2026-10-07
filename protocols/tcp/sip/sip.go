@@ -52,7 +52,30 @@ func randomToken() string {
 // A nil slice means no reply. The top Via of each response gets received/rport
 // filled from src as a real proxy or UA would; src may be nil.
 func (r *Responder) Reply(req gosip.Request, src net.Addr) []gosip.Response {
-	resps := r.reply(req)
+	return annotate(req, src, r.reply(req)...)
+}
+
+// Answer returns the 100 Trying, 180 Ringing and 200 OK (with SDP) for an
+// INVITE, Via annotated for src like Reply. The UDP handler sends the 200
+// after a ringing delay instead of in the same burst.
+func (r *Responder) Answer(req gosip.Request, src net.Addr) (trying, ringing, ok gosip.Response) {
+	resps := annotate(req, src, r.invite(req)...)
+	return resps[0], resps[1], resps[2]
+}
+
+// Final returns a response to req with code and reason, Via annotated for
+// src like Reply. tag is the To tag; empty draws a new one. Responses that
+// belong to an INVITE already answered with a provisional (487, and the 200
+// to its CANCEL) pass that response's tag (RFC 3261 §9.2).
+func (r *Responder) Final(req gosip.Request, src net.Addr, code gosip.StatusCode, reason, tag string) gosip.Response {
+	if tag == "" {
+		tag = r.Token()
+	}
+	return annotate(req, src, r.response(req, code, reason, tag))[0]
+}
+
+// annotate sets the top Via of each response from src (see sourceVia).
+func annotate(req gosip.Request, src net.Addr, resps ...gosip.Response) []gosip.Response {
 	if vias, ok := sourceVia(req, src); ok {
 		for _, res := range resps {
 			res.ReplaceHeaders("Via", vias)

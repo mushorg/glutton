@@ -29,5 +29,8 @@ dial_timeout: 5   # timeout in seconds for proxy target connection.
 capture_traffic:
   enabled: false
 
+sip:
+  reject_invites: 2   # new INVITE calls per source IP per hour answered 404 before calls ring; 0 disables.
+
 spicy:
   enabled: true

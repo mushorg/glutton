@@ -88,7 +88,8 @@ func TestHandleUDPPeeksSIP(t *testing.T) {
 
 	err := HandleUDP(context.Background(), src, dst, sipviciousInviteRead1, connection.Metadata{}, testLogger{}, h)
 	require.NoError(t, err)
-	// the INVITE opens a dialog, produced once it goes idle
+	// the INVITE opens a dialog, rings, and is produced once it goes idle
+	timers.fire(t, sipRing)
 	timers.fire(t, time.Minute)
 	require.Len(t, h.produced, 1)
 	require.Equal(t, "sip", h.produced[0].handler)

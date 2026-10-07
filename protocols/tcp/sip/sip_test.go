@@ -69,6 +69,34 @@ func TestReplyInviteAnswered(t *testing.T) {
 	require.Equal(t, mustParam(t, ringTo.Params, "tag"), mustParam(t, okTo.Params, "tag"))
 }
 
+func TestAnswerMatchesReply(t *testing.T) {
+	src := &net.UDPAddr{IP: net.ParseIP("51.75.106.116"), Port: 65145}
+	req := parseRequest(t, pplsipInvite)
+	trying, ringing, ok := testResponder().Answer(req, src)
+	resps := testResponder().Reply(req, src)
+	require.Equal(t, []string{resps[0].String(), resps[1].String(), resps[2].String()},
+		[]string{trying.String(), ringing.String(), ok.String()})
+	require.Contains(t, ok.String(), ";received=51.75.106.116\r\n")
+}
+
+func TestFinal(t *testing.T) {
+	src := &net.UDPAddr{IP: net.ParseIP("51.75.106.116"), Port: 65145}
+	req := parseRequest(t, pplsipInvite)
+	want := func(status, tag string) string {
+		return "SIP/2.0 " + status + "\r\n" +
+			"Via: SIP/2.0/UDP 0.0.0.0:65145;branch=z9hG4bK951917159;received=51.75.106.116\r\n" +
+			"From: <sip:14500163172166221:5060@1.2.3.4>;tag=414451770\r\n" +
+			"To: <sip:14500972598112101@1.2.3.4>;tag=" + tag + "\r\n" +
+			"Call-ID: 1492163839-465544234-336545636\r\n" +
+			"CSeq: 1 INVITE\r\n" +
+			"Server: Asterisk PBX 18.20.0\r\n" +
+			"Content-Length: 0\r\n\r\n"
+	}
+	// an empty tag draws a new one
+	require.Equal(t, want("404 Not Found", "0123456789abcdef"), testResponder().Final(req, src, 404, "Not Found", "").String())
+	require.Equal(t, want("487 Request Terminated", "ringtag"), testResponder().Final(req, src, 487, "Request Terminated", "ringtag").String())
+}
+
 func TestSDPAnswerCodecs(t *testing.T) {
 	answer := sdpAnswer("v=0\r\nm=audio 4000 RTP/AVP 18 8\r\n", "1.2.3.4", 10000, 1)
 	require.Contains(t, answer, "m=audio 10000 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000\r\n")

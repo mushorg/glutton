@@ -64,7 +64,8 @@ func parseSIP(data []byte, complete bool) (sip.Message, error) {
 }
 
 // HandleSIP parses a UDP SIP datagram and answers it like a misconfigured
-// Asterisk PBX (OPTIONS and REGISTER 200, INVITE 100/180/200 with SDP).
+// Asterisk PBX (OPTIONS and REGISTER 200, INVITE 100/180 then 200 with SDP
+// after a ringing delay; the first few INVITEs per source get 404).
 // An INVITE opens a dialog keyed by source IP and Call-ID: later datagrams
 // with that key (ACK, BYE, CANCEL, retransmits) join it, and the dialog is
 // produced as one event when it ends (BYE or CANCEL answered, idle timeout,
@@ -99,7 +100,9 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 		if req, ok := msg.(sip.Request); ok && req.Method() == sip.INVITE && d == nil {
 			var evicted *sipDialog
 			d, evicted = sipDialogs.open(key, func() *sipDialog {
-				return newSIPDialog(ctx, key, sipDialogs, srcAddr, dstAddr, md, logger, h)
+				d := newSIPDialog(ctx, key, sipDialogs, srcAddr, dstAddr, md, logger, h)
+				d.reject = sipRejects.reject(srcAddr.IP.String(), sipNow(), sipRejectInvites())
+				return d
 			})
 			if evicted != nil {
 				evicted.finish(connection.EndEvicted)
