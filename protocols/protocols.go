@@ -49,19 +49,20 @@ func bindUDP(fn udpHandler, log interfaces.Logger, h interfaces.Honeypot) UDPHan
 // MapUDPProtocolHandlers map protocol handlers to corresponding protocol
 func MapUDPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[string]UDPHandlerFunc {
 	return map[string]UDPHandlerFunc{
-		"sip":       bindUDP(udp.HandleSIP, log, h),
-		"openvpn":   bindUDP(udp.HandleOpenVPN, log, h),
-		"mdns":      bindUDP(udp.HandleMDNS, log, h),
-		"l2tp":      bindUDP(udp.HandleL2TP, log, h),
-		"raknet":    bindUDP(udp.HandleRakNet, log, h),
-		"kerberos":  bindUDP(udp.HandleKerberos, log, h),
-		"coap":      bindUDP(udp.HandleCoAP, log, h),
-		"ike":       bindUDP(udp.HandleIKE, log, h),
-		"a2s":       bindUDP(udp.HandleA2S, log, h),
-		"ddp":       bindUDP(udp.HandleDDP, log, h),
-		"rtps":      bindUDP(udp.HandleRTPS, log, h),
-		"proxy_udp": bindUDP(udp.HandleProxyUDP, log, h),
-		"udp":       bindUDP(udp.HandleUDP, log, h),
+		"sip":         bindUDP(udp.HandleSIP, log, h),
+		"openvpn":     bindUDP(udp.HandleOpenVPN, log, h),
+		"mdns":        bindUDP(udp.HandleMDNS, log, h),
+		"l2tp":        bindUDP(udp.HandleL2TP, log, h),
+		"raknet":      bindUDP(udp.HandleRakNet, log, h),
+		"kerberos":    bindUDP(udp.HandleKerberos, log, h),
+		"coap":        bindUDP(udp.HandleCoAP, log, h),
+		"ike":         bindUDP(udp.HandleIKE, log, h),
+		"a2s":         bindUDP(udp.HandleA2S, log, h),
+		"ddp":         bindUDP(udp.HandleDDP, log, h),
+		"rtps":        bindUDP(udp.HandleRTPS, log, h),
+		"wsdiscovery": bindUDP(udp.HandleWSDiscovery, log, h),
+		"proxy_udp":   bindUDP(udp.HandleProxyUDP, log, h),
+		"udp":         bindUDP(udp.HandleUDP, log, h),
 	}
 }
 

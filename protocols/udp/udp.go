@@ -16,6 +16,7 @@ import (
 	"github.com/mushorg/glutton/protocols/udp/ddp"
 	"github.com/mushorg/glutton/protocols/udp/ike"
 	"github.com/mushorg/glutton/protocols/udp/rtps"
+	"github.com/mushorg/glutton/protocols/udp/wsd"
 )
 
 const maxUDPPayload = 1024
@@ -51,6 +52,9 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	}
 	if rtps.LooksLikeRTPS(data) {
 		return HandleRTPS(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
+	if wsd.LooksLikeWSD(data) {
+		return HandleWSDiscovery(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
 
 	truncated := len(data) > maxUDPPayload
