@@ -13,6 +13,7 @@ import (
 	"github.com/mushorg/glutton/protocols/interfaces"
 	sipproto "github.com/mushorg/glutton/protocols/tcp/sip"
 	"github.com/mushorg/glutton/protocols/udp/a2s"
+	"github.com/mushorg/glutton/protocols/udp/ddp"
 	"github.com/mushorg/glutton/protocols/udp/ike"
 )
 
@@ -43,6 +44,9 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	}
 	if a2s.LooksLikeA2S(data) {
 		return HandleA2S(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
+	if ddp.LooksLikeDDP(data) {
+		return HandleDDP(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
 
 	truncated := len(data) > maxUDPPayload

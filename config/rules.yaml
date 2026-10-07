@@ -94,6 +94,9 @@ rules:
   - match: udp dst port 27015
     type: conn_handler
     target: a2s
+  - match: udp dst port 987 or port 9302
+    type: conn_handler
+    target: ddp
   - match: udp
     type: conn_handler
     target: udp

@@ -58,6 +58,7 @@ func MapUDPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"coap":      bindUDP(udp.HandleCoAP, log, h),
 		"ike":       bindUDP(udp.HandleIKE, log, h),
 		"a2s":       bindUDP(udp.HandleA2S, log, h),
+		"ddp":       bindUDP(udp.HandleDDP, log, h),
 		"proxy_udp": bindUDP(udp.HandleProxyUDP, log, h),
 		"udp":       bindUDP(udp.HandleUDP, log, h),
 	}

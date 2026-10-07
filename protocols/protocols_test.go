@@ -45,6 +45,7 @@ func TestMapUDPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "kerberos", "expected Kerberos UDP handler")
 	require.Contains(t, m, "coap", "expected CoAP UDP handler")
 	require.Contains(t, m, "a2s", "expected A2S UDP handler")
+	require.Contains(t, m, "ddp", "expected DDP UDP handler")
 	require.Contains(t, m, "proxy_udp", "expected proxy_udp handler")
 	ctx := context.Background()
 	err := m["udp"](ctx, &net.UDPAddr{}, &net.UDPAddr{}, []byte{}, connection.Metadata{})
