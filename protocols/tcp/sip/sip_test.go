@@ -2,6 +2,7 @@ package sip
 
 import (
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -32,7 +33,7 @@ func testResponder() *Responder {
 }
 
 func TestReplyInviteAnswered(t *testing.T) {
-	resps := testResponder().Reply(parseRequest(t, pplsipInvite), nil)
+	resps := testResponder().Reply(parseRequest(t, pplsipInvite), nil, Answer)
 	require.Len(t, resps, 3)
 	require.Equal(t, gosip.StatusCode(100), resps[0].StatusCode())
 	to, _ := resps[0].To()
@@ -73,7 +74,7 @@ func TestAnswerMatchesReply(t *testing.T) {
 	src := &net.UDPAddr{IP: net.ParseIP("51.75.106.116"), Port: 65145}
 	req := parseRequest(t, pplsipInvite)
 	trying, ringing, ok := testResponder().Answer(req, src)
-	resps := testResponder().Reply(req, src)
+	resps := testResponder().Reply(req, src, Answer)
 	require.Equal(t, []string{resps[0].String(), resps[1].String(), resps[2].String()},
 		[]string{trying.String(), ringing.String(), ok.String()})
 	require.Contains(t, ok.String(), ";received=51.75.106.116\r\n")
@@ -118,7 +119,7 @@ func TestReplyRegisterAccepted(t *testing.T) {
 			"CSeq: 1 REGISTER\r\n"+
 			"Contact: <sip:100@185.243.5.243:49618>"+extra+
 			"Content-Length: 0\r\n\r\n"))
-		resps := testResponder().Reply(req, nil)
+		resps := testResponder().Reply(req, nil, Answer)
 		require.Len(t, resps, 1)
 		require.Equal(t, gosip.StatusCode(200), resps[0].StatusCode())
 		return resps[0]
@@ -148,7 +149,7 @@ func TestReplyAuthenticatedRejected(t *testing.T) {
 	} {
 		req := parseRequest(t, withAuth(message, header))
 		require.Equal(t, "1000", Credentials(req))
-		resps := testResponder().Reply(req, nil)
+		resps := testResponder().Reply(req, nil, Answer)
 		require.Len(t, resps, 1)
 		require.Equal(t, gosip.StatusCode(403), resps[0].StatusCode())
 		require.Equal(t, "Forbidden", resps[0].Reason())
@@ -159,7 +160,7 @@ func TestReplyAuthenticatedRejected(t *testing.T) {
 func TestReplyRegisterWithCredentialsAccepted(t *testing.T) {
 	register := []byte(strings.ReplaceAll(string(pplsipInvite), "INVITE", "REGISTER"))
 	req := parseRequest(t, withAuth(register, `Authorization: Digest username="1000",realm="asterisk",nonce="x",uri="sip:1.2.3.4",response="00"`))
-	resps := testResponder().Reply(req, nil)
+	resps := testResponder().Reply(req, nil, Answer)
 	require.Len(t, resps, 1)
 	require.Equal(t, gosip.StatusCode(200), resps[0].StatusCode())
 }
@@ -172,7 +173,7 @@ func TestReplyOptions(t *testing.T) {
 		"Call-ID: 12345\r\n"+
 		"CSeq: 1 OPTIONS\r\n"+
 		"Content-Length: 0\r\n\r\n"))
-	resps := testResponder().Reply(req, nil)
+	resps := testResponder().Reply(req, nil, Answer)
 	require.Len(t, resps, 1)
 	out := resps[0].String()
 	require.True(t, strings.HasPrefix(out, "SIP/2.0 200 OK\r\n"), out)
@@ -185,7 +186,7 @@ func TestReplyOptions(t *testing.T) {
 func TestReplyKeepsExistingToTag(t *testing.T) {
 	req := parseRequest(t, []byte(strings.Replace(string(pplsipInvite),
 		"To: <sip:14500972598112101@1.2.3.4>\r\n", "To: <sip:14500972598112101@1.2.3.4>;tag=peer\r\n", 1)))
-	out := testResponder().Reply(req, nil)[0].String()
+	out := testResponder().Reply(req, nil, Answer)[0].String()
 	require.Contains(t, out, "To: <sip:14500972598112101@1.2.3.4>;tag=peer\r\n")
 	// the request itself is not mutated
 	to, _ := req.To()
@@ -210,7 +211,7 @@ func TestReplyMethods(t *testing.T) {
 	}
 	for method, want := range cases {
 		data := strings.ReplaceAll(string(pplsipInvite), "INVITE", method)
-		resps := testResponder().Reply(parseRequest(t, []byte(data)), nil)
+		resps := testResponder().Reply(parseRequest(t, []byte(data)), nil, Answer)
 		if want == 0 {
 			require.Empty(t, resps, method)
 			continue
@@ -231,7 +232,7 @@ func TestDescribe(t *testing.T) {
 		UserAgent: "pplsip",
 	}, info)
 
-	resp := testResponder().Reply(parseRequest(t, pplsipInvite), nil)[2]
+	resp := testResponder().Reply(parseRequest(t, pplsipInvite), nil, Answer)[2]
 	info = Describe(resp)
 	require.Equal(t, 200, info.Status)
 	require.Equal(t, "Asterisk PBX 18.20.0", info.UserAgent)
@@ -279,7 +280,7 @@ func TestReplyViaReceivedAndRport(t *testing.T) {
 	}
 	for _, c := range cases {
 		req := request(c.via)
-		out := testResponder().Reply(req, c.src)[0].String()
+		out := testResponder().Reply(req, c.src, Answer)[0].String()
 		require.Contains(t, out, "\r\n"+c.want+"From:", c.name)
 		// the request is not mutated
 		require.NotContains(t, req.String(), "received=", c.name)
@@ -346,7 +347,7 @@ func TestNormalizeHeaders(t *testing.T) {
 func TestAckTimeoutBye(t *testing.T) {
 	r := testResponder()
 	invite := parseRequest(t, pplsipInvite)
-	ok := r.Reply(invite, nil)[2]
+	ok := r.Reply(invite, nil, Answer)[2]
 
 	bye := r.AckTimeoutBye(invite, ok)
 	require.NotNil(t, bye)
@@ -374,7 +375,70 @@ func TestAckTimeoutByeFallsBackToFrom(t *testing.T) {
 	r := testResponder()
 	invite := parseRequest(t, []byte(strings.Replace(string(pplsipInvite),
 		"Contact: <sip:14500163172166221:5060@212.129.10.158:65145>\r\n", "", 1)))
-	bye := r.AckTimeoutBye(invite, r.Reply(invite, nil)[2])
+	bye := r.AckTimeoutBye(invite, r.Reply(invite, nil, Answer)[2])
 	require.NotNil(t, bye)
 	require.Equal(t, "sip:14500163172166221:5060@1.2.3.4", bye.Recipient().String())
+}
+
+func TestReplyVariants(t *testing.T) {
+	authHeader := `Authorization: Digest username="1000",realm="asterisk",nonce="x",uri="sip:1.2.3.4",response="00"`
+	register := []byte(strings.ReplaceAll(string(pplsipInvite), "INVITE", "REGISTER"))
+	cases := []struct {
+		name    string
+		variant Variant
+		data    []byte
+		want    []int
+	}{
+		{"answer register", Answer, register, []int{200}},
+		{"answer invite", Answer, pplsipInvite, []int{100, 180, 200}},
+		{"auth register", Auth, register, []int{401}},
+		{"auth register with credentials", Auth, withAuth(register, authHeader), []int{200}},
+		{"auth invite", Auth, pplsipInvite, []int{401}},
+		{"auth invite with credentials", Auth, withAuth(pplsipInvite, authHeader), []int{100, 180, 200}},
+		{"busy register", Busy, register, []int{200}},
+		{"busy invite", Busy, pplsipInvite, []int{100, 180, 486}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resps := testResponder().Reply(parseRequest(t, c.data), nil, c.variant)
+			var got []int
+			for _, r := range resps {
+				got = append(got, int(r.StatusCode()))
+			}
+			require.Equal(t, c.want, got)
+			if c.want[0] == 401 {
+				require.Contains(t, resps[0].String(), `WWW-Authenticate: Digest realm="asterisk",nonce="0123456789abcdef",algorithm=MD5,qop="auth"`+"\r\n")
+			}
+		})
+	}
+}
+
+func TestReplyBusySharesRingingTag(t *testing.T) {
+	r := &Responder{Token: sequentialTokens()}
+	resps := r.Reply(parseRequest(t, pplsipInvite), nil, Busy)
+	ringingTo, _ := resps[1].To()
+	busyTo, _ := resps[2].To()
+	require.Equal(t, mustParam(t, ringingTo.Params, "tag"), mustParam(t, busyTo.Params, "tag"))
+	require.Equal(t, "Busy Here", resps[2].Reason())
+	require.Empty(t, resps[2].Body())
+}
+
+func TestChallenge(t *testing.T) {
+	src := &net.UDPAddr{IP: net.ParseIP("203.0.113.10"), Port: 5079}
+	resp := testResponder().Challenge(parseRequest(t, pplsipInvite), src)
+	require.Equal(t, gosip.StatusCode(401), resp.StatusCode())
+	require.Contains(t, resp.String(), "received=203.0.113.10")
+}
+
+func TestVariantString(t *testing.T) {
+	require.Equal(t, []string{"answer", "auth", "busy"}, []string{Answer.String(), Auth.String(), Busy.String()})
+	require.Equal(t, Answer, Variants[0])
+}
+
+func sequentialTokens() func() string {
+	n := 0
+	return func() string {
+		n++
+		return strings.Repeat(strconv.Itoa(n%10), 16)
+	}
 }

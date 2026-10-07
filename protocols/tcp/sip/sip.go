@@ -48,11 +48,56 @@ func randomToken() string {
 	return hex.EncodeToString(b)
 }
 
+// Variant selects how REGISTER and INVITE are answered. A source returning
+// after an idle gap gets the next variant, so each visit shows how the
+// scanner reacts to a different outcome. Other methods are answered the same
+// way in every variant.
+type Variant int
+
+const (
+	// Answer accepts REGISTER and answers INVITE with 200 and SDP.
+	Answer Variant = iota
+	// Auth challenges REGISTER and INVITE with 401 until they carry
+	// credentials, then behaves like Answer.
+	Auth
+	// Busy accepts REGISTER and rings INVITE, then rejects it with 486.
+	Busy
+)
+
+// Variants is the rotation order for returning sources; Answer comes first,
+// so a first visit sees the baseline.
+var Variants = []Variant{Answer, Auth, Busy}
+
+func (v Variant) String() string {
+	switch v {
+	case Answer:
+		return "answer"
+	case Auth:
+		return "auth"
+	case Busy:
+		return "busy"
+	}
+	return "variant" + strconv.Itoa(int(v))
+}
+
 // Reply returns the responses to send for req, received from src, in order.
 // A nil slice means no reply. The top Via of each response gets received/rport
 // filled from src as a real proxy or UA would; src may be nil.
-func (r *Responder) Reply(req gosip.Request, src net.Addr) []gosip.Response {
-	return annotate(req, src, r.reply(req)...)
+func (r *Responder) Reply(req gosip.Request, src net.Addr, v Variant) []gosip.Response {
+	return annotate(req, src, r.reply(req, v)...)
+}
+
+// Challenge returns a 401 digest challenge to req, Via annotated for src
+// like Reply.
+func (r *Responder) Challenge(req gosip.Request, src net.Addr) gosip.Response {
+	return annotate(req, src, r.challenge(req))[0]
+}
+
+func (r *Responder) challenge(req gosip.Request) gosip.Response {
+	challenge := `Digest realm="` + realm + `",nonce="` + r.Token() + `",algorithm=MD5,qop="auth"`
+	return r.response(req, 401, "Unauthorized", r.Token(),
+		&gosip.GenericHeader{HeaderName: "WWW-Authenticate", Contents: challenge},
+	)
 }
 
 // Answer returns the 100 Trying, 180 Ringing and 200 OK (with SDP) for an
@@ -137,8 +182,9 @@ func sourceVia(req gosip.Request, src net.Addr) ([]gosip.Header, bool) {
 // an extension go on to place the toll-fraud call and reveal the dialed
 // number. BYE ends that call with 200. Other session-creating requests
 // (SUBSCRIBE, MESSAGE, ...) get a 401 digest challenge when unauthenticated
-// and 403 Forbidden once they carry credentials.
-func (r *Responder) reply(req gosip.Request) []gosip.Response {
+// and 403 Forbidden once they carry credentials. v changes the REGISTER and
+// INVITE outcomes (see Variant).
+func (r *Responder) reply(req gosip.Request, v Variant) []gosip.Response {
 	switch req.Method() {
 	case gosip.ACK:
 		return nil
@@ -149,9 +195,26 @@ func (r *Responder) reply(req gosip.Request) []gosip.Response {
 			&gosip.GenericHeader{HeaderName: "Supported", Contents: supported},
 		)}
 	case gosip.REGISTER:
+		if v == Auth && Credentials(req) == "" {
+			return []gosip.Response{r.challenge(req)}
+		}
 		return []gosip.Response{r.register(req)}
 	case gosip.INVITE:
-		return r.invite(req)
+		if v == Auth && Credentials(req) == "" {
+			return []gosip.Response{r.challenge(req)}
+		}
+		resps := r.invite(req)
+		if v == Busy {
+			// 100 and 180 as usual, then busy instead of the answer
+			tag := ""
+			if to, ok := resps[1].To(); ok && to.Params != nil {
+				if t, ok := to.Params.Get("tag"); ok && t != nil {
+					tag = t.String()
+				}
+			}
+			resps[2] = r.response(req, 486, "Busy Here", tag)
+		}
+		return resps
 	case gosip.BYE:
 		return []gosip.Response{r.response(req, 200, "OK", r.Token())}
 	case gosip.SUBSCRIBE, gosip.NOTIFY, gosip.PUBLISH,
@@ -159,10 +222,7 @@ func (r *Responder) reply(req gosip.Request) []gosip.Response {
 		if Credentials(req) != "" {
 			return []gosip.Response{r.response(req, 403, "Forbidden", r.Token())}
 		}
-		challenge := `Digest realm="` + realm + `",nonce="` + r.Token() + `",algorithm=MD5,qop="auth"`
-		return []gosip.Response{r.response(req, 401, "Unauthorized", r.Token(),
-			&gosip.GenericHeader{HeaderName: "WWW-Authenticate", Contents: challenge},
-		)}
+		return []gosip.Response{r.challenge(req)}
 	case gosip.CANCEL, gosip.PRACK:
 		return []gosip.Response{r.response(req, 481, "Call/Transaction Does Not Exist", r.Token())}
 	default:

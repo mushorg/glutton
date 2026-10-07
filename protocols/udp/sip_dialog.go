@@ -13,6 +13,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	sipproto "github.com/mushorg/glutton/protocols/tcp/sip"
 	"github.com/spf13/viper"
 
 	"github.com/ghettovoice/gosip/sip"
@@ -31,17 +32,13 @@ const (
 	// active dialog is produced with endReason evicted. Worst case memory is
 	// about maxSIPDialogs * maxSIPDialogFrames * maxSIPPayload (32 MiB).
 	maxSIPDialogs = 256
-	// defaultSIPRejectInvites is how many new INVITE dialogs per source get
-	// 404 before calls are answered (config key sip.reject_invites). Toll-fraud
-	// tools stop at the first prefix that rings, so a few failures make them
-	// reveal more of their dial-prefix list.
+	// defaultSIPRejectInvites is how many new INVITE dialogs per source visit
+	// get 404 before calls are answered (config key sip.reject_invites).
+	// Toll-fraud tools stop at the first prefix that rings, so a few failures
+	// make them reveal more of their dial-prefix list. The count lives in the
+	// recall store and starts over when a source returns after
+	// recall.visit_gap.
 	defaultSIPRejectInvites = 2
-	// sipRejectWindow is how long a source's INVITE count lasts; after it a
-	// returning scanner is rejected again.
-	sipRejectWindow = time.Hour
-	// maxSIPRejectSources caps the sources tracked for rejection; when full,
-	// the source counted longest ago is dropped.
-	maxSIPRejectSources = 4096
 )
 
 // sipTimer is the part of *time.Timer the dialog uses.
@@ -77,9 +74,6 @@ var sipRingDelay = func() time.Duration {
 	return 2*time.Second + rand.N(4*time.Second)
 }
 
-// sipNow is the clock for the reject window; tests swap it.
-var sipNow = time.Now
-
 // sipRejectLimit overrides sip.reject_invites in tests when >= 0.
 var sipRejectLimit = -1
 
@@ -93,50 +87,16 @@ func sipRejectInvites() int {
 	return defaultSIPRejectInvites
 }
 
-type sipRejectEntry struct {
-	count int
-	first time.Time
-}
-
-// sipRejectTable counts new INVITE dialogs per source IP within
-// sipRejectWindow.
-type sipRejectTable struct {
-	mu      sync.Mutex
-	max     int
-	sources map[string]sipRejectEntry
-}
-
-func newSIPRejectTable(max int) *sipRejectTable {
-	return &sipRejectTable{max: max, sources: map[string]sipRejectEntry{}}
-}
-
-// sipRejects decides which INVITEs are answered with 404.
-var sipRejects = newSIPRejectTable(maxSIPRejectSources)
-
-// reject counts a new INVITE dialog from ip and reports whether it is among
-// the first limit of the current window.
-func (t *sipRejectTable) reject(ip string, now time.Time, limit int) bool {
-	if limit <= 0 {
+// sipRejectInvite counts a new INVITE dialog in the source's visit and
+// reports whether it is among the first sip.reject_invites of that visit.
+// Without a visit (recall disabled) nothing is rejected.
+func sipRejectInvite(ip net.IP, v sipVisit) bool {
+	limit := sipRejectInvites()
+	if limit <= 0 || v.store == nil {
 		return false
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	e, ok := t.sources[ip]
-	if !ok || now.Sub(e.first) >= sipRejectWindow {
-		if !ok && len(t.sources) >= t.max {
-			oldest := ""
-			for k, cand := range t.sources {
-				if oldest == "" || cand.first.Before(t.sources[oldest].first) {
-					oldest = k
-				}
-			}
-			delete(t.sources, oldest)
-		}
-		e = sipRejectEntry{first: now}
-	}
-	e.count++
-	t.sources[ip] = e
-	return e.count <= limit
+	n := v.store.Count("sip", ip, "invite")
+	return n > 0 && n <= limit
 }
 
 func sipDialogKey(src *net.UDPAddr, callID string) string {
@@ -212,15 +172,17 @@ type sipDialog struct {
 	idle     sipTimer
 	stopCtx  func() bool
 
+	visit sipVisit // response variant of the source's visit
+
 	// INVITE server transaction
-	reject    bool // answer the first INVITE with 404
-	inviteSeq uint32
-	invite    sip.Request
-	tag       string // To tag of the INVITE's responses
-	last      []byte // latest response to the INVITE, replayed on retransmits
-	ring      sipTimer
-	ringGen   uint64
-	pendingOK sip.Response // the 200 OK sent when ringing ends
+	reject       bool // answer the first INVITE with 404
+	inviteSeq    uint32
+	invite       sip.Request
+	tag          string // To tag of the INVITE's responses
+	last         []byte // latest response to the INVITE, replayed on retransmits
+	ring         sipTimer
+	ringGen      uint64
+	pendingFinal sip.Response // the final response (200, or 486 when busy) sent when ringing ends
 
 	// final response resends until ACK: 2xx per RFC 3261 §13.3.1.4,
 	// non-2xx per §17.2.1 (Timer G, ended by Timer H)
@@ -288,8 +250,9 @@ func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
 		}
 		d.acked = true
 		d.stopResendLocked()
-		// the ACK to a 404 or 487 completes the failed call
-		if !d.final.IsSuccess() {
+		// the ACK to a 404, 486 or 487 completes the failed call; after a
+		// 401/407 the caller retries the INVITE with credentials in this dialog
+		if !d.final.IsSuccess() && !isAuthChallenge(d.final) {
 			return connection.EndClientClose, nil
 		}
 		return "", nil
@@ -307,13 +270,13 @@ func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
 		}
 		return d.inviteLocked(seq, req)
 	case sip.CANCEL:
-		if d.pendingOK != nil {
+		if d.pendingFinal != nil {
 			return d.cancelLocked(req)
 		}
 	}
 
 	d.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
-	for _, resp := range sipResponder.Reply(req, d.src) {
+	for _, resp := range sipResponder.Reply(req, d.src, d.visit.variant) {
 		if err := d.writeLocked([]byte(resp.String()), resp); err != nil {
 			return connection.EndWriteError, err
 		}
@@ -327,8 +290,9 @@ func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
 }
 
 // inviteLocked answers a new INVITE: 100 Trying, then 404 when the dialog
-// was picked for rejection, else 180 Ringing and the 200 OK after
-// sipRingDelay.
+// was picked for rejection, else 180 Ringing and the final response after
+// sipRingDelay (200 OK, or 486 Busy Here in the busy variant). In the auth
+// variant an INVITE without credentials gets a 401 challenge instead.
 func (d *sipDialog) inviteLocked(seq uint32, req sip.Request) (string, error) {
 	d.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
 	first := d.invite == nil
@@ -336,11 +300,17 @@ func (d *sipDialog) inviteLocked(seq uint32, req sip.Request) (string, error) {
 	d.stopResendLocked()
 	d.invite, d.inviteSeq, d.final, d.acked = req, seq, nil, false
 
+	reject := first && d.reject
+	if !reject && d.visit.variant == sipproto.Auth && sipproto.Credentials(req) == "" {
+		// Asterisk challenges without a 100 Trying
+		return d.sendFinalLocked(sipResponder.Challenge(req, d.src), connection.EndTimeout)
+	}
+
 	trying, ringing, ok := sipResponder.Answer(req, d.src)
 	if err := d.writeLocked([]byte(trying.String()), trying); err != nil {
 		return connection.EndWriteError, err
 	}
-	if first && d.reject {
+	if reject {
 		// what Asterisk sends when no dialplan extension matches the number
 		notFound := sipResponder.Final(req, d.src, 404, "Not Found", "")
 		return d.sendFinalLocked(notFound, connection.EndTimeout)
@@ -351,7 +321,10 @@ func (d *sipDialog) inviteLocked(seq uint32, req sip.Request) (string, error) {
 		return connection.EndWriteError, err
 	}
 	d.last = ringingBytes
-	d.pendingOK = ok
+	d.pendingFinal = ok
+	if d.visit.variant == sipproto.Busy {
+		d.pendingFinal = sipResponder.Final(req, d.src, 486, "Busy Here", d.tag)
+	}
 	d.ringGen++
 	gen := d.ringGen
 	d.ring = sipAfterFunc(sipRingDelay(), func() { d.answer(gen) })
@@ -372,20 +345,20 @@ func (d *sipDialog) cancelLocked(req sip.Request) (string, error) {
 	return d.sendFinalLocked(terminated, connection.EndClientClose)
 }
 
-// answer fires when ringing ends and sends the 200 OK. gen ties it to the
-// INVITE that started the ringing.
+// answer fires when ringing ends and sends the final response. gen ties it
+// to the INVITE that started the ringing.
 func (d *sipDialog) answer(gen uint64) {
 	d.mu.Lock()
-	if d.produced || gen != d.ringGen || d.pendingOK == nil {
+	if d.produced || gen != d.ringGen || d.pendingFinal == nil {
 		d.mu.Unlock()
 		return
 	}
 	d.ring = nil
-	ok := d.pendingOK
-	d.pendingOK = nil
-	// the 200 OK resends run up to 64*T1 from here
+	final := d.pendingFinal
+	d.pendingFinal = nil
+	// the final response resends run up to 64*T1 from here
 	d.armIdleLocked()
-	endReason, _ := d.sendFinalLocked(ok, connection.EndTimeout)
+	endReason, _ := d.sendFinalLocked(final, connection.EndTimeout)
 	if endReason == "" && len(d.events) >= maxSIPDialogFrames {
 		endReason = connection.EndMaxFrames
 	}
@@ -401,7 +374,7 @@ func (d *sipDialog) stopRingLocked() {
 		d.ring.Stop()
 		d.ring = nil
 	}
-	d.pendingOK = nil
+	d.pendingFinal = nil
 }
 
 // sendFinalLocked sends the INVITE's final response and resends it at T1
@@ -423,6 +396,11 @@ func (d *sipDialog) sendFinalLocked(final sip.Response, unacked string) (string,
 	return "", nil
 }
 
+func isAuthChallenge(res sip.Response) bool {
+	code := res.StatusCode()
+	return code == 401 || code == 407
+}
+
 func sipToTag(res sip.Response) string {
 	if to, ok := res.To(); ok && to.Params != nil {
 		if tag, ok := to.Params.Get("tag"); ok && tag != nil {
@@ -438,7 +416,7 @@ func (d *sipDialog) writeLocked(data []byte, msg sip.Message) error {
 	if msg == nil {
 		msg, _ = parseSIP(data, true)
 	}
-	d.events = append(d.events, sipDecoded("write", msg, data))
+	d.events = append(d.events, d.visit.tag(sipDecoded("write", msg, data)))
 	if err := d.h.ReplyUDP(d.src, d.dst, data); err != nil {
 		d.logger.Error("Failed to send SIP reply", slog.String("protocol", "sip"), producer.ErrAttr(err))
 		return err
@@ -520,6 +498,7 @@ func (d *sipDialog) finish(endReason string) {
 	d.mu.Unlock()
 
 	d.table.remove(d.key, d)
+	noteSIPVisit(d.src.IP, d.visit, events)
 	if err := d.h.ProduceUDP("sip", d.src, d.dst, md, helpers.FirstOrEmpty[parsedSIP](events).Payload, events); err != nil {
 		d.logger.Error("Failed to produce message", slog.String("protocol", "sip"), producer.ErrAttr(err))
 	}

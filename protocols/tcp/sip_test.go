@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/recall"
 	sipproto "github.com/mushorg/glutton/protocols/tcp/sip"
 	"github.com/stretchr/testify/require"
 )
@@ -24,8 +25,30 @@ var sipByeRead = []byte("BYE sip:14500972598112101@1.2.3.4:5060 SIP/2.0\r\nVia: 
 
 func startSIP(t *testing.T) (net.Conn, *fakeHoneypot, chan error) {
 	t.Helper()
+	stubSIPRecall(t)
+	return startSIPFrom(t, nil)
+}
+
+// stubSIPRecall gives the test a fresh visit store and returns a function
+// that advances its clock.
+func stubSIPRecall(t *testing.T) func(time.Duration) {
+	t.Helper()
+	now := time.Date(2026, 10, 7, 16, 0, 0, 0, time.UTC)
+	orig := sipRecall
+	sipRecall = recall.NewWithClock(recall.Config{Enabled: true, Gap: time.Hour}, func() time.Time { return now })
+	t.Cleanup(func() { sipRecall = orig })
+	return func(d time.Duration) { now = now.Add(d) }
+}
+
+// startSIPFrom runs the handler on a pipe whose server side reports remote
+// as the client address; nil keeps the pipe's address.
+func startSIPFrom(t *testing.T, remote net.Addr) (net.Conn, *fakeHoneypot, chan error) {
+	t.Helper()
 	client, serverConn := net.Pipe()
 	t.Cleanup(func() { client.Close() })
+	if remote != nil {
+		serverConn = connWithRemote{Conn: serverConn, remote: remote}
+	}
 	hp := newFakeHoneypot()
 	responder := &sipproto.Responder{Token: func() string { return "feedface" }}
 	done := make(chan error, 1)
@@ -100,6 +123,7 @@ func TestHandleSIPTCPRegisterThenCall(t *testing.T) {
 	}
 	write := func(f parsedSIP, status, payload string) parsedSIP {
 		f.Direction, f.Status, f.UserAgent, f.Payload = "write", status, "Asterisk PBX 18.20.0", []byte(payload)
+		f.Variant, f.Visit = "answer", 1
 		return f
 	}
 	require.Equal(t, []parsedSIP{
@@ -158,4 +182,38 @@ func TestHandleSIPTCPMalformedStillProduces(t *testing.T) {
 	produced := <-hp.produced
 	require.Equal(t, []parsedSIP{{Direction: "read", Payload: []byte("not-sip\r\n\r\n")}}, produced.decoded)
 	require.Equal(t, connection.EndReadError, produced.endReason)
+}
+
+func TestHandleSIPTCPReturningSourceGetsNextVariant(t *testing.T) {
+	advance := stubSIPRecall(t)
+	remote := staticAddr{"185.243.5.243:49618"}
+	register := func() (string, producedTCP) {
+		client, hp, done := startSIPFrom(t, remote)
+		_, err := client.Write(sipRegisterRead1)
+		require.NoError(t, err)
+		reply := readSIPReply(t, client)
+		require.NoError(t, client.Close())
+		return reply, waitSIP(t, hp, done)
+	}
+
+	reply, produced := register()
+	require.True(t, strings.HasPrefix(reply, "SIP/2.0 200 OK\r\n"), reply)
+	events := produced.decoded.([]parsedSIP)
+	require.Equal(t, "answer", events[1].Variant)
+	require.Equal(t, 1, events[1].Visit)
+	require.Empty(t, events[0].Variant, "reads carry no variant")
+
+	advance(time.Hour)
+	reply, produced = register()
+	require.True(t, strings.HasPrefix(reply, "SIP/2.0 401 Unauthorized\r\n"), reply)
+	events = produced.decoded.([]parsedSIP)
+	require.Equal(t, "auth", events[1].Variant)
+	require.Equal(t, 2, events[1].Visit)
+
+	advance(time.Hour)
+	v := sipRecall.Begin("sip", net.ParseIP("185.243.5.243"), len(sipproto.Variants))
+	require.Equal(t, 3, v.Number)
+	require.Equal(t, "auth", v.Previous.Variant)
+	require.Equal(t, []string{"REGISTER"}, v.Previous.Commands)
+	require.Equal(t, "VOIP", v.Previous.UserAgent)
 }

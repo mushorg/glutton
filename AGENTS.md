@@ -16,6 +16,7 @@ canonical shape of a handler so new or refactored handlers stay consistent.
 | `protocols/protocols.go` | Handler registry: maps rule `target` names to handler funcs. |
 | `protocols/interfaces/` | `Logger` and `Honeypot` interfaces every handler receives. |
 | `protocols/helpers/` | `FirstOrEmpty`, `Store` (content-addressed file storage). |
+| `protocols/recall/` | In-memory per-(protocol, source IP) visit memory; picks the response variant for returning sources. |
 | `protocols/mocks/` | mockery-generated `MockHoneypot` / `MockLogger`. |
 | `producer/` | `producer.Event` envelope and sinks (log, HPFeeds, HTTP). |
 | `config/rules.yaml` | Which traffic reaches which handler. |
@@ -122,6 +123,7 @@ func HandleX(ctx context.Context, conn net.Conn, md connection.Metadata, logger 
 - **Files**: store uploaded or fetched artifacts with `helpers.Store(data, folder)` and record the returned hash in a `PayloadHash` field (`ftp.go`, `tcp.go`).
 - **Parsing boundary**: byte-level parsing and response construction belong in a sub-package (`protocols/tcp/smb/`) or a `.spicy` grammar; connection lifecycle, logging, producer calls, and fake responses stay in the Go handler. Never commit generated Spicy artifacts.
 - **Determinism**: anything that sleeps or randomizes (e.g. `randomSleep` in `smtp.go`) should be injectable so handler tests run instantly.
+- **Returning sources**: to answer a returning source differently, use `recall.Shared` through a package variable tests can swap (`sipRecall`): call `Begin` once per event (it picks a variant that stays stable within a visit and advances after `recall.visit_gap`), `Note` the read frames at produce time, and record `variant` and `visit` on write frames. Variant 0 must be the existing behavior. See `protocols/udp/sip.go`.
 - **Do not export** handler internals; only `HandleX` is exported from `protocols/tcp`.
 
 Decoded JSON field names are the contract with Ochi/analysis. Keep `direction` and `payload`. When the handler already parsed it, also set `command` (leaf operation, not only the outer PDU), `path`, `status` on writes, and `truncated` when a capture cap applied. Handler-specific extras (`native_os`, `cookie`, `user_agent`, `nt_status`) are fine beside these. Do not introduce a shared Go frame type.

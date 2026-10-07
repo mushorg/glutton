@@ -19,6 +19,7 @@ import (
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
+	"github.com/mushorg/glutton/protocols/recall"
 	"github.com/mushorg/glutton/protocols/spicy"
 	"github.com/mushorg/glutton/rules"
 
@@ -133,6 +134,9 @@ func (g *Glutton) Init() error {
 			return err
 		}
 	}
+	// Per-source visit memory for handlers that vary replies to returning sources
+	recall.Shared.Configure(recallConfig())
+
 	// Initiating protocol handlers
 	g.tcpProtocolHandlers = protocols.MapTCPProtocolHandlers(g.Logger, g)
 	g.udpProtocolHandlers = protocols.MapUDPProtocolHandlers(g.Logger, g)
@@ -145,6 +149,24 @@ func (g *Glutton) Init() error {
 	}
 
 	return nil
+}
+
+// recallConfig reads the recall block; it is enabled unless set to false.
+func recallConfig() recall.Config {
+	cfg := recall.DefaultConfig()
+	if viper.IsSet("recall.enabled") {
+		cfg.Enabled = viper.GetBool("recall.enabled")
+	}
+	if secs := viper.GetInt("recall.visit_gap"); secs > 0 {
+		cfg.Gap = time.Duration(secs) * time.Second
+	}
+	if secs := viper.GetInt("recall.ttl"); secs > 0 {
+		cfg.TTL = time.Duration(secs) * time.Second
+	}
+	if n := viper.GetInt("recall.max_sources"); n > 0 {
+		cfg.Max = n
+	}
+	return cfg
 }
 
 func (g *Glutton) udpListen(wg *sync.WaitGroup) {

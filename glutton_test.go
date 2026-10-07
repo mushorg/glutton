@@ -4,9 +4,11 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
+	"github.com/mushorg/glutton/protocols/recall"
 	"github.com/mushorg/glutton/rules"
 
 	"github.com/spf13/viper"
@@ -51,4 +53,28 @@ func TestProduceUDPSkipsWhenRuleProduceFalse(t *testing.T) {
 		Rule: &rules.Rule{Produce: &produceFalse},
 	}, nil, nil)
 	require.NoError(t, err)
+}
+
+func TestRecallConfig(t *testing.T) {
+	keys := []string{"recall.enabled", "recall.visit_gap", "recall.ttl", "recall.max_sources"}
+	orig := map[string]any{}
+	for _, k := range keys {
+		orig[k] = viper.Get(k)
+	}
+	t.Cleanup(func() {
+		for k, v := range orig {
+			viper.Set(k, v)
+		}
+	})
+
+	for _, k := range keys {
+		viper.Set(k, nil)
+	}
+	require.Equal(t, recall.DefaultConfig(), recallConfig(), "enabled with defaults when unset")
+
+	viper.Set("recall.enabled", false)
+	viper.Set("recall.visit_gap", 60)
+	viper.Set("recall.ttl", 3600)
+	viper.Set("recall.max_sources", 10)
+	require.Equal(t, recall.Config{Enabled: false, Gap: time.Minute, TTL: time.Hour, Max: 10}, recallConfig())
 }
