@@ -41,17 +41,30 @@ func TestRDPParseHeader2(t *testing.T) {
 
 func TestConnectionConfirm(t *testing.T) {
 	cr := CRTPDU{SrcRef: [2]byte{0x11, 0x22}}
-	header, cc, err := ConnectionConfirm(cr, true)
+	header, cc, err := ConnectionConfirm(cr, true, ProtocolHybrid)
 	require.NoError(t, err)
-	// TPKT v3, length 19 | X.224 CC (LI 14, type 0xD0, dst-ref echoes CR src-ref) | RDP_NEG_RSP TLS|CredSSP
-	require.Equal(t, "030000130ed011220000000200080003000000", hex.EncodeToString(cc))
+	// TPKT v3, length 19 | X.224 CC (LI 14, type 0xD0, dst-ref echoes CR src-ref) | RDP_NEG_RSP CredSSP
+	require.Equal(t, "030000130ed011220000000200080002000000", hex.EncodeToString(cc))
 	require.Equal(t, byte(3), header.Version)
 	require.Equal(t, [2]byte{0x00, 0x13}, header.Length)
 }
 
+func TestSelectProtocol(t *testing.T) {
+	require.Equal(t, ProtocolHybrid, SelectProtocol(0x3))
+	require.Equal(t, ProtocolHybrid, SelectProtocol(0xb))
+	require.Equal(t, ProtocolSSL, SelectProtocol(0x1))
+	require.Equal(t, ProtocolRDP, SelectProtocol(0x0))
+	require.Equal(t, ProtocolRDP, SelectProtocol(0x4))
+}
+
+func TestRequestedMask(t *testing.T) {
+	require.Equal(t, uint32(3), RequestedMask(processRawCR("0300002b26e00000000000436f6f6b69653a206d737473686173683d68656c6c6f0d0a0100080003000000", t)))
+	require.Equal(t, uint32(0), RequestedMask(processRawCR("0300000b06e00000000000", t)))
+}
+
 func TestConnectionConfirmStandardRDP(t *testing.T) {
 	cr := CRTPDU{SrcRef: [2]byte{0x00, 0x00}}
-	header, cc, err := ConnectionConfirm(cr, false)
+	header, cc, err := ConnectionConfirm(cr, false, ProtocolRDP)
 	require.NoError(t, err)
 	require.Equal(t, "0300000b06d00000000000", hex.EncodeToString(cc))
 	require.Equal(t, byte(3), header.Version)
@@ -85,7 +98,7 @@ func TestTPDUTypeAndMCS(t *testing.T) {
 }
 
 func TestMCSConnectResponse(t *testing.T) {
-	header, resp := MCSConnectResponse()
+	header, resp := MCSConnectResponse(ProtocolSSL)
 	require.Greater(t, len(resp), 11)
 	require.Equal(t, byte(3), resp[0])
 	require.Equal(t, byte(TPDUData), resp[5])
@@ -95,6 +108,16 @@ func TestMCSConnectResponse(t *testing.T) {
 	require.True(t, bytes.Contains(resp, []byte{0x7f, 0x66}))
 	require.True(t, bytes.Contains(resp, []byte("McDn")))
 	require.False(t, IsMCSConnectInitial(resp))
+	// SC_CORE (01 0c 10 00) carries the selected protocol after the version.
+	i := bytes.Index(resp, []byte{0x01, 0x0c, 0x10, 0x00})
+	require.GreaterOrEqual(t, i, 0)
+	require.Equal(t, uint32(ProtocolSSL), binary.LittleEndian.Uint32(resp[i+8:i+12]))
+}
+
+func TestIsTSRequest(t *testing.T) {
+	require.True(t, IsTSRequest([]byte{0x30, 0x82, 0x01, 0x00}))
+	require.False(t, IsTSRequest([]byte{0x03, 0x00, 0x00, 0x0b}))
+	require.False(t, IsTSRequest(nil))
 }
 
 func mustHex(s string) []byte {

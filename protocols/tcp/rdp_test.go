@@ -279,3 +279,125 @@ func TestHandleRDPEarlyDisconnect(t *testing.T) {
 	require.True(t, ok)
 	require.Empty(t, events)
 }
+
+// rdpCRTLSOnly is rdpCRHello requesting only PROTOCOL_SSL.
+var rdpCRTLSOnly = func() []byte {
+	b := append([]byte(nil), rdpCRHello...)
+	b[len(b)-4] = 0x01
+	return b
+}()
+
+func startRDPTLS(t *testing.T, cr []byte) (*tls.Conn, []byte, <-chan error, *fakeHoneypot) {
+	t.Helper()
+	client, serverConn := net.Pipe()
+	t.Cleanup(func() { _ = client.Close() })
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleRDP(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	_, err := client.Write(cr)
+	require.NoError(t, err)
+	cc := make([]byte, 19)
+	_, err = io.ReadFull(client, cc)
+	require.NoError(t, err)
+
+	tlsClient := tls.Client(client, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12, ServerName: "rdp"})
+	require.NoError(t, tlsClient.Handshake())
+	return tlsClient, cc, done, hp
+}
+
+func TestHandleRDPSelectsSingleProtocol(t *testing.T) {
+	tlsClient, cc, _, _ := startRDPTLS(t, rdpCRHello)
+	_ = tlsClient.Close()
+	require.Equal(t, byte(0x02), cc[11], "RDP_NEG_RSP")
+	require.Equal(t, []byte{0x02, 0x00, 0x00, 0x00}, cc[15:19], "HYBRID only, not TLS|CredSSP")
+
+	_, cc, _, _ = startRDPTLS(t, rdpCRTLSOnly)
+	require.Equal(t, []byte{0x01, 0x00, 0x00, 0x00}, cc[15:19])
+}
+
+func TestHandleRDPRecordsTSRequestAfterTLS(t *testing.T) {
+	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHello)
+	tsRequest := []byte{0x30, 0x03, 0x02, 0x01, 0x06}
+	_, err := tlsClient.Write(tsRequest)
+	require.NoError(t, err)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	events := produced.decoded.([]parsedRDP)
+	require.Len(t, events, 5)
+	require.Equal(t, "TLSClientHello", events[2].Command)
+	require.Equal(t, "TLSHandshake", events[3].Command)
+	require.Equal(t, "read", events[4].Direction)
+	require.Equal(t, "TSRequest", events[4].Command)
+	require.Equal(t, tsRequest, events[4].Payload)
+	require.Equal(t, byte(0), events[4].Header.Version)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+}
+
+func TestHandleRDPMCSOverTLS(t *testing.T) {
+	tlsClient, _, done, hp := startRDPTLS(t, rdpCRTLSOnly)
+	_, err := tlsClient.Write(rdpMCSConnectInitial)
+	require.NoError(t, err)
+
+	buf := make([]byte, 512)
+	n, err := tlsClient.Read(buf)
+	require.NoError(t, err)
+	require.True(t, bytes.Contains(buf[:n], []byte{0x7f, 0x66}))
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	events := waitProduced(t, hp).decoded.([]parsedRDP)
+	require.Equal(t, "MCSConnectInitial", events[4].Command)
+	require.Equal(t, "MCSConnectResponse", events[5].Command)
+}
+
+func TestHandleRDPTLSDisconnectAfterClientHello(t *testing.T) {
+	client, serverConn := net.Pipe()
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleRDP(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	_, err := client.Write(rdpCRHello)
+	require.NoError(t, err)
+	_, err = io.ReadFull(client, make([]byte, 19))
+	require.NoError(t, err)
+
+	// Send a short ClientHello, wait briefly for any reply, then drop the connection.
+	hello := mustDecodeHex("160301003d0100003903030000000000000000000000000000000000000000000000000000000000000000000002c02f01000000")
+	_, err = client.Write(hello)
+	require.NoError(t, err)
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(200*time.Millisecond)))
+	_, _ = client.Read(make([]byte, 4096))
+	require.NoError(t, client.Close())
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	events := waitProduced(t, hp).decoded.([]parsedRDP)
+	require.GreaterOrEqual(t, len(events), 3)
+	require.Equal(t, "TLSClientHello", events[2].Command)
+}

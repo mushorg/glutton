@@ -54,10 +54,13 @@ func wrapX224DT(payload []byte) ([]byte, TKIPHeader) {
 // MCSConnectResponse builds a minimal MCS Connect-Response (APPLICATION 102)
 // with GCC Conference Create Response (H.221 key "McDn"), SC_CORE, SC_NET, and
 // SC_SECURITY with no encryption. It is enough for probes to accept the PDU;
-// it is not a full capability exchange.
-func MCSConnectResponse() (TKIPHeader, []byte) {
-	// TS_UD_SC_CORE (0x0c01), length 16: version 0x00080004, PROTOCOL_RDP.
+// it is not a full capability exchange. selected is the protocol chosen in the
+// Connection Confirm, echoed in SC_CORE clientRequestedProtocols.
+func MCSConnectResponse(selected uint32) (TKIPHeader, []byte) {
+	// TS_UD_SC_CORE (0x0c01), length 16: version 0x00080004, then
+	// clientRequestedProtocols.
 	scCore := []byte{0x01, 0x0c, 0x10, 0x00, 0x04, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	binary.LittleEndian.PutUint32(scCore[8:12], selected)
 	// TS_UD_SC_NET (0x0c03): I/O channel 1003, no static channels.
 	scNet := []byte{0x03, 0x0c, 0x08, 0x00, 0xeb, 0x03, 0x00, 0x00}
 	// TS_UD_SC_SEC1 (0x0c02): ENCRYPTION_METHOD_NONE / ENCRYPTION_LEVEL_NONE.

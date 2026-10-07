@@ -13,6 +13,7 @@ const (
 	CmdTLSHandshake       = "TLSHandshake"
 	CmdMCSConnectInitial  = "MCSConnectInitial"
 	CmdMCSConnectResponse = "MCSConnectResponse"
+	CmdTSRequest          = "TSRequest"
 )
 
 var rdpProtocolBits = []struct {
@@ -90,4 +91,10 @@ func SelectedProtocols(cc []byte) string {
 		return ""
 	}
 	return ProtocolMaskName(binary.LittleEndian.Uint32(cc[15:19]))
+}
+
+// IsTSRequest reports a CredSSP TSRequest: a DER SEQUENCE sent over TLS
+// instead of a TPKT frame.
+func IsTSRequest(data []byte) bool {
+	return len(data) >= 2 && data[0] == 0x30
 }

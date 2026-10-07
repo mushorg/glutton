@@ -59,14 +59,41 @@ type ConnectionConfirmPDU struct {
 
 const (
 	// X.224 TPDU type in the high nibble of the byte after LI (ITU-T X.224).
-	TPDUConnectionRequest    = 0xe0
-	TPDUConnectionConfirm    = 0xd0
-	TPDUData                 = 0xf0
-	tpduTypeMask             = 0xf0
-	rdpNegReqType            = 0x01
-	rdpNegRspType            = 0x02
-	rdpNegSelectedTLSCredSSP = 0x03
+	TPDUConnectionRequest = 0xe0
+	TPDUConnectionConfirm = 0xd0
+	TPDUData              = 0xf0
+	tpduTypeMask          = 0xf0
+	rdpNegReqType         = 0x01
+	rdpNegRspType         = 0x02
+
+	// Selected/requested protocol flags (MS-RDPBCGR 2.2.1.1.1).
+	ProtocolRDP    uint32 = 0x0
+	ProtocolSSL    uint32 = 0x1
+	ProtocolHybrid uint32 = 0x2
 )
+
+// RequestedMask returns the protocol bitmask from the CR's RDP_NEG_REQ, or 0
+// when there is none.
+func RequestedMask(pdu ConnectionRequestPDU) uint32 {
+	if !HasRDPNegReq(pdu) {
+		return 0
+	}
+	return binary.LittleEndian.Uint32(pdu.RDPNegReq.RequestedProtocols[:])
+}
+
+// SelectProtocol picks the single protocol a server answers with
+// (MS-RDPBCGR 2.2.1.2.1 allows exactly one): CredSSP if offered, else TLS,
+// else standard RDP security.
+func SelectProtocol(requested uint32) uint32 {
+	switch {
+	case requested&ProtocolHybrid != 0:
+		return ProtocolHybrid
+	case requested&ProtocolSSL != 0:
+		return ProtocolSSL
+	default:
+		return ProtocolRDP
+	}
+}
 
 // ParseTKIPHeader reads the 4-byte TPKT header. It is safe on short slices.
 func ParseTKIPHeader(data []byte) TKIPHeader {
@@ -106,7 +133,9 @@ func HasRDPNegReq(pdu ConnectionRequestPDU) bool {
 	return pdu.RDPNegReq.Type == rdpNegReqType
 }
 
-func ConnectionConfirm(cr CRTPDU, includeNegRsp bool) (TKIPHeader, []byte, error) {
+// ConnectionConfirm builds the X.224 CC. With includeNegRsp it carries an
+// RDP_NEG_RSP naming selected (see SelectProtocol).
+func ConnectionConfirm(cr CRTPDU, includeNegRsp bool, selected uint32) (TKIPHeader, []byte, error) {
 	if !includeNegRsp {
 		// MS-RDPBCGR 2.2.1.2: 11-byte CC, X.224 LI=6, no rdpNegData.
 		cc := []byte{
@@ -130,10 +159,10 @@ func ConnectionConfirm(cr CRTPDU, includeNegRsp bool) (TKIPHeader, []byte, error
 			DstRef: cr.SrcRef,
 		},
 		Response: NegotiationResponse{
-			Type:             rdpNegRspType,
-			SelectedProtocol: [4]byte{rdpNegSelectedTLSCredSSP},
+			Type: rdpNegRspType,
 		},
 	}
+	binary.LittleEndian.PutUint32(cc.Response.SelectedProtocol[:], selected)
 	binary.LittleEndian.PutUint16(cc.Response.Length[:], 8)
 	buf := new(bytes.Buffer)
 	if err := binary.Write(buf, binary.LittleEndian, cc); err != nil {
