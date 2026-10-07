@@ -104,6 +104,9 @@ rules:
   - match: udp dst port 987 or port 9302
     type: conn_handler
     target: ddp
+  - match: udp dst port 7400 or port 7401 or port 7410 or port 7411
+    type: conn_handler
+    target: rtps
   - match: udp
     type: conn_handler
     target: udp

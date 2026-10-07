@@ -42,7 +42,7 @@ deploy-helper: .require-deploy-host
 	ssh $(DEPLOY_HOST) 'chmod +x /opt/glutton/redeploy-glutton.sh'
 
 # Build, upload to /tmp (avoids ETXTBSY), then restart the screen session.
-deploy: build .require-deploy-host
+deploy: clean build .require-deploy-host
 	scp bin/server $(DEPLOY_HOST):/tmp/glutton.new
 	ssh $(DEPLOY_HOST) /opt/glutton/redeploy-glutton.sh
 
