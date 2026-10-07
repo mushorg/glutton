@@ -35,6 +35,9 @@ rules:
   - match: tcp dst port 995
     type: conn_handler
     target: pop3s
+  - match: tcp dst port 43
+    type: conn_handler
+    target: whois
   - match: tcp dst port 11211
     type: conn_handler
     target: memcache
