@@ -87,6 +87,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"http":       bindTCP(tcp.HandleHTTP, log, h),
 		"mcp":        bindTCP(tcp.HandleMCP, log, h),
 		"modbus":     bindTCP(tcp.HandleModbus, log, h),
+		"dnp3":       bindTCP(tcp.HandleDNP3, log, h),
 		"opcua":      bindTCP(tcp.HandleOPCUA, log, h),
 		"dicom":      bindTCP(tcp.HandleDICOM, log, h),
 		"mctp":       mctpOrTCP(log, h),

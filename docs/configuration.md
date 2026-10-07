@@ -48,6 +48,7 @@ Source: `config/config.yaml`. Keys you'll most often touch:
 | `recall.max_sources`                                                 | `65536`                  | Sources kept in memory; the least recently seen is dropped first. |
 | `sip.reject_invites`                                                 | `2`                      | UDP SIP: the first N new INVITE calls in each visit of a source IP get `404 Not Found`, so toll-fraud tools go on to try more dial prefixes. The count is kept in the recall store and starts over when the source returns after `recall.visit_gap`; with `recall.enabled: false` nothing is rejected. `0` answers every call. |
 | `openvpn.reply`                                                      | `false`                  | UDP OpenVPN: reply to a well-formed `P_CONTROL_HARD_RESET_CLIENT_V2` with a `P_CONTROL_HARD_RESET_SERVER_V2` (random session ID, acks the client packet ID; no tls-auth/tls-crypt) so scanners send their follow-up control packets. Malformed resets are never answered. `false` keeps the handler parse-only. |
+| `dnp3.address`                                                       | `10`                     | TCP DNP3: the outstation link address the handler answers as. `REQUEST_LINK_STATUS` gets `LINK_STATUS`; `RESET_LINK_STATES`, `TEST_LINK_STATES` and `CONFIRMED_USER_DATA` get `ACK`. Frames for any other address (including broadcast) get no reply. Link layer only: no application-layer responses. |
 | `spicy.enabled`                                                      | `true`                   | Initializes Spicy/HILTI and enables Spicy-backed paths (HTTP parsing, TCP-payload protocol detection). Set `false` if you build without Spicy or want the Spicy-free dispatch path. |
 
 
@@ -90,7 +91,7 @@ rules:
 
 ### Rule types
 
-`**conn_handler**` — `target` is a handler key. Current TCP keys: `smtp`, `rdp`, `smb`, `ftp`, `sip`, `rfb`, `telnet`, `mqtt`, `iscsi`, `bittorrent`, `memcache`, `jabber`, `pop3`, `whois`, `adb`, `mongodb`, `http`, `mcp`, `modbus`, `opcua`, `mctp`, `dicom`, `proxy_tcp`, `tcp`. UDP keys: `sip`, `openvpn`, `mdns`, `l2tp`, `raknet`, `kerberos`, `coap`, `ike`, `a2s`, `ddp`, `rtps`, `proxy_udp`, `udp`. If the target isn't registered, the listener accepts the connection but no handler runs.
+`**conn_handler**` — `target` is a handler key. Current TCP keys: `smtp`, `rdp`, `smb`, `ftp`, `sip`, `rfb`, `telnet`, `mqtt`, `iscsi`, `bittorrent`, `memcache`, `jabber`, `pop3`, `whois`, `adb`, `mongodb`, `http`, `mcp`, `modbus`, `dnp3`, `opcua`, `mctp`, `dicom`, `proxy_tcp`, `tcp`. UDP keys: `sip`, `openvpn`, `mdns`, `l2tp`, `raknet`, `kerberos`, `coap`, `ike`, `a2s`, `ddp`, `rtps`, `proxy_udp`, `udp`. If the target isn't registered, the listener accepts the connection but no handler runs.
 
 `**proxy_tcp**` — forwards a matched TCP connection to an upstream `host:port`. The address is parsed at rule-load time and stored in rule metadata; at dispatch the proxy handler dials it and pipes bytes both directions. Tunable via `dial_timeout`, `conn_timeout`, `max_tcp_payload`, and `capture_traffic.enabled` in the main config.
 
