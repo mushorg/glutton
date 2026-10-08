@@ -16,17 +16,19 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
 )
 
+// parsedRDP is one frame of an RDP session. Header is nil for TLS and CredSSP
+// frames (they carry no TPKT framing); it is set for all X.224/TPKT PDUs.
 type parsedRDP struct {
-	Direction       string         `json:"direction,omitempty"`
-	Command         string         `json:"command,omitempty"`
-	Cookie          string         `json:"cookie,omitempty"`
-	Protocols       string         `json:"protocols,omitempty"`
-	NTLMDomain      string         `json:"ntlm_domain,omitempty"`
-	NTLMUser        string         `json:"ntlm_user,omitempty"`
-	NTLMWorkstation string         `json:"ntlm_workstation,omitempty"`
-	Header          rdp.TKIPHeader `json:"header,omitempty"`
-	Payload         []byte         `json:"payload,omitempty"`
-	Truncated       bool           `json:"truncated,omitempty"`
+	Direction       string          `json:"direction,omitempty"`
+	Command         string          `json:"command,omitempty"`
+	Cookie          string          `json:"cookie,omitempty"`
+	Protocols       string          `json:"protocols,omitempty"`
+	NTLMDomain      string          `json:"ntlm_domain,omitempty"`
+	NTLMUser        string          `json:"ntlm_user,omitempty"`
+	NTLMWorkstation string          `json:"ntlm_workstation,omitempty"`
+	Header          *rdp.TKIPHeader `json:"header,omitempty"`
+	Payload         []byte          `json:"payload,omitempty"`
+	Truncated       bool            `json:"truncated,omitempty"`
 }
 
 // rdpMaxReceive is larger than maxBufferSize: modern TLS ClientHellos often
@@ -54,7 +56,9 @@ func (c *rdpWriteRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func (rs *rdpServer) write(header rdp.TKIPHeader, data []byte) error {
+// write appends a write frame and sends data on the connection.
+// header is nil for TLS/CredSSP frames that carry no TPKT framing.
+func (rs *rdpServer) write(header *rdp.TKIPHeader, data []byte) error {
 	rs.events = append(rs.events, parsedRDP{
 		Header:    header,
 		Direction: "write",
@@ -99,10 +103,20 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 	}()
 
+	// Obtain the sensor's stable identity once per handler invocation.
+	rdpComputer, _ := rdp.Identity()
+	rdpCert, certErr := helpers.SelfSignedCertificateRDP(rdpComputer)
+	if certErr != nil {
+		logger.Error("Failed to get RDP TLS certificate", slog.String("protocol", "rdp"), producer.ErrAttr(certErr))
+		endReason = connection.EndHandlerClose
+		return certErr
+	}
+
 	buffer := make([]byte, rdpMaxReceive)
 	// rd is the raw connection until the client starts TLS, then the decrypted one.
 	rd := conn
 	var requested, selected uint32
+	var ntlmNegotiateFlags uint32
 	tlsDone := false
 	for {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
@@ -127,10 +141,11 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		header := rdp.ParseTKIPHeader(raw)
 
 		// The client starts TLS on the same TCP connection after the Connection
-		// Confirm. Terminate it and keep reading the decrypted stream.
+		// Confirm. Terminate it using the RDP-specific certificate and keep
+		// reading the decrypted stream.
 		if !tlsDone && rdp.IsTLSRecord(raw) {
 			rec := &rdpWriteRecorder{Conn: conn, on: true}
-			tlsConn, info, hsErr := helpers.TerminateTLSFrom(rec, io.MultiReader(bytes.NewReader(raw), conn))
+			tlsConn, info, hsErr := helpers.TerminateTLSFromWith(rdpCert, rec, io.MultiReader(bytes.NewReader(raw), conn))
 			rec.on = false
 			md.TLS = info
 			server.events = append(server.events, parsedRDP{
@@ -160,7 +175,7 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		fr := parsedRDP{
 			Direction: "read",
 			Command:   rdp.FrameCommand(raw),
-			Header:    header,
+			Header:    &header,
 			Payload:   raw,
 		}
 
@@ -186,7 +201,7 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 				return err
 			}
 			logger.Debug(fmt.Sprintf("rdp resp pdu: %+v", resp))
-			if err := server.write(ccHeader, resp); err != nil {
+			if err := server.write(&ccHeader, resp); err != nil {
 				endReason = connection.EndWriteError
 				return err
 			}
@@ -194,25 +209,32 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			server.events = append(server.events, fr)
 			logger.Debug("rdp MCS Connect-Initial", slog.String("protocol", "rdp"), slog.Int("bytes", len(raw)))
 			mcsHeader, resp := rdp.MCSConnectResponse(selected)
-			if err := server.write(mcsHeader, resp); err != nil {
+			if err := server.write(&mcsHeader, resp); err != nil {
 				endReason = connection.EndWriteError
 				return err
 			}
 			return nil
 		case tlsDone && rdp.IsTSRequest(raw):
 			parsed := rdp.ParseCredSSP(raw)
-			fr.Header = rdp.TKIPHeader{}
+			// CredSSP frames carry no TPKT framing — omit the header.
+			fr.Header = nil
 			switch parsed.NTLMType {
 			case rdp.NTLMMsgNegotiate:
 				fr.Command = rdp.CmdNTLMNegotiate
+				ntlmNegotiateFlags = parsed.NegotiateFlags
 				server.events = append(server.events, fr)
 				logger.Debug("rdp CredSSP NTLM Negotiate", slog.String("protocol", "rdp"), slog.Int("bytes", len(raw)))
-				resp, err := rdp.BuildTSRequestChallenge()
+				computer, domain := rdp.Identity()
+				resp, err := rdp.BuildTSRequestChallengeWith(rdp.NTLMChallengeOptions{
+					Computer:    computer,
+					Domain:      domain,
+					ClientFlags: ntlmNegotiateFlags,
+				})
 				if err != nil {
 					endReason = connection.EndWriteError
 					return err
 				}
-				if err := server.write(rdp.TKIPHeader{}, resp); err != nil {
+				if err := server.write(nil, resp); err != nil {
 					endReason = connection.EndWriteError
 					return err
 				}

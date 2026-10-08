@@ -9,6 +9,14 @@ import (
 	"github.com/mushorg/glutton/connection"
 )
 
+// NOTE on the TLS 1.0 downgrade sentinel: Go's crypto/tls inserts the RFC 8446
+// DOWNGRD\0 sentinel into ServerHello.random when negotiating TLS 1.0 or 1.1.
+// Windows Schannel is believed not to send this sentinel, which could allow
+// fingerprinting the sensor via JA3S or similar analysis. MinVersion is kept at
+// TLS 1.0 because some old RDP clients require it; raise it to tls.VersionTLS12
+// if future testing confirms Schannel behavior, as that would also eliminate the
+// sentinel.
+
 // tlsCertName is the subject of the shared self-signed server certificate.
 const tlsCertName = "localhost"
 
@@ -55,22 +63,30 @@ func TerminateTLS(conn net.Conn) (net.Conn, *connection.TLSInfo, error) {
 // partly consumed already: handshake reads come from r (for example a
 // bufio.Reader over conn, or a STARTTLS upgrade) and writes go to conn.
 func TerminateTLSFrom(conn net.Conn, r io.Reader) (net.Conn, *connection.TLSInfo, error) {
-	info := &connection.TLSInfo{}
 	cert, err := SelfSignedCertificate(pkix.Name{CommonName: tlsCertName}, tlsCertName)
 	if err != nil {
-		return nil, info, err
+		return nil, &connection.TLSInfo{}, err
 	}
+	return TerminateTLSFromWith(cert, conn, r)
+}
+
+// TerminateTLSFromWith is like TerminateTLSFrom but serves cert instead of the
+// shared self-signed certificate. Use it when a handler needs a
+// protocol-specific certificate (e.g. RDP uses a cert whose CN matches the
+// sensor's computer name so it is consistent with the NTLM Challenge identity).
+func TerminateTLSFromWith(cert tls.Certificate, conn net.Conn, r io.Reader) (net.Conn, *connection.TLSInfo, error) {
+	info := &connection.TLSInfo{}
 	rec := &helloRecorder{r: r, limit: TLSHelloLimit}
 	tlsConn := tls.Server(&recordedConn{Conn: conn, r: rec}, &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS10,
+		MinVersion:   tls.VersionTLS10, // see sentinel note at top of file
 		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 			info.ServerName = hello.ServerName
 			info.ALPN = append([]string(nil), hello.SupportedProtos...)
 			return nil, nil
 		},
 	})
-	err = tlsConn.Handshake()
+	err := tlsConn.Handshake()
 	info.Hello = rec.buf
 	info.Truncated = rec.truncated
 	if err != nil {

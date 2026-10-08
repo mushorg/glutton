@@ -91,7 +91,7 @@ func TestHandleRDPNegotiationAndTLSStub(t *testing.T) {
 
 	require.Equal(t, "read", events[2].Direction)
 	require.Equal(t, byte(0x16), events[2].Payload[0], "ClientHello")
-	require.Equal(t, byte(0), events[2].Header.Version, "TLS frames have no TPKT header")
+	require.Nil(t, events[2].Header, "TLS frames have no TPKT header")
 	require.Equal(t, "TLSClientHello", events[2].Command)
 
 	require.Equal(t, "write", events[3].Direction)
@@ -344,7 +344,7 @@ func TestHandleRDPRecordsTSRequestAfterTLS(t *testing.T) {
 	require.Equal(t, "read", events[4].Direction)
 	require.Equal(t, "TSRequest", events[4].Command)
 	require.Equal(t, tsRequest, events[4].Payload)
-	require.Equal(t, byte(0), events[4].Header.Version)
+	require.Nil(t, events[4].Header, "CredSSP frames have no TPKT header")
 	select {
 	case extra := <-hp.produced:
 		t.Fatalf("expected a single produced event, got another: %+v", extra)
@@ -405,7 +405,7 @@ func TestHandleRDPCredSSPExchange(t *testing.T) {
 
 	require.Equal(t, "NTLMNegotiate", events[4].Command)
 	require.Equal(t, "read", events[4].Direction)
-	require.Equal(t, byte(0), events[4].Header.Version, "no TPKT header on CredSSP frames")
+	require.Nil(t, events[4].Header, "no TPKT header on CredSSP frames")
 
 	require.Equal(t, "NTLMChallenge", events[5].Command)
 	require.Equal(t, "write", events[5].Direction)

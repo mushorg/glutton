@@ -201,3 +201,13 @@ func TestParseCredSSPMalformed(t *testing.T) {
 	require.Equal(t, ParsedCredSSP{}, ParseCredSSP([]byte{0xff}))
 	require.Equal(t, ParsedCredSSP{}, ParseCredSSP([]byte{0x30, 0x01, 0x00}))
 }
+
+func TestParseCredSSPNegotiateFlags(t *testing.T) {
+	ntlm := make([]byte, 32)
+	copy(ntlm[0:8], "NTLMSSP\x00")
+	binary.LittleEndian.PutUint32(ntlm[8:12], NTLMMsgNegotiate)
+	binary.LittleEndian.PutUint32(ntlm[12:16], 0x60088235)
+	parsed := ParseCredSSP(WrapTSRequest(ntlm))
+	require.Equal(t, NTLMMsgNegotiate, parsed.NTLMType)
+	require.Equal(t, uint32(0x60088235), parsed.NegotiateFlags)
+}

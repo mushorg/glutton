@@ -3,6 +3,7 @@ package helpers
 import (
 	"bufio"
 	"crypto/tls"
+	"crypto/x509"
 	"net"
 	"testing"
 	"time"
@@ -98,4 +99,38 @@ func TestTerminateTLSFromBufferedReader(t *testing.T) {
 	}()
 	require.NoError(t, tls.Client(client, &tls.Config{InsecureSkipVerify: true}).Handshake())
 	require.NoError(t, <-done)
+}
+
+func TestTerminateTLSFromWith(t *testing.T) {
+	// Use SelfSignedCertificateRDP to verify TerminateTLSFromWith accepts a custom cert.
+	cert, err := SelfSignedCertificateRDP("WIN-TESTNODE")
+	require.NoError(t, err)
+
+	client, server := net.Pipe()
+	defer client.Close()
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	require.NoError(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+
+	res := make(chan error, 1)
+	go func() {
+		_, _, err := TerminateTLSFromWith(cert, server, server)
+		res <- err
+	}()
+
+	tc := tls.Client(client, &tls.Config{InsecureSkipVerify: true})
+	require.NoError(t, tc.Handshake())
+	_ = tc.Close()
+	require.NoError(t, <-res)
+}
+
+func TestSelfSignedCertificateRDP(t *testing.T) {
+	cert, err := SelfSignedCertificateRDP("WIN-ABCDEF12345")
+	require.NoError(t, err)
+	require.NotEmpty(t, cert.Certificate)
+
+	parsed, err := x509.ParseCertificate(cert.Certificate[0])
+	require.NoError(t, err)
+	require.Equal(t, "WIN-ABCDEF12345", parsed.Subject.CommonName)
+	require.Empty(t, parsed.DNSNames, "RDP cert must have no SAN")
+	require.False(t, parsed.BasicConstraintsValid, "RDP cert must not include BasicConstraints")
 }
