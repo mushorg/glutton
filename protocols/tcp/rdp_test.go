@@ -188,6 +188,7 @@ func TestHandleRDPMCSConnectInitialNoSecondCC(t *testing.T) {
 	require.Equal(t, byte(0xf0), mcsResp[5], "MCS reply is X.224 DT, not a second CC")
 	require.NotEqual(t, byte(0xd0), mcsResp[5])
 	require.True(t, bytes.Contains(mcsResp, []byte{0x7f, 0x66}))
+	require.NoError(t, client.Close())
 
 	select {
 	case err := <-done:
@@ -361,6 +362,7 @@ func TestHandleRDPMCSOverTLS(t *testing.T) {
 	n, err := tlsClient.Read(buf)
 	require.NoError(t, err)
 	require.True(t, bytes.Contains(buf[:n], []byte{0x7f, 0x66}))
+	require.NoError(t, tlsClient.Close())
 
 	select {
 	case err := <-done:

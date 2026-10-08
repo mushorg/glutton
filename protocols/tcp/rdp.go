@@ -213,7 +213,6 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 				endReason = connection.EndWriteError
 				return err
 			}
-			return nil
 		case tlsDone && rdp.IsTSRequest(raw):
 			parsed := rdp.ParseCredSSP(raw)
 			// CredSSP frames carry no TPKT framing — omit the header.
