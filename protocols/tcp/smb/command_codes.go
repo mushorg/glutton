@@ -3,8 +3,11 @@ package smb
 import "fmt"
 
 const (
+	CmdClose                 = 0x04
 	CmdTransaction           = 0x25
 	CmdTransactionSecondary  = 0x26
+	CmdReadAndX              = 0x2e
+	CmdWriteAndX             = 0x2f
 	CmdEcho                  = 0x2b
 	CmdTransaction2          = 0x32
 	CmdTransaction2Secondary = 0x33
@@ -19,8 +22,11 @@ const (
 )
 
 var smb1CommandNames = map[byte]string{
+	CmdClose:                 "SMB_COM_CLOSE",
 	CmdTransaction:           "SMB_COM_TRANSACTION",
 	CmdTransactionSecondary:  "SMB_COM_TRANSACTION_SECONDARY",
+	CmdReadAndX:              "SMB_COM_READ_ANDX",
+	CmdWriteAndX:             "SMB_COM_WRITE_ANDX",
 	CmdEcho:                  "SMB_COM_ECHO",
 	CmdTransaction2:          "SMB_COM_TRANSACTION2",
 	CmdTransaction2Secondary: "SMB_COM_TRANSACTION2_SECONDARY",

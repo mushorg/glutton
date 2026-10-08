@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"path/filepath"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
@@ -20,7 +21,10 @@ const (
 	maxSMBMessage    = 256 * 1024
 	maxSMBMessages   = 128
 	maxSMBClaimedLen = 16 * 1024 * 1024
+	maxSMBTxBuffer   = 4 * 1024 * 1024
 )
+
+var smbStore = helpers.Store
 
 type parsedSMB struct {
 	Direction      string        `json:"direction,omitempty"`
@@ -34,6 +38,7 @@ type parsedSMB struct {
 	NativeOS       string        `json:"native_os,omitempty"`
 	NativeLanMan   string        `json:"native_lanman,omitempty"`
 	TotalDataCount uint32        `json:"total_data_count,omitempty"`
+	PayloadHash    string        `json:"payload_hash,omitempty"`
 	Payload        []byte        `json:"payload,omitempty"`
 	Truncated      bool          `json:"truncated,omitempty"`
 }
@@ -46,6 +51,8 @@ type smbServer struct {
 	fid     uint16
 	txTotal uint32
 	txOpen  bool
+	txBuf   []byte
+	txEvent int
 }
 
 type smbFrame struct {
@@ -118,6 +125,24 @@ func (ss *smbServer) nextFID() uint16 {
 	return ss.fid
 }
 
+// flushTx stores the reassembled transaction data and tags the NT_TRANSACT
+// read frame that started it with the content hash.
+func (ss *smbServer) flushTx(logger interfaces.Logger) {
+	buf := ss.txBuf
+	ss.txBuf = nil
+	if len(buf) == 0 {
+		return
+	}
+	hash := helpers.SHA256Hex(buf)
+	if _, err := smbStore(buf, filepath.Join("payloads", "smb")); err != nil {
+		logger.Error("Failed to store SMB transaction payload", slog.String("protocol", "smb"), producer.ErrAttr(err))
+		return
+	}
+	if ss.txEvent < len(ss.events) {
+		ss.events[ss.txEvent].PayloadHash = hash
+	}
+}
+
 func smbPDU(frame smbFrame) []byte {
 	if len(frame.payload) <= 4 {
 		return nil
@@ -134,6 +159,7 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	endReason := connection.EndHandlerClose
 	defer func() {
 		md.EndReason = endReason
+		server.flushTx(logger)
 		if err := h.ProduceTCP("smb", conn, md, helpers.FirstOrEmpty[parsedSMB](server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "smb"), producer.ErrAttr(err))
 		}
@@ -268,15 +294,34 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 		responseHeader, resp, err = smb.MakeComTransactionResponse(header)
 	case smb.CmdNtTransact:
 		responseHeader, resp, err = smb.MakeComNtTransactionResponse(header)
+		ss.flushTx(logger)
 		ss.txTotal = totalDataCount
 		ss.txOpen = totalDataCount > 0
+		ss.txEvent = len(ss.events) - 1
+		if ss.txOpen && totalDataCount <= maxSMBTxBuffer && !frame.truncated {
+			ss.txBuf = make([]byte, totalDataCount)
+			copy(ss.txBuf, smb.NtTransactData(pdu))
+		}
 	case smb.CmdNtTransactSecondary, smb.CmdTransactionSecondary, smb.CmdTransaction2Secondary:
 		disp, count, ok := smb.SecondaryDataRange(header.Command, smbBuf.Bytes())
+		if ss.txOpen && ss.txBuf != nil && !frame.truncated {
+			if d, data, dok := smb.SecondaryData(header.Command, pdu); dok && uint64(d)+uint64(len(data)) <= uint64(len(ss.txBuf)) {
+				copy(ss.txBuf[d:], data)
+			}
+		}
 		if !ss.txOpen || !ok || uint64(disp)+uint64(count) < uint64(ss.txTotal) {
 			return nil // middle fragment: no reply
 		}
 		ss.txOpen = false
+		ss.flushTx(logger)
 		responseHeader, resp, err = smb.MakeTransactionCompleteResponse(header)
+	case smb.CmdWriteAndX:
+		count := smb.WriteAndXDataLength(smbBuf.Bytes())
+		responseHeader, resp, err = smb.MakeWriteAndXResponse(header, count)
+	case smb.CmdReadAndX:
+		responseHeader, resp, err = smb.MakeReadAndXResponse(header)
+	case smb.CmdClose:
+		responseHeader, resp, err = smb.MakeHeaderResponse(header)
 	case smb.CmdEcho:
 		responseHeader, resp, err = smb.MakeEchoResponse(header, smbBuf.Bytes())
 	default:

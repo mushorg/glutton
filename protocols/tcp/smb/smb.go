@@ -362,6 +362,49 @@ func SecondaryDataRange(command byte, body []byte) (displacement, count uint32, 
 	}
 }
 
+// NtTransactData returns the data bytes carried in the initial NT_TRANSACT
+// request. pdu starts at the SMB header (DataOffset is relative to it).
+func NtTransactData(pdu []byte) []byte {
+	const hdr = 32
+	if len(pdu) < hdr+36 {
+		return nil
+	}
+	body := pdu[hdr:]
+	count := binary.LittleEndian.Uint32(body[28:32])
+	off := binary.LittleEndian.Uint32(body[32:36])
+	return sliceRange(pdu, off, count)
+}
+
+// SecondaryData returns the displacement and data bytes of a secondary
+// transaction request. pdu starts at the SMB header.
+func SecondaryData(command byte, pdu []byte) (displacement uint32, data []byte, ok bool) {
+	const hdr = 32
+	if len(pdu) <= hdr {
+		return 0, nil, false
+	}
+	body := pdu[hdr:]
+	disp, count, ok := SecondaryDataRange(command, body)
+	if !ok {
+		return 0, nil, false
+	}
+	var off uint32
+	if command == CmdNtTransactSecondary {
+		off = binary.LittleEndian.Uint32(body[28:32])
+	} else {
+		off = uint32(binary.LittleEndian.Uint16(body[13:15]))
+	}
+	data = sliceRange(pdu, off, count)
+	return disp, data, data != nil
+}
+
+func sliceRange(b []byte, off, count uint32) []byte {
+	end := uint64(off) + uint64(count)
+	if count == 0 || off < 32 || end > uint64(len(b)) {
+		return nil
+	}
+	return b[off:end]
+}
+
 func echoRequestData(body []byte) []byte {
 	// WordCount(1) + EchoCount(2) + ByteCount(2) + data.
 	if len(body) < 5 {
@@ -718,6 +761,68 @@ func MakeTransactionCompleteResponse(header SMBHeader) (SMBHeader, []byte, error
 
 	data, err := toBytes(smb)
 	return smb.Header, data, err
+}
+
+// WriteAndXDataLength extracts DataLength from an SMB_COM_WRITE_ANDX request
+// body positioned after the 32-byte SMB header. Returns 0 if the body is short.
+func WriteAndXDataLength(body []byte) uint16 {
+	// WordCount(1) + AndXCmd(1) + AndXRes(1) + AndXOff(2) + FID(2) +
+	// FileOffset(4) + Timeout(4) + WriteMode(2) + Remaining(2) + DataLenHigh(2) = 21
+	const off = 21
+	if len(body) < off+2 {
+		return 0
+	}
+	return binary.LittleEndian.Uint16(body[off : off+2])
+}
+
+// MakeWriteAndXResponse builds an SMB_COM_WRITE_ANDX success reply
+// acknowledging count bytes written (WordCount=6).
+func MakeWriteAndXResponse(header SMBHeader, count uint16) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	h.Command = CmdWriteAndX
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	var body bytes.Buffer
+	body.WriteByte(6)        // WordCount
+	body.WriteByte(0xff)     // AndXCommand: none
+	body.WriteByte(0)        // AndXReserved
+	putUint16(&body, 0)      // AndXOffset
+	putUint16(&body, count)  // Count: bytes written
+	putUint16(&body, 0xffff) // Remaining (pipe convention)
+	putUint16(&body, 0)      // CountHigh
+	putUint16(&body, 0)      // Reserved
+	putUint16(&body, 0)      // ByteCount
+	return h, append(hb, body.Bytes()...), nil
+}
+
+// MakeReadAndXResponse builds an SMB_COM_READ_ANDX success reply with no data
+// (WordCount=12, DataLength=0 — signals end of file / empty pipe).
+func MakeReadAndXResponse(header SMBHeader) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	h.Command = CmdReadAndX
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	// DataOffset: from start of SMB header (32) through WC(1)+12words*2(24)+BC(2) = 59.
+	const dataOffset = 59
+	var body bytes.Buffer
+	body.WriteByte(12)           // WordCount
+	body.WriteByte(0xff)         // AndXCommand: none
+	body.WriteByte(0)            // AndXReserved
+	putUint16(&body, 0)          // AndXOffset
+	putUint16(&body, 0)          // Remaining (0 = EOF)
+	putUint16(&body, 0)          // DataCompactionMode
+	putUint16(&body, 0)          // Reserved1
+	putUint16(&body, 0)          // DataLength (0 bytes)
+	putUint16(&body, dataOffset) // DataOffset
+	putUint16(&body, 0)          // DataLengthHigh
+	putUint32(&body, 0)          // Reserved2[0]
+	putUint32(&body, 0)          // Reserved2[1]
+	putUint16(&body, 0)          // ByteCount
+	return h, append(hb, body.Bytes()...), nil
 }
 
 func ParseHeader(buffer *bytes.Buffer, header *SMBHeader) error {

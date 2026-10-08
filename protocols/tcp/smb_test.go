@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/tcp/smb"
 	"github.com/stretchr/testify/require"
 )
@@ -607,4 +608,44 @@ func TestHandleSMBStoresSMB2WithoutAbort(t *testing.T) {
 	require.Equal(t, "read", frames[0].Direction)
 	require.Equal(t, "SMB2_NEGOTIATE", frames[1].Command)
 	require.Equal(t, "write", frames[1].Direction)
+}
+
+func TestHandleSMBStoresReassembledTransaction(t *testing.T) {
+	var stored []byte
+	orig := smbStore
+	smbStore = func(data []byte, folder string) (string, error) {
+		stored = append([]byte(nil), data...)
+		return "", nil
+	}
+	t.Cleanup(func() { smbStore = orig })
+
+	client, hp, done := startHandleSMB(t)
+
+	ntBody := make([]byte, 36, 40)
+	ntBody[0] = 19
+	binary.LittleEndian.PutUint32(ntBody[8:12], 8)
+	binary.LittleEndian.PutUint32(ntBody[28:32], 4)
+	binary.LittleEndian.PutUint32(ntBody[32:36], 32+36)
+	ntBody = append(ntBody, "AAAA"...)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdNtTransact, 1, 1, 1)), ntBody...))
+	readSMBFrame(t, client)
+
+	secBody := smbTrans2SecondaryBody(4, 4)
+	binary.LittleEndian.PutUint16(secBody[13:15], 32+uint16(len(secBody)))
+	secBody = append(secBody, "BBBB"...)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdTransaction2Secondary, 1, 1, 2)), secBody...))
+	readSMBFrame(t, client)
+
+	ev := finishHandleSMB(t, client, done, hp)
+	require.Equal(t, []byte("AAAABBBB"), stored)
+	frames := ev.decoded.([]parsedSMB)
+	var hashed int
+	for _, f := range frames {
+		if f.PayloadHash != "" {
+			require.Equal(t, smb.CmdNtTransact, int(f.Header.Command))
+			require.Equal(t, helpers.SHA256Hex([]byte("AAAABBBB")), f.PayloadHash)
+			hashed++
+		}
+	}
+	require.Equal(t, 1, hashed)
 }
