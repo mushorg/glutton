@@ -8,8 +8,8 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
+	"github.com/mushorg/glutton/protocols/guard"
 	"github.com/mushorg/glutton/protocols/recall"
-	"github.com/mushorg/glutton/protocols/udpguard"
 	"github.com/mushorg/glutton/rules"
 
 	"github.com/spf13/viper"
@@ -80,38 +80,78 @@ func TestRecallConfig(t *testing.T) {
 	require.Equal(t, recall.Config{Enabled: false, Gap: time.Minute, TTL: time.Hour, Max: 10}, recallConfig())
 }
 
-func TestUDPGuardConfig(t *testing.T) {
-	keys := []string{"udp_reply_limit.enabled", "udp_reply_limit.source_rate", "udp_reply_limit.source_burst",
-		"udp_reply_limit.global_rate", "udp_reply_limit.global_burst", "udp_reply_limit.max_sources"}
-	orig := map[string]any{}
-	for _, k := range keys {
-		orig[k] = viper.Get(k)
-	}
-	t.Cleanup(func() {
-		for k, v := range orig {
-			viper.Set(k, v)
-		}
-	})
+func TestGuardConfig(t *testing.T) {
+	for _, tc := range []struct {
+		key string
+		def guard.Config
+	}{
+		{"udp_reply_limit", guard.DefaultConfig()},
+		{"tcp_reply_limit", guard.DefaultTCPConfig()},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			keys := []string{tc.key + ".enabled", tc.key + ".source_rate", tc.key + ".source_burst",
+				tc.key + ".global_rate", tc.key + ".global_burst", tc.key + ".max_sources"}
+			orig := map[string]any{}
+			for _, k := range keys {
+				orig[k] = viper.Get(k)
+			}
+			t.Cleanup(func() {
+				for k, v := range orig {
+					viper.Set(k, v)
+				}
+			})
 
-	for _, k := range keys {
-		viper.Set(k, nil)
-	}
-	require.Equal(t, udpguard.DefaultConfig(), udpGuardConfig(), "enabled with defaults when unset")
+			for _, k := range keys {
+				viper.Set(k, nil)
+			}
+			require.Equal(t, tc.def, guardConfig(tc.key, tc.def), "enabled with defaults when unset")
 
-	viper.Set("udp_reply_limit.enabled", false)
-	viper.Set("udp_reply_limit.source_rate", 10)
-	viper.Set("udp_reply_limit.source_burst", 20)
-	viper.Set("udp_reply_limit.global_rate", 0)
-	viper.Set("udp_reply_limit.global_burst", 40)
-	viper.Set("udp_reply_limit.max_sources", 50)
-	require.Equal(t, udpguard.Config{Enabled: false, SourceRate: 10, SourceBurst: 20, GlobalRate: 0, GlobalBurst: 40, MaxSources: 50}, udpGuardConfig())
+			viper.Set(tc.key+".enabled", false)
+			viper.Set(tc.key+".source_rate", 10)
+			viper.Set(tc.key+".source_burst", 20)
+			viper.Set(tc.key+".global_rate", 0)
+			viper.Set(tc.key+".global_burst", 40)
+			viper.Set(tc.key+".max_sources", 50)
+			require.Equal(t, guard.Config{Enabled: false, SourceRate: 10, SourceBurst: 20, GlobalRate: 0, GlobalBurst: 40, MaxSources: 50}, guardConfig(tc.key, tc.def))
+		})
+	}
 }
 
 func TestReplyUDPDropsOverBudget(t *testing.T) {
-	g := &Glutton{udpGuard: udpguard.New(udpguard.Config{Enabled: true, SourceRate: 1, SourceBurst: 64})}
+	g := &Glutton{udpGuard: guard.New(guard.Config{Enabled: true, SourceRate: 1, SourceBurst: 64})}
 	src := &net.UDPAddr{IP: net.ParseIP("192.0.2.1"), Port: 40000}
 	dst := &net.UDPAddr{IP: net.ParseIP("198.51.100.1"), Port: 5683}
 	// Over budget: dropped before any socket is opened, and not reported as
 	// a send error.
 	require.NoError(t, g.ReplyUDP(src, dst, make([]byte, 65)))
+}
+
+func TestGuardConnFailsWritesOverBudget(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err == nil {
+			accepted <- c
+		}
+	}()
+	client, err := net.Dial("tcp", ln.Addr().String())
+	require.NoError(t, err)
+	defer client.Close()
+	server := <-accepted
+
+	g := &Glutton{tcpGuard: guard.New(guard.Config{Enabled: true, SourceRate: 1, SourceBurst: 64})}
+	conn := g.GuardConn(server)
+	defer conn.Close()
+	_, ok := conn.(interface{ CloseWrite() error })
+	require.True(t, ok, "half-close stays reachable for proxy_tcp")
+
+	n, err := conn.Write(make([]byte, 64))
+	require.NoError(t, err)
+	require.Equal(t, 64, n)
+	n, err = conn.Write([]byte{1})
+	require.ErrorIs(t, err, guard.ErrLimited)
+	require.Zero(t, n)
 }

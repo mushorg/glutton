@@ -1,10 +1,13 @@
-// Package udpguard bounds UDP replies so spoofed requests cannot turn the
-// honeypot into an amplifier or reflector. Every reply is charged against a
-// token bucket for its destination IP (the claimed request source, i.e. the
-// would-be victim) and against one global bucket. A reply that does not fit
-// either bucket is dropped. It is in-memory only: per-destination state is
-// bounded by Config.MaxSources (least recently charged dropped first).
-package udpguard
+// Package guard bounds the bytes the honeypot sends so it cannot be turned
+// into an amplifier, reflector or bandwidth sink. Every reply is charged
+// against a token bucket for its destination IP (for UDP the claimed request
+// source, i.e. the would-be victim; for TCP the connected peer) and against
+// one global bucket. A reply that does not fit either bucket is refused: UDP
+// callers drop it, a guarded TCP Conn fails the Write with ErrLimited. Each
+// network gets its own Guard so their budgets stay independent. It is
+// in-memory only: per-destination state is bounded by Config.MaxSources
+// (least recently charged dropped first).
+package guard
 
 import (
 	"container/list"
@@ -14,12 +17,24 @@ import (
 	"time"
 )
 
+// UDP defaults: replies go to an unverified (possibly spoofed) address, so
+// budgets are tight.
 const (
 	DefaultSourceRate  = 512
 	DefaultSourceBurst = 8 << 10
 	DefaultGlobalRate  = 128 << 10
 	DefaultGlobalBurst = 1 << 20
 	DefaultMaxSources  = 65536
+)
+
+// TCP defaults: the peer completed a handshake, so budgets only bound how
+// much one source (or all sources) can pull from the honeypot. The source
+// burst must exceed the largest single Write a handler or proxy makes.
+const (
+	DefaultTCPSourceRate  = 64 << 10
+	DefaultTCPSourceBurst = 1 << 20
+	DefaultTCPGlobalRate  = 8 << 20
+	DefaultTCPGlobalBurst = 32 << 20
 )
 
 // Config sets the reply budgets. Rates are bytes per second, bursts are the
@@ -38,7 +53,19 @@ type Config struct {
 	MaxSources int
 }
 
-// DefaultConfig returns the enabled guard defaults.
+// DefaultTCPConfig returns the enabled guard defaults for TCP.
+func DefaultTCPConfig() Config {
+	return Config{
+		Enabled:     true,
+		SourceRate:  DefaultTCPSourceRate,
+		SourceBurst: DefaultTCPSourceBurst,
+		GlobalRate:  DefaultTCPGlobalRate,
+		GlobalBurst: DefaultTCPGlobalBurst,
+		MaxSources:  DefaultMaxSources,
+	}
+}
+
+// DefaultConfig returns the enabled guard defaults for UDP.
 func DefaultConfig() Config {
 	return Config{
 		Enabled:     true,

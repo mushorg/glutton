@@ -20,6 +20,10 @@ type Honeypot interface {
 	// ReplyUDP sends a transparent UDP response to srcAddr, sourced from dstAddr
 	// (the original destination of the request).
 	ReplyUDP(srcAddr, dstAddr *net.UDPAddr, payload []byte) error
+	// GuardConn charges writes on conn against the TCP reply budget of its
+	// remote IP. Accepted connections are already guarded; use it for
+	// connections a handler dials itself.
+	GuardConn(conn net.Conn) net.Conn
 	ConnectionByFlow([2]uint64) connection.Metadata
 	UpdateConnectionTimeout(ctx context.Context, conn net.Conn) error
 	MetadataByConnection(net.Conn) (connection.Metadata, error)

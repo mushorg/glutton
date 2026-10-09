@@ -374,9 +374,14 @@ func finishReadSide(conn net.Conn, logger interfaces.Logger, dir string) error {
 	return conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 }
 
+type keepAliver interface {
+	SetKeepAlive(bool) error
+}
+
 // It is best-effort to enables TCP keepalive for real TCP connections
+// (including guarded ones)
 func setKeepAlive(conn net.Conn, logger interfaces.Logger, name string) {
-	tcpConn, ok := conn.(*net.TCPConn)
+	tcpConn, ok := conn.(keepAliver)
 	if !ok {
 		return
 	}

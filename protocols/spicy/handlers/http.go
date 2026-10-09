@@ -152,6 +152,7 @@ func handleVMwareSend(ctx context.Context, body []byte, uri string, md connectio
 		log.Error("vmware-send dial failed", producer.ErrAttr(err))
 		return true
 	}
+	c = hp.GuardConn(c)
 	go func() {
 		if err := tcp.HandleTCP(ctx, c, md, log, hp); err != nil {
 			log.Error("vmware-send TCP relay error", producer.ErrAttr(err))

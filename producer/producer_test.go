@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -216,4 +217,41 @@ func TestMakeEventTCPTLS(t *testing.T) {
 		ServerName: "mail.example.com", ALPN: []string{"pop3"}, Version: "TLS 1.3",
 		Cipher: "TLS_AES_128_GCM_SHA256", ClientHello: "FgMB",
 	}, ev.TLS)
+}
+
+func TestLogHTTPRedactsCredentials(t *testing.T) {
+	p, err := New("test", "v0.0.0")
+	require.NoError(t, err)
+	p.httpClient.Timeout = 50 * time.Millisecond
+
+	block := make(chan struct{})
+	svr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow" {
+			<-block
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer svr.Close()
+	defer close(block)
+
+	u, err := url.Parse(svr.URL)
+	require.NoError(t, err)
+	event := &Event{SrcHost: "198.51.100.1"}
+
+	viper.Set("producers.http.remote", "http://user:hunter2@"+u.Host+"/slow?token=s3cr3t")
+	err = p.logHTTP(event)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "s3cr3t")
+	require.NotContains(t, err.Error(), "hunter2")
+	require.Contains(t, err.Error(), "token=REDACTED")
+	var uerr *url.Error
+	require.ErrorAs(t, err, &uerr)
+	require.True(t, uerr.Timeout())
+
+	viper.Set("producers.http.remote", "http://"+u.Host+"/publish?token=s3cr3t")
+	err = p.logHTTP(event)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "s3cr3t")
+	require.Contains(t, err.Error(), "401")
 }

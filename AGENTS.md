@@ -16,6 +16,7 @@ canonical shape of a handler so new or refactored handlers stay consistent.
 | `protocols/protocols.go` | Handler registry: maps rule `target` names to handler funcs. |
 | `protocols/interfaces/` | `Logger` and `Honeypot` interfaces every handler receives. |
 | `protocols/helpers/` | `FirstOrEmpty`, `Store` (content-addressed file storage). |
+| `protocols/guard/` | Per-IP + global reply byte budgets; `udp_reply_limit` gates `ReplyUDP`, `tcp_reply_limit` wraps every accepted TCP conn. |
 | `protocols/recall/` | In-memory per-(protocol, source IP) visit memory; picks the response variant for returning sources. |
 | `protocols/mocks/` | mockery-generated `MockHoneypot` / `MockLogger`. |
 | `producer/` | `producer.Event` envelope and sinks (log, HPFeeds, HTTP). |
@@ -146,7 +147,7 @@ Decoded JSON field names are the contract with Ochi/analysis. Keep `direction` a
 
 ## Checklist for a new or changed handler
 
-1. Handler in `protocols/tcp/<name>.go` (or `protocols/udp/<name>.go`) following the skeleton above. UDP handlers that must answer use `h.ReplyUDP(srcAddr, dstAddr, payload)`.
+1. Handler in `protocols/tcp/<name>.go` (or `protocols/udp/<name>.go`) following the skeleton above. UDP handlers that must answer use `h.ReplyUDP(srcAddr, dstAddr, payload)` (never a raw socket, so the reply budget applies). Accepted TCP conns are already guarded; a handler that dials out itself wraps the conn with `h.GuardConn(conn)` before writing.
 2. Registration in `protocols/protocols.go` (`MapTCPProtocolHandlers` / `MapUDPProtocolHandlers`) and an assertion in `protocols/protocols_test.go`.
 3. Rule in `config/rules.yaml`, placed before broad catch-alls.
 4. Tests beside the handler (`protocols/tcp/<name>_test.go`):

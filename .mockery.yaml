@@ -1,9 +1,11 @@
-with-expecter: true
+template: testify
+template-data:
+  unroll-variadic: true
 packages:
-    github.com/mushorg/glutton/protocols/interfaces:
-        # place your package-specific config here
-        config:
-            all: true
-            dir: protocols/mocks/
-            filename: mock_{{.InterfaceName | lower}}.go
-            outpkg: mocks
+  github.com/mushorg/glutton/protocols/interfaces:
+    config:
+      all: true
+      dir: protocols/mocks/
+      filename: mock_{{.InterfaceName | lower}}.go
+      pkgname: mocks
+      structname: Mock{{.InterfaceName}}

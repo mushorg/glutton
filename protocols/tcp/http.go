@@ -273,6 +273,7 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 			if err != nil {
 				return err
 			}
+			vconn = h.GuardConn(vconn)
 			go func() {
 				if err := HandleTCP(ctx, vconn, md, logger, h); err != nil {
 					logger.Error("Failed to handle vmware attack", producer.ErrAttr(err))

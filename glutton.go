@@ -19,9 +19,9 @@ import (
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
+	"github.com/mushorg/glutton/protocols/guard"
 	"github.com/mushorg/glutton/protocols/recall"
 	"github.com/mushorg/glutton/protocols/spicy"
-	"github.com/mushorg/glutton/protocols/udpguard"
 	"github.com/mushorg/glutton/rules"
 
 	"github.com/google/uuid"
@@ -42,7 +42,8 @@ type Glutton struct {
 	ctx                 context.Context
 	cancel              context.CancelFunc
 	publicAddrs         []net.IP
-	udpGuard            *udpguard.Guard
+	udpGuard            *guard.Guard
+	tcpGuard            *guard.Guard
 }
 
 //go:embed config/rules.yaml
@@ -138,8 +139,10 @@ func (g *Glutton) Init() error {
 	}
 	// Per-source visit memory for handlers that vary replies to returning sources
 	recall.Shared.Configure(recallConfig())
-	// Reply budgets so spoofed requests cannot use the honeypot as a UDP amplifier
-	g.udpGuard = udpguard.New(udpGuardConfig())
+	// Reply budgets so spoofed requests cannot use the honeypot as a UDP
+	// amplifier, and TCP peers cannot pull unbounded bytes from it
+	g.udpGuard = guard.New(guardConfig("udp_reply_limit", guard.DefaultConfig()))
+	g.tcpGuard = guard.New(guardConfig("tcp_reply_limit", guard.DefaultTCPConfig()))
 
 	// Initiating protocol handlers
 	g.tcpProtocolHandlers = protocols.MapTCPProtocolHandlers(g.Logger, g)
@@ -173,26 +176,27 @@ func recallConfig() recall.Config {
 	return cfg
 }
 
-// udpGuardConfig reads the udp_reply_limit block; it is enabled unless set to
-// false, and global_rate 0 disables the global budget.
-func udpGuardConfig() udpguard.Config {
-	cfg := udpguard.DefaultConfig()
-	if viper.IsSet("udp_reply_limit.enabled") {
-		cfg.Enabled = viper.GetBool("udp_reply_limit.enabled")
+// guardConfig reads a reply limit block (udp_reply_limit or
+// tcp_reply_limit) over def; it is enabled unless set to false, and
+// global_rate 0 disables the global budget.
+func guardConfig(key string, def guard.Config) guard.Config {
+	cfg := def
+	if viper.IsSet(key + ".enabled") {
+		cfg.Enabled = viper.GetBool(key + ".enabled")
 	}
-	if n := viper.GetInt("udp_reply_limit.source_rate"); n > 0 {
+	if n := viper.GetInt(key + ".source_rate"); n > 0 {
 		cfg.SourceRate = n
 	}
-	if n := viper.GetInt("udp_reply_limit.source_burst"); n > 0 {
+	if n := viper.GetInt(key + ".source_burst"); n > 0 {
 		cfg.SourceBurst = n
 	}
-	if viper.IsSet("udp_reply_limit.global_rate") {
-		cfg.GlobalRate = max(0, viper.GetInt("udp_reply_limit.global_rate"))
+	if viper.IsSet(key + ".global_rate") {
+		cfg.GlobalRate = max(0, viper.GetInt(key+".global_rate"))
 	}
-	if n := viper.GetInt("udp_reply_limit.global_burst"); n > 0 {
+	if n := viper.GetInt(key + ".global_burst"); n > 0 {
 		cfg.GlobalBurst = n
 	}
-	if n := viper.GetInt("udp_reply_limit.max_sources"); n > 0 {
+	if n := viper.GetInt(key + ".max_sources"); n > 0 {
 		cfg.MaxSources = n
 	}
 	return cfg
@@ -286,6 +290,10 @@ func (g *Glutton) tcpListen() {
 		}
 
 		g.Logger.Debug("new connection", slog.String("addr", conn.LocalAddr().String()), slog.String("handler", rule.Target))
+
+		// Registered by its raw address above; from here on every write the
+		// handler (or TLS termination, or a proxy) makes is charged.
+		conn = g.GuardConn(conn)
 
 		g.ctx = context.WithValue(g.ctx, ctxTimeout("timeout"), int64(viper.GetInt("conn_timeout")))
 		if err := g.UpdateConnectionTimeout(g.ctx, conn); err != nil {
@@ -480,6 +488,31 @@ func (g *Glutton) ReplyUDP(srcAddr, dstAddr *net.UDPAddr, payload []byte) error 
 	defer conn.Close()
 	_, err = conn.Write(payload)
 	return err
+}
+
+// GuardConn charges writes on conn against the tcp_reply_limit budget for its
+// remote IP. A write over budget fails with guard.ErrLimited, which ends the
+// handler's session; one warning is logged per limited episode.
+func (g *Glutton) GuardConn(conn net.Conn) net.Conn {
+	return g.tcpGuard.Wrap(conn, g.logTCPLimit)
+}
+
+func (g *Glutton) logTCPLimit(conn net.Conn, d guard.Decision, size int) {
+	if !d.First || g.Logger == nil {
+		return
+	}
+	attrs := []any{
+		slog.String("limit", string(d.Limit)),
+		slog.Int("bytes", size),
+		slog.String("reporter", "glutton"),
+	}
+	if a, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+		attrs = append(attrs, slog.String("src_ip", a.IP.String()))
+	}
+	if a, ok := conn.LocalAddr().(*net.TCPAddr); ok {
+		attrs = append(attrs, slog.Int("dest_port", a.Port))
+	}
+	g.Logger.Warn("Dropping TCP replies over the reply budget", attrs...)
 }
 
 // Shutdown the packet processor

@@ -43,6 +43,14 @@ udp_reply_limit:   # bounds UDP replies per destination IP so spoofed requests c
   global_burst: 1048576   # most reply bytes to all destinations at once.
   max_sources: 65536      # destinations tracked; the least recently answered is dropped first.
 
+tcp_reply_limit:   # bounds bytes written to each TCP peer IP (all handlers, TLS, proxy_tcp, and handler-dialed relays).
+  enabled: true
+  source_rate: 65536      # bytes per second one peer IP may receive.
+  source_burst: 1048576   # most bytes one peer IP may receive at once; larger single writes are never sent.
+  global_rate: 8388608    # bytes per second to all peers together; 0 disables.
+  global_burst: 33554432  # most bytes to all peers at once.
+  max_sources: 65536      # peers tracked; the least recently answered is dropped first.
+
 openvpn:
   reply: false        # answer well-formed UDP hard resets with P_CONTROL_HARD_RESET_SERVER_V2 (default parse-only).
 

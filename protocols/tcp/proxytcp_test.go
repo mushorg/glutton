@@ -102,6 +102,10 @@ func (h *fakeHoneypot) UpdateConnectionTimeout(context.Context, net.Conn) error 
 	return nil
 }
 
+func (h *fakeHoneypot) GuardConn(conn net.Conn) net.Conn {
+	return conn
+}
+
 func (h *fakeHoneypot) MetadataByConnection(net.Conn) (connection.Metadata, error) {
 	return connection.Metadata{}, nil
 }

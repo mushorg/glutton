@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -170,7 +173,42 @@ func (p *Producer) logHTTP(event *Event) error {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
+		return redactURLError(err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("http producer: %s %s: %s", req.Method, redactURL(req.URL), resp.Status)
+	}
+	return nil
+}
+
+// redactURL renders u without userinfo and with every query value replaced,
+// so tokens in producers.http.remote never reach the logs.
+func redactURL(u *url.URL) string {
+	r := *u
+	r.User = nil
+	if q := r.Query(); len(q) > 0 {
+		for k := range q {
+			q[k] = []string{"REDACTED"}
+		}
+		r.RawQuery = q.Encode()
+	}
+	return r.String()
+}
+
+// redactURLError strips credentials from the URL that net/http embeds in
+// *url.Error messages.
+func redactURLError(err error) error {
+	var uerr *url.Error
+	if !errors.As(err, &uerr) {
 		return err
 	}
-	return resp.Body.Close()
+	redacted := *uerr
+	if u, perr := url.Parse(uerr.URL); perr == nil {
+		redacted.URL = redactURL(u)
+	} else {
+		redacted.URL = "<redacted>"
+	}
+	return &redacted
 }

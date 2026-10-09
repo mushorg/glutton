@@ -1,4 +1,4 @@
-package udpguard
+package guard
 
 import (
 	"net"
@@ -96,4 +96,51 @@ func TestNewAppliesDefaults(t *testing.T) {
 	want := DefaultConfig()
 	want.GlobalRate = 0
 	require.Equal(t, want, g.cfg, "GlobalRate 0 keeps the global bucket disabled")
+}
+
+func TestDefaultTCPConfigSurvivesNew(t *testing.T) {
+	require.Equal(t, DefaultTCPConfig(), New(DefaultTCPConfig()).cfg)
+}
+
+type addrConn struct {
+	net.Conn
+	remote net.Addr
+	wrote  []byte
+}
+
+func (c *addrConn) RemoteAddr() net.Addr { return c.remote }
+func (c *addrConn) Write(p []byte) (int, error) {
+	c.wrote = append(c.wrote, p...)
+	return len(p), nil
+}
+
+func TestWrapChargesRemoteIP(t *testing.T) {
+	g, _ := newGuard(Config{Enabled: true, SourceRate: 1, SourceBurst: 10})
+	var refused []Decision
+	onLimit := func(_ net.Conn, d Decision, size int) {
+		require.Equal(t, 5, size)
+		refused = append(refused, d)
+	}
+	a := &addrConn{remote: &net.TCPAddr{IP: victim, Port: 1}}
+	b := &addrConn{remote: &net.TCPAddr{IP: victim, Port: 2}}
+	ca, cb := g.Wrap(a, onLimit), g.Wrap(b, onLimit)
+
+	_, err := ca.Write([]byte("hello"))
+	require.NoError(t, err)
+	_, err = cb.Write([]byte("world"))
+	require.NoError(t, err, "connections from one IP share a budget")
+	n, err := ca.Write([]byte("again"))
+	require.ErrorIs(t, err, ErrLimited)
+	require.Zero(t, n)
+	require.Equal(t, "hello", string(a.wrote), "refused write sent nothing")
+	require.Equal(t, []Decision{{Limit: LimitSource, First: true}}, refused)
+}
+
+func TestWrapPassThrough(t *testing.T) {
+	a := &addrConn{remote: &net.TCPAddr{IP: victim, Port: 1}}
+	var nilGuard *Guard
+	require.Same(t, net.Conn(a), nilGuard.Wrap(a, nil))
+	require.Same(t, net.Conn(a), New(Config{Enabled: false}).Wrap(a, nil))
+	unix := &addrConn{remote: &net.UnixAddr{Name: "x", Net: "unix"}}
+	require.Same(t, net.Conn(unix), New(DefaultTCPConfig()).Wrap(unix, nil), "no IP to charge")
 }

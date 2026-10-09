@@ -53,6 +53,9 @@ func (h *recordingHoneypot) ConnectionByFlow([2]uint64) connection.Metadata {
 func (h *recordingHoneypot) UpdateConnectionTimeout(context.Context, net.Conn) error {
 	return nil
 }
+func (h *recordingHoneypot) GuardConn(conn net.Conn) net.Conn {
+	return conn
+}
 func (h *recordingHoneypot) MetadataByConnection(net.Conn) (connection.Metadata, error) {
 	return connection.Metadata{}, nil
 }
