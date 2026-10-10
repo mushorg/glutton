@@ -2,6 +2,8 @@ package banners
 
 import (
 	"bytes"
+	"encoding/binary"
+	"encoding/hex"
 	"strconv"
 	"strings"
 	"testing"
@@ -120,4 +122,52 @@ func TestForPayload(t *testing.T) {
 		_, ok := ForPayload(data)
 		require.False(t, ok, "%q", data)
 	}
+}
+
+// censysH2 is the h2c preface + SETTINGS from Ochi event
+// 2fa1bb07-466c-4764-851d-096aeb5ce474 (Censys, tcp/44818).
+const censysH2 = "505249202a20485454502f322e300d0a0d0a534d0d0a0d0a" +
+	"00001804000000000000020000000000040000426800060004000000030000000a"
+
+func TestForPayloadHTTP2Preface(t *testing.T) {
+	data, err := hex.DecodeString(censysH2)
+	require.NoError(t, err)
+	resp, ok := ForPayload(data)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "http2-settings", Data: h2Reply}, resp)
+
+	// the bare preface is enough, a partial one is not
+	_, ok = ForPayload(h2Preface)
+	require.True(t, ok)
+	for _, data := range [][]byte{data[:20], []byte("PRI * HTTP/1.1\r\n\r\n")} {
+		_, ok := ForPayload(data)
+		require.False(t, ok, "%q", data)
+	}
+}
+
+func TestHTTP2ReplyFrames(t *testing.T) {
+	type frame struct {
+		typ, flags byte
+		stream     uint32
+		payload    []byte
+	}
+	var frames []frame
+	for b := h2Reply; len(b) > 0; {
+		require.GreaterOrEqual(t, len(b), 9)
+		n := int(b[0])<<16 | int(b[1])<<8 | int(b[2])
+		require.GreaterOrEqual(t, len(b), 9+n)
+		frames = append(frames, frame{b[3], b[4], binary.BigEndian.Uint32(b[5:9]), b[9 : 9+n]})
+		b = b[9+n:]
+	}
+	require.Len(t, frames, 4)
+	for _, f := range frames {
+		require.Zero(t, f.stream)
+	}
+	// SETTINGS, WINDOW_UPDATE, SETTINGS ACK, GOAWAY
+	require.Equal(t, []byte{0x04, 0x08, 0x04, 0x07}, []byte{frames[0].typ, frames[1].typ, frames[2].typ, frames[3].typ})
+	require.Zero(t, frames[0].flags)
+	require.Zero(t, len(frames[0].payload)%6)
+	require.Equal(t, byte(0x01), frames[2].flags)
+	require.Empty(t, frames[2].payload)
+	require.Equal(t, make([]byte, 8), frames[3].payload) // last stream 0, NO_ERROR
 }

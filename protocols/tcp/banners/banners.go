@@ -96,6 +96,21 @@ var (
 
 	// TLS fatal handshake_failure alert.
 	tlsAlert = []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28}
+
+	// HTTP/2 client connection preface (RFC 9113 §3.4), sent first by h2c
+	// prior-knowledge clients.
+	h2Preface = []byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+	// nginx-style HTTP/2 server reply, all on stream 0:
+	//   SETTINGS       MAX_CONCURRENT_STREAMS=128, INITIAL_WINDOW_SIZE=65536,
+	//                  MAX_FRAME_SIZE=16777215
+	//   WINDOW_UPDATE  connection window +2147418112
+	//   SETTINGS ACK   for the client's SETTINGS
+	//   GOAWAY         last stream 0, NO_ERROR (the catch-all closes after one write)
+	h2Reply = mustHex(
+		"000012040000000000" + "000300000080" + "000400010000" + "000500ffffff" +
+			"000004080000000000" + "7fff0000" +
+			"000000040100000000" +
+			"000008070000000000" + "0000000000000000")
 )
 
 // x11Reason is Xorg's refusal for a client without authorization; nmap
@@ -192,6 +207,8 @@ func ForPayload(data []byte) (Response, bool) {
 		return Response{Name: "ssh", Data: sshBanner}, true
 	case len(data) >= 3 && data[0] == 0x16 && data[1] == 0x03 && data[2] <= 0x04:
 		return Response{Name: "tls-alert", Data: tlsAlert}, true
+	case bytes.HasPrefix(data, h2Preface):
+		return Response{Name: "http2-settings", Data: h2Reply}, true
 	case mglnddProbe.Match(data):
 		return Response{Name: "mglndd", Silent: true}, true
 	}

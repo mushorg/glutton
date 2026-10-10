@@ -247,6 +247,30 @@ func TestHandleTCPSignatureBeatsPort(t *testing.T) {
 	require.Equal(t, "tls-alert", events[1].Status)
 }
 
+func TestHandleTCPHTTP2Preface(t *testing.T) {
+	// h2c preface + SETTINGS from Ochi event 2fa1bb07-466c-4764-851d-096aeb5ce474
+	// (Censys, tcp/44818); it used to get random bytes
+	client, hp, done := startCatchAll(t, 44818)
+
+	probe := append([]byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"),
+		0x00, 0x00, 0x18, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x04, 0x00, 0x00, 0x42, 0x68,
+		0x00, 0x06, 0x00, 0x04, 0x00, 0x00,
+		0x00, 0x03, 0x00, 0x00, 0x00, 0x0a)
+	_, err := client.Write(probe)
+	require.NoError(t, err)
+	reply, ok := banners.ForPayload(probe)
+	require.True(t, ok)
+	require.Equal(t, reply.Data, readAll(t, client, len(reply.Data)))
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Command: "http2-settings", Payload: probe, PayloadHash: helpers.SHA256Hex(probe)},
+		{Direction: "write", Status: "http2-settings", Payload: reply.Data, PayloadHash: helpers.SHA256Hex(reply.Data)},
+	}, events)
+}
+
 func TestHandleTCPX11Denied(t *testing.T) {
 	// X11 setup from Ochi event bf678cc5-ae8d-4ea2-8d97-02ca98d6e37c (tcp/6029)
 	client, hp, done := startCatchAll(t, 6029)
