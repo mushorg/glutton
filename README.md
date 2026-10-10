@@ -87,6 +87,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | HiSilicon DVR (MCTP)        | `HI_SRDK_*` control calls on tcp/9000    |
 | Catch-all service banners   | SSH/POP3/RFB greetings, MSSQL/AJP/RPC replies |
 | DICOM                       | PACS associations, C-ECHO/C-FIND/C-STORE |
+| ICAP                        | OPTIONS/REQMOD/RESPMOD on tcp/1344, 11344 |
 | Hadoop YARN                 | `POST */cluster/apps/new-application`    |
 | Docker Engine API           | `GET /v1.16/version`                     |
 | HTTP                        | generic web requests                     |

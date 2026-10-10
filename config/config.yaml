@@ -71,6 +71,10 @@ sip:
 smtp:
   hostname: mail.localdomain   # server name in the 220 greeting and HELO/EHLO replies.
 
+icap:
+  service: "C-ICAP/0.5.10 server - Echo demo service"   # Service header in OPTIONS replies.
+  istag: CI0001-XXXXXXXXX                               # ISTag (without quotes) on every reply.
+
 dnp3:
   address: 10        # outstation link address; REQUEST_LINK_STATUS and TEST_LINK sent to it are answered, other addresses get silence.
 
