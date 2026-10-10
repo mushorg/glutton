@@ -17,6 +17,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp"
 	"github.com/mushorg/glutton/protocols/tcp/adb"
 	"github.com/mushorg/glutton/protocols/tcp/mctp"
+	"github.com/mushorg/glutton/protocols/tcp/minecraft"
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
 	"github.com/mushorg/glutton/protocols/tcp/socks"
 	"github.com/mushorg/glutton/protocols/udp"
@@ -191,6 +192,19 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		// four-byte snip holds the whole CNXN command
 		if adb.LooksLikeADB(snip) {
 			return tcp.HandleADB(ctx, bufConn, md, log, h)
+		}
+		// Minecraft server-list scanners (matscan) ping any port; the
+		// Handshake is short and arrives whole, so peek for all of it
+		if n, ok := minecraft.HandshakeLen(snip); ok {
+			hs, hsConn, err := peekOrClose(conn, bufConn, n, log)
+			if err != nil {
+				return nil
+			}
+			bufConn = hsConn
+			if minecraft.LooksLikeHandshake(hs) {
+				return tcp.HandleMinecraft(ctx, bufConn, md, log, h)
+			}
+			snip = hs[:min(len(hs), 4)]
 		}
 		// HTTP on any port goes to the HTTP handler, with or without Spicy
 		if looksLikeHTTPMethodStart(snip) {

@@ -28,6 +28,16 @@ const (
 	// Handshake states (next state field).
 	StateStatus = 1
 	StateLogin  = 2
+	// StateTransfer (1.20.5+) is accepted by LooksLikeHandshake only.
+	StateTransfer = 3
+
+	// maxAddressBytes is the protocol's cap on the Handshake address.
+	maxAddressBytes = 255
+	// minHandshakeLen and maxHandshakeLen bound the declared length of a
+	// Handshake: packet ID, protocol VarInt, address with its VarInt length,
+	// port and next state.
+	minHandshakeLen = 1 + 1 + 1 + 2 + 1
+	maxHandshakeLen = 1 + MaxVarIntBytes + 2 + maxAddressBytes + 2 + 1
 
 	// Packet IDs.
 	IDHandshake   = 0x00
@@ -167,6 +177,58 @@ func ParseHandshake(body []byte) (Handshake, error) {
 		return h, err
 	}
 	return h, nil
+}
+
+// handshakeFrame checks the length prefix and packet ID b starts with and
+// returns the prefix size and the full wire length of the packet.
+func handshakeFrame(b []byte) (prefix, total int, ok bool) {
+	n, used, err := ReadVarInt(bytes.NewReader(b))
+	if err != nil || used > 2 || len(b) <= used || b[used] != IDHandshake {
+		return 0, 0, false
+	}
+	if n < minHandshakeLen || n > maxHandshakeLen {
+		return 0, 0, false
+	}
+	return used, used + int(n), true
+}
+
+// HandshakeLen reports whether b (at least the length prefix and the byte
+// after it) could start a Handshake, and if so the packet's full wire length,
+// so a dispatcher knows how far to peek.
+func HandshakeLen(b []byte) (int, bool) {
+	_, total, ok := handshakeFrame(b)
+	return total, ok
+}
+
+// LooksLikeHandshake reports whether b starts with one complete Handshake
+// whose fields end exactly at its declared length. Bytes after it (usually a
+// Status Request or Login Start) are ignored.
+func LooksLikeHandshake(b []byte) bool {
+	prefix, total, ok := handshakeFrame(b)
+	if !ok || len(b) < total {
+		return false
+	}
+	br := bytes.NewReader(b[prefix+1 : total])
+	if proto, _, err := ReadVarInt(br); err != nil || proto < -1 {
+		return false
+	}
+	addrLen, _, err := ReadVarInt(br)
+	if err != nil || addrLen < 0 || addrLen > maxAddressBytes || int(addrLen) > br.Len() {
+		return false
+	}
+	addr := make([]byte, addrLen)
+	if _, err := io.ReadFull(br, addr); err != nil || !utf8.Valid(addr) {
+		return false
+	}
+	var port [2]byte
+	if _, err := io.ReadFull(br, port[:]); err != nil {
+		return false
+	}
+	state, _, err := ReadVarInt(br)
+	if err != nil || state < StateStatus || state > StateTransfer {
+		return false
+	}
+	return br.Len() == 0
 }
 
 // ParseLoginStart returns the player name from a Login Start body. Any
