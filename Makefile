@@ -44,6 +44,7 @@ deploy-helper: .require-deploy-host
 # Build, upload to /tmp (avoids ETXTBSY), then restart the screen session.
 deploy: clean build .require-deploy-host
 	scp bin/server $(DEPLOY_HOST):/tmp/glutton.new
+	scp config/rules.yaml $(DEPLOY_HOST):/opt/glutton/rules.yaml
 	ssh $(DEPLOY_HOST) /opt/glutton/redeploy-glutton.sh
 
 clean:

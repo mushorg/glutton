@@ -57,6 +57,9 @@ rules:
   - match: tcp dst port 20000
     type: conn_handler
     target: dnp3
+  - match: tcp dst port 44818
+    type: conn_handler
+    target: enip
   - match: tcp dst port 4840
     type: conn_handler
     target: opcua
