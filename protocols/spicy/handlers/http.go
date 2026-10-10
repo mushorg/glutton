@@ -3,7 +3,6 @@ package handlers
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -217,14 +216,6 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 		slog.String("path", path),
 		slog.String("query", query),
 	)
-
-	if len(body) > 0 {
-		max := len(body)
-		if max > 1024 {
-			max = 1024
-		}
-		log.Info("HTTP payload:\n" + hex.Dump(body[:max]))
-	}
 
 	_ = hp.ProduceTCP("http", conn, md, body, decodedHTTP{
 		Method: method,

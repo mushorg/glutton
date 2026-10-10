@@ -3,7 +3,6 @@ package tcp
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -136,7 +135,6 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 
 		raw := make([]byte, n)
 		copy(raw, buffer[:n])
-		logger.Debug(fmt.Sprintf("rdp \n%s", hex.Dump(raw)))
 
 		header := rdp.ParseTKIPHeader(raw)
 

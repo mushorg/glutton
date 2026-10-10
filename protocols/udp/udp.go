@@ -2,8 +2,6 @@ package udp
 
 import (
 	"context"
-	"encoding/hex"
-	"fmt"
 	"log/slog"
 	"net"
 
@@ -86,7 +84,6 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 		}
 	}()
 
-	log.Info(fmt.Sprintf("UDP payload:\n%s", hex.Dump(payload)))
 	if _, err := helpers.Store(payload, "payloads"); err != nil {
 		log.Error("failed to store UDP payload", slog.String("protocol", "udp"), producer.ErrAttr(err))
 	}

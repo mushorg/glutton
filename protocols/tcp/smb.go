@@ -3,7 +3,6 @@ package tcp
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -183,9 +182,6 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			break
 		}
 		pdu := smbPDU(frame)
-		if len(pdu) > 0 && len(pdu) <= 2048 {
-			logger.Debug("SMB Payload", slog.String("payload", hex.Dump(pdu)), slog.String("protocol", "smb"))
-		}
 
 		switch {
 		case bytes.HasPrefix(pdu, []byte("\xffSMB")):

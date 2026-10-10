@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -151,8 +150,6 @@ func HandleMongoDB(ctx context.Context, conn net.Conn, md connection.Metadata, l
 			slog.Int("request_id", int(header.RequestID)),
 			slog.String("handler", "mongodb"),
 		)
-
-		logger.Debug(fmt.Sprintf("MongoDB payload:\n%s", hex.Dump(message)))
 
 		responseHeader, response, err := mongodb.BuildResponse(header, command)
 		if err != nil {

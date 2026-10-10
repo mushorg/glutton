@@ -3,7 +3,6 @@ package tcp
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -169,11 +168,6 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			slog.String("handler", "tcp"),
 			slog.String("payload_hash", payloadHash),
 		)
-		dumpLen := len(data)
-		if dumpLen > 1024 {
-			dumpLen = 1024
-		}
-		logger.Info(fmt.Sprintf("TCP payload:\n%s", hex.Dump(data[:dumpLen])))
 		sigResp, matched := banners.ForPayload(data)
 		command := ""
 		if matched {

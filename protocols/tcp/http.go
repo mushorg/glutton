@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -224,14 +223,6 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 		UserAgent: req.UserAgent(),
 		Payload:   raw,
 	})
-
-	if len(body) > 0 {
-		n := len(body)
-		if n > 1024 {
-			n = 1024
-		}
-		logger.Info(fmt.Sprintf("HTTP payload:\n%s", hex.Dump(body[:n])))
-	}
 
 	switch req.Method {
 	case http.MethodPost:
