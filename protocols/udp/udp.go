@@ -62,6 +62,9 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	if wsd.LooksLikeWSD(data) {
 		return HandleWSDiscovery(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
+	if looksLikeHiFlying(srcAddr, data) {
+		return HandleHiFlying(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
 
 	truncated := len(data) > maxUDPPayload
 	payload := make([]byte, min(len(data), maxUDPPayload))

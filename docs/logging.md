@@ -126,6 +126,7 @@ Example shape:
 | `rtps` | UDP | [protocols/rtps.md](protocols/rtps.md) |
 | `wsdiscovery` | UDP | [protocols/wsdiscovery.md](protocols/wsdiscovery.md) |
 | `knx` | UDP | [protocols/knx.md](protocols/knx.md) |
+| `hiflying` | UDP | [protocols/hiflying.md](protocols/hiflying.md) |
 | `dtls` | UDP | [protocols/dtls.md](protocols/dtls.md) |
 | `mqtt` | TCP | [protocols/mqtt.md](protocols/mqtt.md) |
 | `memcache` | TCP | [protocols/memcache.md](protocols/memcache.md) |

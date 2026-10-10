@@ -118,6 +118,9 @@ rules:
   - match: udp dst port 3702
     type: conn_handler
     target: wsdiscovery
+  - match: udp dst port 48899
+    type: conn_handler
+    target: hiflying
   - match: udp
     type: conn_handler
     target: udp
