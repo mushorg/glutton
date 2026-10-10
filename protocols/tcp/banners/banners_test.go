@@ -30,6 +30,7 @@ func TestForPort(t *testing.T) {
 		{1433, "mssql-prelogin", false, false, []byte{0x04, 0x01, 0x00, 0x25}},
 		{4899, "radmin", false, false, []byte{0x01, 0x00, 0x00, 0x00, 0x25}},
 		{8009, "ajp-404", false, false, []byte("AB\x00\x36\x04\x01\x94")},
+		{8126, "statsd-stats", false, false, []byte("uptime: ")},
 		{4444, "cmd-shell", false, true, []byte("Microsoft Windows [Version 5.2.3790]\r\n")},
 	}
 	for _, c := range cases {
@@ -84,6 +85,23 @@ func TestHTTPResponse(t *testing.T) {
 	require.Contains(t, head, "Date: Tue, 06 Oct 2026 12:00:00 GMT")
 	require.Contains(t, head, "Content-Length: "+strconv.Itoa(len(body)))
 	require.NotContains(t, strings.ReplaceAll(head, "\r\n", ""), "\n", "bare LF in headers")
+}
+
+func TestStatsdStats(t *testing.T) {
+	prevNow, prevStart := now, statsdStart
+	now = func() time.Time { return time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC) }
+	statsdStart = now().Add(-90 * time.Second)
+	t.Cleanup(func() { now, statsdStart = prevNow, prevStart })
+
+	// 2026-10-06T12:00:00Z is Unix 1791288000
+	require.Equal(t, "uptime: 90\n"+
+		"messages.last_msg_seen: 5\n"+
+		"messages.bad_lines_seen: 0\n"+
+		"graphite.last_flush: 0\n"+
+		"graphite.last_exception: 90\n"+
+		"graphite.flush_time: 0\n"+
+		"graphite.flush_length: 1400\n"+
+		"END\n\n", string(statsdStats()))
 }
 
 func TestForPayload(t *testing.T) {

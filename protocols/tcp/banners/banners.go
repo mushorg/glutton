@@ -169,6 +169,27 @@ func httpResponse() []byte {
 		"\r\n" + body)
 }
 
+// statsdStart is when the fake statsd management console came up; uptime and
+// graphite.last_exception count from it, so they differ per sensor run.
+var statsdStart = now().Add(-(37*time.Hour + 12*time.Minute))
+
+// statsdStats is the Etsy statsd management console (mgmt_port 8126) reply to
+// "stats": uptime, the base message stats and the graphite backend status, with
+// last_* values as seconds since the event, terminated by "END\n\n".
+func statsdStats() []byte {
+	t := now()
+	uptime := int64(t.Sub(statsdStart).Seconds())
+	s := t.Unix()
+	return []byte("uptime: " + strconv.FormatInt(uptime, 10) + "\n" +
+		"messages.last_msg_seen: " + strconv.FormatInt(s%7, 10) + "\n" +
+		"messages.bad_lines_seen: 0\n" +
+		"graphite.last_flush: " + strconv.FormatInt(s%10, 10) + "\n" +
+		"graphite.last_exception: " + strconv.FormatInt(uptime, 10) + "\n" +
+		"graphite.flush_time: " + strconv.FormatInt(s%4, 10) + "\n" +
+		"graphite.flush_length: " + strconv.FormatInt(1400+s%300, 10) + "\n" +
+		"END\n\n")
+}
+
 // ForPort returns the canned response for a destination port.
 func ForPort(port uint16) (Response, bool) {
 	switch port {
@@ -190,6 +211,8 @@ func ForPort(port uint16) (Response, bool) {
 		return Response{Name: "radmin", Data: radminReply}, true
 	case 8009:
 		return Response{Name: "ajp-404", Data: ajp404}, true
+	case 8126:
+		return Response{Name: "statsd-stats", Data: statsdStats()}, true
 	case 4444:
 		return Response{Name: "cmd-shell", Data: cmdShellBanner, GreetWhenIdle: true}, true
 	case 389:
