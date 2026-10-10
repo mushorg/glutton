@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net"
 	"testing"
@@ -506,4 +507,242 @@ func TestHandleRDPTLSDisconnectAfterClientHello(t *testing.T) {
 	events := waitProduced(t, hp).decoded.([]parsedRDP)
 	require.GreaterOrEqual(t, len(events), 3)
 	require.Equal(t, "TLSClientHello", events[2].Command)
+}
+
+// rdpX224DT wraps an MCS PDU in TPKT + X.224 Data.
+func rdpX224DT(mcs []byte) []byte {
+	out := []byte{0x03, 0x00, 0x00, 0x00, 0x02, 0xf0, 0x80}
+	out = append(out, mcs...)
+	binary.BigEndian.PutUint16(out[2:4], uint16(len(out)))
+	return out
+}
+
+// rdpClientInfoPDU builds a synthetic Client Info PDU (MCS Send Data Request
+// on the I/O channel, SEC_INFO_PKT, Unicode TS_INFO_PACKET) as mstsc sends it
+// on a TLS session with ENCRYPTION_LEVEL_NONE.
+func rdpClientInfoPDU(domain, user, password string) []byte {
+	fields := [][]byte{rdpUTF16LE(domain), rdpUTF16LE(user), rdpUTF16LE(password), nil, nil}
+	info := []byte{0x40, 0x00, 0x00, 0x00}
+	hdr := make([]byte, 18)
+	binary.LittleEndian.PutUint32(hdr[4:8], 0x10) // INFO_UNICODE
+	for i, f := range fields {
+		binary.LittleEndian.PutUint16(hdr[8+2*i:], uint16(len(f)))
+	}
+	info = append(info, hdr...)
+	for _, f := range fields {
+		info = append(append(info, f...), 0, 0)
+	}
+	mcs := []byte{0x64, 0x00, 0x06, 0x03, 0xeb, 0x70}
+	if len(info) < 0x80 {
+		mcs = append(mcs, byte(len(info)))
+	} else {
+		mcs = append(mcs, 0x80|byte(len(info)>>8), byte(len(info)))
+	}
+	return rdpX224DT(append(mcs, info...))
+}
+
+var (
+	rdpErectDomain = rdpX224DT([]byte{0x04, 0x01, 0x00, 0x01, 0x00})
+	rdpAttachUser  = rdpX224DT([]byte{0x28})
+)
+
+func rdpChannelJoin(channel uint16) []byte {
+	return rdpX224DT([]byte{0x38, 0x00, 0x06, byte(channel >> 8), byte(channel)})
+}
+
+func waitRDPDone(t *testing.T, done <-chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+}
+
+func rdpCommands(events []parsedRDP) []string {
+	cmds := make([]string, len(events))
+	for i, e := range events {
+		cmds[i] = e.Direction + ":" + e.Command
+	}
+	return cmds
+}
+
+func TestHandleRDPClientInfoOverTLS(t *testing.T) {
+	tlsClient, _, done, hp := startRDPTLS(t, rdpCRTLSOnly)
+
+	_, err := tlsClient.Write(rdpMCSConnectInitial)
+	require.NoError(t, err)
+	buf := make([]byte, 512)
+	n, err := tlsClient.Read(buf)
+	require.NoError(t, err)
+	require.True(t, bytes.Contains(buf[:n], mustDecodeHex("030c1000eb030300ec03ed03ee030000")), "SC_NET assigns the three requested channels")
+
+	// Erect Domain and Attach User arrive in one record, as mstsc sends them.
+	_, err = tlsClient.Write(append(append([]byte{}, rdpErectDomain...), rdpAttachUser...))
+	require.NoError(t, err)
+	auc := make([]byte, 11)
+	_, err = io.ReadFull(tlsClient, auc)
+	require.NoError(t, err)
+	require.Equal(t, mustDecodeHex("0300000b02f0802e000006"), auc)
+
+	channels := []uint16{1007, 1003, 1004, 1005, 1006}
+	for _, ch := range channels {
+		_, err = tlsClient.Write(rdpChannelJoin(ch))
+		require.NoError(t, err)
+		cjc := make([]byte, 15)
+		_, err = io.ReadFull(tlsClient, cjc)
+		require.NoError(t, err)
+		require.Equal(t, byte(0x3e), cjc[7])
+		require.Equal(t, ch, binary.BigEndian.Uint16(cjc[13:15]))
+	}
+
+	info := rdpClientInfoPDU("CORP", "administrator", "Winter2024!")
+	_, err = tlsClient.Write(info)
+	require.NoError(t, err)
+	tail, err := io.ReadAll(tlsClient)
+	require.NoError(t, err)
+	require.Equal(t, 34+36+9, len(tail), "license alert, set error info, disconnect ultimatum")
+	waitRDPDone(t, done)
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "rdp", produced.protocol)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+	events := produced.decoded.([]parsedRDP)
+
+	want := []string{
+		"read:ConnectionRequest", "write:ConnectionConfirm", "read:TLSClientHello", "write:TLSHandshake",
+		"read:MCSConnectInitial", "write:MCSConnectResponse",
+		"read:ErectDomainRequest", "read:AttachUserRequest", "write:AttachUserConfirm",
+	}
+	for range channels {
+		want = append(want, "read:ChannelJoinRequest", "write:ChannelJoinConfirm")
+	}
+	want = append(want, "read:ClientInfo", "write:LicenseErrorAlert", "write:SetErrorInfo", "write:DisconnectProviderUltimatum")
+	require.Equal(t, want, rdpCommands(events))
+
+	require.Equal(t, &rdp.ClientData{
+		ClientName:        "EMP-LAP-0014",
+		ClientBuild:       2600,
+		DesktopWidth:      1280,
+		DesktopHeight:     800,
+		KeyboardLayout:    0x0809,
+		HighColorDepth:    16,
+		EncryptionMethods: 0x10,
+		Channels:          []string{"rdpdr", "cliprdr", "rdpsnd"},
+	}, events[4].ClientData)
+	require.Equal(t, rdpErectDomain, events[6].Payload)
+	require.Equal(t, rdpAttachUser, events[7].Payload)
+	require.Equal(t, uint16(1007), events[9].ChannelID)
+	require.Equal(t, uint16(1007), events[10].ChannelID)
+	require.Equal(t, uint16(1006), events[18].ChannelID)
+
+	ci := events[19]
+	require.Equal(t, info, ci.Payload)
+	require.Equal(t, uint16(1003), ci.ChannelID)
+	require.Equal(t, &rdp.ClientInfo{Domain: "CORP", Username: "administrator", PasswordLen: 11}, ci.ClientInfo)
+
+	require.Equal(t, "STATUS_VALID_CLIENT", events[20].Status)
+	require.Equal(t, "ERRINFO_SERVER_DENIED_CONNECTION", events[21].Status)
+	require.Equal(t, tail, append(append(append([]byte{}, events[20].Payload...), events[21].Payload...), events[22].Payload...))
+
+	// The password only exists inside the raw payload; no decoded field names it.
+	for _, e := range events {
+		e.Payload = nil
+		js, err := json.Marshal(e)
+		require.NoError(t, err)
+		require.NotContains(t, string(js), "Winter2024!")
+		require.NotContains(t, string(js), `"password"`)
+	}
+}
+
+func TestHandleRDPReassemblesSplitPDUs(t *testing.T) {
+	client, serverConn := net.Pipe()
+	defer client.Close()
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleRDP(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+
+	_, err := client.Write(rdpCRStandard)
+	require.NoError(t, err)
+	_, err = io.ReadFull(client, make([]byte, 11))
+	require.NoError(t, err)
+
+	// Connect-Initial split mid-PDU across two writes.
+	_, err = client.Write(rdpMCSConnectInitial[:100])
+	require.NoError(t, err)
+	_, err = client.Write(rdpMCSConnectInitial[100:])
+	require.NoError(t, err)
+	n, err := client.Read(make([]byte, 512))
+	require.NoError(t, err)
+	require.Greater(t, n, 11)
+
+	_, err = client.Write(rdpAttachUser)
+	require.NoError(t, err)
+	_, err = io.ReadFull(client, make([]byte, 11))
+	require.NoError(t, err)
+
+	_, err = client.Write(rdpClientInfoPDU("", "guest", ""))
+	require.NoError(t, err)
+	_, err = io.ReadFull(client, make([]byte, 34+36+9))
+	require.NoError(t, err)
+	waitRDPDone(t, done)
+
+	events := waitProduced(t, hp).decoded.([]parsedRDP)
+	require.Equal(t, []string{
+		"read:ConnectionRequest", "write:ConnectionConfirm",
+		"read:MCSConnectInitial", "write:MCSConnectResponse",
+		"read:AttachUserRequest", "write:AttachUserConfirm",
+		"read:ClientInfo", "write:LicenseErrorAlert", "write:SetErrorInfo", "write:DisconnectProviderUltimatum",
+	}, rdpCommands(events))
+	require.Equal(t, rdpMCSConnectInitial, events[2].Payload, "reassembled PDU is one frame")
+	require.Equal(t, "guest", events[6].ClientInfo.Username)
+	require.Zero(t, events[6].ClientInfo.PasswordLen)
+}
+
+func TestHandleRDPPartialTPKTAtDisconnect(t *testing.T) {
+	client, serverConn := net.Pipe()
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleRDP(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+
+	_, err := client.Write(rdpCRStandard)
+	require.NoError(t, err)
+	_, err = io.ReadFull(client, make([]byte, 11))
+	require.NoError(t, err)
+	partial := rdpMCSConnectInitial[:40]
+	_, err = client.Write(partial)
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
+	waitRDPDone(t, done)
+
+	events := waitProduced(t, hp).decoded.([]parsedRDP)
+	require.Len(t, events, 3)
+	require.Equal(t, "read", events[2].Direction)
+	require.Equal(t, partial, events[2].Payload)
+	require.True(t, events[2].Truncated)
+}
+
+func TestHandleRDPNTLMVersion(t *testing.T) {
+	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHello)
+	_, err := tlsClient.Write(rdp.WrapTSRequest(makeNTLMNegotiate()))
+	require.NoError(t, err)
+	_, err = tlsClient.Read(make([]byte, 512))
+	require.NoError(t, err)
+	_, err = tlsClient.Write(rdp.WrapTSRequest(makeNTLMAuthenticate("ACME", "jsmith")))
+	require.NoError(t, err)
+	waitRDPDone(t, done)
+
+	events := waitProduced(t, hp).decoded.([]parsedRDP)
+	require.Equal(t, "anonymous", events[6].NTLMVersion, "empty NtChallengeResponse")
 }

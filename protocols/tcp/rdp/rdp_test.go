@@ -98,7 +98,7 @@ func TestTPDUTypeAndMCS(t *testing.T) {
 }
 
 func TestMCSConnectResponse(t *testing.T) {
-	header, resp := MCSConnectResponse(ProtocolSSL)
+	header, resp := MCSConnectResponse(ProtocolSSL, 0)
 	require.Greater(t, len(resp), 11)
 	require.Equal(t, byte(3), resp[0])
 	require.Equal(t, byte(TPDUData), resp[5])

@@ -44,7 +44,7 @@ func FrameCommand(data []byte) string {
 	case TPDUConnectionConfirm:
 		return CmdConnectionConfirm
 	case TPDUData:
-		return CmdMCSConnectInitial
+		return domainCommand(MCSDomainType(data))
 	}
 	return ""
 }
@@ -100,4 +100,24 @@ func SelectedProtocols(cc []byte) string {
 // instead of a TPKT frame.
 func IsTSRequest(data []byte) bool {
 	return len(data) >= 2 && data[0] == 0x30
+}
+
+func domainCommand(typ int) string {
+	switch typ {
+	case mcsErectDomainRequest:
+		return CmdErectDomainRequest
+	case mcsAttachUserRequest:
+		return CmdAttachUserRequest
+	case mcsAttachUserConfirm:
+		return CmdAttachUserConfirm
+	case mcsChannelJoinRequest:
+		return CmdChannelJoinRequest
+	case mcsChannelJoinConfirm:
+		return CmdChannelJoinConfirm
+	case mcsSendDataRequest:
+		return CmdSendDataRequest
+	case mcsDisconnectProviderUltimatum:
+		return CmdDisconnectProviderUltimatum
+	}
+	return CmdX224Data
 }

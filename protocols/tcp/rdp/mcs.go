@@ -55,14 +55,28 @@ func wrapX224DT(payload []byte) ([]byte, TKIPHeader) {
 // with GCC Conference Create Response (H.221 key "McDn"), SC_CORE, SC_NET, and
 // SC_SECURITY with no encryption. It is enough for probes to accept the PDU;
 // it is not a full capability exchange. selected is the protocol chosen in the
-// Connection Confirm, echoed in SC_CORE clientRequestedProtocols.
-func MCSConnectResponse(selected uint32) (TKIPHeader, []byte) {
+// Connection Confirm, echoed in SC_CORE clientRequestedProtocols. channels is
+// the number of static channels the client asked for in CS_NET; SC_NET assigns
+// each one an ID from 1004 so clients go on to join them.
+func MCSConnectResponse(selected uint32, channels int) (TKIPHeader, []byte) {
 	// TS_UD_SC_CORE (0x0c01), length 16: version 0x00080004, then
 	// clientRequestedProtocols.
 	scCore := []byte{0x01, 0x0c, 0x10, 0x00, 0x04, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 	binary.LittleEndian.PutUint32(scCore[8:12], selected)
-	// TS_UD_SC_NET (0x0c03): I/O channel 1003, no static channels.
-	scNet := []byte{0x03, 0x0c, 0x08, 0x00, 0xeb, 0x03, 0x00, 0x00}
+	// TS_UD_SC_NET (0x0c03): I/O channel 1003, then one ID per static
+	// channel, padded to a multiple of four bytes.
+	if channels < 0 || channels > maxClientChannels {
+		channels = 0
+	}
+	netLen := 8 + 2*channels + 2*(channels%2)
+	scNet := make([]byte, netLen)
+	binary.LittleEndian.PutUint16(scNet[0:2], 0x0c03)
+	binary.LittleEndian.PutUint16(scNet[2:4], uint16(netLen))
+	binary.LittleEndian.PutUint16(scNet[4:6], mcsIOChannel)
+	binary.LittleEndian.PutUint16(scNet[6:8], uint16(channels))
+	for i := 0; i < channels; i++ {
+		binary.LittleEndian.PutUint16(scNet[8+2*i:], uint16(mcsIOChannel+1+i))
+	}
 	// TS_UD_SC_SEC1 (0x0c02): ENCRYPTION_METHOD_NONE / ENCRYPTION_LEVEL_NONE.
 	scSec := []byte{0x02, 0x0c, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 	blocks := append(append(append([]byte{}, scCore...), scNet...), scSec...)

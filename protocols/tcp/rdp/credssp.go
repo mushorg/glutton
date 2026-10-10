@@ -53,6 +53,9 @@ type ParsedCredSSP struct {
 	Domain         string `json:"domain,omitempty"`
 	Username       string `json:"username,omitempty"`
 	Workstation    string `json:"workstation,omitempty"`
+	// NTLMVersion is "NTLMv1", "NTLMv2", or "anonymous", from the length of
+	// the Type 3 NtChallengeResponse. The response itself is not kept.
+	NTLMVersion string `json:"ntlm_version,omitempty"`
 }
 
 // ParseCredSSP extracts structured data from a CredSSP TSRequest.
@@ -74,8 +77,25 @@ func ParseCredSSP(data []byte) ParsedCredSSP {
 		out.Domain = readNTLMUTF16Field(ntlm, 28)
 		out.Username = readNTLMUTF16Field(ntlm, 36)
 		out.Workstation = readNTLMUTF16Field(ntlm, 44)
+		if len(ntlm) >= 22 {
+			out.NTLMVersion = ntlmVersion(int(binary.LittleEndian.Uint16(ntlm[20:22])))
+		}
 	}
 	return out
+}
+
+// ntlmVersion classifies an NtChallengeResponse by length (MS-NLMP 2.2.2.6,
+// 2.2.2.8): empty for anonymous, 24 bytes for NTLMv1, longer for NTLMv2.
+func ntlmVersion(ntLen int) string {
+	switch {
+	case ntLen == 0:
+		return "anonymous"
+	case ntLen == 24:
+		return "NTLMv1"
+	case ntLen > 24:
+		return "NTLMv2"
+	}
+	return ""
 }
 
 // NTLMChallengeOptions configures an NTLM Type 2 Challenge message.
