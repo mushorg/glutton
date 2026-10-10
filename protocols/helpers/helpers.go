@@ -28,8 +28,8 @@ func Store(data []byte, folder string) (string, error) {
 	sha256Hash := hex.EncodeToString(sum[:])
 	path := filepath.Join(folder, sha256Hash)
 	if _, err := os.Stat(path); err == nil {
-		// file already exists
-		return "", nil
+		// already stored: same content, same hash
+		return sha256Hash, nil
 	}
 	out, err := os.Create(path)
 	if err != nil {

@@ -26,6 +26,9 @@ type Response struct {
 	// Silent means the client's bytes get no reply, as a real service does
 	// with input it cannot parse.
 	Silent bool
+	// Close means the service hangs up after this reply (HTTP sends
+	// Connection: close), so no further client messages are answered.
+	Close bool
 }
 
 // now is replaced in tests for a stable HTTP Date header.
@@ -200,7 +203,7 @@ func ForPort(port uint16) (Response, bool) {
 	case 5900:
 		return Response{Name: "rfb", Data: rfbBanner, ServerFirst: true}, true
 	case 80:
-		return Response{Name: "http", Data: httpResponse()}, true
+		return Response{Name: "http", Data: httpResponse(), Close: true}, true
 	case 135:
 		return Response{Name: "dcerpc-bind-ack", Data: dcerpcBindAck}, true
 	case 139:

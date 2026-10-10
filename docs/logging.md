@@ -47,7 +47,7 @@ Events are emitted only when (1) `producers.enabled` is true so a producer objec
 
 ### TLS details
 
-`tls` is set when the rule has `tls: true`, or `tls: auto` and the client opened with a ClientHello. `decoded` and `payload` then hold the decrypted plaintext protocol, so a display should say that the session was TLS.
+`tls` is set when the rule has `tls: true`, or `tls: auto` and the client opened with a ClientHello, or when the `tcp` catch-all terminated a complete ClientHello itself (its first `decoded` frame is then the raw `tls-clienthello` read). `decoded` and `payload` then hold the decrypted plaintext protocol, so a display should say that the session was TLS.
 
 | Field | Type | Meaning |
 | --- | --- | --- |

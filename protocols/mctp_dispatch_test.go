@@ -2,7 +2,6 @@ package protocols
 
 import (
 	"context"
-	"io"
 	"net"
 	"testing"
 	"time"
@@ -109,7 +108,7 @@ func TestMCTPTargetFallsBackToTCP(t *testing.T) {
 	names := dispatchMCTP(t, func(c net.Conn) {
 		_, err := c.Write([]byte{0x01, 0x01, 0x00, 0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 		require.NoError(t, err)
-		_, _ = io.ReadAll(c) // random-bytes reply until the handler closes
+		_, _ = c.Read(make([]byte, 4096)) // one random-bytes reply
 	})
 	require.Equal(t, []string{"tcp"}, names)
 }
@@ -118,7 +117,7 @@ func TestMCTPTargetShortPayloadFallsBackToTCP(t *testing.T) {
 	names := dispatchMCTP(t, func(c net.Conn) {
 		_, err := c.Write([]byte("REM"))
 		require.NoError(t, err)
-		_, _ = io.ReadAll(c)
+		_, _ = c.Read(make([]byte, 4096))
 	})
 	require.Equal(t, []string{"tcp"}, names)
 }

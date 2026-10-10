@@ -133,9 +133,10 @@ func TestCatchAllIdlePortClientFirstNotGreeted(t *testing.T) {
 	_, err := client.Write([]byte("whoami\r\n"))
 	require.NoError(t, err)
 	// one prompt as the reply, no greeting before it
-	reply, err := io.ReadAll(client)
-	require.NoError(t, err)
 	want, _ := banners.ForPort(4444)
+	reply := make([]byte, len(want.Data))
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
 	require.Equal(t, want.Data, reply)
 
 	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
@@ -172,9 +173,10 @@ func TestCatchAllShortPayloadWithSpicy(t *testing.T) {
 	// shorter than the 16-byte protocol peek: still handled, not dropped
 	_, err := client.Write([]byte("whoami\r\n"))
 	require.NoError(t, err)
-	reply, err := io.ReadAll(client)
-	require.NoError(t, err)
 	want, _ := banners.ForPort(4444)
+	reply := make([]byte, len(want.Data))
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
 	require.Equal(t, want.Data, reply)
 
 	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
@@ -188,9 +190,11 @@ func TestCatchAllLongPayloadWithSpicy(t *testing.T) {
 	// answers with random bytes
 	_, err := client.Write([]byte("\x10\x20\x30\x40 not a known protocol at all\r\n"))
 	require.NoError(t, err)
-	reply, err := io.ReadAll(client)
+	// the catch-all waits for a next message: read just the reply
+	reply := make([]byte, 4096)
+	n, err := client.Read(reply)
 	require.NoError(t, err)
-	require.NotEmpty(t, reply)
+	require.NotZero(t, n)
 
 	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
 }
@@ -229,9 +233,11 @@ func TestCatchAllSOCKSLookalikeStaysTCP(t *testing.T) {
 	// SOCKS4 header without the userid terminator: not SOCKS, keep all bytes
 	_, err := client.Write([]byte("\x04\x01\x00\x50\x01\x02\x03\x04not a socks request"))
 	require.NoError(t, err)
-	reply, err := io.ReadAll(client)
+	// the catch-all waits for a next message: read just the reply
+	reply := make([]byte, 4096)
+	n, err := client.Read(reply)
 	require.NoError(t, err)
-	require.NotEmpty(t, reply)
+	require.NotZero(t, n)
 
 	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
 }
@@ -263,9 +269,11 @@ func TestCatchAllTPKTLookalikeStaysTCP(t *testing.T) {
 	// TPKT-framed X.224 Data TPDU, not a Connection Request
 	_, err := client.Write([]byte{0x03, 0x00, 0x00, 0x0c, 0x02, 0xf0, 0x80, 0x7f, 0x65, 0x82, 0x00, 0x00})
 	require.NoError(t, err)
-	reply, err := io.ReadAll(client)
+	// the catch-all waits for a next message: read just the reply
+	reply := make([]byte, 4096)
+	n, err := client.Read(reply)
 	require.NoError(t, err)
-	require.NotEmpty(t, reply)
+	require.NotZero(t, n)
 
 	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
 }
@@ -276,9 +284,11 @@ func TestCatchAllShortTPKTPrefixStaysTCP(t *testing.T) {
 	// shorter than the RDP peek: still handled, not dropped
 	_, err := client.Write([]byte{0x03, 0x00, 0x00, 0x2f})
 	require.NoError(t, err)
-	reply, err := io.ReadAll(client)
+	// the catch-all waits for a next message: read just the reply
+	reply := make([]byte, 4096)
+	n, err := client.Read(reply)
 	require.NoError(t, err)
-	require.NotEmpty(t, reply)
+	require.NotZero(t, n)
 
 	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
 }

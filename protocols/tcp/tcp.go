@@ -1,9 +1,11 @@
 package tcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	"net"
@@ -26,9 +28,20 @@ type parsedTCP struct {
 	Payload     []byte `json:"payload,omitempty"`
 	PayloadHash string `json:"payload_hash,omitempty"`
 	// TLS ClientHello fingerprint fields (tls_version, ja3, ja4, ...) on a
-	// read answered with tls-alert, flattened into the frame.
+	// tls-clienthello or tls-alert read, flattened into the frame.
 	*helpers.ClientHello
 }
+
+const (
+	// tlsAlert is the banners response name for a TLS record the catch-all
+	// cannot terminate: it is answered with a handshake_failure alert.
+	tlsAlert = "tls-alert"
+	// tlsClientHello tags a complete ClientHello the catch-all terminated.
+	tlsClientHello = "tls-clienthello"
+	// maxExchanges caps the client messages the catch-all answers on one
+	// connection (a TLS ClientHello does not count).
+	maxExchanges = 4
+)
 
 type tcpServer struct {
 	events []parsedTCP
@@ -60,19 +73,39 @@ func (s *tcpServer) write(data []byte, status string) error {
 	return nil
 }
 
-func (s *tcpServer) captureRead(data []byte, payloadHash, command string) {
-	frame := parsedTCP{
+func (s *tcpServer) captureRead(data []byte, payloadHash, command string, hello *helpers.ClientHello) {
+	s.events = append(s.events, parsedTCP{
 		Direction:   "read",
 		Command:     command,
 		PayloadHash: payloadHash,
 		Payload:     data,
-	}
-	if command == "tls-alert" {
-		if hello, ok := helpers.ParseClientHello(data); ok {
-			frame.ClientHello = hello
+		ClientHello: hello,
+	})
+}
+
+// readPayload reads one client message: until a short read, a read error, or
+// the max_tcp_payload cap. endReason is set when the read ended the session;
+// err is only returned when the connection timeout could not be set.
+func (s *tcpServer) readPayload(ctx context.Context, h interfaces.Honeypot, logger interfaces.Logger) (data []byte, endReason string, err error) {
+	buffer := make([]byte, maxBufferSize)
+	for {
+		if err := h.UpdateConnectionTimeout(ctx, s.conn); err != nil {
+			return data, connection.EndTimeout, err
+		}
+		n, err := s.conn.Read(buffer)
+		if err != nil {
+			logger.Debug("read error", slog.String("handler", "tcp"), producer.ErrAttr(err))
+			return data, connection.EndReasonFromRead(err), nil
+		}
+		data = append(data, buffer[:n]...)
+		if n < maxBufferSize {
+			return data, "", nil
+		}
+		if len(data) > viper.GetInt("max_tcp_payload") {
+			logger.Debug("max message length reached", slog.String("handler", "tcp"))
+			return data, connection.EndMaxFrames, nil
 		}
 	}
-	s.events = append(s.events, frame)
 }
 
 // bannerFollowUp answers the client's reply to a server-first banner so the
@@ -109,7 +142,8 @@ func GreetsWhenIdle(port uint16) bool {
 
 // HandleTCP takes a net.Conn, captures what the client sends and answers with
 // a canned service response (by payload signature, then destination port),
-// falling back to random bytes. Server-first ports get their banner on connect.
+// falling back to random bytes, for up to maxExchanges client messages.
+// Server-first ports get their banner on connect.
 func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	return handleTCP(ctx, conn, md, logger, h, false)
 }
@@ -142,70 +176,95 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 	}()
 
+	// greet sends a server-first banner; false means the session is over.
+	greet := func(banner banners.Response) (bool, error) {
+		if err := h.UpdateConnectionTimeout(ctx, server.conn); err != nil {
+			endReason = connection.EndTimeout
+			return false, err
+		}
+		if err := server.write(banner.Data, banner.Name); err != nil {
+			logger.Debug("Failed to write banner", slog.String("protocol", "tcp"), producer.ErrAttr(err))
+			endReason = connection.EndWriteError
+			return false, nil
+		}
+		return true, nil
+	}
+	// read reads the next client message; a nil result means the session is over.
+	read := func() ([]byte, error) {
+		data, reason, err := server.readPayload(ctx, h, logger)
+		if reason != "" {
+			endReason = reason
+		}
+		if err != nil || len(data) == 0 {
+			return nil, err
+		}
+		return data, nil
+	}
+
 	portResp, hasPortResp := banners.ForPort(md.TargetPort)
 	greeted := hasPortResp && (portResp.ServerFirst || (silent && portResp.GreetWhenIdle))
 	if greeted {
-		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
-			endReason = connection.EndTimeout
+		if ok, err := greet(portResp); !ok {
 			return err
-		}
-		if err := server.write(portResp.Data, portResp.Name); err != nil {
-			logger.Debug("Failed to write banner", slog.String("protocol", "tcp"), producer.ErrAttr(err))
-			endReason = connection.EndWriteError
-			return nil
 		}
 	}
 
-	msgLength := 0
-	data := []byte{}
-	buffer := make([]byte, maxBufferSize)
+	data, err := read()
+	if data == nil {
+		return err
+	}
+	payloadHash := server.storeRead(data, host, port, md, logger)
 
-	for {
-		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
-			endReason = connection.EndTimeout
-			return err
-		}
-		n, err := conn.Read(buffer)
-		if err != nil {
-			logger.Debug("read error", slog.String("handler", "tcp"), producer.ErrAttr(err))
-			endReason = connection.EndReasonFromRead(err)
-			break
-		}
-		msgLength += n
-		data = append(data, buffer[:n]...)
-		if n < maxBufferSize {
-			break
-		}
-		if msgLength > viper.GetInt("max_tcp_payload") {
-			logger.Debug("max message length reached", slog.String("handler", "tcp"))
-			endReason = connection.EndMaxFrames
-			break
+	// A complete ClientHello on a port without a tls: rule: finish the
+	// handshake and answer what the client sends inside the tunnel, as on a
+	// plaintext connection, instead of ending the session with an alert.
+	if sigResp, matched := banners.ForPayload(data); matched && sigResp.Name == tlsAlert {
+		if hello, ok := helpers.ParseClientHello(data); ok {
+			server.captureRead(data, payloadHash, tlsClientHello, hello)
+			if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+				endReason = connection.EndTimeout
+				return err
+			}
+			tlsConn, info, err := helpers.TerminateTLSFrom(conn, io.MultiReader(bytes.NewReader(data), conn))
+			if err != nil {
+				logger.Debug("TLS handshake failed", slog.String("protocol", "tcp"), producer.ErrAttr(err))
+				endReason = connection.EndReasonFromRead(err)
+				return nil
+			}
+			md.TLS = info
+			server.conn = tlsConn
+
+			greeted = hasPortResp && portResp.ServerFirst
+			if greeted {
+				if ok, err := greet(portResp); !ok {
+					return err
+				}
+			}
+			if data, err = read(); data == nil {
+				return err
+			}
+			payloadHash = server.storeRead(data, host, port, md, logger)
 		}
 	}
 
-	if len(data) > 0 {
-		payloadHash, err := helpers.Store(data, "payloads")
-		if err != nil {
-			logger.Error("Failed to store payload", slog.String("handler", "tcp"), producer.ErrAttr(err))
-		}
-		logger.Info(
-			"Packet got handled by TCP handler",
-			slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-			slog.String("src_ip", host),
-			slog.String("src_port", port),
-			slog.String("handler", "tcp"),
-			slog.String("payload_hash", payloadHash),
-		)
+	// Answer up to maxExchanges client messages, so a client that follows up
+	// on the first reply gets another one instead of a closed connection.
+	for round := 1; ; round++ {
 		sigResp, matched := banners.ForPayload(data)
 		command := ""
 		if matched {
 			command = sigResp.Name
-		} else if greeted {
+		} else if greeted && round == 1 {
+			// only the message right after the greeting answers it
 			if sigResp, matched = bannerFollowUp(portResp, data); matched {
 				command = portResp.Name
 			}
 		}
-		server.captureRead(data, payloadHash, command)
+		var hello *helpers.ClientHello
+		if command == tlsAlert {
+			hello, _ = helpers.ParseClientHello(data)
+		}
+		server.captureRead(data, payloadHash, command, hello)
 
 		resp := sigResp
 		switch {
@@ -225,8 +284,37 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		if err := server.write(resp.Data, resp.Name); err != nil {
 			logger.Error("write error", slog.String("handler", "tcp"), producer.ErrAttr(err))
 			endReason = connection.EndWriteError
+			return nil
 		}
+		if resp.Close {
+			return nil
+		}
+		if round == maxExchanges {
+			logger.Debug("max exchanges reached", slog.String("handler", "tcp"))
+			endReason = connection.EndMaxFrames
+			return nil
+		}
+		if data, err = read(); data == nil {
+			return err
+		}
+		payloadHash = server.storeRead(data, host, port, md, logger)
 	}
+}
 
-	return nil
+// storeRead stores a client message as a payload sample and logs its arrival.
+func (s *tcpServer) storeRead(data []byte, host, port string, md connection.Metadata, logger interfaces.Logger) string {
+	payloadHash, err := helpers.Store(data, "payloads")
+	if err != nil {
+		logger.Error("Failed to store payload", slog.String("handler", "tcp"), producer.ErrAttr(err))
+	}
+	logger.Info(
+		"Packet got handled by TCP handler",
+		slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+		slog.String("src_ip", host),
+		slog.String("src_port", port),
+		slog.String("handler", "tcp"),
+		slog.String("payload_hash", payloadHash),
+		slog.Bool("tls", md.TLS != nil),
+	)
+	return payloadHash
 }

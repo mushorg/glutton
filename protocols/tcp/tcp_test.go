@@ -3,6 +3,7 @@ package tcp
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net"
@@ -117,6 +118,14 @@ func startCatchAllWith(t *testing.T, port uint16, handler func(context.Context, 
 
 func finishCatchAll(t *testing.T, client net.Conn, hp *fakeHoneypot, done chan error) []parsedTCP {
 	t.Helper()
+	events, ok := finishCatchAllProduced(t, client, hp, done).decoded.([]parsedTCP)
+	require.True(t, ok)
+	return events
+}
+
+// finishCatchAllProduced is finishCatchAll returning the whole produced event.
+func finishCatchAllProduced(t *testing.T, client net.Conn, hp *fakeHoneypot, done chan error) producedTCP {
+	t.Helper()
 	require.NoError(t, client.Close())
 	select {
 	case err := <-done:
@@ -127,9 +136,90 @@ func finishCatchAll(t *testing.T, client net.Conn, hp *fakeHoneypot, done chan e
 	produced := waitProduced(t, hp)
 	require.Equal(t, "tcp", produced.protocol)
 	require.Empty(t, hp.produced, "exactly one event per session")
-	events, ok := produced.decoded.([]parsedTCP)
-	require.True(t, ok)
-	return events
+	return produced
+}
+
+// readReply reads one handler write of unknown length (random bytes): a
+// net.Pipe read returns a whole pending write that fits the buffer.
+func readReply(t *testing.T, conn net.Conn) []byte {
+	t.Helper()
+	buf := make([]byte, 4096)
+	n, err := conn.Read(buf)
+	require.NoError(t, err)
+	return buf[:n]
+}
+
+func TestHandleTCPAnswersFollowUps(t *testing.T) {
+	// a client that keeps talking gets a reply per message
+	client, hp, done := startCatchAll(t, 1433)
+	want, _ := banners.ForPort(1433)
+
+	prelogin := []byte{0x12, 0x01, 0x00, 0x2f, 0x00, 0x00, 0x01, 0x00}
+	for range 2 {
+		_, err := client.Write(prelogin)
+		require.NoError(t, err)
+		require.Equal(t, want.Data, readAll(t, client, len(want.Data)))
+	}
+	ssh := []byte("SSH-2.0-Go\r\n")
+	_, err := client.Write(ssh)
+	require.NoError(t, err)
+	sshBanner, _ := banners.ForPayload(ssh)
+	require.Equal(t, sshBanner.Data, readAll(t, client, len(sshBanner.Data)))
+
+	produced := finishCatchAllProduced(t, client, hp, done)
+	require.Equal(t, connection.EndClientClose, produced.endReason)
+	events := produced.decoded.([]parsedTCP)
+	hash := helpers.SHA256Hex(prelogin)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Payload: prelogin, PayloadHash: hash},
+		{Direction: "write", Status: "mssql-prelogin", Payload: want.Data, PayloadHash: helpers.SHA256Hex(want.Data)},
+		{Direction: "read", Payload: prelogin, PayloadHash: hash},
+		{Direction: "write", Status: "mssql-prelogin", Payload: want.Data, PayloadHash: helpers.SHA256Hex(want.Data)},
+		{Direction: "read", Command: "ssh", Payload: ssh, PayloadHash: helpers.SHA256Hex(ssh)},
+		{Direction: "write", Status: "ssh", Payload: sshBanner.Data, PayloadHash: helpers.SHA256Hex(sshBanner.Data)},
+	}, events)
+}
+
+func TestHandleTCPHTTPClosesAfterReply(t *testing.T) {
+	// the HTTP response says Connection: close, so the handler hangs up
+	client, hp, done := startCatchAll(t, 80)
+	_, err := client.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
+	require.NoError(t, err)
+	want, _ := banners.ForPort(80)
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	require.Equal(t, want.Data, reply)
+
+	produced := finishCatchAllProduced(t, client, hp, done)
+	require.Equal(t, connection.EndHandlerClose, produced.endReason)
+	require.Len(t, produced.decoded.([]parsedTCP), 2)
+}
+
+func TestHandleTCPMaxExchanges(t *testing.T) {
+	client, hp, done := startCatchAll(t, 9999)
+	for i := range maxExchanges {
+		_, err := client.Write([]byte{'a' + byte(i)})
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(readReply(t, client)), 12)
+	}
+	// the handler hangs up after the last answered message
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not stop at maxExchanges")
+	}
+	produced := waitProduced(t, hp)
+	require.Equal(t, connection.EndMaxFrames, produced.endReason)
+	events := produced.decoded.([]parsedTCP)
+	require.Len(t, events, 2*maxExchanges)
+	for i, e := range events {
+		if i%2 == 0 {
+			require.Equal(t, []byte{'a' + byte(i/2)}, e.Payload)
+		} else {
+			require.Equal(t, "random", e.Status)
+		}
+	}
 }
 
 func readAll(t *testing.T, conn net.Conn, n int) []byte {
@@ -202,9 +292,7 @@ func TestHandleTCPRFBNonVersionGetsRandom(t *testing.T) {
 	readAll(t, client, len(rfb.ServerVersion))
 	_, err := client.Write([]byte("GET / HTTP/1.0\r\n\r\n"))
 	require.NoError(t, err)
-	// drain the whole reply: the pipe is synchronous and the handler closes after it
-	reply, err := io.ReadAll(client)
-	require.NoError(t, err)
+	reply := readReply(t, client)
 	require.GreaterOrEqual(t, len(reply), 12)
 
 	events := finishCatchAll(t, client, hp, done)
@@ -342,7 +430,7 @@ func TestHandleTCPLDAPRootDSE(t *testing.T) {
 	}, events)
 }
 
-func TestHandleTCPTLSAlertRecordsClientHello(t *testing.T) {
+func TestHandleTCPTLSClientHelloDisconnectMidHandshake(t *testing.T) {
 	// ClientHello from Ochi event 5c99acb5-9d55-4846-90e7-30a6b2c0a135 (tcp/48392)
 	hello, err := os.ReadFile("../helpers/testdata/clienthello_go_mlkem.bin")
 	require.NoError(t, err)
@@ -350,14 +438,17 @@ func TestHandleTCPTLSAlertRecordsClientHello(t *testing.T) {
 
 	_, err = client.Write(hello)
 	require.NoError(t, err)
-	alert := []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28}
-	require.Equal(t, alert, readAll(t, client, 7))
+	// the handler answers with a ServerHello record, not an alert
+	require.Equal(t, byte(0x16), readAll(t, client, 5)[0])
 
-	events := finishCatchAll(t, client, hp, done)
+	// a replayed hello cannot finish the handshake: hang up mid-handshake
+	produced := finishCatchAllProduced(t, client, hp, done)
+	require.Nil(t, produced.tls, "no TLS session was established")
+	events := produced.decoded.([]parsedTCP)
 	require.Equal(t, []parsedTCP{
 		{
 			Direction:   "read",
-			Command:     "tls-alert",
+			Command:     "tls-clienthello",
 			Payload:     hello,
 			PayloadHash: helpers.SHA256Hex(hello),
 			ClientHello: &helpers.ClientHello{
@@ -369,7 +460,6 @@ func TestHandleTCPTLSAlertRecordsClientHello(t *testing.T) {
 				JA4:          "t13i131000_f57a46bbacb6_ab7e3b40a677",
 			},
 		},
-		{Direction: "write", Status: "tls-alert", Payload: alert, PayloadHash: helpers.SHA256Hex(alert)},
 	}, events)
 
 	// fingerprint fields are flattened into the read frame
@@ -380,9 +470,81 @@ func TestHandleTCPTLSAlertRecordsClientHello(t *testing.T) {
 	require.Equal(t, "TLS 1.3", frame["tls_version"])
 	require.Equal(t, "t13i131000_f57a46bbacb6_ab7e3b40a677", frame["ja4"])
 	require.NotContains(t, frame, "sni")
-	raw, err = json.Marshal(events[1])
+}
+
+// startCatchAllTCP runs the catch-all on a loopback TCP connection; a TLS 1.3
+// server flight (session tickets included) can stall on an unbuffered net.Pipe.
+func startCatchAllTCP(t *testing.T, port uint16) (net.Conn, *fakeHoneypot, chan error) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	previousMaxPayload := viper.Get("max_tcp_payload")
+	viper.Set("max_tcp_payload", 4096)
+	t.Cleanup(func() { viper.Set("max_tcp_payload", previousMaxPayload) })
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	require.NotContains(t, string(raw), "ja3")
+	t.Cleanup(func() { ln.Close() })
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			done <- err
+			return
+		}
+		_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+		done <- HandleTCP(context.Background(), conn, connection.Metadata{TargetPort: port}, &recordingLogger{}, hp)
+	}()
+	client, err := net.Dial("tcp", ln.Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { client.Close() })
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	return client, hp, done
+}
+
+func TestHandleTCPTLSTerminatesAndReplies(t *testing.T) {
+	// a TLS client on a port without a tls: rule gets the port's plaintext
+	// response inside the tunnel
+	raw, hp, done := startCatchAllTCP(t, 80)
+	client := tls.Client(raw, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // test client for a self-signed cert
+	require.NoError(t, client.Handshake())
+
+	req := []byte("GET / HTTP/1.0\r\n\r\n")
+	_, err := client.Write(req)
+	require.NoError(t, err)
+	want, _ := banners.ForPort(80)
+	reply := make([]byte, len(want.Data))
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
+	require.Equal(t, want.Data, reply)
+
+	produced := finishCatchAllProduced(t, client, hp, done)
+	require.NotNil(t, produced.tls)
+	require.Equal(t, "TLS 1.3", produced.tls.Version)
+	require.Empty(t, produced.tls.ServerName)
+	events := produced.decoded.([]parsedTCP)
+	require.Len(t, events, 3)
+	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, "tls-clienthello", events[0].Command)
+	require.NotNil(t, events[0].ClientHello)
+	require.Equal(t, "TLS 1.3", events[0].ClientHello.Version)
+	require.Equal(t, byte(0x16), events[0].Payload[0])
+	require.Equal(t, parsedTCP{Direction: "read", Payload: req, PayloadHash: helpers.SHA256Hex(req)}, events[1])
+	require.Equal(t, parsedTCP{Direction: "write", Status: "http", Payload: reply, PayloadHash: helpers.SHA256Hex(reply)}, events[2])
+}
+
+func TestHandleTCPTLSHandshakeOnlyClient(t *testing.T) {
+	// certificate grabbers hang up right after the handshake
+	raw, hp, done := startCatchAllTCP(t, 4028)
+	client := tls.Client(raw, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // test client for a self-signed cert
+	require.NoError(t, client.Handshake())
+
+	produced := finishCatchAllProduced(t, client, hp, done)
+	require.NotNil(t, produced.tls)
+	require.Equal(t, connection.EndClientClose, produced.endReason)
+	events := produced.decoded.([]parsedTCP)
+	require.Len(t, events, 1)
+	require.Equal(t, "tls-clienthello", events[0].Command)
 }
 
 func TestHandleTCPTLSAlertMalformedHello(t *testing.T) {
@@ -410,8 +572,7 @@ func TestHandleTCPSilentGreetsIdlePort(t *testing.T) {
 	_, err := client.Write(cmd)
 	require.NoError(t, err)
 	// not the prompt again: no follow-up is emulated yet
-	reply, err := io.ReadAll(client)
-	require.NoError(t, err)
+	reply := readReply(t, client)
 	require.NotEqual(t, want.Data, reply)
 
 	events := finishCatchAll(t, client, hp, done)
