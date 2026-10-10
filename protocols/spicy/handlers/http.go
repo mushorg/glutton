@@ -156,28 +156,6 @@ Content-Type: text/plain; charset=UTF-8`
 	return []byte("HTTP/1.1 200 OK\r\n" + headers + smbCfg)
 }
 
-func handleVMwareSend(ctx context.Context, body []byte, uri string, md connection.Metadata, log interfaces.Logger, hp interfaces.Honeypot) bool {
-	if !strings.Contains(uri, "hyper/send") || len(body) == 0 {
-		return false
-	}
-	parts := strings.Split(string(body), " ")
-	if len(parts) < 11 {
-		return false
-	}
-	c, err := net.Dial("tcp", parts[9]+":"+parts[10])
-	if err != nil {
-		log.Error("vmware-send dial failed", producer.ErrAttr(err))
-		return true
-	}
-	c = hp.GuardConn(c)
-	go func() {
-		if err := tcp.HandleTCP(ctx, c, md, log, hp); err != nil {
-			log.Error("vmware-send TCP relay error", producer.ErrAttr(err))
-		}
-	}()
-	return true
-}
-
 func bodyFromParsed(parsed *spicy.ParsedData) []byte {
 	v, ok := parsed.Fields["body.content"]
 	if !ok {
@@ -239,9 +217,6 @@ func (s *httpServer) buildResponse(ctx context.Context, method, uriRaw, path str
 	}
 	if resp := citrixSMBResponse(path); resp != nil {
 		return resp
-	}
-	if handleVMwareSend(ctx, body, uriRaw, md, log, hp) {
-		return nil
 	}
 	if resp := tcp.LFIResponse(queryFromURI(uriRaw)); resp != nil {
 		return resp

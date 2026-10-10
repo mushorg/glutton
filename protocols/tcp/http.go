@@ -284,23 +284,6 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 		return s.write(smbHandler(req))
 	}
 
-	// Handler for VMWare Attack
-	if strings.Contains(req.RequestURI, "hyper/send") {
-		parts := strings.Split(string(body), " ")
-		if len(parts) >= 11 {
-			vconn, err := net.Dial("tcp", parts[9]+":"+parts[10])
-			if err != nil {
-				return err
-			}
-			vconn = h.GuardConn(vconn)
-			go func() {
-				if err := HandleTCP(ctx, vconn, md, logger, h); err != nil {
-					logger.Error("Failed to handle vmware attack", producer.ErrAttr(err))
-				}
-			}()
-		}
-	}
-
 	if resp := LFIResponse(req.URL.RawQuery); resp != nil {
 		return s.write(resp)
 	}

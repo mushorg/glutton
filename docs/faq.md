@@ -14,7 +14,7 @@ The HTTP handler also dispatches a handful of nested, payload-driven mini-handle
 - Hadoop YARN exploit
 - Docker Engine API
 - Citrix ADC / NetScaler (CVE-2019-19781)
-- VMware "hyper/send" attack
+- VMware "hyper/send" attack (request is captured only; the honeypot never dials the address in the body)
 - Wallet probes
 
 These nested branches live inside the HTTP handler rather than being registered as separate handler keys, so they're not selectable via a rule `target`.
