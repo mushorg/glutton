@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -111,17 +112,26 @@ Content-Type: text/plain; charset=UTF-8`
 }
 
 type parsedHTTP struct {
-	Direction string `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
-	Command   string `json:"command,omitempty"`   // HTTP method
-	Path      string `json:"path,omitempty"`
-	Query     string `json:"query,omitempty"`
-	Host      string `json:"host,omitempty"`
-	UserAgent string `json:"user_agent,omitempty"`
-	Status    string `json:"status,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	DestPort  uint16 `json:"dest_port,omitempty"` // set on reads; sessions can span ports
-	SrcPort   string `json:"src_port,omitempty"`  // set on reads; sessions can span connections
-	Payload   []byte `json:"payload,omitempty"`   // raw HTTP request or response bytes
+	Direction  string     `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
+	Command    string     `json:"command,omitempty"`   // HTTP method
+	Path       string     `json:"path,omitempty"`
+	Query      string     `json:"query,omitempty"`
+	Parameters url.Values `json:"parameters,omitempty"` // parsed query key/values
+	Host       string     `json:"host,omitempty"`
+	UserAgent  string     `json:"user_agent,omitempty"`
+	Status     string     `json:"status,omitempty"`
+	SessionID  string     `json:"session_id,omitempty"`
+	DestPort   uint16     `json:"dest_port,omitempty"` // set on reads; sessions can span ports
+	SrcPort    string     `json:"src_port,omitempty"`  // set on reads; sessions can span connections
+	Payload    []byte     `json:"payload,omitempty"`   // raw HTTP request or response bytes
+}
+
+// httpParameters returns the query map, or nil when empty so omitempty drops it.
+func httpParameters(q url.Values) url.Values {
+	if len(q) == 0 {
+		return nil
+	}
+	return q
 }
 
 func stampHTTP(frame *parsedHTTP, id string) {
@@ -202,7 +212,8 @@ func (s *httpServer) write(data []byte) error {
 func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw []byte, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer req.Body.Close()
 	path := req.URL.EscapedPath()
-	query := req.URL.Query().Encode()
+	params := req.URL.Query()
+	query := params.Encode()
 	body, _ := io.ReadAll(req.Body)
 
 	if c, err := req.Cookie(httpSessionCookie); err == nil && strings.TrimSpace(c.Value) != "" {
@@ -213,15 +224,16 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 
 	_, srcPort, _ := net.SplitHostPort(s.conn.RemoteAddr().String())
 	s.record(parsedHTTP{
-		Direction: "read",
-		DestPort:  md.TargetPort,
-		SrcPort:   srcPort,
-		Command:   req.Method,
-		Path:      path,
-		Query:     query,
-		Host:      req.Host,
-		UserAgent: req.UserAgent(),
-		Payload:   raw,
+		Direction:  "read",
+		DestPort:   md.TargetPort,
+		SrcPort:    srcPort,
+		Command:    req.Method,
+		Path:       path,
+		Query:      query,
+		Parameters: httpParameters(params),
+		Host:       req.Host,
+		UserAgent:  req.UserAgent(),
+		Payload:    raw,
 	})
 
 	switch req.Method {

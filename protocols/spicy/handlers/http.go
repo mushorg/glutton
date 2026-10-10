@@ -26,12 +26,25 @@ const maxHTTPRequests = 50
 // headers are omitted from the decoded shape so the sensor address is not
 // published; Payload keeps the raw wire bytes for replay.
 type parsedHTTP struct {
-	Direction string `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
-	Command   string `json:"command,omitempty"`   // HTTP method
-	Path      string `json:"path,omitempty"`
-	Query     string `json:"query,omitempty"`
-	Status    string `json:"status,omitempty"`
-	Payload   []byte `json:"payload,omitempty"` // raw HTTP request or response bytes
+	Direction  string     `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
+	Command    string     `json:"command,omitempty"`   // HTTP method
+	Path       string     `json:"path,omitempty"`
+	Query      string     `json:"query,omitempty"`
+	Parameters url.Values `json:"parameters,omitempty"` // parsed query key/values
+	Status     string     `json:"status,omitempty"`
+	Payload    []byte     `json:"payload,omitempty"` // raw HTTP request or response bytes
+}
+
+// httpParameters parses a raw query string into url.Values, or nil when empty.
+func httpParameters(rawQuery string) url.Values {
+	if rawQuery == "" {
+		return nil
+	}
+	v, err := url.ParseQuery(rawQuery)
+	if err != nil || len(v) == 0 {
+		return nil
+	}
+	return v
 }
 
 // requestPathAndQuery returns path and query without scheme or host, so
@@ -319,11 +332,12 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 		)
 
 		server.events = append(server.events, parsedHTTP{
-			Direction: "read",
-			Command:   method,
-			Path:      path,
-			Query:     query,
-			Payload:   append([]byte(nil), raw...),
+			Direction:  "read",
+			Command:    method,
+			Path:       path,
+			Query:      query,
+			Parameters: httpParameters(query),
+			Payload:    append([]byte(nil), raw...),
 		})
 
 		resp := server.buildResponse(ctx, method, uriRaw, path, body, md, log, hp)

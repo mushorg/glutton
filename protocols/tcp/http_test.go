@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +99,7 @@ func TestHandleHTTPKeepAliveOneEvent(t *testing.T) {
 	require.Equal(t, "read", events[0].Direction)
 	require.Equal(t, "GET", events[0].Command)
 	require.Equal(t, "/", events[0].Path)
+	require.Nil(t, events[0].Parameters)
 	require.Equal(t, "127.0.0.1", events[0].Host)
 	require.Equal(t, "test-agent/1.0", events[0].UserAgent)
 	require.Equal(t, sessionID, events[0].SessionID)
@@ -105,6 +107,45 @@ func TestHandleHTTPKeepAliveOneEvent(t *testing.T) {
 	require.Equal(t, "200", events[1].Status)
 	require.Equal(t, sessionID, events[1].SessionID)
 	require.Equal(t, "/wallet", events[2].Path)
+}
+
+func TestHandleHTTPParameters(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write(httpTestRequest("GET", "/search?q=lfi&file=../../etc/passwd", "", nil))
+	require.NoError(t, err)
+	_, _, _ = readHTTPResponse(t, client)
+
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	events, ok := produced.decoded.([]parsedHTTP)
+	require.True(t, ok)
+	require.GreaterOrEqual(t, len(events), 1)
+	require.Equal(t, url.Values{
+		"q":    {"lfi"},
+		"file": {"../../etc/passwd"},
+	}.Encode(), events[0].Query)
+	require.Equal(t, url.Values{
+		"q":    {"lfi"},
+		"file": {"../../etc/passwd"},
+	}, events[0].Parameters)
 }
 
 func TestHandleHTTPSessionGroupsAcrossConnections(t *testing.T) {

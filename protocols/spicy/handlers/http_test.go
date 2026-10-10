@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"sync"
 	"testing"
 
@@ -130,7 +131,7 @@ func TestHandleHTTPResponseBranches(t *testing.T) {
 		{
 			name:     "Default",
 			request:  buildHTTPRequest("GET", "/test", ""),
-			contains: "HTTP/1.1 200 OK\r\n\r\n",
+			contains: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
 		},
 		{
 			name:     "Wallet",
@@ -175,6 +176,7 @@ func TestHandleHTTPUsesParsedQuery(t *testing.T) {
 
 	require.Equal(t, "/test/path", events[0].Path)
 	require.Equal(t, "x=1&y=two", events[0].Query)
+	require.Equal(t, url.Values{"x": {"1"}, "y": {"two"}}, events[0].Parameters)
 }
 
 func TestHandleHTTPWithBody(t *testing.T) {
