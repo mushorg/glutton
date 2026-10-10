@@ -272,6 +272,11 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 			}()
 		}
 	}
+
+	if resp := LFIResponse(req.URL.RawQuery); resp != nil {
+		return s.write(resp)
+	}
+
 	if err := s.write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")); err != nil {
 		return fmt.Errorf("failed to send HTTP response: %w", err)
 	}

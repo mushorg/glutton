@@ -55,7 +55,7 @@ func httpOKJSON(data []byte) []byte {
 }
 
 func httpPlainOK() []byte {
-	return []byte("HTTP/1.1 200 OK\r\n\r\n")
+	return []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
 }
 
 func httpStatusCode(resp []byte) string {
@@ -222,7 +222,25 @@ func (s *httpServer) buildResponse(ctx context.Context, method, uriRaw, path str
 	if handleVMwareSend(ctx, body, uriRaw, md, log, hp) {
 		return nil
 	}
+	if resp := tcp.LFIResponse(queryFromURI(uriRaw)); resp != nil {
+		return resp
+	}
 	return httpPlainOK()
+}
+
+// queryFromURI returns the raw query string from a request-target or absolute URI.
+func queryFromURI(uriRaw string) string {
+	if i := strings.IndexByte(uriRaw, '?'); i >= 0 {
+		q := uriRaw[i+1:]
+		if j := strings.IndexAny(q, " \r\n"); j >= 0 {
+			q = q[:j]
+		}
+		return q
+	}
+	if u, err := url.ParseRequestURI(uriRaw); err == nil {
+		return u.RawQuery
+	}
+	return ""
 }
 
 // HandleHTTP takes a net.Conn and does HTTP communication using Spicy parsing.
