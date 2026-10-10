@@ -194,3 +194,44 @@ func TestCatchAllLongPayloadWithSpicy(t *testing.T) {
 
 	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
 }
+
+func TestCatchAllRoutesSOCKS(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 5678)
+
+	// SOCKS4a CONNECT httpbin.org:80 from Ochi event
+	// 2e27fe0b-5593-4090-bc5b-fddebc9666c6
+	_, err := client.Write([]byte("\x04\x01\x00\x50\x00\x00\x00\x01\x00httpbin.org\x00"))
+	require.NoError(t, err)
+	reply := make([]byte, 8)
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x00, 0x5a}, reply[:2])
+
+	require.Equal(t, "socks", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllRoutesSOCKS5Greeting(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 9999)
+
+	_, err := client.Write([]byte{0x05, 0x01, 0x00})
+	require.NoError(t, err)
+	reply := make([]byte, 2)
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x05, 0x00}, reply)
+
+	require.Equal(t, "socks", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllSOCKSLookalikeStaysTCP(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 9999)
+
+	// SOCKS4 header without the userid terminator: not SOCKS, keep all bytes
+	_, err := client.Write([]byte("\x04\x01\x00\x50\x01\x02\x03\x04not a socks request"))
+	require.NoError(t, err)
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	require.NotEmpty(t, reply)
+
+	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
+}

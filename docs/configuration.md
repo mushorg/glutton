@@ -127,7 +127,7 @@ rules:
 
 ### Rule types
 
-`**conn_handler**` — `target` is a handler key. Current TCP keys: `smtp`, `rdp`, `smb`, `ftp`, `sip`, `rfb`, `telnet`, `mqtt`, `iscsi`, `bittorrent`, `memcache`, `jabber`, `pop3`, `whois`, `adb`, `mongodb`, `minecraft`, `http`, `mcp`, `modbus`, `dnp3`, `opcua`, `mctp`, `dicom`, `proxy_tcp`, `tcp`. UDP keys: `sip`, `openvpn`, `mdns`, `l2tp`, `raknet`, `kerberos`, `coap`, `ike`, `a2s`, `ddp`, `rtps`, `knx`, `dtls`, `wsdiscovery`, `proxy_udp`, `udp`. If the target isn't registered, the listener accepts the connection but no handler runs.
+`**conn_handler**` — `target` is a handler key. Current TCP keys: `smtp`, `rdp`, `smb`, `ftp`, `sip`, `rfb`, `telnet`, `mqtt`, `iscsi`, `bittorrent`, `memcache`, `jabber`, `pop3`, `whois`, `adb`, `mongodb`, `minecraft`, `socks`, `http`, `mcp`, `modbus`, `dnp3`, `opcua`, `mctp`, `dicom`, `proxy_tcp`, `tcp`. UDP keys: `sip`, `openvpn`, `mdns`, `l2tp`, `raknet`, `kerberos`, `coap`, `ike`, `a2s`, `ddp`, `rtps`, `knx`, `dtls`, `wsdiscovery`, `proxy_udp`, `udp`. If the target isn't registered, the listener accepts the connection but no handler runs.
 
 `**proxy_tcp**` — forwards a matched TCP connection to an upstream `host:port`. The address is parsed at rule-load time and stored in rule metadata; at dispatch the proxy handler dials it and pipes bytes both directions. Tunable via `dial_timeout`, `conn_timeout`, `max_tcp_payload`, and `capture_traffic.enabled` in the main config.
 

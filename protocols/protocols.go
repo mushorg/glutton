@@ -15,6 +15,7 @@ import (
 	spicyHandlers "github.com/mushorg/glutton/protocols/spicy/handlers"
 	"github.com/mushorg/glutton/protocols/tcp"
 	"github.com/mushorg/glutton/protocols/tcp/mctp"
+	"github.com/mushorg/glutton/protocols/tcp/socks"
 	"github.com/mushorg/glutton/protocols/udp"
 	"github.com/spf13/viper"
 )
@@ -94,6 +95,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"adb":        bindTCP(tcp.HandleADB, log, h),
 		"mongodb":    bindTCP(tcp.HandleMongoDB, log, h),
 		"minecraft":  bindTCP(tcp.HandleMinecraft, log, h),
+		"socks":      bindTCP(tcp.HandleSOCKS, log, h),
 		"http":       bindTCP(tcp.HandleHTTP, log, h),
 		"mcp":        bindTCP(tcp.HandleMCP, log, h),
 		"modbus":     bindTCP(tcp.HandleModbus, log, h),
@@ -136,6 +138,19 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		snip, bufConn, err := peekOrClose(conn, src, 4, log)
 		if err != nil {
 			return nil
+		}
+		// proxy checkers send SOCKS requests to any port; the request is the
+		// whole first segment, so peek for all of it before deciding
+		if snip[0] == socks.Version4 || snip[0] == socks.Version5 {
+			req, reqConn, err := peekOrClose(conn, bufConn, socks.MaxSOCKS4Request, log)
+			if err != nil {
+				return nil
+			}
+			bufConn = reqConn
+			if socks.LooksLikeSOCKS(req) {
+				return tcp.HandleSOCKS(ctx, bufConn, md, log, h)
+			}
+			snip = req[:min(len(req), 4)]
 		}
 		if viper.GetBool("spicy.enabled") {
 			if protocol, ok := parseTCPProtocol(snip, log); ok {

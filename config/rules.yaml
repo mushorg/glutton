@@ -69,20 +69,9 @@ rules:
   - match: tcp dst port 25565
     type: conn_handler
     target: minecraft
-  - match: tcp dst port 443
-    type: proxy_tcp
-    target: 127.0.0.1:443
-    produce: false
-  - match: udp dst port 443
-    type: proxy_udp
-    target: 127.0.0.1:443
-    produce: false
-  - match: tcp dst port 9889
-    type: proxy_tcp
-    target: 127.0.0.1:9889
-  - match: tcp dst port 3306
-    type: proxy_tcp
-    target: 127.0.0.1:3306
+  - match: tcp dst port 1080 or port 4145
+    type: conn_handler
+    target: socks
   - match: tcp
     type: conn_handler
     target: tcp
