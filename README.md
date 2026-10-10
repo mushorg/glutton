@@ -87,7 +87,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | HiSilicon DVR (MCTP)        | `HI_SRDK_*` control calls on tcp/9000    |
 | RTSP (IP cameras)           | OPTIONS/DESCRIBE and credential attempts on tcp/554, 8554, 10554 |
 | Catch-all service banners   | POP3/RFB greetings, MSSQL/AJP/RPC replies |
-| DICOM                       | PACS associations, C-ECHO/C-FIND/C-STORE |
+| DICOM                       | PACS associations, C-FIND search keys, C-STORE uploads on tcp/104, 11112 |
 | ICAP                        | OPTIONS/REQMOD/RESPMOD on tcp/1344, 11344 |
 | SSH                         | key exchange, HASSH and login attempts on tcp/22, 2222, any port |
 | Hadoop YARN                 | `POST */cluster/apps/new-application`    |

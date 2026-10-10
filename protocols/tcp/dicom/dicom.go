@@ -65,6 +65,13 @@ const (
 	noDataSet      uint16 = 0x0101
 	StatusSuccess  uint16 = 0x0000
 	StatusUnrecOp  uint16 = 0x0211
+	StatusPending  uint16 = 0xFF00
+	// StatusMoveDestinationUnknown refuses C-MOVE to an AE that is not configured.
+	StatusMoveDestinationUnknown uint16 = 0xA801
+	// StatusOutOfResourcesSubOps refuses C-GET: unable to perform sub-operations.
+	StatusOutOfResourcesSubOps uint16 = 0xA702
+	// StatusIdentifierMismatch: data set does not match SOP class.
+	StatusIdentifierMismatch uint16 = 0xA900
 )
 
 // Command set element tags (group 0000).
@@ -360,6 +367,18 @@ func chooseTransferSyntax(offered []string) (string, bool) {
 	return ImplicitVRLittleEndian, false
 }
 
+// AcceptedContexts maps each presentation context accepted by
+// BuildAssociateAC to its chosen transfer syntax.
+func AcceptedContexts(rq AssociateRQ) map[byte]string {
+	out := make(map[byte]string, len(rq.PresentationContexts))
+	for _, pc := range rq.PresentationContexts {
+		if ts, ok := chooseTransferSyntax(pc.TransferSyntaxes); ok {
+			out[pc.ID] = ts
+		}
+	}
+	return out
+}
+
 // BuildAssociateAC accepts every proposed presentation context.
 func BuildAssociateAC(rq AssociateRQ) []byte {
 	body := make([]byte, 0, 256)
@@ -449,16 +468,24 @@ func ParsePData(pdu []byte) ([]PDV, error) {
 
 // BuildPData wraps one complete command or data set fragment in a P-DATA-TF.
 func BuildPData(contextID byte, command, last bool, data []byte) []byte {
-	var mch byte
-	if command {
-		mch |= 0x01
+	return BuildPDataPDVs(PDV{ContextID: contextID, Command: command, Last: last, Data: data})
+}
+
+// BuildPDataPDVs wraps several PDVs in one P-DATA-TF.
+func BuildPDataPDVs(pdvs ...PDV) []byte {
+	var body []byte
+	for _, pdv := range pdvs {
+		var mch byte
+		if pdv.Command {
+			mch |= 0x01
+		}
+		if pdv.Last {
+			mch |= 0x02
+		}
+		body = binary.BigEndian.AppendUint32(body, uint32(len(pdv.Data)+2))
+		body = append(body, pdv.ContextID, mch)
+		body = append(body, pdv.Data...)
 	}
-	if last {
-		mch |= 0x02
-	}
-	body := binary.BigEndian.AppendUint32(nil, uint32(len(data)+2))
-	body = append(body, contextID, mch)
-	body = append(body, data...)
 	return appendPDU(PDUPData, body)
 }
 
@@ -511,6 +538,14 @@ func StatusName(status uint16) string {
 		return "Success"
 	case StatusUnrecOp:
 		return "UnrecognizedOperation"
+	case StatusPending:
+		return "Pending"
+	case StatusMoveDestinationUnknown:
+		return "MoveDestinationUnknown"
+	case StatusOutOfResourcesSubOps:
+		return "OutOfResources"
+	case StatusIdentifierMismatch:
+		return "IdentifierDoesNotMatchSOPClass"
 	}
 	return fmt.Sprintf("0x%04x", status)
 }
@@ -597,9 +632,11 @@ func encodeCommand(elems []element) []byte {
 	return append(out, body...)
 }
 
-// Response returns the response command for a request, or false when no
-// response is due (responses, C-CANCEL). C-* services succeed with no
-// matches or sub-operations; N-* services are not supported.
+// Response returns the (final) response command for a request, or false when
+// no response is due (responses, C-CANCEL). C-ECHO, C-STORE and C-FIND
+// succeed; C-MOVE is refused because no destination AE is configured and
+// C-GET because no sub-operations can be performed, so the server never
+// connects out or sends images. N-* services are not supported.
 func Response(req Command) (Command, bool) {
 	if req.IsResponse() || req.Field == CCancelRQ {
 		return Command{}, false
@@ -617,7 +654,11 @@ func Response(req Command) (Command, bool) {
 		if resp.SOPClassUID == "" {
 			resp.SOPClassUID = VerificationSOPClass
 		}
-	case CStoreRQ, CFindRQ, CGetRQ, CMoveRQ:
+	case CStoreRQ, CFindRQ:
+	case CMoveRQ:
+		resp.Status = StatusMoveDestinationUnknown
+	case CGetRQ:
+		resp.Status = StatusOutOfResourcesSubOps
 	default:
 		resp.Status = StatusUnrecOp
 	}

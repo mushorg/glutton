@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -115,8 +116,8 @@ func TestHandleDICOMIssue50FindSession(t *testing.T) {
 		dicomElem{0x0700, dicomUS(0)},
 		dicomElem{0x0800, dicomUS(0)},
 	))
-	// (0010,0010) PatientName = "*" in Explicit VR LE
-	findData := dicom.BuildPData(1, false, true, []byte{0x10, 0x00, 0x10, 0x00, 'P', 'N', 0x02, 0x00, '*', ' '})
+	// (0010,0010) PatientName = "*" in Implicit VR LE, the accepted transfer syntax
+	findData := dicom.BuildPData(1, false, true, []byte{0x10, 0x00, 0x10, 0x00, 0x02, 0x00, 0x00, 0x00, '*', ' '})
 	rsp := dicomRoundTrip(t, client, findCmd, findData)
 	pdvs, err := dicom.ParsePData(rsp)
 	require.NoError(t, err)
@@ -150,7 +151,7 @@ func TestHandleDICOMIssue50FindSession(t *testing.T) {
 			Payload:                dicomIssue50RQ,
 		},
 		{Direction: "write", Command: "A-ASSOCIATE-AC", PDUType: "A-ASSOCIATE-AC", Status: "Accepted", Payload: ac},
-		{Direction: "read", Command: "C-FIND-RQ", PDUType: "P-DATA-TF", MessageID: 5, SOPClassUID: worklistFind, Payload: append(append([]byte{}, findCmd...), findData...)},
+		{Direction: "read", Command: "C-FIND-RQ", PDUType: "P-DATA-TF", MessageID: 5, SOPClassUID: worklistFind, Query: map[string]string{"PatientName": "*"}, Payload: append(append([]byte{}, findCmd...), findData...)},
 		{Direction: "write", Command: "C-FIND-RSP", PDUType: "P-DATA-TF", Status: "Success", MessageID: 5, SOPClassUID: worklistFind, Payload: rsp},
 		{Direction: "read", Command: "A-RELEASE-RQ", PDUType: "A-RELEASE-RQ", Payload: release},
 		{Direction: "write", Command: "A-RELEASE-RP", PDUType: "A-RELEASE-RP", Payload: rp},
@@ -289,4 +290,126 @@ func TestHandleDICOMTruncatedPDUStillProduces(t *testing.T) {
 	ev := waitDICOM(t, hp, done)
 	require.Empty(t, ev.decoded)
 	require.Equal(t, connection.EndReadError, ev.endReason)
+}
+
+const studyRootMove = "1.2.840.10008.5.1.4.1.2.2.2"
+
+// dicomAssociateRQ builds a synthetic A-ASSOCIATE-RQ (no user info item).
+func dicomAssociateRQ(called, calling string, contexts ...dicom.PresentationContext) []byte {
+	item := func(typ byte, v []byte) []byte {
+		return append(binary.BigEndian.AppendUint16([]byte{typ, 0}, uint16(len(v))), v...)
+	}
+	body := []byte{0, 1, 0, 0}
+	body = append(body, fmt.Sprintf("%-16s%-16s", called, calling)...)
+	body = append(body, make([]byte, 32)...)
+	body = append(body, item(0x10, []byte(dicom.ApplicationContextUID))...)
+	for _, pc := range contexts {
+		v := append([]byte{pc.ID, 0, 0, 0}, item(0x30, []byte(pc.AbstractSyntax))...)
+		for _, ts := range pc.TransferSyntaxes {
+			v = append(v, item(0x40, []byte(ts))...)
+		}
+		body = append(body, item(0x20, v)...)
+	}
+	return append(binary.BigEndian.AppendUint32([]byte{dicom.PDUAssociateRQ, 0}, uint32(len(body))), body...)
+}
+
+func dicomReadCommand(t *testing.T, pdu []byte) (dicom.Command, []dicom.PDV) {
+	t.Helper()
+	pdvs, err := dicom.ParsePData(pdu)
+	require.NoError(t, err)
+	require.NotEmpty(t, pdvs)
+	cmd, err := dicom.ParseCommand(pdvs[0].Data)
+	require.NoError(t, err)
+	return cmd, pdvs
+}
+
+// Synthetic Study Root session as sent by `findscu -S -k PatientName=MIL*`
+// followed by `movescu -aem EVIL`: the find returns the matching archive
+// entry, the move is refused without connecting anywhere.
+func TestHandleDICOMStudyRootFindAndMove(t *testing.T) {
+	client, hp, done := startDICOM(t)
+
+	assoc := dicomAssociateRQ("PACS", "FINDSCU",
+		dicom.PresentationContext{ID: 1, AbstractSyntax: dicom.StudyRootFind, TransferSyntaxes: []string{dicom.ExplicitVRLittleEndian}},
+		dicom.PresentationContext{ID: 3, AbstractSyntax: studyRootMove, TransferSyntaxes: []string{dicom.ExplicitVRLittleEndian}},
+	)
+	ac := dicomRoundTrip(t, client, assoc)
+	require.Equal(t, dicom.PDUAssociateAC, ac[0])
+
+	findCmd := dicom.BuildPData(1, true, true, dicomCommand(
+		dicomElem{0x0002, dicomUI(dicom.StudyRootFind)},
+		dicomElem{0x0100, dicomUS(dicom.CFindRQ)},
+		dicomElem{0x0110, dicomUS(1)},
+		dicomElem{0x0700, dicomUS(0)},
+		dicomElem{0x0800, dicomUS(0)},
+	))
+	// QueryRetrieveLevel=STUDY, PatientName=MIL*, StudyInstanceUID return key (Explicit VR LE)
+	identifier, _ := hex.DecodeString("080052004353060053545544592010001000504e04004d494c2a20000d0055490000")
+	findData := dicom.BuildPData(1, false, true, identifier)
+	pending := dicomRoundTrip(t, client, findCmd, findData)
+	cmd, pdvs := dicomReadCommand(t, pending)
+	require.Equal(t, dicom.StatusPending, cmd.Status)
+	require.Equal(t, uint16(1), cmd.RespondedTo)
+	require.Len(t, pdvs, 2)
+	elems, err := dicom.ParseDataSet(pdvs[1].Data, dicom.ExplicitVRLittleEndian)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{
+		"QueryRetrieveLevel": "STUDY",
+		"PatientName":        "MILLER^ANNA",
+		"StudyInstanceUID":   "1.2.276.0.7230010.3.1.2.2831156423.4120.1726558452.215",
+	}, dicom.QueryMap(elems))
+
+	final, err := dicom.ReadPDU(client)
+	require.NoError(t, err)
+	cmd, _ = dicomReadCommand(t, final)
+	require.Equal(t, dicom.StatusSuccess, cmd.Status)
+	require.False(t, cmd.HasDataSet())
+
+	moveCmd := dicom.BuildPData(3, true, true, dicomCommand(
+		dicomElem{0x0002, dicomUI(studyRootMove)},
+		dicomElem{0x0100, dicomUS(dicom.CMoveRQ)},
+		dicomElem{0x0110, dicomUS(2)},
+		dicomElem{0x0600, []byte("EVIL            ")},
+		dicomElem{0x0700, dicomUS(0)},
+		dicomElem{0x0800, dicomUS(0)},
+	))
+	// QueryRetrieveLevel=STUDY, StudyInstanceUID=1.2.3.4
+	moveIdent, _ := hex.DecodeString("0800520043530600535455445920" + "20000d0055490800312e322e332e3400")
+	moveData := dicom.BuildPData(3, false, true, moveIdent)
+	moveRsp := dicomRoundTrip(t, client, moveCmd, moveData)
+	cmd, _ = dicomReadCommand(t, moveRsp)
+	require.Equal(t, uint16(0x8021), cmd.Field)
+	require.Equal(t, dicom.StatusMoveDestinationUnknown, cmd.Status)
+
+	abort := dicom.BuildAbort(0, 0)
+	_, err = client.Write(abort)
+	require.NoError(t, err)
+
+	ev := waitDICOM(t, hp, done)
+	frames := ev.decoded.([]parsedDICOM)
+	require.Len(t, frames, 8)
+	require.Equal(t, "PACS", frames[0].CalledAE)
+	require.Equal(t, parsedDICOM{
+		Direction:   "read",
+		Command:     "C-FIND-RQ",
+		PDUType:     "P-DATA-TF",
+		MessageID:   1,
+		SOPClassUID: dicom.StudyRootFind,
+		Query:       map[string]string{"QueryRetrieveLevel": "STUDY", "PatientName": "MIL*", "StudyInstanceUID": ""},
+		Payload:     append(append([]byte{}, findCmd...), findData...),
+	}, frames[2])
+	require.Equal(t, parsedDICOM{Direction: "write", Command: "C-FIND-RSP", PDUType: "P-DATA-TF", Status: "Pending", MessageID: 1, SOPClassUID: dicom.StudyRootFind, Payload: pending}, frames[3])
+	require.Equal(t, parsedDICOM{Direction: "write", Command: "C-FIND-RSP", PDUType: "P-DATA-TF", Status: "Success", MessageID: 1, SOPClassUID: dicom.StudyRootFind, Payload: final}, frames[4])
+	require.Equal(t, parsedDICOM{
+		Direction:       "read",
+		Command:         "C-MOVE-RQ",
+		PDUType:         "P-DATA-TF",
+		MessageID:       2,
+		SOPClassUID:     studyRootMove,
+		MoveDestination: "EVIL",
+		Query:           map[string]string{"QueryRetrieveLevel": "STUDY", "StudyInstanceUID": "1.2.3.4"},
+		Payload:         append(append([]byte{}, moveCmd...), moveData...),
+	}, frames[5])
+	require.Equal(t, parsedDICOM{Direction: "write", Command: "C-MOVE-RSP", PDUType: "P-DATA-TF", Status: "MoveDestinationUnknown", MessageID: 2, SOPClassUID: studyRootMove, Payload: moveRsp}, frames[6])
+	require.Equal(t, "A-ABORT", frames[7].Command)
 }

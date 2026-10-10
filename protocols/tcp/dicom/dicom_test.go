@@ -189,6 +189,18 @@ func TestResponse(t *testing.T) {
 	require.Equal(t, "1.2.3", encoded.SOPInstanceUID)
 	require.Equal(t, StatusSuccess, encoded.Status)
 
+	// C-MOVE/C-GET are refused: no move destinations, no sub-operations
+	resp, ok = Response(Command{Field: CMoveRQ, MessageID: 4, MoveDestination: "EVIL"})
+	require.True(t, ok)
+	encoded, err = ParseCommand(EncodeCommand(resp))
+	require.NoError(t, err)
+	require.Equal(t, StatusMoveDestinationUnknown, encoded.Status)
+	require.Equal(t, "MoveDestinationUnknown", StatusName(resp.Status))
+	resp, ok = Response(Command{Field: CGetRQ, MessageID: 5})
+	require.True(t, ok)
+	require.Equal(t, StatusOutOfResourcesSubOps, resp.Status)
+	require.Equal(t, "OutOfResources", StatusName(resp.Status))
+
 	resp, ok = Response(Command{Field: NGetRQ, MessageID: 3})
 	require.True(t, ok)
 	require.Equal(t, StatusUnrecOp, resp.Status)

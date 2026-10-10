@@ -29,26 +29,27 @@ var storeDicom = func(data []byte) error {
 }
 
 type parsedDICOM struct {
-	Direction              string   `json:"direction,omitempty"`
-	Command                string   `json:"command,omitempty"`
-	Path                   string   `json:"path,omitempty"`
-	Status                 string   `json:"status,omitempty"`
-	PDUType                string   `json:"pdu_type,omitempty"`
-	CalledAE               string   `json:"called_ae,omitempty"`
-	CallingAE              string   `json:"calling_ae,omitempty"`
-	ApplicationContext     string   `json:"application_context,omitempty"`
-	AbstractSyntaxes       []string `json:"abstract_syntaxes,omitempty"`
-	TransferSyntaxes       []string `json:"transfer_syntaxes,omitempty"`
-	ImplementationClassUID string   `json:"implementation_class_uid,omitempty"`
-	ImplementationVersion  string   `json:"implementation_version,omitempty"`
-	Username               string   `json:"username,omitempty"`
-	MessageID              uint16   `json:"message_id,omitempty"`
-	SOPClassUID            string   `json:"sop_class_uid,omitempty"`
-	SOPInstanceUID         string   `json:"sop_instance_uid,omitempty"`
-	MoveDestination        string   `json:"move_destination,omitempty"`
-	PayloadHash            string   `json:"payload_hash,omitempty"`
-	Payload                []byte   `json:"payload,omitempty"`
-	Truncated              bool     `json:"truncated,omitempty"`
+	Direction              string            `json:"direction,omitempty"`
+	Command                string            `json:"command,omitempty"`
+	Path                   string            `json:"path,omitempty"`
+	Status                 string            `json:"status,omitempty"`
+	PDUType                string            `json:"pdu_type,omitempty"`
+	CalledAE               string            `json:"called_ae,omitempty"`
+	CallingAE              string            `json:"calling_ae,omitempty"`
+	ApplicationContext     string            `json:"application_context,omitempty"`
+	AbstractSyntaxes       []string          `json:"abstract_syntaxes,omitempty"`
+	TransferSyntaxes       []string          `json:"transfer_syntaxes,omitempty"`
+	ImplementationClassUID string            `json:"implementation_class_uid,omitempty"`
+	ImplementationVersion  string            `json:"implementation_version,omitempty"`
+	Username               string            `json:"username,omitempty"`
+	MessageID              uint16            `json:"message_id,omitempty"`
+	SOPClassUID            string            `json:"sop_class_uid,omitempty"`
+	SOPInstanceUID         string            `json:"sop_instance_uid,omitempty"`
+	MoveDestination        string            `json:"move_destination,omitempty"`
+	Query                  map[string]string `json:"query,omitempty"`
+	PayloadHash            string            `json:"payload_hash,omitempty"`
+	Payload                []byte            `json:"payload,omitempty"`
+	Truncated              bool              `json:"truncated,omitempty"`
 }
 
 type dicomServer struct {
@@ -56,7 +57,10 @@ type dicomServer struct {
 	conn       net.Conn
 	logger     interfaces.Logger
 	associated bool
-	assembler  dicom.Assembler
+	calledAE   string
+	// accepted presentation context ID → transfer syntax
+	contexts  map[byte]string
+	assembler dicom.Assembler
 	// raw P-DATA-TF bytes of the DIMSE message being reassembled
 	pending          []byte
 	pendingTruncated bool
@@ -125,6 +129,8 @@ func (s *dicomServer) handleAssociate(pdu []byte) (dicom.AssociateRQ, bool, erro
 		return rq, false, s.write(dicom.BuildAssociateRJ(1, 1, 1), parsedDICOM{Status: "Rejected"})
 	}
 	s.associated = true
+	s.calledAE = rq.CalledAE
+	s.contexts = dicom.AcceptedContexts(rq)
 	return rq, true, s.write(dicom.BuildAssociateAC(rq), parsedDICOM{Status: "Accepted"})
 }
 
@@ -169,23 +175,48 @@ func (s *dicomServer) handleMessage(msg *dicom.Message) error {
 			s.logger.Error("Failed to store data set", slog.String("protocol", "dicom"), producer.ErrAttr(err))
 		}
 	}
+	ts := s.contexts[msg.ContextID]
+	switch cmd.Field {
+	case dicom.CFindRQ, dicom.CGetRQ, dicom.CMoveRQ:
+		// the identifier holds the search keys; decode what we can
+		elems, _ := dicom.ParseDataSet(msg.DataSet, ts)
+		frame.Query = dicom.QueryMap(elems)
+	}
 	s.events = append(s.events, frame)
 
+	if cmd.Field == dicom.CFindRQ {
+		for _, r := range dicom.FindReplies(cmd, msg.DataSet, ts, s.calledAE) {
+			if err := s.reply(msg.ContextID, r); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	resp, ok := dicom.Response(cmd)
 	if !ok {
 		return nil
 	}
-	return s.write(dicom.BuildPData(msg.ContextID, true, true, dicom.EncodeCommand(resp)), parsedDICOM{
-		Command:     dicom.CommandName(resp.Field),
-		Status:      dicom.StatusName(resp.Status),
-		MessageID:   resp.RespondedTo,
-		SOPClassUID: resp.SOPClassUID,
+	return s.reply(msg.ContextID, dicom.Reply{Command: resp})
+}
+
+// reply sends a DIMSE response command, and its data set if any, in one P-DATA-TF.
+func (s *dicomServer) reply(contextID byte, r dicom.Reply) error {
+	pdvs := []dicom.PDV{{ContextID: contextID, Command: true, Last: true, Data: dicom.EncodeCommand(r.Command)}}
+	if r.DataSet != nil {
+		pdvs = append(pdvs, dicom.PDV{ContextID: contextID, Last: true, Data: r.DataSet})
+	}
+	return s.write(dicom.BuildPDataPDVs(pdvs...), parsedDICOM{
+		Command:     dicom.CommandName(r.Command.Field),
+		Status:      dicom.StatusName(r.Command.Status),
+		MessageID:   r.Command.RespondedTo,
+		SOPClassUID: r.Command.SOPClassUID,
 	})
 }
 
 // HandleDICOM takes a net.Conn and does basic DICOM Upper Layer communication:
-// it accepts any association, answers C-ECHO/C-FIND/C-STORE/C-GET/C-MOVE with
-// success and stores C-STORE data sets.
+// it accepts any association, answers C-ECHO and C-STORE with success (storing
+// the data sets), answers Q/R C-FIND with matches from a synthetic archive and
+// refuses C-GET/C-MOVE.
 func HandleDICOM(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := &dicomServer{events: []parsedDICOM{}, conn: conn, logger: logger}
 	endReason := connection.EndHandlerClose
