@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
@@ -20,7 +21,15 @@ const (
 	asn1ClassContext   = 2
 	kerberosASReq      = 10
 	kerberosTGSReq     = 12
+	kerberosError      = 30
+
+	kdcErrPreauthRequired = 25
+	paEncTimestamp        = 2
+	paETypeInfo2          = 19
 )
+
+// kerberosNow is the KRB-ERROR stime clock; tests swap it for determinism.
+var kerberosNow = time.Now
 
 var (
 	errDERTruncated   = errors.New("truncated DER")
@@ -32,6 +41,7 @@ var (
 var kerberosMsgNames = map[int]string{
 	kerberosASReq:  "AS-REQ",
 	kerberosTGSReq: "TGS-REQ",
+	kerberosError:  "KRB-ERROR",
 }
 
 type parsedKerberos struct {
@@ -40,6 +50,7 @@ type parsedKerberos struct {
 	Path      string `json:"path,omitempty"`
 	MsgType   int    `json:"msg_type,omitempty"`
 	MsgName   string `json:"msg_name,omitempty"`
+	Status    string `json:"status,omitempty"`
 	PVNO      int    `json:"pvno,omitempty"`
 	Realm     string `json:"realm,omitempty"`
 	SName     string `json:"sname,omitempty"`
@@ -56,6 +67,86 @@ type derValue struct {
 	constructed bool
 	tag         int
 	content     []byte
+}
+
+func derEncode(tag byte, content []byte) []byte {
+	n := len(content)
+	out := []byte{tag}
+	switch {
+	case n < 0x80:
+		out = append(out, byte(n))
+	case n < 0x100:
+		out = append(out, 0x81, byte(n))
+	default:
+		out = append(out, 0x82, byte(n>>8), byte(n))
+	}
+	return append(out, content...)
+}
+
+func derCat(parts ...[]byte) []byte {
+	var out []byte
+	for _, p := range parts {
+		out = append(out, p...)
+	}
+	return out
+}
+
+func derInt(n int) []byte {
+	b := []byte{byte(n)}
+	for v := n >> 8; v > 0; v >>= 8 {
+		b = append([]byte{byte(v)}, b...)
+	}
+	if b[0]&0x80 != 0 {
+		b = append([]byte{0}, b...)
+	}
+	return derEncode(0x02, b)
+}
+
+func derCtx(tag int, content []byte) []byte { return derEncode(0xa0|byte(tag), content) }
+
+func derGeneralString(s string) []byte { return derEncode(0x1b, []byte(s)) }
+
+func derPrincipal(nameType int, parts ...string) []byte {
+	var strs []byte
+	for _, p := range parts {
+		strs = append(strs, derGeneralString(p)...)
+	}
+	return derEncode(0x30, derCat(derCtx(0, derInt(nameType)), derCtx(1, derEncode(0x30, strs))))
+}
+
+// buildKerberosPreauthRequired builds the KRB-ERROR a KDC sends for an AS-REQ
+// without pre-authentication: KDC_ERR_PREAUTH_REQUIRED with METHOD-DATA naming
+// PA-ENC-TIMESTAMP and PA-ETYPE-INFO2. Clients answer with a second AS-REQ
+// carrying an encrypted timestamp, which is the next request we want to see.
+func buildKerberosPreauthRequired(req parsedKerberos, now time.Time) []byte {
+	etype := 18
+	for _, e := range req.ETypes {
+		if e == 18 || e == 17 || e == 23 {
+			etype = e
+			break
+		}
+	}
+	entry := derCtx(0, derInt(etype))
+	if req.CName != "" && etype != 23 {
+		entry = derCat(entry, derCtx(1, derGeneralString(req.Realm+strings.ReplaceAll(req.CName, "/", ""))))
+	}
+	info2 := derEncode(0x30, derEncode(0x30, entry))
+	methodData := derEncode(0x30, derCat(
+		derEncode(0x30, derCat(derCtx(1, derInt(paETypeInfo2)), derCtx(2, derEncode(0x04, info2)))),
+		derEncode(0x30, derCat(derCtx(1, derInt(paEncTimestamp)), derCtx(2, derEncode(0x04, nil)))),
+	))
+	now = now.UTC()
+	body := derCat(
+		derCtx(0, derInt(5)),
+		derCtx(1, derInt(kerberosError)),
+		derCtx(4, derEncode(0x18, []byte(now.Format("20060102150405Z")))),
+		derCtx(5, derInt(now.Nanosecond()/1000)),
+		derCtx(6, derInt(kdcErrPreauthRequired)),
+		derCtx(9, derGeneralString(req.Realm)),
+		derCtx(10, derPrincipal(2, "krbtgt", req.Realm)),
+		derCtx(12, derEncode(0x04, methodData)),
+	)
+	return derEncode(0x60|kerberosError, derEncode(0x30, body))
 }
 
 func kerberosMsgName(msgType int) string {
@@ -400,8 +491,10 @@ func looksLikeKerberos(data []byte) bool {
 }
 
 // HandleKerberos parses a Kerberos UDP datagram (typically AS-REQ / TGS-REQ on
-// port 88) and emits one producer event. It does not reply: a KRB-ERROR or
-// AS-REP would advertise a KDC. Parse-only is enough to tag scanner probes.
+// port 88) and emits one producer event. An AS-REQ with a realm is answered
+// with KDC_ERR_PREAUTH_REQUIRED so the client retries with an encrypted
+// timestamp (revealing its principal); TGS-REQ and unparseable input stay
+// parse-only. No AS-REP is ever produced: there is no real KDC behind this.
 func HandleKerberos(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	payload := make([]byte, min(len(data), maxKerberosPayload))
 	copy(payload, data[:len(payload)])
@@ -441,5 +534,25 @@ func HandleKerberos(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []b
 		slog.String("realm", frame.Realm),
 		slog.String("sname", frame.SName),
 	)
+
+	if frame.MsgType != kerberosASReq || frame.Realm == "" {
+		return nil
+	}
+	resp := buildKerberosPreauthRequired(frame, kerberosNow())
+	if err := h.ReplyUDP(srcAddr, dstAddr, resp); err != nil {
+		logger.Error("Failed to send Kerberos reply", slog.String("protocol", "kerberos"), producer.ErrAttr(err))
+		return nil
+	}
+	events = append(events, parsedKerberos{
+		Direction: "write",
+		Command:   "KRB-ERROR",
+		Path:      "krbtgt/" + frame.Realm,
+		MsgType:   kerberosError,
+		MsgName:   "KRB-ERROR",
+		Status:    "KDC_ERR_PREAUTH_REQUIRED",
+		Realm:     frame.Realm,
+		SName:     "krbtgt/" + frame.Realm,
+		Payload:   resp,
+	})
 	return nil
 }
