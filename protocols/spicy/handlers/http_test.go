@@ -160,8 +160,18 @@ func TestHandleHTTPResponseBranches(t *testing.T) {
 		},
 		{
 			name:     "Citrix",
-			request:  buildHTTPRequest("GET", "/vpn/index.html", ""),
+			request:  buildHTTPRequest("GET", "/vpn/../vpns/cfg/smb.conf", ""),
 			contains: "[global]",
+		},
+		{
+			name:     "CitrixLogin",
+			request:  buildHTTPRequest("GET", "/vpn/index.html", ""),
+			contains: "<title>NetScaler Gateway</title>",
+		},
+		{
+			name:     "CitrixTemplateWrite",
+			request:  buildHTTPRequest("POST", "/vpn/../vpns/portal/scripts/newbm.pl", "url=http://example.com&title=%5B%25+7*7+%25%5D&desc=d&UI_inuse=a"),
+			contains: "parent.window.ns_reload",
 		},
 	}
 

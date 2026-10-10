@@ -62,7 +62,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 
 | Name                        | What it captures                         |
 | --------------------------- | ---------------------------------------- |
-| Citrix ADC (CVE-2019-19781) | `GET /vpn/*` RCE probes                  |
+| Citrix ADC (CVE-2019-19781) | `/vpn/../vpns/` scans, `newbm.pl` template payloads |
 | VMware "hyper/send"         | `* hyper/send` request-body exploit (logged, never dialed) |
 | Ethereum JSON-RPC           | `POST` body containing `eth_blockNumber` |
 | Wallet probes               | URIs containing `wallet`                 |

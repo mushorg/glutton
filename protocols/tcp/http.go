@@ -19,6 +19,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/mushorg/glutton/protocols/tcp/citrix"
 	"github.com/mushorg/glutton/protocols/tcp/pve"
 	"github.com/mushorg/glutton/protocols/tcp/selenium"
 )
@@ -100,41 +101,25 @@ func handlePOST(req *http.Request, body []byte, logger interfaces.Logger) ([]byt
 	return nil, nil
 }
 
-// scanning attempts for CVE-2019-19781
-// based on https://github.com/x1sec/citrix-honeypot/
-func smbHandler(_ *http.Request) []byte {
-	headers := `Server: Apache
-X-Frame-Options: SAMEORIGIN
-Last-Modified: Thu, 28 Nov 2019 20:19:22 GMT
-ETag: "53-5986dd42b0680"
-Accept-Ranges: bytes
-Content-Length: 93
-X-XSS-Protection: 1; mode=block
-X-Content-Type-Options: nosniff
-Content-Type: text/plain; charset=UTF-8`
-
-	smbConfig := "\r\n\r\n[global]\r\n\tencrypt passwords = yes\r\n\tname resolve order = lmhosts wins host bcast\r\n"
-	return []byte("HTTP/1.1 200 OK\r\n" + headers + smbConfig)
-}
-
 type parsedHTTP struct {
-	Direction  string     `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
-	Command    string     `json:"command,omitempty"`   // HTTP method
-	Path       string     `json:"path,omitempty"`
-	Query      string     `json:"query,omitempty"`
-	Parameters url.Values `json:"parameters,omitempty"` // parsed query key/values
-	Host       string     `json:"host,omitempty"`
-	Username   string     `json:"username,omitempty"` // Proxmox VE login (never the password)
-	UserAgent  string     `json:"user_agent,omitempty"`
-	Status     string     `json:"status,omitempty"`
-	SessionID  string     `json:"session_id,omitempty"`
-	DestPort   uint16     `json:"dest_port,omitempty"` // set on reads; sessions can span ports
-	SrcPort    string     `json:"src_port,omitempty"`  // set on reads; sessions can span connections
-	Browser    string     `json:"browser,omitempty"`   // Selenium new-session browserName
-	Binary     string     `json:"binary,omitempty"`    // Selenium new-session browser binary
-	Args       []string   `json:"args,omitempty"`      // Selenium new-session browser args
-	Truncated  bool       `json:"truncated,omitempty"` // a Selenium binary/args cap applied
-	Payload    []byte     `json:"payload,omitempty"`   // raw HTTP request or response bytes
+	Direction  string          `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
+	Command    string          `json:"command,omitempty"`   // HTTP method
+	Path       string          `json:"path,omitempty"`
+	Query      string          `json:"query,omitempty"`
+	Parameters url.Values      `json:"parameters,omitempty"` // parsed query key/values
+	Host       string          `json:"host,omitempty"`
+	Username   string          `json:"username,omitempty"` // Proxmox VE login (never the password)
+	UserAgent  string          `json:"user_agent,omitempty"`
+	Status     string          `json:"status,omitempty"`
+	SessionID  string          `json:"session_id,omitempty"`
+	DestPort   uint16          `json:"dest_port,omitempty"` // set on reads; sessions can span ports
+	SrcPort    string          `json:"src_port,omitempty"`  // set on reads; sessions can span connections
+	Browser    string          `json:"browser,omitempty"`   // Selenium new-session browserName
+	Binary     string          `json:"binary,omitempty"`    // Selenium new-session browser binary
+	Args       []string        `json:"args,omitempty"`      // Selenium new-session browser args
+	Truncated  bool            `json:"truncated,omitempty"` // a Selenium binary/args cap applied
+	Citrix     *citrix.Request `json:"citrix,omitempty"`    // CVE-2019-19781 stage, NSC_USER, template
+	Payload    []byte          `json:"payload,omitempty"`   // raw HTTP request or response bytes
 }
 
 // httpParameters returns the query map, or nil when empty so omitempty drops it.
@@ -256,6 +241,7 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 	if proxmox {
 		frame.Username, _ = pve.LoginUsername(req.Method, path, body)
 	}
+	frame.Citrix = citrix.Inspect(req.Method, path, req.Header, body)
 	s.record(frame)
 
 	if grid {
@@ -263,6 +249,14 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 	}
 	if proxmox {
 		return s.write(pve.Respond(req.Method, path, httpNow()))
+	}
+	if frame.Citrix != nil {
+		logger.Info(
+			"HTTP Citrix CVE-2019-19781 request",
+			slog.String("handler", "http"),
+			slog.String("stage", string(frame.Citrix.Stage)),
+		)
+		return s.write(citrix.Respond(frame.Citrix.Stage))
 	}
 
 	switch req.Method {
@@ -291,10 +285,6 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 			return fmt.Errorf("failed to read embedded file: %w", err)
 		}
 		return s.write(httpOKJSON(data))
-	}
-
-	if strings.HasPrefix(req.RequestURI, "/vpn/") {
-		return s.write(smbHandler(req))
 	}
 
 	if resp := LFIResponse(req.URL.RawQuery); resp != nil {

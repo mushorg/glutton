@@ -18,6 +18,7 @@ import (
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/spicy"
 	"github.com/mushorg/glutton/protocols/tcp"
+	"github.com/mushorg/glutton/protocols/tcp/citrix"
 	"github.com/mushorg/glutton/protocols/tcp/selenium"
 )
 
@@ -27,17 +28,18 @@ const maxHTTPRequests = 50
 // headers are omitted from the decoded shape so the sensor address is not
 // published; Payload keeps the raw wire bytes for replay.
 type parsedHTTP struct {
-	Direction  string     `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
-	Command    string     `json:"command,omitempty"`   // HTTP method
-	Path       string     `json:"path,omitempty"`
-	Query      string     `json:"query,omitempty"`
-	Parameters url.Values `json:"parameters,omitempty"` // parsed query key/values
-	Status     string     `json:"status,omitempty"`
-	Browser    string     `json:"browser,omitempty"`   // Selenium new-session browserName
-	Binary     string     `json:"binary,omitempty"`    // Selenium new-session browser binary
-	Args       []string   `json:"args,omitempty"`      // Selenium new-session browser args
-	Truncated  bool       `json:"truncated,omitempty"` // a Selenium binary/args cap applied
-	Payload    []byte     `json:"payload,omitempty"`   // raw HTTP request or response bytes
+	Direction  string          `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
+	Command    string          `json:"command,omitempty"`   // HTTP method
+	Path       string          `json:"path,omitempty"`
+	Query      string          `json:"query,omitempty"`
+	Parameters url.Values      `json:"parameters,omitempty"` // parsed query key/values
+	Status     string          `json:"status,omitempty"`
+	Browser    string          `json:"browser,omitempty"`   // Selenium new-session browserName
+	Binary     string          `json:"binary,omitempty"`    // Selenium new-session browser binary
+	Args       []string        `json:"args,omitempty"`      // Selenium new-session browser args
+	Truncated  bool            `json:"truncated,omitempty"` // a Selenium binary/args cap applied
+	Citrix     *citrix.Request `json:"citrix,omitempty"`    // CVE-2019-19781 stage and template (no headers here)
+	Payload    []byte          `json:"payload,omitempty"`   // raw HTTP request or response bytes
 }
 
 // httpParameters parses a raw query string into url.Values, or nil when empty.
@@ -139,23 +141,6 @@ func dockerAPIVersionResponse(path string, log interfaces.Logger) []byte {
 	return httpOKJSON(data)
 }
 
-func citrixSMBResponse(path string) []byte {
-	if !strings.HasPrefix(path, "/vpn/") {
-		return nil
-	}
-	headers := `Server: Apache
-X-Frame-Options: SAMEORIGIN
-Last-Modified: Thu, 28 Nov 2019 20:19:22 GMT
-ETag: "53-5986dd42b0680"
-Accept-Ranges: bytes
-Content-Length: 93
-X-XSS-Protection: 1; mode=block
-X-Content-Type-Options: nosniff
-Content-Type: text/plain; charset=UTF-8`
-	smbCfg := "\r\n\r\n[global]\r\n\tencrypt passwords = yes\r\n\tname resolve order = lmhosts wins host bcast\r\n"
-	return []byte("HTTP/1.1 200 OK\r\n" + headers + smbCfg)
-}
-
 func bodyFromParsed(parsed *spicy.ParsedData) []byte {
 	v, ok := parsed.Fields["body.content"]
 	if !ok {
@@ -200,6 +185,9 @@ func (s *httpServer) buildResponse(ctx context.Context, method, uriRaw, path str
 	if selenium.IsGridRequest(md.TargetPort, path) {
 		return selenium.Respond(method, path, body)
 	}
+	if resp := citrix.Respond(citrix.Classify(method, path)); resp != nil {
+		return resp
+	}
 	switch method {
 	case "POST":
 		if resp := ethereumRPCResponse(body); resp != nil {
@@ -213,9 +201,6 @@ func (s *httpServer) buildResponse(ctx context.Context, method, uriRaw, path str
 		return resp
 	}
 	if resp := dockerAPIVersionResponse(path, log); resp != nil {
-		return resp
-	}
-	if resp := citrixSMBResponse(path); resp != nil {
 		return resp
 	}
 	if resp := tcp.LFIResponse(queryFromURI(uriRaw)); resp != nil {
@@ -327,6 +312,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 				frame.Browser, frame.Binary, frame.Args, frame.Truncated = sess.Browser, sess.Binary, sess.Args, sess.Truncated
 			}
 		}
+		frame.Citrix = citrix.Inspect(method, path, nil, body)
 		server.events = append(server.events, frame)
 
 		resp := server.buildResponse(ctx, method, uriRaw, path, body, md, log, hp)
