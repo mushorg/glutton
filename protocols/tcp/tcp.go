@@ -25,6 +25,9 @@ type parsedTCP struct {
 	Status      string `json:"status,omitempty"`  // canned response name, or "random", on writes
 	Payload     []byte `json:"payload,omitempty"`
 	PayloadHash string `json:"payload_hash,omitempty"`
+	// TLS ClientHello fingerprint fields (tls_version, ja3, ja4, ...) on a
+	// read answered with tls-alert, flattened into the frame.
+	*helpers.ClientHello
 }
 
 type tcpServer struct {
@@ -58,12 +61,18 @@ func (s *tcpServer) write(data []byte, status string) error {
 }
 
 func (s *tcpServer) captureRead(data []byte, payloadHash, command string) {
-	s.events = append(s.events, parsedTCP{
+	frame := parsedTCP{
 		Direction:   "read",
 		Command:     command,
 		PayloadHash: payloadHash,
 		Payload:     data,
-	})
+	}
+	if command == "tls-alert" {
+		if hello, ok := helpers.ParseClientHello(data); ok {
+			frame.ClientHello = hello
+		}
+	}
+	s.events = append(s.events, frame)
 }
 
 // bannerFollowUp answers the client's reply to a server-first banner so the

@@ -2,8 +2,10 @@ package tcp
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -242,6 +244,62 @@ func TestHandleTCPSignatureBeatsPort(t *testing.T) {
 	require.Len(t, events, 2)
 	require.Equal(t, "tls-alert", events[0].Command)
 	require.Equal(t, "tls-alert", events[1].Status)
+}
+
+func TestHandleTCPTLSAlertRecordsClientHello(t *testing.T) {
+	// ClientHello from Ochi event 5c99acb5-9d55-4846-90e7-30a6b2c0a135 (tcp/48392)
+	hello, err := os.ReadFile("../helpers/testdata/clienthello_go_mlkem.bin")
+	require.NoError(t, err)
+	client, hp, done := startCatchAll(t, 48392)
+
+	_, err = client.Write(hello)
+	require.NoError(t, err)
+	alert := []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28}
+	require.Equal(t, alert, readAll(t, client, 7))
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Equal(t, []parsedTCP{
+		{
+			Direction:   "read",
+			Command:     "tls-alert",
+			Payload:     hello,
+			PayloadHash: helpers.SHA256Hex(hello),
+			ClientHello: &helpers.ClientHello{
+				Version:      "TLS 1.3",
+				CipherSuites: []uint16{0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc009, 0xc013, 0xc00a, 0xc014, 0x1301, 0x1302, 0x1303},
+				Extensions:   []uint16{11, 65281, 23, 18, 5, 10, 13, 50, 43, 51},
+				Groups:       []uint16{0x11ec, 29, 23, 24, 25},
+				JA3:          "2196848d251b217de8b2c037e356c11d",
+				JA4:          "t13i131000_f57a46bbacb6_ab7e3b40a677",
+			},
+		},
+		{Direction: "write", Status: "tls-alert", Payload: alert, PayloadHash: helpers.SHA256Hex(alert)},
+	}, events)
+
+	// fingerprint fields are flattened into the read frame
+	raw, err := json.Marshal(events[0])
+	require.NoError(t, err)
+	var frame map[string]any
+	require.NoError(t, json.Unmarshal(raw, &frame))
+	require.Equal(t, "TLS 1.3", frame["tls_version"])
+	require.Equal(t, "t13i131000_f57a46bbacb6_ab7e3b40a677", frame["ja4"])
+	require.NotContains(t, frame, "sni")
+	raw, err = json.Marshal(events[1])
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "ja3")
+}
+
+func TestHandleTCPTLSAlertMalformedHello(t *testing.T) {
+	// the record header matches the signature but the hello is cut short
+	client, hp, done := startCatchAll(t, 8009)
+	_, err := client.Write([]byte{0x16, 0x03, 0x01, 0x00, 0x05, 0x01, 0x00, 0x00, 0x01, 0x03})
+	require.NoError(t, err)
+	readAll(t, client, 7)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 2)
+	require.Equal(t, "tls-alert", events[0].Command)
+	require.Nil(t, events[0].ClientHello)
 }
 
 func TestHandleTCPSilentGreetsIdlePort(t *testing.T) {
