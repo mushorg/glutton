@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/guard"
 	"github.com/mushorg/glutton/protocols/tcp/rfb"
 	"github.com/stretchr/testify/require"
 )
@@ -39,21 +40,59 @@ func (c rfbClient) send(data []byte) {
 	require.NoError(c.t, err)
 }
 
+// rfbClock is a fake clock for update pacing; sleeping advances it.
+type rfbClock struct {
+	now   time.Time
+	slept time.Duration
+}
+
+func (c *rfbClock) install(s *rfbServer) {
+	c.now = time.Unix(0, 0)
+	s.now = func() time.Time { return c.now }
+	s.sleep = func(d time.Duration) {
+		c.now = c.now.Add(d)
+		c.slept += d
+	}
+}
+
 // startRFB runs the handler on one end of a pipe and returns the other end.
+// Pacing uses a fake clock, so updates are never delayed.
 func startRFB(t *testing.T) (rfbClient, *fakeHoneypot, chan error) {
 	t.Helper()
 	client, serverConn := net.Pipe()
+	return startRFBOn(t, client, serverConn, func(s *rfbServer) { new(rfbClock).install(s) })
+}
+
+// startRFBOn runs the handler on serverConn after configure has adjusted the
+// server.
+func startRFBOn(t *testing.T, client, serverConn net.Conn, configure func(*rfbServer)) (rfbClient, *fakeHoneypot, chan error) {
+	t.Helper()
 	t.Cleanup(func() { client.Close() })
 
 	hp := newFakeHoneypot()
 	server := newRFBServer(serverConn)
 	server.rand = bytes.NewReader(rfbTestChallenge)
+	configure(server)
 
 	done := make(chan error, 1)
 	go func() {
 		done <- handleRFB(context.Background(), server, connection.Metadata{}, &recordingLogger{}, hp)
 	}()
 	return rfbClient{t: t, conn: client}, hp, done
+}
+
+// startRFBGuarded runs the handler on a loopback TCP conn wrapped by a reply
+// guard with cfg, as glutton wraps every accepted conn.
+func startRFBGuarded(t *testing.T, cfg guard.Config, configure func(*rfbServer)) (rfbClient, *fakeHoneypot, chan error) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	client, err := net.Dial("tcp", ln.Addr().String())
+	require.NoError(t, err)
+	serverConn, err := ln.Accept()
+	require.NoError(t, err)
+	return startRFBOn(t, client, guard.New(cfg).Wrap(serverConn, nil), configure)
 }
 
 // finishRFB waits for the handler and returns its single produced event.
@@ -296,38 +335,178 @@ func (c rfbClient) expectNothing() {
 	require.ErrorIs(c.t, err, os.ErrDeadlineExceeded)
 }
 
-// TestHandleRFBCensysFramebufferUpdate replays the Censys session from
-// https://ochi.mushmush.org/events/3c7ee349-e595-443d-8378-26607dc711fb,
-// which used to hang until timeout after its FramebufferUpdateRequest.
-func TestHandleRFBCensysFramebufferUpdate(t *testing.T) {
-	c, hp, done := startRFB(t)
-	setEncodings := []byte{0x02, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x21}
-	fullRequest := []byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x03, 0x00}
-	incremental := []byte{0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x03, 0x00}
-	update := rfb.FramebufferUpdate(rfb.Rect{Width: rfbWidth, Height: rfbHeight, Encoding: rfb.EncodingRaw, Data: rfb.RenderRaw(rfbDesktop, rfb.DefaultPixelFormat)})
-	require.Len(t, update, 16+rfbWidth*rfbHeight*4)
+// The Censys session from
+// https://ochi.mushmush.org/events/3c7ee349-e595-443d-8378-26607dc711fb and
+// https://ochi.mushmush.org/events/a8a8d1cd-5ad4-4c21-b4ea-c6e736ade52b: Raw
+// and DesktopSize only, then a full-screen request. It used to hang until
+// timeout, and then failed with write_error because the 3 MiB Raw update was
+// over the tcp_reply_limit burst.
+var (
+	rfbCensysSetEncodings = []byte{0x02, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x21}
+	rfbCensysFullRequest  = []byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x03, 0x00}
+	rfbCensysIncremental  = []byte{0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x03, 0x00}
+)
+
+// rfbBands is the full Raw desktop as the band updates the handler sends.
+func rfbBands(t *testing.T) [][]byte {
+	t.Helper()
+	rows := rfb.BandRows(rfbWidth, rfb.DefaultPixelFormat, rfbMaxBandBytes)
+	require.Equal(t, uint16(128), rows)
+	var bands [][]byte
+	for y := uint16(0); y < rfbHeight; y += rows {
+		data := rfb.RawRect(rfbDesktopRaw(), rfb.DefaultPixelFormat, rfbWidth, 0, y, rfbWidth, rows)
+		bands = append(bands, rfb.FramebufferUpdate(rfb.Rect{Y: y, Width: rfbWidth, Height: rows, Encoding: rfb.EncodingRaw, Data: data}))
+	}
+	return bands
+}
+
+// rfbCensysSession drives the Censys session to the end of the screen and
+// asserts what the client received and what was recorded.
+func rfbCensysSession(t *testing.T, c rfbClient, hp *fakeHoneypot, done chan error) {
+	t.Helper()
+	bands := rfbBands(t)
 
 	rfbNoneLogin(c)
-	c.send(setEncodings)
-	c.send(fullRequest)
-	c.expect(update)
-	c.send(incremental) // nothing changed, so no reply
+	c.send(rfbCensysSetEncodings)
+	c.send(rfbCensysFullRequest)
+	screen := make([]byte, 0, rfbWidth*rfbHeight*4)
+	for i, band := range bands {
+		if i > 0 {
+			c.send(rfbCensysIncremental) // the rest of the screen is still pending
+		}
+		c.expect(band)
+		screen = append(screen, band[16:]...)
+	}
+	require.Equal(t, rfbDesktopRaw(), screen)
+	c.send(rfbCensysIncremental) // the whole screen was sent and nothing changed: no reply
 	c.expectNothing()
 	require.NoError(t, c.conn.Close())
 
 	produced := finishRFB(t, hp, done)
 	require.Equal(t, connection.EndClientClose, produced.endReason)
-	events := produced.decoded.([]parsedRFB)
-	require.Equal(t, []string{
-		"ProtocolVersion", "ProtocolVersion", "Security", "SecurityType", "SecurityResult", "ClientInit", "ServerInit",
-		"SetEncodings", "FramebufferUpdateRequest", "FramebufferUpdate", "FramebufferUpdateRequest",
-	}, rfbCommands(events))
+	want := []parsedRFB{
+		{Direction: "read", Command: "SetEncodings", Encodings: []int32{0, -223}, Payload: rfbCensysSetEncodings},
+		{Direction: "read", Command: "FramebufferUpdateRequest", Payload: rfbCensysFullRequest},
+	}
+	for i, band := range bands {
+		if i > 0 {
+			want = append(want, parsedRFB{Direction: "read", Command: "FramebufferUpdateRequest", Payload: rfbCensysIncremental})
+		}
+		want = append(want, parsedRFB{Direction: "write", Command: "FramebufferUpdate", Encodings: []int32{0}, Payload: band[:rfbMaxPayload], Truncated: true})
+	}
+	want = append(want, parsedRFB{Direction: "read", Command: "FramebufferUpdateRequest", Payload: rfbCensysIncremental})
+	require.Equal(t, want, produced.decoded.([]parsedRFB)[7:])
+}
+
+func TestHandleRFBCensysFramebufferUpdate(t *testing.T) {
+	c, hp, done := startRFB(t)
+	rfbCensysSession(t, c, hp, done)
+}
+
+// TestHandleRFBCensysGuarded replays the Censys session through a reply
+// guard. Its rates are scaled up together with the handler's pacing so the
+// test runs in about a second; the burst sizes are the defaults.
+func TestHandleRFBCensysGuarded(t *testing.T) {
+	const speedup = 64
+	cfg := guard.DefaultTCPConfig()
+	cfg.SourceRate *= speedup
+	c, hp, done := startRFBGuarded(t, cfg, func(s *rfbServer) { s.paceRate *= speedup })
+	rfbCensysSession(t, c, hp, done)
+}
+
+// TestHandleRFBGuardRefusesUpdate: an update the guard refuses for good is
+// recorded as limited, nothing reaches the client and the session goes on.
+func TestHandleRFBGuardRefusesUpdate(t *testing.T) {
+	cfg := guard.DefaultTCPConfig()
+	cfg.SourceBurst = rfbWriteChunk / 2 // no update chunk ever fits
+	clock := new(rfbClock)
+	c, hp, done := startRFBGuarded(t, cfg, clock.install)
+
+	rfbNoneLogin(c)
+	c.send(rfbCensysSetEncodings)
+	c.send(rfbCensysFullRequest)
+	c.expectNothing()
+	c.send(rfbCensysIncremental) // the refused band is still pending and tried again
+	c.expectNothing()
+	c.send([]byte{5, 0, 0, 1, 0, 2}) // still reading
+	require.NoError(t, c.conn.Close())
+
+	produced := finishRFB(t, hp, done)
+	require.Equal(t, connection.EndClientClose, produced.endReason)
+	limited := parsedRFB{Direction: "write", Command: "FramebufferUpdate", Status: "limited", Encodings: []int32{0}, Truncated: true}
 	require.Equal(t, []parsedRFB{
-		{Direction: "read", Command: "SetEncodings", Encodings: []int32{0, -223}, Payload: setEncodings},
-		{Direction: "read", Command: "FramebufferUpdateRequest", Payload: fullRequest},
-		{Direction: "write", Command: "FramebufferUpdate", Encodings: []int32{0}, Payload: update[:rfbMaxPayload], Truncated: true},
-		{Direction: "read", Command: "FramebufferUpdateRequest", Payload: incremental},
-	}, events[7:])
+		{Direction: "read", Command: "SetEncodings", Encodings: []int32{0, -223}, Payload: rfbCensysSetEncodings},
+		{Direction: "read", Command: "FramebufferUpdateRequest", Payload: rfbCensysFullRequest},
+		limited,
+		{Direction: "read", Command: "FramebufferUpdateRequest", Payload: rfbCensysIncremental},
+		limited,
+		{Direction: "read", Command: "PointerEvent", Payload: []byte{5, 0, 0, 1, 0, 2}},
+	}, produced.decoded.([]parsedRFB)[7:])
+	require.Equal(t, 2*rfbLimitWait, clock.slept) // retried before giving up, twice
+}
+
+// rfbRefusingConn refuses its first refuse writes the way a guarded conn does.
+type rfbRefusingConn struct {
+	net.Conn
+	refuse int
+}
+
+func (c *rfbRefusingConn) Write(p []byte) (int, error) {
+	if c.refuse > 0 {
+		c.refuse--
+		return 0, guard.ErrLimited
+	}
+	return c.Conn.Write(p)
+}
+
+func TestHandleRFBRetriesRefusedWrite(t *testing.T) {
+	client, serverConn := net.Pipe()
+	refusing := &rfbRefusingConn{Conn: serverConn}
+	clock := new(rfbClock)
+	c, hp, done := startRFBOn(t, client, refusing, clock.install)
+	band := rfbBands(t)[0]
+
+	rfbNoneLogin(c)
+	refusing.refuse = 2
+	c.send(rfbCensysFullRequest)
+	c.expect(band)
+	require.NoError(t, c.conn.Close())
+
+	events := finishRFB(t, hp, done).decoded.([]parsedRFB)
+	require.Equal(t, parsedRFB{Direction: "write", Command: "FramebufferUpdate", Encodings: []int32{0}, Payload: band[:rfbMaxPayload], Truncated: true}, events[len(events)-1])
+	require.Equal(t, 2*rfbLimitRetry, clock.slept)
+}
+
+func TestRFBPace(t *testing.T) {
+	s := newRFBServer(nil)
+	clock := new(rfbClock)
+	clock.install(s)
+
+	for range rfbPaceBurst / rfbWriteChunk {
+		s.pace(rfbWriteChunk) // the burst goes out at once
+	}
+	require.Zero(t, clock.slept)
+	s.pace(rfbWriteChunk)
+	require.InDelta(t, float64(rfbWriteChunk)/rfbPaceRate, clock.slept.Seconds(), 1e-6)
+
+	clock.now = clock.now.Add(time.Hour) // refills, but only up to the burst
+	clock.slept = 0
+	s.pace(rfbPaceBurst)
+	require.Zero(t, clock.slept)
+	s.pace(1)
+	require.NotZero(t, clock.slept)
+
+	// a full Raw screen takes what does not fit the burst at the paced rate
+	s = newRFBServer(nil)
+	clock = new(rfbClock)
+	clock.install(s)
+	for sent := 0; sent < len(rfbDesktopRaw()); sent += rfbWriteChunk {
+		s.pace(rfbWriteChunk)
+	}
+	want := float64(len(rfbDesktopRaw())-rfbPaceBurst) / rfbPaceRate
+	require.InDelta(t, want, clock.slept.Seconds(), 0.01)
+	require.Less(t, rfbPaceRate, guard.DefaultTCPSourceRate)
+	require.Less(t, rfbPaceBurst+rfbWriteChunk, guard.DefaultTCPSourceBurst)
 }
 
 func TestHandleRFBIncrementalFirstRRE(t *testing.T) {
@@ -365,8 +544,9 @@ func TestHandleRFBSetPixelFormat(t *testing.T) {
 func TestHandleRFBUpdateBudget(t *testing.T) {
 	c, hp, done := startRFB(t)
 	full := []byte{3, 0, 0, 0, 0, 0, 0x04, 0x00, 0x03, 0x00}
-	size := 16 + rfbWidth*rfbHeight*4
-	allowed := rfbMaxUpdateBytes / size
+	size := len(rfbBands(t)[0]) // a full request restarts at the top band
+	allowed := rfbMaxSessionBytes / size
+	require.Equal(t, 7, allowed)
 
 	rfbNoneLogin(c)
 	for range allowed {
@@ -401,7 +581,11 @@ func TestHandleRFBDisconnectDuringUpdate(t *testing.T) {
 	produced := waitProduced(t, hp)
 	require.Equal(t, connection.EndWriteError, produced.endReason)
 	events := produced.decoded.([]parsedRFB)
-	require.Equal(t, "FramebufferUpdateRequest", events[len(events)-1].Command)
+	last := events[len(events)-1]
+	require.Equal(t, "FramebufferUpdate", last.Command)
+	require.Equal(t, "write_error", last.Status)
+	require.True(t, last.Truncated)
+	require.Equal(t, []byte{0, 0, 0, 1}, last.Payload) // only what reached the client
 }
 
 func rfbCommands(events []parsedRFB) []string {

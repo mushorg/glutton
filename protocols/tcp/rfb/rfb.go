@@ -385,6 +385,16 @@ func ClampRect(x, y, w, h, width, height uint16) (uint16, uint16, uint16, uint16
 	return x, y, w, h, true
 }
 
+// BandRows is how many rows of a w pixel wide Raw rectangle fit in maxBytes
+// of pixel data in pf, at least one.
+func BandRows(w uint16, pf PixelFormat, maxBytes int) uint16 {
+	row := int(w) * int(pf.BPP/8)
+	if row == 0 {
+		return 1
+	}
+	return uint16(max(1, min(maxBytes/row, 0xffff)))
+}
+
 // UpdateRequest is a decoded FramebufferUpdateRequest.
 type UpdateRequest struct {
 	Incremental         bool

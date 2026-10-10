@@ -150,6 +150,14 @@ func TestClampRect(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestBandRows(t *testing.T) {
+	require.Equal(t, uint16(128), BandRows(1024, DefaultPixelFormat, 512<<10)) // 4096-byte rows
+	require.Equal(t, uint16(256), BandRows(1024, PixelFormat{BPP: 16}, 512<<10))
+	require.Equal(t, uint16(1), BandRows(1024, DefaultPixelFormat, 100)) // a row never splits
+	require.Equal(t, uint16(1), BandRows(0, DefaultPixelFormat, 512<<10))
+	require.Equal(t, uint16(0xffff), BandRows(1, PixelFormat{BPP: 8}, 1<<20))
+}
+
 func TestUpdateMessages(t *testing.T) {
 	req, ok := ParseUpdateRequest([]byte{0, 0, 0, 0, 0, 4, 0, 3, 0})
 	require.True(t, ok)
