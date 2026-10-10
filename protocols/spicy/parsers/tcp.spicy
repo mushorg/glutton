@@ -12,8 +12,6 @@ public type Protocol = unit {
 
         if ($$ == b"GET " || $$ == b"POST" || $$ == b"HEAD" || $$ == b"OPTI" || $$ == b"CONN")
             self.protocol = "http";
-        else if ($$ == b"\x03\x00\x00\x2b")
-            self.protocol = "rdp";
     }
 
     rest: bytes &eod;

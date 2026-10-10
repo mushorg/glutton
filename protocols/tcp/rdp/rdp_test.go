@@ -211,3 +211,32 @@ func TestParseCredSSPNegotiateFlags(t *testing.T) {
 	require.Equal(t, NTLMMsgNegotiate, parsed.NTLMType)
 	require.Equal(t, uint32(0x60088235), parsed.NegotiateFlags)
 }
+
+func TestLooksLikeConnectionRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		hex  string
+		want bool
+	}{
+		// Ochi event 325c8103-b64a-4aeb-a2a3-3a8c9c32e05c, tcp/49119
+		{"cookie Administr", "0300002f2ae00000000000436f6f6b69653a206d737473686173683d41646d696e697374720d0a0100080003000000", true},
+		{"cookie hello", "0300002b26e00000000000436f6f6b69653a206d737473686173683d68656c6c6f0d0a0100080003000000", true},
+		{"bare CR", "0300000b06e00000000000", true},
+		{"header only", "0300002f2ae0", true},
+		{"too short", "0300002f2a", false},
+		{"tls", "160301020001", false},
+		{"http", "474554202f20", false},
+		{"x224 data", "0300000c02f0807f6582", false},
+		{"LI mismatch", "0300002f26e00000000000", false},
+		{"length too small", "0300000a05e000000000", false},
+		{"length too large", "030004012fe0", false},
+		{"tpkt version", "0200002f2ae00000000000", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := hex.DecodeString(test.hex)
+			require.NoError(t, err)
+			require.Equal(t, test.want, LooksLikeConnectionRequest(data))
+		})
+	}
+}

@@ -113,12 +113,6 @@ func TestParseTCPProtocol(t *testing.T) {
 			ok:       true,
 		},
 		{
-			name:     "rdp",
-			sample:   []byte{0x03, 0x00, 0x00, 0x2b},
-			protocol: "rdp",
-			ok:       true,
-		},
-		{
 			name: "mongodb",
 			sample: []byte{
 				0x10, 0x00, 0x00, 0x00,

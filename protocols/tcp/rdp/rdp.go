@@ -66,6 +66,11 @@ const (
 	rdpNegReqType         = 0x01
 	rdpNegRspType         = 0x02
 
+	// TPKT length bounds for a Connection Request: 4-byte TPKT + 7-byte
+	// X.224 CR at minimum; cookie, routing token and RDP_NEG_REQ stay small.
+	minConnectionRequestLen = 11
+	maxConnectionRequestLen = 1024
+
 	// Selected/requested protocol flags (MS-RDPBCGR 2.2.1.1.1).
 	ProtocolRDP    uint32 = 0x0
 	ProtocolSSL    uint32 = 0x1
@@ -121,6 +126,20 @@ func TPDUType(data []byte) byte {
 // IsConnectionRequest reports an X.224 Connection Request TPDU (type 0xE).
 func IsConnectionRequest(data []byte) bool {
 	return TPDUType(data)&tpduTypeMask == TPDUConnectionRequest
+}
+
+// LooksLikeConnectionRequest reports whether data starts with a TPKT-framed
+// X.224 Connection Request whose lengths agree, whatever the cookie length.
+// It needs only the first 6 bytes, so the catch-all can route off-port RDP.
+func LooksLikeConnectionRequest(data []byte) bool {
+	if len(data) < 6 || data[0] != 0x03 || data[1] != 0x00 {
+		return false
+	}
+	tpktLen := int(binary.BigEndian.Uint16(data[2:4]))
+	if tpktLen < minConnectionRequestLen || tpktLen > maxConnectionRequestLen {
+		return false
+	}
+	return int(data[4]) == tpktLen-5 && IsConnectionRequest(data)
 }
 
 // IsDataTPDU reports an X.224 Data TPDU (type 0xF).

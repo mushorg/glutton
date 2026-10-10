@@ -15,6 +15,7 @@ import (
 	spicyHandlers "github.com/mushorg/glutton/protocols/spicy/handlers"
 	"github.com/mushorg/glutton/protocols/tcp"
 	"github.com/mushorg/glutton/protocols/tcp/mctp"
+	"github.com/mushorg/glutton/protocols/tcp/rdp"
 	"github.com/mushorg/glutton/protocols/tcp/socks"
 	"github.com/mushorg/glutton/protocols/udp"
 	"github.com/spf13/viper"
@@ -22,6 +23,9 @@ import (
 
 // peek enough of the HTTP request line to detect /mcp or /sse
 const mcpRequestLinePeek = 96
+
+// rdpPeekLen covers the TPKT header, X.224 LI and TPDU type of an RDP CR.
+const rdpPeekLen = 6
 
 const (
 	// mctpPeekLen covers the "REMOTE " method prefix of an MCTP request line.
@@ -153,14 +157,22 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 			}
 			snip = req[:min(len(req), 4)]
 		}
+		// RDP scanners probe moved RDP on any port; the CR's TPKT length
+		// varies with the cookie, so check the framing rather than a prefix
+		if snip[0] == 0x03 {
+			cr, crConn, err := peekOrClose(conn, bufConn, rdpPeekLen, log)
+			if err != nil {
+				return nil
+			}
+			bufConn = crConn
+			if rdp.LooksLikeConnectionRequest(cr) {
+				return tcp.HandleRDP(ctx, bufConn, md, log, h)
+			}
+			snip = cr[:min(len(cr), 4)]
+		}
 		if viper.GetBool("spicy.enabled") {
-			if protocol, ok := parseTCPProtocol(snip, log); ok {
-				switch protocol {
-				case "http":
-					return handleDetectedHTTP(ctx, bufConn, md, log, h)
-				case "rdp":
-					return tcp.HandleRDP(ctx, bufConn, md, log, h)
-				}
+			if protocol, ok := parseTCPProtocol(snip, log); ok && protocol == "http" {
+				return handleDetectedHTTP(ctx, bufConn, md, log, h)
 			}
 			more, moreConn, err := peekOrClose(conn, bufConn, 16, log)
 			if err != nil {

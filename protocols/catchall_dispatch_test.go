@@ -235,3 +235,50 @@ func TestCatchAllSOCKSLookalikeStaysTCP(t *testing.T) {
 
 	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
 }
+
+func TestCatchAllRoutesOffPortRDP(t *testing.T) {
+	// no Spicy: RDP routing must not depend on it
+	client, hp, done := startCatchAllDispatch(t, 49119)
+
+	// RDP CR with cookie mstshash=Administr from Ochi event
+	// 325c8103-b64a-4aeb-a2a3-3a8c9c32e05c (TPKT length 47, not 43)
+	cr := append([]byte{0x03, 0x00, 0x00, 0x2f, 0x2a, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00},
+		"Cookie: mstshash=Administr\r\n"...)
+	cr = append(cr, 0x01, 0x00, 0x08, 0x00, 0x03, 0x00, 0x00, 0x00)
+	_, err := client.Write(cr)
+	require.NoError(t, err)
+	reply := make([]byte, 19)
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
+	// Connection Confirm with RDP_NEG_RSP
+	require.Equal(t, []byte{0x03, 0x00, 0x00, 0x13, 0x0e, 0xd0}, reply[:6])
+	require.Equal(t, byte(0x02), reply[11])
+
+	require.Equal(t, "rdp", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllTPKTLookalikeStaysTCP(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 9999)
+
+	// TPKT-framed X.224 Data TPDU, not a Connection Request
+	_, err := client.Write([]byte{0x03, 0x00, 0x00, 0x0c, 0x02, 0xf0, 0x80, 0x7f, 0x65, 0x82, 0x00, 0x00})
+	require.NoError(t, err)
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	require.NotEmpty(t, reply)
+
+	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllShortTPKTPrefixStaysTCP(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 9999)
+
+	// shorter than the RDP peek: still handled, not dropped
+	_, err := client.Write([]byte{0x03, 0x00, 0x00, 0x2f})
+	require.NoError(t, err)
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	require.NotEmpty(t, reply)
+
+	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
+}
