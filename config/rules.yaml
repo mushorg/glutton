@@ -89,6 +89,9 @@ rules:
     type: conn_handler
     target: http
     tls: auto
+  - match: tcp dst port 22 or port 2222
+    type: conn_handler
+    target: ssh
   - match: tcp
     type: conn_handler
     target: tcp

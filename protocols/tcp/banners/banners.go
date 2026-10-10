@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/protocols/helpers"
+	"github.com/mushorg/glutton/protocols/tcp/ssh"
 )
 
 // Response is a canned reply.
@@ -45,7 +46,7 @@ func mustHex(s string) []byte {
 }
 
 var (
-	sshBanner  = []byte("SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10\r\n")
+	sshBanner  = []byte(ssh.ServerVersion + "\r\n")
 	pop3Banner = []byte("+OK Dovecot (Ubuntu) ready.\r\n")
 	rfbBanner  = []byte("RFB 003.008\n")
 

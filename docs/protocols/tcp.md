@@ -28,7 +28,7 @@ Writes set `status` to the response name or `random`.
 
 | Client sends | Response | Reply |
 | --- | --- | --- |
-| `SSH-` | `ssh` | SSH banner |
+| `SSH-` | `ssh` | SSH banner. The catch-all dispatcher routes `SSH-` to the [`ssh`](ssh.md) handler first, so this only applies when another dispatcher's fallback (e.g. `mctp`, `rtsp`) hands SSH to the catch-all |
 | TLS handshake record (`16 03 00`–`04`, or TLCP `16 01 01` from GmSSL/Tongsuo) that is not a complete ClientHello | `tls-alert` | TLS alert |
 | Complete TLS ClientHello | `tls-clienthello` | TLS handshake, see [TLS ClientHello](#tls-clienthello) |
 | HTTP/2 client preface `PRI * HTTP/2.0` (h2c prior knowledge) | `http2-settings` | nginx-style SETTINGS, WINDOW_UPDATE, SETTINGS ACK and GOAWAY (NO_ERROR) on stream 0 |
@@ -81,7 +81,7 @@ Parsing uses `helpers.ParseClientHello`, a lenient parser that reassembles a hel
 
 ## Server-first banners
 
-- **22 / 2222 (`ssh`), 110 (`pop3`), 5900 (`rfb`):** banner sent on connect, before any read.
+- **110 (`pop3`), 5900 (`rfb`):** banner sent on connect, before any read. 22 / 2222 (`ssh`) get the SSH banner the same way only without the `ssh` rule; the default rules send them to the [`ssh`](ssh.md) handler.
 - **4444 (`cmd-shell`, a Windows Server 2003 `cmd.exe` prompt):** waits 2s for the client first.
   - A silent client gets the prompt as `decoded[0]` (a `write`).
   - A client that speaks first is routed by its bytes as on any catch-all port (HTTP to `http`), and otherwise gets the prompt as the reply.

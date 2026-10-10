@@ -104,6 +104,7 @@ func MapUDPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[string]TCPHandlerFunc {
 	m := map[string]TCPHandlerFunc{
 		"smtp":       bindTCP(tcp.HandleSMTP, log, h),
+		"ssh":        bindTCP(tcp.HandleSSH, log, h),
 		"rdp":        bindTCP(tcp.HandleRDP, log, h),
 		"smb":        bindTCP(tcp.HandleSMB, log, h),
 		"ftp":        bindTCP(tcp.HandleFTP, log, h),
@@ -168,6 +169,10 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		snip, bufConn, err := peekOrClose(conn, src, 4, log)
 		if err != nil {
 			return nil
+		}
+		// SSH clients on moved ports send their identification string first
+		if bytes.HasPrefix(snip, []byte("SSH-")) {
+			return tcp.HandleSSH(ctx, bufConn, md, log, h)
 		}
 		// proxy checkers send SOCKS requests to any port; the request is the
 		// whole first segment, so peek for all of it before deciding

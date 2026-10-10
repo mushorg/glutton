@@ -71,6 +71,9 @@ sip:
 smtp:
   hostname: mail.localdomain   # server name in the 220 greeting and HELO/EHLO replies.
 
+ssh:
+  host_keys: []   # private key files (PEM/OpenSSH) for the ssh handler; empty generates RSA, ECDSA and Ed25519 keys per process.
+
 icap:
   service: "C-ICAP/0.5.10 server - Echo demo service"   # Service header in OPTIONS replies.
   istag: CI0001-XXXXXXXXX                               # ISTag (without quotes) on every reply.

@@ -148,6 +148,7 @@ Example shape:
 | `mcp` | TCP | [protocols/mcp.md](protocols/mcp.md) |
 | `telnet` | TCP | [protocols/telnet.md](protocols/telnet.md) |
 | `smtp` | TCP | [protocols/smtp.md](protocols/smtp.md) |
+| `ssh` | TCP | [protocols/ssh.md](protocols/ssh.md) |
 | `ftp` | TCP | [protocols/ftp.md](protocols/ftp.md) |
 | `rfb` | TCP | [protocols/rfb.md](protocols/rfb.md) |
 | `iscsi` | TCP | [protocols/iscsi.md](protocols/iscsi.md) |
