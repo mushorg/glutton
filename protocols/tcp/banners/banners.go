@@ -12,6 +12,8 @@ import (
 	"encoding/hex"
 	"strconv"
 	"time"
+
+	"github.com/mushorg/glutton/protocols/helpers"
 )
 
 // Response is a canned reply.
@@ -231,7 +233,7 @@ func ForPayload(data []byte) (Response, bool) {
 	switch {
 	case bytes.HasPrefix(data, []byte("SSH-")):
 		return Response{Name: "ssh", Data: sshBanner}, true
-	case len(data) >= 3 && data[0] == 0x16 && data[1] == 0x03 && data[2] <= 0x04:
+	case helpers.LooksLikeTLSHandshakeRecord(data):
 		return Response{Name: "tls-alert", Data: tlsAlert}, true
 	case bytes.HasPrefix(data, h2Preface):
 		return Response{Name: "http2-settings", Data: h2Reply}, true

@@ -287,6 +287,8 @@ func TestWithTLS(t *testing.T) {
 func TestLooksLikeTLSRecord(t *testing.T) {
 	require.True(t, looksLikeTLSRecord([]byte{0x16, 0x03, 0x01}))
 	require.True(t, looksLikeTLSRecord([]byte{0x16, 0x03, 0x03}))
+	// TLCP (GmSSL/Tongsuo) record version
+	require.True(t, looksLikeTLSRecord([]byte{0x16, 0x01, 0x01}))
 	require.False(t, looksLikeTLSRecord([]byte{0x16, 0x03, 0x05}))
 	require.False(t, looksLikeTLSRecord([]byte{0x16, 0x00, 0x00}))
 	require.False(t, looksLikeTLSRecord([]byte("GET")))

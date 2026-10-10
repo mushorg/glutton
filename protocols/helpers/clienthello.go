@@ -57,6 +57,17 @@ type clientHello struct {
 	alpn          []string
 }
 
+// LooksLikeTLSHandshakeRecord matches a TLS handshake record header: content
+// type 0x16 and a 3.x record version up to TLS 1.3's legacy 0x0304, or 0x0101,
+// the TLCP (GB/T 38636) version that GmSSL/Tongsuo clients put on their
+// ClientHello record even when they also offer TLS 1.3.
+func LooksLikeTLSHandshakeRecord(b []byte) bool {
+	if len(b) < 3 || b[0] != recordTypeHandshake {
+		return false
+	}
+	return b[1] == 0x03 && b[2] <= 0x04 || b[1] == 0x01 && b[2] == 0x01
+}
+
 // ParseClientHello parses the ClientHello at the start of data, as captured
 // raw from the wire (record framing included, possibly spread over several
 // handshake records). The parser is lenient where crypto/tls is strict:

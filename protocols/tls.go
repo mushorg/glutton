@@ -115,10 +115,9 @@ func sniffTLS(bufConn BufferedConn, log interfaces.Logger) bool {
 	return looksLikeTLSRecord(hdr)
 }
 
-// looksLikeTLSRecord matches a TLS handshake record header: content type 0x16
-// and a 3.x record version up to TLS 1.3's legacy 0x0304.
+// looksLikeTLSRecord matches a TLS (or TLCP) handshake record header.
 func looksLikeTLSRecord(b []byte) bool {
-	return len(b) >= 3 && b[0] == tlsRecordHandshake && b[1] == 0x03 && b[2] <= 0x04
+	return helpers.LooksLikeTLSHandshakeRecord(b)
 }
 
 // finishTLS runs fn on a terminated TLS session, or produces the single event

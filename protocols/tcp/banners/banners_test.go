@@ -116,6 +116,11 @@ func TestForPayload(t *testing.T) {
 	require.Equal(t, "tls-alert", resp.Name)
 	require.Equal(t, []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28}, resp.Data)
 
+	// TLCP (GmSSL/Tongsuo) ClientHello record header, Ochi event cf4dd8e6-27af-432b-8db8-3bbb8ab34630
+	resp, ok = ForPayload([]byte{0x16, 0x01, 0x01, 0x01, 0xfb, 0x01})
+	require.True(t, ok)
+	require.Equal(t, "tls-alert", resp.Name)
+
 	// X11 setup from Ochi event bf678cc5-ae8d-4ea2-8d97-02ca98d6e37c (nmap X11Probe)
 	resp, ok = ForPayload([]byte{0x6c, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 	require.True(t, ok)

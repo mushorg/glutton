@@ -29,7 +29,7 @@ Writes set `status` to the response name or `random`.
 | Client sends | Response | Reply |
 | --- | --- | --- |
 | `SSH-` | `ssh` | SSH banner |
-| TLS record (not a complete ClientHello) | `tls-alert` | TLS alert |
+| TLS handshake record (`16 03 00`–`04`, or TLCP `16 01 01` from GmSSL/Tongsuo) that is not a complete ClientHello | `tls-alert` | TLS alert |
 | Complete TLS ClientHello | `tls-clienthello` | TLS handshake, see [TLS ClientHello](#tls-clienthello) |
 | HTTP/2 client preface `PRI * HTTP/2.0` (h2c prior knowledge) | `http2-settings` | nginx-style SETTINGS, WINDOW_UPDATE, SETTINGS ACK and GOAWAY (NO_ERROR) on stream 0 |
 | X11 connection setup | `x11-denied` | Setup Failed reply "No protocol specified" in the client's byte order |

@@ -36,6 +36,40 @@ func TestParseClientHelloCaptured(t *testing.T) {
 	}, hello)
 }
 
+// clienthello_tlcp.bin is the ClientHello from Ochi event
+// cf4dd8e6-27af-432b-8db8-3bbb8ab34630 (tcp/9000): record and legacy version
+// 0x0101 (TLCP), SM4-SM3 suites e013/e053, TLS 1.3 offered via
+// supported_versions, SNI after a 220-byte padding extension.
+func TestParseClientHelloTLCP(t *testing.T) {
+	data, err := os.ReadFile("testdata/clienthello_tlcp.bin")
+	require.NoError(t, err)
+	require.True(t, LooksLikeTLSHandshakeRecord(data))
+	hello, ok := ParseClientHello(data)
+	require.True(t, ok)
+	require.Equal(t, &ClientHello{
+		Version:      "TLS 1.3",
+		CipherSuites: []uint16{0x1303, 0x1301, 0x1302, 0xcca9, 0xcca8, 0xc02b, 0xc02f, 0xc02c, 0xc030, 0xc013, 0xc014, 0xe013, 0xe053, 0x009c, 0x009d, 0x002f, 0x0035},
+		Extensions:   []uint16{23, 65281, 10, 11, 35, 16, 5, 13, 18, 51, 45, 43, 27, 21, 0},
+		Groups:       []uint16{29, 23, 24},
+		SNI:          "snongel.com",
+		ALPN:         []string{"h2", "http/1.1"},
+		// JA3 cross-checked with tshark tls.handshake.ja3 (version 257 = 0x0101)
+		JA3:  "ef53b4052670264d7c747d36964b86e4",
+		JA3N: "b05ac31f27ff71a0e2d13427530520d7",
+		JA4:  "t13d1715h2_e08a0f08260f_de4a06bb82e3",
+		JA4R: "t13d1715h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9,e013,e053_0005,000a,000b,000d,0012,0015,0017,001b,0023,002b,002d,0033,ff01_0403,0804,0401,0503,0805,0501,0806,0601",
+	}, hello)
+}
+
+func TestLooksLikeTLSHandshakeRecord(t *testing.T) {
+	for _, b := range [][]byte{{0x16, 0x03, 0x00}, {0x16, 0x03, 0x01}, {0x16, 0x03, 0x04}, {0x16, 0x01, 0x01}} {
+		require.True(t, LooksLikeTLSHandshakeRecord(b), "% x", b)
+	}
+	for _, b := range [][]byte{nil, {0x16}, {0x16, 0x03}, {0x16, 0x03, 0x05}, {0x16, 0x00, 0x00}, {0x16, 0x01, 0x00}, {0x16, 0x01, 0x02}, {0x17, 0x03, 0x03}, []byte("GET")} {
+		require.False(t, LooksLikeTLSHandshakeRecord(b), "% x", b)
+	}
+}
+
 // clientHelloFrom captures the ClientHello a crypto/tls client sends.
 func clientHelloFrom(t *testing.T, cfg *tls.Config) []byte {
 	t.Helper()

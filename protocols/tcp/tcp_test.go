@@ -476,6 +476,35 @@ func TestHandleTCPTLSClientHelloDisconnectMidHandshake(t *testing.T) {
 	require.NotContains(t, frame, "sni")
 }
 
+func TestHandleTCPTLCPClientHello(t *testing.T) {
+	// TLCP-versioned (16 01 01) hello offering TLS 1.3, from Ochi event
+	// cf4dd8e6-27af-432b-8db8-3bbb8ab34630 (tcp/9000). Older sensors did not
+	// recognize the record and answered with random bytes.
+	hello, err := os.ReadFile("../helpers/testdata/clienthello_tlcp.bin")
+	require.NoError(t, err)
+	client, hp, done := startCatchAll(t, 9000)
+
+	_, err = client.Write(hello)
+	require.NoError(t, err)
+	// crypto/tls negotiates TLS 1.3 from supported_versions: a ServerHello
+	// record comes back, not random bytes or an alert
+	require.Equal(t, []byte{0x16, 0x03, 0x03}, readAll(t, client, 5)[:3])
+
+	// a replayed hello cannot finish the handshake
+	produced := finishCatchAllProduced(t, client, hp, done)
+	require.Nil(t, produced.tls, "no TLS session was established")
+	events := produced.decoded.([]parsedTCP)
+	require.Len(t, events, 1)
+	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, "tls-clienthello", events[0].Command)
+	require.Equal(t, hello, events[0].Payload)
+	require.Equal(t, helpers.SHA256Hex(hello), events[0].PayloadHash)
+	require.NotNil(t, events[0].ClientHello)
+	require.Equal(t, "TLS 1.3", events[0].ClientHello.Version)
+	require.Equal(t, "snongel.com", events[0].ClientHello.SNI)
+	require.Equal(t, "t13d1715h2_e08a0f08260f_de4a06bb82e3", events[0].ClientHello.JA4)
+}
+
 // startCatchAllTCP runs the catch-all on a loopback TCP connection; a TLS 1.3
 // server flight (session tickets included) can stall on an unbuffered net.Pipe.
 func startCatchAllTCP(t *testing.T, port uint16) (net.Conn, *fakeHoneypot, chan error) {
