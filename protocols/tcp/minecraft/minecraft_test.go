@@ -60,14 +60,36 @@ func TestParseHandshakeStringOverrun(t *testing.T) {
 }
 
 func TestBuildStatusResponse(t *testing.T) {
-	def := BuildStatusResponse(-1)
-	require.Contains(t, string(def), `"protocol":769`)
-	echo := BuildStatusResponse(767)
-	require.Contains(t, string(echo), `"protocol":767`)
-	require.Contains(t, string(echo), `"description":{"text":"A Minecraft Server"}`)
-	pkt, err := ReadPacket(bytes.NewReader(echo))
+	pkt, err := ReadPacket(bytes.NewReader(BuildStatusResponse()))
 	require.NoError(t, err)
 	require.Equal(t, int32(IDStatusResp), pkt.ID)
+	js, err := readString(bytes.NewReader(pkt.Body))
+	require.NoError(t, err)
+	require.Equal(t, `{"description":"A Minecraft Server","players":{"max":20,"online":0},"version":{"name":"1.21.4","protocol":769}}`, js)
+}
+
+func TestVersionReason(t *testing.T) {
+	require.Equal(t, "", VersionReason(DefaultProtocol))
+	require.Equal(t, ReasonOutdatedClient, VersionReason(47))
+	require.Equal(t, ReasonOutdatedClient, VersionReason(-1))
+	require.Equal(t, ReasonIncompatible, VersionReason(767))
+	require.Equal(t, ReasonIncompatible, VersionReason(770))
+}
+
+func TestBuildLoginDisconnect(t *testing.T) {
+	for reason, want := range map[string]string{
+		ReasonNotWhitelisted:    `{"translate":"multiplayer.disconnect.not_whitelisted"}`,
+		ReasonTransfersDisabled: `{"translate":"multiplayer.disconnect.transfers_disabled"}`,
+		ReasonIncompatible:      `{"translate":"multiplayer.disconnect.incompatible","with":["1.21.4"]}`,
+		ReasonOutdatedClient:    `{"translate":"multiplayer.disconnect.outdated_client","with":["1.21.4"]}`,
+	} {
+		pkt, err := ReadPacket(bytes.NewReader(BuildLoginDisconnect(reason)))
+		require.NoError(t, err)
+		require.Equal(t, int32(IDLoginDiscon), pkt.ID)
+		js, err := readString(bytes.NewReader(pkt.Body))
+		require.NoError(t, err)
+		require.Equal(t, want, js)
+	}
 }
 
 func TestPongAndLogin(t *testing.T) {
@@ -79,7 +101,6 @@ func TestPongAndLogin(t *testing.T) {
 	name, err := ParseLoginStart([]byte{0x03, 'b', 'o', 'b', 0xaa})
 	require.NoError(t, err)
 	require.Equal(t, "bob", name)
-	require.Contains(t, string(BuildLoginDisconnect()), `"text"`)
 }
 
 // matscanPing is the Handshake + Status Request from Ochi event

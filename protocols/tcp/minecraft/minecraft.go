@@ -19,11 +19,14 @@ const (
 	MaxVarIntBytes = 5
 	maxStringBytes = 1024
 
-	// DefaultProtocol is the protocol number advertised when the client sends
-	// none that is usable (e.g. -1 from a scanner).
+	// DefaultProtocol is the protocol the server speaks. Like vanilla, it is
+	// advertised whatever protocol the client sends.
 	DefaultProtocol = 769
 	// DefaultVersionName matches DefaultProtocol.
 	DefaultVersionName = "1.21.4"
+	// minModernProtocol (1.16.5) splits outdated_client from incompatible in
+	// vanilla's login version check.
+	minModernProtocol = 754
 
 	// Handshake states (next state field).
 	StateStatus = 1
@@ -47,6 +50,14 @@ const (
 	IDStatusResp  = 0x00
 	IDPong        = 0x01
 	IDLoginDiscon = 0x00
+)
+
+// Login Disconnect reasons: the vanilla translation keys.
+const (
+	ReasonNotWhitelisted    = "multiplayer.disconnect.not_whitelisted"
+	ReasonIncompatible      = "multiplayer.disconnect.incompatible"
+	ReasonOutdatedClient    = "multiplayer.disconnect.outdated_client"
+	ReasonTransfersDisabled = "multiplayer.disconnect.transfers_disabled"
 )
 
 var (
@@ -258,15 +269,15 @@ func stringBody(s string) []byte {
 	return append(b, s...)
 }
 
-// BuildStatusResponse builds the Status Response (0x00). The client's protocol
-// version is echoed when positive, otherwise DefaultProtocol is used.
-func BuildStatusResponse(clientProtocol int32) []byte {
-	proto := clientProtocol
-	if proto <= 0 {
-		proto = DefaultProtocol
-	}
-	js := fmt.Sprintf(`{"version":{"name":%q,"protocol":%d},"players":{"max":20,"online":0},"description":{"text":"A Minecraft Server"}}`,
-		DefaultVersionName, proto)
+// BuildStatusResponse builds the Status Response (0x00) of a vanilla 1.21.4
+// dedicated server with default server.properties in offline mode: plain
+// string MOTD, nobody online, no favicon, and no enforcesSecureChat (vanilla
+// omits it when false, and it is false without online mode). Field order and
+// compact encoding follow vanilla's codec. Like vanilla, the client's protocol
+// is not echoed.
+func BuildStatusResponse() []byte {
+	js := fmt.Sprintf(`{"description":"A Minecraft Server","players":{"max":20,"online":0},"version":{"name":%q,"protocol":%d}}`,
+		DefaultVersionName, DefaultProtocol)
 	return BuildPacket(IDStatusResp, stringBody(js))
 }
 
@@ -275,8 +286,26 @@ func BuildPong(payload []byte) []byte {
 	return BuildPacket(IDPong, payload)
 }
 
-// BuildLoginDisconnect builds a login-state Disconnect (0x00) with a JSON chat
-// component.
-func BuildLoginDisconnect() []byte {
-	return BuildPacket(IDLoginDiscon, stringBody(`{"text":"You are not white-listed on this server!"}`))
+// VersionReason returns the reason vanilla rejects a login Handshake with, or
+// "" when clientProtocol matches DefaultProtocol.
+func VersionReason(clientProtocol int32) string {
+	switch {
+	case clientProtocol == DefaultProtocol:
+		return ""
+	case clientProtocol < minModernProtocol:
+		return ReasonOutdatedClient
+	default:
+		return ReasonIncompatible
+	}
+}
+
+// BuildLoginDisconnect builds a login-state Disconnect (0x00) with a
+// translatable JSON chat component. Version reasons carry the server version
+// name as their argument, as in vanilla.
+func BuildLoginDisconnect(reason string) []byte {
+	js := fmt.Sprintf(`{"translate":%q}`, reason)
+	if reason == ReasonIncompatible || reason == ReasonOutdatedClient {
+		js = fmt.Sprintf(`{"translate":%q,"with":[%q]}`, reason, DefaultVersionName)
+	}
+	return BuildPacket(IDLoginDiscon, stringBody(js))
 }

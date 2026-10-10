@@ -3,6 +3,7 @@ package tcp
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,18 +74,89 @@ func TestMinecraftStatusPing(t *testing.T) {
 	require.Equal(t, pong, frames[4].Payload)
 }
 
+var mcLogin = minecraft.BuildPacket(0, append([]byte{3}, "bob"...))
+
 func TestMinecraftLogin(t *testing.T) {
-	login := minecraft.BuildPacket(0, append([]byte{3}, "bob"...))
+	var resp []byte
 	p, _ := runMinecraft(t, func(c net.Conn) {
-		_, _ = c.Write(append(mcHandshake(767, 2), login...))
-		_, err := readMCPacket(c)
+		_, _ = c.Write(append(mcHandshake(minecraft.DefaultProtocol, 2), mcLogin...))
+		var err error
+		resp, err = readMCPacket(c)
 		require.NoError(t, err)
 	})
 	frames := p.decoded.([]parsedMinecraft)
 	require.Len(t, frames, 3)
 	require.Equal(t, "login_start", frames[1].Command)
 	require.Equal(t, "bob", frames[1].Username)
-	require.Equal(t, "disconnect", frames[2].Status)
+	require.Equal(t, "not_whitelisted", frames[2].Status)
+	require.Equal(t, minecraft.BuildLoginDisconnect(minecraft.ReasonNotWhitelisted), resp)
+}
+
+// A login Handshake with a foreign protocol (or a transfer) is rejected before
+// Login Start, as vanilla does; a Login Start already in flight is recorded.
+func TestMinecraftLoginRejected(t *testing.T) {
+	for _, tc := range []struct {
+		proto, state int32
+		reason       string
+	}{
+		{767, minecraft.StateLogin, minecraft.ReasonIncompatible},
+		{47, minecraft.StateLogin, minecraft.ReasonOutdatedClient},
+		{minecraft.DefaultProtocol, minecraft.StateTransfer, minecraft.ReasonTransfersDisabled},
+	} {
+		var resp []byte
+		p, _ := runMinecraft(t, func(c net.Conn) {
+			// net.Pipe is unbuffered: write in the background and wait for
+			// the in-flight Login Start to be consumed before closing.
+			wrote := make(chan struct{})
+			go func() {
+				defer close(wrote)
+				_, _ = c.Write(append(mcHandshake(tc.proto, tc.state), mcLogin...))
+			}()
+			var err error
+			resp, err = readMCPacket(c)
+			require.NoError(t, err)
+			<-wrote
+		})
+		require.Equal(t, minecraft.BuildLoginDisconnect(tc.reason), resp)
+		frames := p.decoded.([]parsedMinecraft)
+		require.Len(t, frames, 3)
+		require.Equal(t, "handshake", frames[0].Command)
+		require.Equal(t, strings.TrimPrefix(tc.reason, "multiplayer.disconnect."), frames[1].Status)
+		require.Equal(t, "login_start", frames[2].Command)
+		require.Equal(t, "bob", frames[2].Username)
+	}
+}
+
+func TestMinecraftLoginRejectedNoLoginStart(t *testing.T) {
+	old := minecraftLingerWait
+	minecraftLingerWait = 10 * time.Millisecond
+	defer func() { minecraftLingerWait = old }()
+	p, _ := runMinecraft(t, func(c net.Conn) {
+		go func() { _, _ = c.Write(mcHandshake(47, minecraft.StateLogin)) }()
+		_, err := readMCPacket(c)
+		require.NoError(t, err)
+		time.Sleep(50 * time.Millisecond)
+	})
+	frames := p.decoded.([]parsedMinecraft)
+	require.Len(t, frames, 2)
+	require.Equal(t, "outdated_client", frames[1].Status)
+}
+
+// matscan's probe (protocol 47) gets the 769 status, not an echo, and a second
+// Status Request ends the session as on vanilla.
+func TestMinecraftStatusNoEchoRepeat(t *testing.T) {
+	var status []byte
+	p, _ := runMinecraft(t, func(c net.Conn) {
+		_, _ = c.Write(append(mcHandshake(47, 1), 0x01, 0x00))
+		var err error
+		status, err = readMCPacket(c)
+		require.NoError(t, err)
+		_, _ = c.Write([]byte{0x01, 0x00})
+	})
+	require.Equal(t, minecraft.BuildStatusResponse(), status)
+	frames := p.decoded.([]parsedMinecraft)
+	require.Len(t, frames, 4)
+	require.Equal(t, "status_request", frames[3].Command)
 }
 
 func TestMinecraftEarlyDisconnect(t *testing.T) {
