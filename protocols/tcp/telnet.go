@@ -206,6 +206,26 @@ func stripTelnetIAC(data []byte) (cleaned, negotiation []byte) {
 	return cleaned, negotiation
 }
 
+// telnetTextStart reports whether b can open a telnet session: IAC or text.
+func telnetTextStart(b byte) bool {
+	return b == 0xff || b == '\r' || b == '\n' || b == '\t' || b == 0 || (b >= 0x20 && b < 0x7f)
+}
+
+// readBinary records whatever the client sent as a single unlabeled frame.
+func (s *telnetServer) readBinary() error {
+	buf := make([]byte, maxBufferSize)
+	n, err := s.reader.Read(buf)
+	if n > 0 {
+		data := append([]byte(nil), buf[:n]...)
+		cmd := "binary"
+		if n >= 2 && data[0] == 0x16 && data[1] == 0x03 {
+			cmd = "tls_client_hello"
+		}
+		s.events = append(s.events, parsedTelnet{Direction: "read", Command: cmd, Message: string(data)})
+	}
+	return err
+}
+
 // read reads a telnet message from a connection
 func (s *telnetServer) read() (string, error) {
 	msg, err := s.reader.ReadString('\n')
@@ -342,6 +362,18 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 		return err
 	}
 	s.step = "username"
+	first, err := s.reader.Peek(1)
+	if err != nil {
+		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
+		endReason = connection.EndReasonFromRead(err)
+		return nil
+	}
+	if !telnetTextStart(first[0]) {
+		// Not telnet (e.g. a TLS ClientHello): do not treat it as credentials.
+		err := s.readBinary()
+		logger.Debug("Non-telnet data on telnet port", slog.String("protocol", "telnet"), slog.String("src_ip", host), slog.String("dest_port", destPort), producer.ErrAttr(err))
+		return nil
+	}
 	userMsg, err := s.read()
 	if err != nil {
 		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))

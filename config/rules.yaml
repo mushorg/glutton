@@ -2,6 +2,7 @@ rules:
   - match: tcp dst port 23 or port 2323 or port 23231
     type: conn_handler
     target: telnet
+    tls: auto
   - match: tcp dst port 1883 or port 8883
     type: conn_handler
     target: mqtt

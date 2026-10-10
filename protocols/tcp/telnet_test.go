@@ -285,3 +285,49 @@ func TestHandleTelnetClientDisconnect(t *testing.T) {
 	}, events)
 	require.Equal(t, connection.EndClientClose, produced.endReason)
 }
+
+func TestHandleTelnetTLSClientHello(t *testing.T) {
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	logger := &recordingLogger{}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleTelnet(context.Background(), serverConn, connection.Metadata{}, logger, hp)
+	}()
+
+	reader := bufio.NewReader(client)
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(2*time.Second)))
+	greeting := make([]byte, 12+len("Username: "))
+	_, err := io.ReadFull(reader, greeting)
+	require.NoError(t, err)
+
+	// TLS 1.2 ClientHello prefix with 0x0a bytes that used to split into frames.
+	hello := []byte{0x16, 0x03, 0x01, 0x00, 0x75, 0x01, 0x00, 0x00, 0x71, 0x03, 0x03, 0x0a, 0x0a, 0x0a, 0x00, 0x2f}
+	require.NoError(t, client.SetWriteDeadline(time.Now().Add(2*time.Second)))
+	_, err = client.Write(hello)
+	require.NoError(t, err)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "telnet", produced.protocol)
+	events, ok := produced.decoded.([]parsedTelnet)
+	require.True(t, ok)
+	require.Equal(t, []parsedTelnet{
+		{Direction: "write", Message: string(greeting[:12])},
+		{Direction: "write", Command: "username", Message: "Username: "},
+		{Direction: "read", Command: "tls_client_hello", Message: string(hello)},
+	}, events)
+
+	logger.mtx.Lock()
+	defer logger.mtx.Unlock()
+	require.Empty(t, logger.infos)
+}
