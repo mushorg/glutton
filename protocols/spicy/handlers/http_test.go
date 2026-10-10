@@ -157,9 +157,40 @@ func TestHandleHTTPUsesParsedQuery(t *testing.T) {
 }
 
 func TestHandleHTTPWithBody(t *testing.T) {
-	conn := runHTTPHandler(t, buildHTTPRequest("POST", "/api", `{"test":true}`))
+	ensureSpicyInitialized()
 
+	body := `{"test":true}`
+	request := buildHTTPRequest("POST", "/api", body)
+	conn := newMockConn(request)
+	logger := createMockLogger()
+	honeypot := &mocks.MockHoneypot{}
+	md := connection.Metadata{
+		TargetPort: 80,
+		Rule:       &rules.Rule{Target: "http"},
+	}
+
+	var gotPayload []byte
+	var gotDecoded interface{}
+	honeypot.EXPECT().ProduceTCP("http", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ string, _ net.Conn, _ connection.Metadata, payload []byte, decoded interface{}) {
+			gotPayload = append([]byte(nil), payload...)
+			gotDecoded = decoded
+		}).
+		Return(nil)
+
+	err := HandleHTTP(context.Background(), conn, md, logger, honeypot)
+	require.NoError(t, err)
 	require.True(t, conn.closed)
+	require.Equal(t, []byte(body), gotPayload)
+
+	decoded, ok := gotDecoded.(decodedHTTP)
+	require.True(t, ok)
+	require.Equal(t, "POST", decoded.Method)
+	require.Equal(t, "/api", decoded.Path)
+	require.Equal(t, []byte(body), decoded.Payload)
+
+	logger.AssertExpectations(t)
+	honeypot.AssertExpectations(t)
 }
 
 func TestHandleHTTPMalformedRequest(t *testing.T) {

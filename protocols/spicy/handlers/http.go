@@ -25,10 +25,11 @@ import (
 // headers so the sensor address is not published (the Go HTTP handler does
 // the same). Payload is the request body only.
 type decodedHTTP struct {
-	Method string `json:"method,omitempty"`
-	URL    string `json:"url,omitempty"`
-	Path   string `json:"path,omitempty"`
-	Query  string `json:"query,omitempty"`
+	Method  string `json:"method,omitempty"`
+	URL     string `json:"url,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Query   string `json:"query,omitempty"`
+	Payload []byte `json:"payload,omitempty"` // request body only
 }
 
 // requestPathAndQuery returns path and query without scheme or host, so
@@ -217,12 +218,16 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 		slog.String("query", query),
 	)
 
-	_ = hp.ProduceTCP("http", conn, md, body, decodedHTTP{
+	decoded := decodedHTTP{
 		Method: method,
 		URL:    path,
 		Path:   path,
 		Query:  query,
-	})
+	}
+	if len(body) > 0 {
+		decoded.Payload = body
+	}
+	_ = hp.ProduceTCP("http", conn, md, body, decoded)
 
 	handled := false
 	switch method {
