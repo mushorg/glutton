@@ -12,27 +12,30 @@ import (
 
 func TestForPort(t *testing.T) {
 	cases := []struct {
-		port        uint16
-		name        string
-		serverFirst bool
-		prefix      []byte
+		port          uint16
+		name          string
+		serverFirst   bool
+		greetWhenIdle bool
+		prefix        []byte
 	}{
-		{22, "ssh", true, []byte("SSH-2.0-OpenSSH_")},
-		{2222, "ssh", true, []byte("SSH-2.0-OpenSSH_")},
-		{110, "pop3", true, []byte("+OK ")},
-		{5900, "rfb", true, []byte("RFB 003.008\n")},
-		{80, "http", false, []byte("HTTP/1.1 200 OK\r\n")},
-		{135, "dcerpc-bind-ack", false, []byte{0x05, 0x00, 0x0c, 0x03}},
-		{139, "netbios-session", false, []byte{0x82, 0x00, 0x00, 0x00}},
-		{1433, "mssql-prelogin", false, []byte{0x04, 0x01, 0x00, 0x25}},
-		{4899, "radmin", false, []byte{0x01, 0x00, 0x00, 0x00, 0x25}},
-		{8009, "ajp-404", false, []byte("AB\x00\x36\x04\x01\x94")},
+		{22, "ssh", true, false, []byte("SSH-2.0-OpenSSH_")},
+		{2222, "ssh", true, false, []byte("SSH-2.0-OpenSSH_")},
+		{110, "pop3", true, false, []byte("+OK ")},
+		{5900, "rfb", true, false, []byte("RFB 003.008\n")},
+		{80, "http", false, false, []byte("HTTP/1.1 200 OK\r\n")},
+		{135, "dcerpc-bind-ack", false, false, []byte{0x05, 0x00, 0x0c, 0x03}},
+		{139, "netbios-session", false, false, []byte{0x82, 0x00, 0x00, 0x00}},
+		{1433, "mssql-prelogin", false, false, []byte{0x04, 0x01, 0x00, 0x25}},
+		{4899, "radmin", false, false, []byte{0x01, 0x00, 0x00, 0x00, 0x25}},
+		{8009, "ajp-404", false, false, []byte("AB\x00\x36\x04\x01\x94")},
+		{4444, "cmd-shell", false, true, []byte("Microsoft Windows [Version 5.2.3790]\r\n")},
 	}
 	for _, c := range cases {
 		resp, ok := ForPort(c.port)
 		require.True(t, ok, c.port)
 		require.Equal(t, c.name, resp.Name, c.port)
 		require.Equal(t, c.serverFirst, resp.ServerFirst, c.port)
+		require.Equal(t, c.greetWhenIdle, resp.GreetWhenIdle, c.port)
 		require.True(t, bytes.HasPrefix(resp.Data, c.prefix), "%d: %q", c.port, resp.Data)
 	}
 
@@ -55,6 +58,13 @@ func TestTextBannersUseCRLF(t *testing.T) {
 		require.True(t, bytes.HasSuffix(b, []byte("\r\n")), "%q", b)
 		require.Equal(t, 1, bytes.Count(b, []byte("\n")), "%q", b)
 	}
+}
+
+func TestCmdShellBanner(t *testing.T) {
+	// bare LFs are what nmap flags as a honeyd cmd.exe emulation
+	require.Equal(t, bytes.Count(cmdShellBanner, []byte("\n")), bytes.Count(cmdShellBanner, []byte("\r\n")))
+	// the prompt ends at '>' with no trailing space or newline
+	require.True(t, bytes.HasSuffix(cmdShellBanner, []byte("C:\\WINDOWS\\system32>")), "%q", cmdShellBanner)
 }
 
 func TestHTTPResponse(t *testing.T) {

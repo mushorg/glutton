@@ -2,7 +2,9 @@ package protocols
 
 import (
 	"context"
+	"errors"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -25,6 +27,10 @@ const (
 	mctpPeekLen     = len("REMOTE ")
 	mctpPeekTimeout = 200 * time.Millisecond
 )
+
+// greetWait is how long the catch-all waits for client bytes on a
+// greet-when-idle port before sending the banner; a var so tests can shorten it.
+var greetWait = 2 * time.Second
 
 type TCPHandlerFunc func(ctx context.Context, conn net.Conn, md connection.Metadata) error
 
@@ -112,7 +118,21 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		if tcp.HasServerBanner(md.TargetPort) {
 			return tcp.HandleTCP(ctx, conn, md, log, h)
 		}
-		snip, bufConn, err := peekOrClose(conn, conn, 4, log)
+		var src net.Conn = conn
+		if tcp.GreetsWhenIdle(md.TargetPort) {
+			// greet clients that wait for a banner, but let clients that speak
+			// first (HTTP on 4444) reach the protocol peek below
+			waited, silent, err := waitForClient(conn, greetWait)
+			if err != nil {
+				log.Debug("failed to wait for client", producer.ErrAttr(err))
+				return conn.Close()
+			}
+			if silent {
+				return tcp.HandleTCPSilent(ctx, waited, md, log, h)
+			}
+			src = waited
+		}
+		snip, bufConn, err := peekOrClose(conn, src, 4, log)
 		if err != nil {
 			return nil
 		}
@@ -125,16 +145,35 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 					return tcp.HandleRDP(ctx, bufConn, md, log, h)
 				}
 			}
-			more, bufConn, err := peekOrClose(conn, bufConn, 16, log)
+			more, moreConn, err := peekOrClose(conn, bufConn, 16, log)
 			if err != nil {
 				return nil
 			}
+			// moreConn now holds the client bytes; the outer reader is drained
+			bufConn = moreConn
 			if protocol, ok := parseTCPProtocol(more, log); ok && protocol == "mongodb" {
 				return tcp.HandleMongoDB(ctx, bufConn, md, log, h)
 			}
 		}
 		return tcp.HandleTCP(ctx, bufConn, md, log, h)
 	}
+}
+
+// waitForClient waits up to wait for the first client byte. silent is true
+// when none arrived; the read deadline is cleared before returning.
+func waitForClient(conn net.Conn, wait time.Duration) (BufferedConn, bool, error) {
+	bufConn := newBufferedConn(conn)
+	if err := bufConn.SetReadDeadline(time.Now().Add(wait)); err != nil {
+		return bufConn, false, err
+	}
+	_, err := bufConn.peek(1)
+	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+		return bufConn, false, err
+	}
+	if derr := bufConn.SetReadDeadline(time.Time{}); derr != nil {
+		return bufConn, false, derr
+	}
+	return bufConn, err != nil, nil
 }
 
 // mctpOrTCP serves the DVR port (tcp/9000): MCTP requests go to the MCTP
@@ -168,14 +207,19 @@ func handleDetectedHTTP(ctx context.Context, bufConn BufferedConn, md connection
 	if peekErr == nil && tcp.LooksLikeMCP(reqLine) {
 		return tcp.HandleMCP(ctx, httpConn, md, log, h)
 	}
-	if peekErr == nil {
-		bufConn = httpConn
-	}
-	return spicyHandlers.HandleHTTP(ctx, bufConn, md, log, h)
+	// httpConn holds the bytes it peeked even when the request is shorter
+	// than the peek, so it must be used either way
+	return spicyHandlers.HandleHTTP(ctx, httpConn, md, log, h)
 }
 
+// peekOrClose peeks up to n bytes. Fewer bytes before the deadline or EOF
+// still count (short probes like "whoami\r\n" must reach a handler); the
+// connection is closed only when nothing arrived.
 func peekOrClose(orig net.Conn, conn net.Conn, n int, log interfaces.Logger) ([]byte, BufferedConn, error) {
 	snip, bufConn, err := Peek(conn, n)
+	if err != nil && len(snip) > 0 {
+		return snip, bufConn, nil
+	}
 	if err != nil {
 		if cerr := orig.Close(); cerr != nil {
 			log.Error("failed to close connection", producer.ErrAttr(cerr))

@@ -90,10 +90,28 @@ func HasServerBanner(port uint16) bool {
 	return ok && resp.ServerFirst
 }
 
+// GreetsWhenIdle reports whether the catch-all greets clients on port that
+// stay silent for a short wait; dispatch waits for client bytes and calls
+// HandleTCPSilent if none arrive.
+func GreetsWhenIdle(port uint16) bool {
+	resp, ok := banners.ForPort(port)
+	return ok && resp.GreetWhenIdle
+}
+
 // HandleTCP takes a net.Conn, captures what the client sends and answers with
 // a canned service response (by payload signature, then destination port),
 // falling back to random bytes. Server-first ports get their banner on connect.
 func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+	return handleTCP(ctx, conn, md, logger, h, false)
+}
+
+// HandleTCPSilent is HandleTCP for a client that stayed silent through the
+// dispatch wait: greet-when-idle ports send their banner before reading.
+func HandleTCPSilent(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+	return handleTCP(ctx, conn, md, logger, h, true)
+}
+
+func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot, silent bool) error {
 	server := tcpServer{
 		events: []parsedTCP{},
 		conn:   conn,
@@ -116,7 +134,8 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	}()
 
 	portResp, hasPortResp := banners.ForPort(md.TargetPort)
-	if hasPortResp && portResp.ServerFirst {
+	greeted := hasPortResp && (portResp.ServerFirst || (silent && portResp.GreetWhenIdle))
+	if greeted {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			endReason = connection.EndTimeout
 			return err
@@ -172,7 +191,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		command := ""
 		if matched {
 			command = sigResp.Name
-		} else if hasPortResp && portResp.ServerFirst {
+		} else if greeted {
 			if sigResp, matched = bannerFollowUp(portResp, data); matched {
 				command = portResp.Name
 			}
@@ -182,7 +201,7 @@ func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		reply, status := sigResp.Data, sigResp.Name
 		switch {
 		case matched:
-		case hasPortResp && !portResp.ServerFirst:
+		case hasPortResp && !greeted:
 			reply, status = portResp.Data, portResp.Name
 		default:
 			if reply, err = randomReply(); err != nil {

@@ -18,6 +18,10 @@ type Response struct {
 	Name        string // recorded as the write frame status
 	Data        []byte
 	ServerFirst bool // sent on connect, before reading
+	// GreetWhenIdle sends the response on connect only if the client stays
+	// silent for a short wait, so ports shared with client-first protocols
+	// (HTTP on 4444) still route those clients by their first bytes.
+	GreetWhenIdle bool
 }
 
 // now is replaced in tests for a stable HTTP Date header.
@@ -35,6 +39,14 @@ var (
 	sshBanner  = []byte("SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10\r\n")
 	pop3Banner = []byte("+OK Dovecot (Ubuntu) ready.\r\n")
 	rfbBanner  = []byte("RFB 003.008\n")
+
+	// cmd.exe prompt of a Windows Server 2003 bind shell, matching the IIS 6.0
+	// persona on port 80. Adapted from honeytrap 4444_tcp (an XP prompt with
+	// bare LFs that nmap does not recognize); CRLF line endings make nmap -sV
+	// report bindshell "Microsoft Windows cmd.exe".
+	cmdShellBanner = []byte("Microsoft Windows [Version 5.2.3790]\r\n" +
+		"(C) Copyright 1985-2003 Microsoft Corp.\r\n\r\n" +
+		"C:\\WINDOWS\\system32>")
 
 	// DCE/RPC bind_ack (honeytrap 135_tcp).
 	dcerpcBindAck = mustHex(
@@ -120,6 +132,8 @@ func ForPort(port uint16) (Response, bool) {
 		return Response{Name: "radmin", Data: radminReply}, true
 	case 8009:
 		return Response{Name: "ajp-404", Data: ajp404}, true
+	case 4444:
+		return Response{Name: "cmd-shell", Data: cmdShellBanner, GreetWhenIdle: true}, true
 	}
 	return Response{}, false
 }

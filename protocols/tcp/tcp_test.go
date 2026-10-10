@@ -9,6 +9,7 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/helpers"
+	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/banners"
 	"github.com/mushorg/glutton/protocols/tcp/rfb"
 	"github.com/spf13/viper"
@@ -89,6 +90,11 @@ func TestHandleTCPCapturesClientPacket(t *testing.T) {
 
 func startCatchAll(t *testing.T, port uint16) (net.Conn, *fakeHoneypot, chan error) {
 	t.Helper()
+	return startCatchAllWith(t, port, HandleTCP)
+}
+
+func startCatchAllWith(t *testing.T, port uint16, handler func(context.Context, net.Conn, connection.Metadata, interfaces.Logger, interfaces.Honeypot) error) (net.Conn, *fakeHoneypot, chan error) {
+	t.Helper()
 	t.Chdir(t.TempDir())
 	previousMaxPayload := viper.Get("max_tcp_payload")
 	viper.Set("max_tcp_payload", 4096)
@@ -100,7 +106,7 @@ func startCatchAll(t *testing.T, port uint16) (net.Conn, *fakeHoneypot, chan err
 	hp := newFakeHoneypot()
 	done := make(chan error, 1)
 	go func() {
-		done <- HandleTCP(context.Background(), serverConn, connection.Metadata{TargetPort: port}, &recordingLogger{}, hp)
+		done <- handler(context.Background(), serverConn, connection.Metadata{TargetPort: port}, &recordingLogger{}, hp)
 	}()
 	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
 	return client, hp, done
@@ -236,6 +242,61 @@ func TestHandleTCPSignatureBeatsPort(t *testing.T) {
 	require.Len(t, events, 2)
 	require.Equal(t, "tls-alert", events[0].Command)
 	require.Equal(t, "tls-alert", events[1].Status)
+}
+
+func TestHandleTCPSilentGreetsIdlePort(t *testing.T) {
+	client, hp, done := startCatchAllWith(t, 4444, HandleTCPSilent)
+
+	// dispatch saw no client bytes: the prompt comes first
+	want, _ := banners.ForPort(4444)
+	banner := readAll(t, client, len(want.Data))
+	require.Equal(t, want.Data, banner)
+
+	cmd := []byte("whoami\r\n")
+	_, err := client.Write(cmd)
+	require.NoError(t, err)
+	// not the prompt again: no follow-up is emulated yet
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	require.NotEqual(t, want.Data, reply)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 3)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "cmd-shell", Payload: banner, PayloadHash: helpers.SHA256Hex(banner)}, events[0])
+	require.Equal(t, "read", events[1].Direction)
+	require.Equal(t, cmd, events[1].Payload)
+	require.Equal(t, "random", events[2].Status)
+}
+
+func TestHandleTCPIdlePortClientFirst(t *testing.T) {
+	// a client that spoke during the wait gets the prompt as the reply
+	client, hp, done := startCatchAll(t, 4444)
+
+	cmd := []byte("whoami\r\n")
+	_, err := client.Write(cmd)
+	require.NoError(t, err)
+	want, _ := banners.ForPort(4444)
+	reply := readAll(t, client, len(want.Data))
+	require.Equal(t, want.Data, reply)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 2)
+	require.Equal(t, cmd, events[0].Payload)
+	require.Equal(t, "cmd-shell", events[1].Status)
+}
+
+func TestHandleTCPSilentWithoutIdleBanner(t *testing.T) {
+	client, hp, done := startCatchAllWith(t, 9999, HandleTCPSilent)
+	events := finishCatchAll(t, client, hp, done)
+	require.Empty(t, events)
+}
+
+func TestGreetsWhenIdle(t *testing.T) {
+	require.True(t, GreetsWhenIdle(4444))
+	require.False(t, GreetsWhenIdle(22), "server-first, not idle-greet")
+	require.False(t, GreetsWhenIdle(80))
+	require.False(t, GreetsWhenIdle(9999))
+	require.False(t, HasServerBanner(4444))
 }
 
 func TestHandleTCPSilentClientNoReply(t *testing.T) {
