@@ -75,6 +75,10 @@ rules:
   - match: tcp dst port 1080 or port 4145
     type: conn_handler
     target: socks
+  - match: tcp dst port 8006
+    type: conn_handler
+    target: http
+    tls: auto
   - match: tcp
     type: conn_handler
     target: tcp

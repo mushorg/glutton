@@ -13,11 +13,13 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/mushorg/glutton/protocols/tcp/pve"
 	"github.com/mushorg/glutton/protocols/tcp/selenium"
 )
 
@@ -28,6 +30,9 @@ const (
 )
 
 var httpSessions = newSessionTable[parsedHTTP]()
+
+// httpNow stamps persona Date headers; tests swap it.
+var httpNow = time.Now
 
 // formatRequest generates ascii representation of a request
 func formatRequest(r *http.Request) string {
@@ -119,6 +124,7 @@ type parsedHTTP struct {
 	Query      string     `json:"query,omitempty"`
 	Parameters url.Values `json:"parameters,omitempty"` // parsed query key/values
 	Host       string     `json:"host,omitempty"`
+	Username   string     `json:"username,omitempty"` // Proxmox VE login (never the password)
 	UserAgent  string     `json:"user_agent,omitempty"`
 	Status     string     `json:"status,omitempty"`
 	SessionID  string     `json:"session_id,omitempty"`
@@ -246,10 +252,17 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 			frame.Browser, frame.Binary, frame.Args, frame.Truncated = sess.Browser, sess.Binary, sess.Args, sess.Truncated
 		}
 	}
+	proxmox := md.TargetPort == pve.Port
+	if proxmox {
+		frame.Username, _ = pve.LoginUsername(req.Method, path, body)
+	}
 	s.record(frame)
 
 	if grid {
 		return s.write(selenium.Respond(req.Method, path, body))
+	}
+	if proxmox {
+		return s.write(pve.Respond(req.Method, path, httpNow()))
 	}
 
 	switch req.Method {

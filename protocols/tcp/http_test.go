@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/tcp/pve"
 	"github.com/stretchr/testify/require"
 )
 
@@ -157,6 +158,79 @@ func TestHandleHTTPSeleniumGrid(t *testing.T) {
 	require.Equal(t, "/bin/sh", events[2].Binary)
 	require.Equal(t, []string{"-c", "id"}, events[2].Args)
 	require.Equal(t, "500", events[3].Status)
+}
+
+func TestHandleHTTPProxmox(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+	prevNow := httpNow
+	httpNow = func() time.Time { return time.Date(2026, 10, 10, 18, 56, 48, 0, time.UTC) }
+	t.Cleanup(func() { httpNow = prevNow })
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{TargetPort: pve.Port}, &recordingLogger{}, hp)
+	}()
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write(httpTestRequest("GET", "/", "", nil))
+	require.NoError(t, err)
+	status, headers, body := readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "pve-api-daemon/3.0", headers.Get("Server"))
+	require.Equal(t, "Sat, 10 Oct 2026 18:56:48 GMT", headers.Get("Date"))
+	require.Contains(t, string(body), pve.Node().Node+" - Proxmox Virtual Environment")
+	sessionID := sessionCookieFromHeaders(t, headers)
+
+	login := []byte("username=root&password=hunter2&realm=pam&new-format=1")
+	_, err = client.Write(httpTestRequest("POST", "/api2/json/access/ticket", sessionID, login))
+	require.NoError(t, err)
+	status, _, body = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusUnauthorized, status)
+	require.Equal(t, `{"data":null}`, string(body))
+
+	_, err = client.Write(httpTestRequest("GET", "/api2/json/version", sessionID, nil))
+	require.NoError(t, err)
+	status, _, _ = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusUnauthorized, status)
+
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "http", produced.protocol)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+	events, ok := produced.decoded.([]parsedHTTP)
+	require.True(t, ok)
+	require.Len(t, events, 6)
+	require.Equal(t, "GET", events[0].Command)
+	require.Empty(t, events[0].Username)
+	require.Equal(t, "write", events[1].Direction)
+	require.Equal(t, "200", events[1].Status)
+	require.Equal(t, "POST", events[2].Command)
+	require.Equal(t, "/api2/json/access/ticket", events[2].Path)
+	require.Equal(t, "root@pam", events[2].Username)
+	require.Equal(t, "401", events[3].Status)
+	require.Equal(t, "/api2/json/version", events[4].Path)
+	require.Equal(t, "401", events[5].Status)
+
+	// the password stays only in the raw request payload
+	for _, ev := range events {
+		require.NotContains(t, ev.Username, "hunter2")
+		require.NotContains(t, ev.Query, "hunter2")
+	}
 }
 
 func TestHandleHTTPParameters(t *testing.T) {

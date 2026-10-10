@@ -3,6 +3,7 @@ package protocols
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/mushorg/glutton/protocols/tcp/pve"
 	"github.com/mushorg/glutton/rules"
 )
 
@@ -52,7 +54,7 @@ func serveTLS(ctx context.Context, fn TCPHandlerFunc, conn net.Conn, md connecti
 		_ = conn.Close()
 		return nil
 	}
-	tlsConn, info, err := helpers.TerminateTLS(conn)
+	tlsConn, info, err := terminateTLS(conn, conn, md)
 	return finishTLS(ctx, fn, conn, tlsConn, info, err, md, log, h)
 }
 
@@ -71,8 +73,22 @@ func serveAutoTLS(ctx context.Context, fn TCPHandlerFunc, conn net.Conn, md conn
 	if !isTLS {
 		return fn(ctx, bufConn, md)
 	}
-	tlsConn, info, err := helpers.TerminateTLSFrom(conn, bufConn.r)
+	tlsConn, info, err := terminateTLS(conn, bufConn.r, md)
 	return finishTLS(ctx, fn, conn, tlsConn, info, err, md, log, h)
+}
+
+// terminateTLS runs the server handshake with the certificate a real service
+// on the port would present: the Proxmox VE node certificate on tcp/8006, the
+// shared self-signed one elsewhere.
+func terminateTLS(conn net.Conn, r io.Reader, md connection.Metadata) (net.Conn, *connection.TLSInfo, error) {
+	if md.TargetPort == pve.Port {
+		cert, err := pve.Certificate()
+		if err != nil {
+			return nil, &connection.TLSInfo{}, err
+		}
+		return helpers.TerminateTLSFromWith(cert, conn, r)
+	}
+	return helpers.TerminateTLSFrom(conn, r)
 }
 
 // sniffTLS reports whether the client opened with a TLS handshake record
