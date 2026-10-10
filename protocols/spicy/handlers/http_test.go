@@ -164,24 +164,34 @@ func TestHandleHTTPWithBody(t *testing.T) {
 
 func TestHandleHTTPMalformedRequest(t *testing.T) {
 	ensureSpicyInitialized()
+	t.Chdir(t.TempDir())
 
 	malformedRequest := "GET /path\r\nHost: 203.0.113.50\r\n\r\n"
 	conn := newMockConn(malformedRequest)
 
 	logger := createMockLogger()
+	logger.EXPECT().Debug(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+	logger.EXPECT().Debug(mock.Anything, mock.Anything).Return().Maybe()
+	logger.EXPECT().Debug(mock.Anything).Return().Maybe()
+
 	honeypot := &mocks.MockHoneypot{}
+	honeypot.EXPECT().UpdateConnectionTimeout(mock.Anything, mock.Anything).Return(nil)
+	var gotHandler string
 	var gotPayload []byte
-	honeypot.EXPECT().ProduceTCP("spicy-http-failed", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Run(func(_ string, _ net.Conn, _ connection.Metadata, payload []byte, _ interface{}) {
-			gotPayload = payload
+	honeypot.EXPECT().ProduceTCP(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(handler string, _ net.Conn, _ connection.Metadata, payload []byte, _ interface{}) {
+			gotHandler = handler
+			gotPayload = append([]byte(nil), payload...)
 		}).
 		Return(nil)
 
 	md := connection.Metadata{TargetPort: 80}
 	err := HandleHTTP(context.Background(), conn, md, logger, honeypot)
-	require.Error(t, err)
+	require.NoError(t, err)
 	require.True(t, conn.closed)
-	require.Nil(t, gotPayload)
+	require.Equal(t, "tcp", gotHandler)
+	require.Equal(t, []byte(malformedRequest), gotPayload)
+	require.Contains(t, conn.Written(), "HTTP/1.1 200 OK")
 
 	logger.AssertExpectations(t)
 	honeypot.AssertExpectations(t)

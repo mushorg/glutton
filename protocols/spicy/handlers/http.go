@@ -178,10 +178,10 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 
 	parsed, err := spicy.Parse("http", payload) // parse the HTTP request using Spicy
 	if err != nil {
-		log.Error("spicy parse error", producer.ErrAttr(err))
-		_ = hp.ProduceTCP("spicy-http-failed", conn, md, nil,
-			map[string]string{"error": err.Error()})
-		return err
+		log.Debug("spicy HTTP parse failed, falling back to tcp",
+			slog.String("handler", "spicy-http"), producer.ErrAttr(err))
+		handoff = true
+		return tcp.HandleTCP(ctx, tcp.PrependConn(conn, payload), md, log, hp)
 	}
 
 	method, _ := parsed.Fields["method"].(string)

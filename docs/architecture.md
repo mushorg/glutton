@@ -69,7 +69,7 @@ Spicy is optional, gated by `spicy.enabled`. When on, the Spicy/HILTI runtime is
 
 Spicy does not replace Go protocol handlers. The parser extracts fields from bytes; Go still owns reads, writes, fake responses, logging, producer calls, timeouts, and fallback behavior.
 
-One routing wrinkle: a rule with target `http` calls the Go HTTP handler directly. The Spicy HTTP handler is reached *only* from the generic `tcp` catch-all path when Spicy detection classifies the payload as HTTP.
+One routing wrinkle: a rule with target `http` calls the Go HTTP handler directly. The Spicy HTTP handler is reached *only* from the generic `tcp` catch-all path when Spicy detection classifies the payload as HTTP. If Spicy HTTP parsing fails, the connection falls back to the generic TCP handler with the buffered request bytes prepended.
 
 ## Output
 
