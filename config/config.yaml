@@ -44,14 +44,22 @@ udp_reply_limit:   # bounds UDP replies per destination IP so spoofed requests c
   source_burst: 8192      # most reply bytes one destination IP may receive at once; larger replies are never sent.
   global_rate: 131072     # reply bytes per second to all destinations together; 0 disables.
   global_burst: 1048576   # most reply bytes to all destinations at once.
+  source_request_rate: 16     # replies per second one destination IP may receive.
+  source_request_burst: 32    # most replies one destination IP may receive at once.
+  global_request_rate: 2048   # replies per second to all destinations together; 0 disables.
+  global_request_burst: 4096  # most replies to all destinations at once.
   max_sources: 65536      # destinations tracked; the least recently answered is dropped first.
 
-tcp_reply_limit:   # bounds bytes written to each TCP peer IP (all handlers, TLS, proxy_tcp, and handler-dialed relays).
+tcp_reply_limit:   # bounds bytes and write counts to each TCP peer IP (all handlers, TLS, proxy_tcp, and handler-dialed relays).
   enabled: true
   source_rate: 65536      # bytes per second one peer IP may receive.
   source_burst: 1048576   # most bytes one peer IP may receive at once; larger single writes are never sent.
   global_rate: 8388608    # bytes per second to all peers together; 0 disables.
   global_burst: 33554432  # most bytes to all peers at once.
+  source_request_rate: 256      # writes per second one peer IP may receive across all its connections.
+  source_request_burst: 512     # most writes one peer IP may receive at once.
+  global_request_rate: 16384    # writes per second to all peers together; 0 disables.
+  global_request_burst: 32768   # most writes to all peers at once.
   max_sources: 65536      # peers tracked; the least recently answered is dropped first.
 
 openvpn:

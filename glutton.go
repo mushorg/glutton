@@ -179,7 +179,7 @@ func recallConfig() recall.Config {
 
 // guardConfig reads a reply limit block (udp_reply_limit or
 // tcp_reply_limit) over def; it is enabled unless set to false, and
-// global_rate 0 disables the global budget.
+// global_rate / global_request_rate 0 disable those global budgets.
 func guardConfig(key string, def guard.Config) guard.Config {
 	cfg := def
 	if viper.IsSet(key + ".enabled") {
@@ -196,6 +196,18 @@ func guardConfig(key string, def guard.Config) guard.Config {
 	}
 	if n := viper.GetInt(key + ".global_burst"); n > 0 {
 		cfg.GlobalBurst = n
+	}
+	if n := viper.GetInt(key + ".source_request_rate"); n > 0 {
+		cfg.SourceRequestRate = n
+	}
+	if n := viper.GetInt(key + ".source_request_burst"); n > 0 {
+		cfg.SourceRequestBurst = n
+	}
+	if viper.IsSet(key + ".global_request_rate") {
+		cfg.GlobalRequestRate = max(0, viper.GetInt(key+".global_request_rate"))
+	}
+	if n := viper.GetInt(key + ".global_request_burst"); n > 0 {
+		cfg.GlobalRequestBurst = n
 	}
 	if n := viper.GetInt(key + ".max_sources"); n > 0 {
 		cfg.MaxSources = n

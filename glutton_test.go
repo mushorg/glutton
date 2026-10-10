@@ -90,7 +90,10 @@ func TestGuardConfig(t *testing.T) {
 	} {
 		t.Run(tc.key, func(t *testing.T) {
 			keys := []string{tc.key + ".enabled", tc.key + ".source_rate", tc.key + ".source_burst",
-				tc.key + ".global_rate", tc.key + ".global_burst", tc.key + ".max_sources"}
+				tc.key + ".global_rate", tc.key + ".global_burst",
+				tc.key + ".source_request_rate", tc.key + ".source_request_burst",
+				tc.key + ".global_request_rate", tc.key + ".global_request_burst",
+				tc.key + ".max_sources"}
 			orig := map[string]any{}
 			for _, k := range keys {
 				orig[k] = viper.Get(k)
@@ -111,8 +114,16 @@ func TestGuardConfig(t *testing.T) {
 			viper.Set(tc.key+".source_burst", 20)
 			viper.Set(tc.key+".global_rate", 0)
 			viper.Set(tc.key+".global_burst", 40)
+			viper.Set(tc.key+".source_request_rate", 5)
+			viper.Set(tc.key+".source_request_burst", 8)
+			viper.Set(tc.key+".global_request_rate", 0)
+			viper.Set(tc.key+".global_request_burst", 16)
 			viper.Set(tc.key+".max_sources", 50)
-			require.Equal(t, guard.Config{Enabled: false, SourceRate: 10, SourceBurst: 20, GlobalRate: 0, GlobalBurst: 40, MaxSources: 50}, guardConfig(tc.key, tc.def))
+			require.Equal(t, guard.Config{
+				Enabled: false, SourceRate: 10, SourceBurst: 20, GlobalRate: 0, GlobalBurst: 40,
+				SourceRequestRate: 5, SourceRequestBurst: 8, GlobalRequestRate: 0, GlobalRequestBurst: 16,
+				MaxSources: 50,
+			}, guardConfig(tc.key, tc.def))
 		})
 	}
 }

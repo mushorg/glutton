@@ -16,7 +16,7 @@ canonical shape of a handler so new or refactored handlers stay consistent.
 | `protocols/protocols.go` | Handler registry: maps rule `target` names to handler funcs. |
 | `protocols/interfaces/` | `Logger` and `Honeypot` interfaces every handler receives. |
 | `protocols/helpers/` | `FirstOrEmpty`, `Store` (content-addressed file storage). |
-| `protocols/guard/` | Per-IP + global reply byte budgets; `udp_reply_limit` gates `ReplyUDP`, `tcp_reply_limit` wraps every accepted TCP conn. |
+| `protocols/guard/` | Per-IP + global reply byte and request-count budgets; `udp_reply_limit` gates `ReplyUDP`, `tcp_reply_limit` wraps every accepted TCP conn. |
 | `protocols/recall/` | In-memory per-(protocol, source IP) visit memory; picks the response variant for returning sources. |
 | `protocols/mocks/` | mockery-generated `MockHoneypot` / `MockLogger`. |
 | `producer/` | `producer.Event` envelope and sinks (log, HPFeeds, HTTP). |

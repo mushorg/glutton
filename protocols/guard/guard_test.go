@@ -19,13 +19,22 @@ func newGuard(cfg Config) (*Guard, *clock) {
 	return g, c
 }
 
+// plentyRequests keeps request budgets from interfering with byte-budget tests.
+func plentyRequests(cfg Config) Config {
+	cfg.SourceRequestRate = 1 << 20
+	cfg.SourceRequestBurst = 1 << 20
+	cfg.GlobalRequestRate = 0
+	cfg.GlobalRequestBurst = 1
+	return cfg
+}
+
 var (
 	victim = net.ParseIP("192.0.2.1")
 	other  = net.ParseIP("192.0.2.2")
 )
 
 func TestAllowSourceBurstAndRefill(t *testing.T) {
-	g, c := newGuard(Config{Enabled: true, SourceRate: 100, SourceBurst: 1000})
+	g, c := newGuard(plentyRequests(Config{Enabled: true, SourceRate: 100, SourceBurst: 1000}))
 
 	for range 10 {
 		require.True(t, g.Allow(victim, 100).Allowed)
@@ -48,13 +57,13 @@ func TestAllowSourceBurstAndRefill(t *testing.T) {
 }
 
 func TestAllowRefusesReplyLargerThanBurst(t *testing.T) {
-	g, _ := newGuard(Config{Enabled: true, SourceRate: 100, SourceBurst: 1000})
+	g, _ := newGuard(plentyRequests(Config{Enabled: true, SourceRate: 100, SourceBurst: 1000}))
 	require.False(t, g.Allow(victim, 1001).Allowed)
 	require.True(t, g.Allow(victim, 1000).Allowed, "refused reply consumed nothing")
 }
 
 func TestAllowGlobalBudget(t *testing.T) {
-	g, c := newGuard(Config{Enabled: true, SourceRate: 1000, SourceBurst: 1000, GlobalRate: 100, GlobalBurst: 1500})
+	g, c := newGuard(plentyRequests(Config{Enabled: true, SourceRate: 1000, SourceBurst: 1000, GlobalRate: 100, GlobalBurst: 1500}))
 
 	require.True(t, g.Allow(victim, 1000).Allowed)
 	require.Equal(t, Decision{Limit: LimitGlobal, First: true}, g.Allow(other, 1000))
@@ -62,6 +71,65 @@ func TestAllowGlobalBudget(t *testing.T) {
 
 	c.advance(time.Second)
 	require.True(t, g.Allow(net.ParseIP("192.0.2.3"), 100).Allowed)
+}
+
+func TestAllowSourceRequestBurstAndRefill(t *testing.T) {
+	g, c := newGuard(Config{
+		Enabled: true, SourceRate: 1 << 20, SourceBurst: 1 << 20, GlobalRate: 0,
+		SourceRequestRate: 2, SourceRequestBurst: 3, GlobalRequestRate: 0,
+	})
+
+	for range 3 {
+		require.True(t, g.Allow(victim, 1).Allowed)
+	}
+	d := g.Allow(victim, 1)
+	require.Equal(t, Decision{Limit: LimitSourceRequests, First: true}, d, "request burst spent")
+	require.Equal(t, Decision{Limit: LimitSourceRequests}, g.Allow(victim, 1), "only the first refusal is flagged")
+
+	require.True(t, g.Allow(other, 1).Allowed, "other destinations keep their own request budget")
+
+	c.advance(time.Second)
+	require.True(t, g.Allow(victim, 1).Allowed)
+	require.True(t, g.Allow(victim, 1).Allowed, "refilled at SourceRequestRate")
+	require.Equal(t, Decision{Limit: LimitSourceRequests, First: true}, g.Allow(victim, 1), "new limited episode")
+
+	c.advance(time.Hour)
+	for range 3 {
+		require.True(t, g.Allow(victim, 1).Allowed, "refill is capped at SourceRequestBurst")
+	}
+	require.False(t, g.Allow(victim, 1).Allowed)
+}
+
+func TestAllowGlobalRequestBudget(t *testing.T) {
+	g, c := newGuard(Config{
+		Enabled: true, SourceRate: 1 << 20, SourceBurst: 1 << 20, GlobalRate: 0,
+		SourceRequestRate: 100, SourceRequestBurst: 100,
+		GlobalRequestRate: 2, GlobalRequestBurst: 3,
+	})
+
+	require.True(t, g.Allow(victim, 1).Allowed)
+	require.True(t, g.Allow(other, 1).Allowed)
+	require.True(t, g.Allow(net.ParseIP("192.0.2.3"), 1).Allowed)
+	require.Equal(t, Decision{Limit: LimitGlobalRequests, First: true}, g.Allow(net.ParseIP("192.0.2.4"), 1))
+	require.False(t, g.Allow(victim, 1).Allowed)
+
+	c.advance(time.Second)
+	require.True(t, g.Allow(victim, 1).Allowed)
+	require.True(t, g.Allow(other, 1).Allowed)
+	require.False(t, g.Allow(net.ParseIP("192.0.2.3"), 1).Allowed)
+}
+
+func TestAllowRequestRefusalConsumesNothing(t *testing.T) {
+	g, c := newGuard(Config{
+		Enabled: true, SourceRate: 100, SourceBurst: 100, GlobalRate: 0,
+		SourceRequestRate: 1, SourceRequestBurst: 1, GlobalRequestRate: 0,
+	})
+	require.True(t, g.Allow(victim, 50).Allowed)
+	require.Equal(t, Decision{Limit: LimitSourceRequests, First: true}, g.Allow(victim, 50))
+	// One second refills one request token; the refused reply must not have
+	// spent the remaining 50 byte tokens.
+	c.advance(time.Second)
+	require.True(t, g.Allow(victim, 50).Allowed, "prior request refusal did not charge bytes")
 }
 
 func TestAllowDisabled(t *testing.T) {
@@ -74,14 +142,14 @@ func TestAllowDisabled(t *testing.T) {
 }
 
 func TestAllowNormalizesMappedIPv4(t *testing.T) {
-	g, _ := newGuard(Config{Enabled: true, SourceRate: 1, SourceBurst: 100})
+	g, _ := newGuard(plentyRequests(Config{Enabled: true, SourceRate: 1, SourceBurst: 100}))
 	require.True(t, g.Allow(victim.To4(), 100).Allowed)
 	require.False(t, g.Allow(victim.To16(), 1).Allowed, "4-byte and 16-byte forms share one bucket")
 	require.Equal(t, 1, g.Len())
 }
 
 func TestAllowEvictsLeastRecentlyCharged(t *testing.T) {
-	g, _ := newGuard(Config{Enabled: true, SourceRate: 1, SourceBurst: 100, MaxSources: 2})
+	g, _ := newGuard(plentyRequests(Config{Enabled: true, SourceRate: 1, SourceBurst: 100, MaxSources: 2}))
 	require.True(t, g.Allow(victim, 100).Allowed)
 	require.True(t, g.Allow(other, 100).Allowed)
 	require.False(t, g.Allow(victim, 1).Allowed, "touch victim so other is oldest")
@@ -95,7 +163,8 @@ func TestNewAppliesDefaults(t *testing.T) {
 	g := New(Config{Enabled: true})
 	want := DefaultConfig()
 	want.GlobalRate = 0
-	require.Equal(t, want, g.cfg, "GlobalRate 0 keeps the global bucket disabled")
+	want.GlobalRequestRate = 0
+	require.Equal(t, want, g.cfg, "GlobalRate/GlobalRequestRate 0 keep those global buckets disabled")
 }
 
 func TestDefaultTCPConfigSurvivesNew(t *testing.T) {
@@ -115,7 +184,7 @@ func (c *addrConn) Write(p []byte) (int, error) {
 }
 
 func TestWrapChargesRemoteIP(t *testing.T) {
-	g, _ := newGuard(Config{Enabled: true, SourceRate: 1, SourceBurst: 10})
+	g, _ := newGuard(plentyRequests(Config{Enabled: true, SourceRate: 1, SourceBurst: 10}))
 	var refused []Decision
 	onLimit := func(_ net.Conn, d Decision, size int) {
 		require.Equal(t, 5, size)
