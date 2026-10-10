@@ -66,6 +66,9 @@ rules:
   - match: tcp dst port 9000
     type: conn_handler
     target: mctp
+  - match: tcp dst port 554 or port 8554 or port 10554
+    type: conn_handler
+    target: rtsp
   - match: tcp dst port 1344 or port 11344
     type: conn_handler
     target: icap

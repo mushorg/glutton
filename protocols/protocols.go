@@ -19,6 +19,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/mctp"
 	"github.com/mushorg/glutton/protocols/tcp/minecraft"
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
+	"github.com/mushorg/glutton/protocols/tcp/rtsp"
 	"github.com/mushorg/glutton/protocols/tcp/socks"
 	"github.com/mushorg/glutton/protocols/udp"
 	"github.com/spf13/viper"
@@ -26,6 +27,10 @@ import (
 
 // peek enough of the HTTP request line to detect /mcp or /sse
 const mcpRequestLinePeek = 96
+
+// rtspLinePeek bounds the RTSP request-line peek; long stream URIs are
+// recognized by their rtsp:// scheme before the version arrives.
+const rtspLinePeek = 256
 
 // rdpPeekLen covers the TPKT header, X.224 LI and TPDU type of an RDP CR.
 const rdpPeekLen = 6
@@ -125,6 +130,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"dicom":      bindTCP(tcp.HandleDICOM, log, h),
 		"icap":       bindTCP(tcp.HandleICAP, log, h),
 		"mctp":       mctpOrTCP(log, h),
+		"rtsp":       rtspOrTCP(log, h),
 		"proxy_tcp":  bindTCP(tcp.HandleProxyTCP, log, h),
 		"tcp":        catchAllTCP(log, h),
 	}
@@ -206,6 +212,17 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 				return tcp.HandleMinecraft(ctx, bufConn, md, log, h)
 			}
 			snip = hs[:min(len(hs), 4)]
+		}
+		// camera scanners probe RTSP on any port; it shares OPTIONS and the
+		// request-line shape with HTTP, so check the version before HTTP
+		if rtsp.MayStart(snip) {
+			if err := bufConn.SetReadDeadline(time.Now().Add(mctpPeekTimeout)); err != nil {
+				log.Debug("failed to set peek deadline", producer.ErrAttr(err))
+			}
+			// a timeout still leaves the bytes that arrived
+			if line, _ := bufConn.peekLine(rtspLinePeek); rtsp.LooksLikeRTSP(line) {
+				return tcp.HandleRTSP(ctx, bufConn, md, log, h)
+			}
 		}
 		// HTTP on any port goes to the HTTP handler, with or without Spicy
 		if looksLikeHTTPMethodStart(snip) {
@@ -320,6 +337,32 @@ func mctpOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 			return tcp.HandleMCTP(ctx, bufConn, md, log, h)
 		}
 		return tcp.HandleTCPWith(ctx, bufConn, md, log, h, tcp.Options{AfterTLS: httpAfterTLS(log, h)})
+	}
+}
+
+// rtspOrTCP serves the RTSP ports (tcp/554, 8554, 10554): RTSP requests go
+// to the RTSP handler; anything else goes through the catch-all dispatch so
+// HTTP and other probes on these ports are still answered and stored.
+func rtspOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
+	catchAll := catchAllTCP(log, h)
+	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			log.Debug("failed to set connection timeout", producer.ErrAttr(err))
+			return conn.Close()
+		}
+		bufConn := newBufferedConn(conn)
+		// wait (up to the connection timeout) for the client to speak first
+		if _, err := bufConn.peek(1); err != nil {
+			log.Debug("failed to peek connection", producer.ErrAttr(err))
+			return conn.Close()
+		}
+		if err := bufConn.SetReadDeadline(time.Now().Add(mctpPeekTimeout)); err != nil {
+			log.Debug("failed to set peek deadline", producer.ErrAttr(err))
+		}
+		if line, _ := bufConn.peekLine(rtspLinePeek); rtsp.LooksLikeRTSP(line) {
+			return tcp.HandleRTSP(ctx, bufConn, md, log, h)
+		}
+		return catchAll(ctx, bufConn, md)
 	}
 }
 

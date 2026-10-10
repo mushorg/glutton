@@ -71,7 +71,7 @@ func Classify(ip net.IP) (scannerName, srcPtr string, err error) {
 		if strings.HasSuffix(name, "shadowserver.io.") {
 			return "shadowserver", srcPtr, nil
 		}
-		if strings.HasSuffix(name, "censys.io.") {
+		if strings.HasSuffix(name, "censys.io.") || strings.HasSuffix(name, "censys-scanner.com.") {
 			return "censys", srcPtr, nil
 		}
 		if strings.HasSuffix(name, "infrawat.ch.") {

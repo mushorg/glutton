@@ -139,6 +139,7 @@ Example shape:
 | `enip` | TCP | [protocols/enip.md](protocols/enip.md) |
 | `opcua` | TCP | [protocols/opcua.md](protocols/opcua.md) |
 | `mctp` | TCP | [protocols/mctp.md](protocols/mctp.md) |
+| `rtsp` | TCP | [protocols/rtsp.md](protocols/rtsp.md) |
 | `icap` | TCP | [protocols/icap.md](protocols/icap.md) |
 | `dicom` | TCP | [protocols/dicom.md](protocols/dicom.md) |
 | `mongodb` | TCP | [protocols/mongodb.md](protocols/mongodb.md) |
