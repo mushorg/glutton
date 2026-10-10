@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -89,7 +90,7 @@ func TestMakeResponses(t *testing.T) {
 			return MakeTreeConnectAndXResponse(h, 1, "C$")
 		}},
 		{name: "MakeNtCreateAndXResponse", cmd: CmdNtCreateAndX, run: func(h SMBHeader) (SMBHeader, []byte, error) {
-			return MakeNtCreateAndXResponse(h, 1)
+			return MakeNtCreateAndXResponse(h, 1, true)
 		}},
 		{name: "MakeComTransaction2Response", cmd: 0x32, run: MakeComTransaction2Response},
 		{name: "MakeComTransactionResponse", cmd: 0x25, run: MakeComTransactionResponse},
@@ -150,13 +151,13 @@ func TestReplyHeaderClearsExtendedSecurity(t *testing.T) {
 }
 
 func TestMakeNegotiateUTF16AndFlags2(t *testing.T) {
-	// Client advertises EXTENDED_SECURITY; negotiate must clear it and force Unicode
-	// Domain/Server names (nmap smb.lua always UTF-16-decodes them).
+	// Client without EXTENDED_SECURITY gets the challenge/domain/server shape
+	// with Unicode Domain/Server names (nmap smb.lua always UTF-16-decodes them).
 	header := SMBHeader{
 		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
 		Command:  0x72,
 		Flags:    0x18,
-		Flags2:   [2]byte{0x53, 0xc8}, // 0xc853
+		Flags2:   [2]byte{0x53, 0xc0}, // 0xc053: Unicode, NT status, no ext-sec
 	}
 	rh, data, err := MakeNegotiateProtocolResponse(header, []byte("\x02NT LM 0.12\x00"))
 	require.NoError(t, err)
@@ -171,6 +172,31 @@ func TestMakeNegotiateUTF16AndFlags2(t *testing.T) {
 	require.Contains(t, string(data), string(serverUTF16))
 	// Must not appear as OEM (NUL-terminated ASCII) after the challenge.
 	require.NotContains(t, string(data), primaryDomain+"\x00"+serverName+"\x00")
+	require.Equal(t, byte(8), data[32+1+2+1+2+2+4+4+4+4+8+2], "8-byte challenge")
+}
+
+func TestMakeNegotiateExtendedSecurity(t *testing.T) {
+	header := SMBHeader{
+		Protocol: [4]byte{0xff, 'S', 'M', 'B'},
+		Command:  0x72,
+		Flags:    0x18,
+		Flags2:   [2]byte{0x53, 0xc8}, // 0xc853 includes EXTENDED_SECURITY
+	}
+	rh, data, err := MakeNegotiateProtocolResponse(header, []byte("\x02NT LM 0.12\x00"))
+	require.NoError(t, err)
+	f2 := binary.LittleEndian.Uint16(rh.Flags2[:])
+	require.NotEqual(t, uint16(0), f2&flags2ExtendedSecurity)
+
+	// WordCount(1) DialectIndex(2) SecurityMode(1) MaxMpx(2) MaxVcs(2)
+	// MaxBuffer(4) MaxRaw(4) SessionKey(4) Capabilities(4) Time(8) TZ(2).
+	const capsOff = 32 + 1 + 2 + 1 + 2 + 2 + 4 + 4 + 4
+	require.NotZero(t, binary.LittleEndian.Uint32(data[capsOff:])&capExtendedSecurity)
+	keyLenOff := capsOff + 4 + 8 + 2
+	require.Equal(t, byte(0), data[keyLenOff], "no challenge with extended security")
+	blob := SPNEGONegTokenInit()
+	require.Equal(t, uint16(16+len(blob)), binary.LittleEndian.Uint16(data[keyLenOff+1:]))
+	require.Equal(t, smb2ServerGUID[:], data[keyLenOff+3:keyLenOff+19])
+	require.Equal(t, blob, data[keyLenOff+19:])
 }
 
 func TestMakeSessionSetupAssignsUID(t *testing.T) {
@@ -293,7 +319,7 @@ func TestMakeNtCreateAndXResponse(t *testing.T) {
 		UID:      [2]byte{0x01, 0x00},
 		MID:      [2]byte{0x00, 0x00},
 	}
-	rh, data, err := MakeNtCreateAndXResponse(header, 0x0041)
+	rh, data, err := MakeNtCreateAndXResponse(header, 0x0041, true)
 	require.NoError(t, err)
 	require.Equal(t, [4]byte{}, rh.Status)
 	require.Equal(t, byte(CmdNtCreateAndX), rh.Command)
@@ -310,6 +336,11 @@ func TestMakeNtCreateAndXResponse(t *testing.T) {
 	require.Equal(t, uint16(fileTypeMessagePipe), binary.LittleEndian.Uint16(data[96:98]))
 	require.Equal(t, []byte{0x00, 0x00}, data[len(data)-2:])
 	require.Equal(t, "SMB_COM_NT_CREATE_ANDX", CommandName(CmdNtCreateAndX))
+
+	_, fileData, err := MakeNtCreateAndXResponse(header, 0x0041, false)
+	require.NoError(t, err)
+	require.Equal(t, uint16(fileTypeDisk), binary.LittleEndian.Uint16(fileData[96:98]), "disk file resource type")
+	require.Equal(t, uint16(0), binary.LittleEndian.Uint16(fileData[98:100]), "no pipe status for a file")
 }
 
 func TestNtCreateAndXNameFromEvent(t *testing.T) {
@@ -499,7 +530,7 @@ func TestMakeSMB2ReplyNegotiate(t *testing.T) {
 	req[0] = 0xfe
 	copy(req[1:4], []byte("SMB"))
 	binary.LittleEndian.PutUint16(req[4:6], 64)
-	name, pdu, ok := MakeSMB2Reply(req)
+	name, pdu, ok := MakeSMB2Reply(req, [8]byte{})
 	require.True(t, ok)
 	require.Equal(t, "SMB2_NEGOTIATE", name)
 	require.GreaterOrEqual(t, len(pdu), 64+64)
@@ -508,7 +539,40 @@ func TestMakeSMB2ReplyNegotiate(t *testing.T) {
 	require.Equal(t, uint16(0x0202), binary.LittleEndian.Uint16(pdu[64+4:64+6]))
 }
 
+func TestMakeSMB2ReplyNegotiateServerGUID(t *testing.T) {
+	req := make([]byte, 64)
+	req[0] = 0xfe
+	copy(req[1:4], []byte("SMB"))
+	_, first, ok := MakeSMB2Reply(req, [8]byte{})
+	require.True(t, ok)
+	_, second, _ := MakeSMB2Reply(req, [8]byte{})
+	guid := first[64+8 : 64+24]
+	require.Equal(t, guid, second[64+8:64+24], "ServerGuid is stable per server")
+	require.NotEqual(t, make([]byte, 16), guid)
+	require.Equal(t, byte(0x40), guid[7]&0xf0, "version 4")
+	require.NotContains(t, strings.ToLower(string(first)), "glutton")
+}
+
+func TestMakeBadNetworkNameResponse(t *testing.T) {
+	req := SMBHeader{Protocol: [4]byte{0xff, 'S', 'M', 'B'}, Command: 0x75, MID: [2]byte{7}}
+	h, data, err := MakeBadNetworkNameResponse(req)
+	require.NoError(t, err)
+	require.Equal(t, "STATUS_BAD_NETWORK_NAME", StatusName(h))
+	require.Len(t, data, 35)
+	require.Equal(t, [4]byte{0xcc, 0x00, 0x00, 0xc0}, [4]byte(data[5:9]))
+	require.Equal(t, byte(0x75), data[4])
+	require.Equal(t, []byte{7, 0}, data[30:32])
+	require.Equal(t, []byte{0, 0, 0}, data[32:])
+}
+
+func TestIsProbeShare(t *testing.T) {
+	require.True(t, IsProbeShare("nmap-share-test"))
+	require.True(t, IsProbeShare("NMAP-SHARE-TEST"))
+	require.False(t, IsProbeShare("IPC$"))
+	require.False(t, IsProbeShare(""))
+}
+
 func TestMakeSMB2ReplyTooShort(t *testing.T) {
-	_, _, ok := MakeSMB2Reply([]byte{0xfe, 'S', 'M', 'B'})
+	_, _, ok := MakeSMB2Reply([]byte{0xfe, 'S', 'M', 'B'}, [8]byte{})
 	require.False(t, ok)
 }

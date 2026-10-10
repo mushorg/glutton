@@ -19,7 +19,7 @@ rules:
   - match: tcp dst portrange 5900-5910
     type: conn_handler
     target: rfb
-  - match: tcp dst port 445
+  - match: tcp dst port 445 or port 139
     type: conn_handler
     target: smb
   - match: tcp dst port 21

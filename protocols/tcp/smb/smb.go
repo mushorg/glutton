@@ -17,7 +17,8 @@ const (
 	flagsReply      = 0x80
 	flags2Unicode   = 0x8000
 	flags2NTStatus  = 0x4000
-	// SMB_FLAGS2_EXTENDED_SECURITY — do not advertise unless NTLMSSP Session Setup is implemented.
+	// SMB_FLAGS2_EXTENDED_SECURITY — echoed only on Negotiate / Session Setup replies to
+	// clients that asked for it (NTLMSSP via SPNEGO); cleared on every other reply.
 	flags2ExtendedSecurity = 0x0800
 	capUnicode             = 0x00000004
 	capNTSMBs              = 0x00000010
@@ -26,11 +27,14 @@ const (
 	capNTFind              = 0x00000200
 	capLargeFiles          = 0x00000008
 	capNTLM                = capUnicode | capLargeFiles | capNTSMBs | capStatus32 | capLevel2Oplocks | capNTFind
-	nativeOS               = "Windows 5.1"
-	nativeLanMan           = "Windows 5.1"
-	primaryDomain          = "WORKGROUP"
-	serverName             = "SERVER"
-	ntLMDialect            = "NT LM 0.12"
+	capExtendedSecurity    = 0x80000000
+	// Windows Server 2008 (NT 6.0) — an OS that actually speaks SMB 2.0.2,
+	// consistent with the SMB2 dialect the honeypot negotiates.
+	nativeOS      = "Windows Server 2008 Standard 6002 Service Pack 2"
+	nativeLanMan  = "Windows Server 2008 Standard 6.0"
+	primaryDomain = "WORKGROUP"
+	serverName    = "SERVER"
+	ntLMDialect   = "NT LM 0.12"
 	// TRANS2 subcommands (MS-CIFS 2.2.6).
 	trans2FindFirst2   = 0x0001
 	trans2SessionSetup = 0x000e
@@ -38,9 +42,15 @@ const (
 	statusNotImplemented = 0xc0000002
 	// STATUS_INVALID_PARAMETER — Windows reply when a fragmented NT_TRANSACT completes.
 	statusInvalidParameter = 0xc000000d
-	fileOpened             = 0x00000001
-	fileTypeMessagePipe    = 0x0002
-	ntCreateAndXWordCount  = 34
+	// STATUS_BAD_NETWORK_NAME — Tree Connect to a share that does not exist.
+	statusBadNetworkName  = 0xc00000cc
+	fileOpened            = 0x00000001
+	fileTypeDisk          = 0x0000
+	fileTypeMessagePipe   = 0x0002
+	fileAttributeNormal   = 0x00000080
+	ntCreateAndXWordCount = 34
+	// STATUS_MORE_PROCESSING_REQUIRED — sent with the NTLM challenge.
+	statusMoreProcessing = 0xc0000016
 )
 
 // Trans2FindFirst2 is the TRANS2_FIND_FIRST2 subcommand (0x0001).
@@ -206,6 +216,19 @@ func decodeOEMString(b []byte) (string, int) {
 	return string(b[:n]), n + 1
 }
 
+// decodeUnicodeStringN decodes exactly nchars UTF-16LE code units (no NUL
+// terminator), as used for NTLM length-prefixed fields.
+func decodeUnicodeStringN(b []byte, nchars int) (string, int) {
+	if nchars*2 > len(b) {
+		nchars = len(b) / 2
+	}
+	runes := make([]uint16, nchars)
+	for i := 0; i < nchars; i++ {
+		runes[i] = binary.LittleEndian.Uint16(b[i*2:])
+	}
+	return string(utf16.Decode(runes)), nchars * 2
+}
+
 func decodeUnicodeString(b []byte) (string, int) {
 	var runes []uint16
 	i := 0
@@ -266,6 +289,13 @@ func shareFromPath(path string) string {
 // IsIPCShare reports whether share is the IPC$ named-pipe share.
 func IsIPCShare(share string) bool {
 	return strings.EqualFold(share, "IPC$")
+}
+
+// IsProbeShare reports whether share is a name scanners use to check that the
+// server rejects nonexistent shares (nmap smb-enum-shares tries
+// nmap-share-test before trusting other answers).
+func IsProbeShare(share string) bool {
+	return strings.EqualFold(share, "nmap-share-test")
 }
 
 // NtCreateAndXName extracts the filename from an SMB_COM_NT_CREATE_ANDX
@@ -493,35 +523,51 @@ func MakeNegotiateProtocolResponse(header SMBHeader, dialectBytes []byte) (SMBHe
 	h.TID = [2]byte{}
 
 	dialectIdx := DialectIndex(dialectBytes, ntLMDialect)
-	challenge := make([]byte, 8)
-	if _, err := rand.Read(challenge); err != nil {
-		return h, nil, err
-	}
-
-	// Non-extended negotiate Domain/Server are UTF-16 in practice; nmap's
-	// smb.lua always decodes them as UTF-16 regardless of the client's Flags2.
-	f2 := flags2(h) | flags2Unicode
-	binary.LittleEndian.PutUint16(h.Flags2[:], f2)
-	domain := encodeString(primaryDomain, true)
-	server := encodeString(serverName, true)
+	// replyHeader clears EXTENDED_SECURITY, so decide from the client's request.
+	extSec := flags2(header)&flags2ExtendedSecurity != 0
 
 	var body bytes.Buffer
 	body.WriteByte(17) // WordCount
 	putUint16(&body, dialectIdx)
-	body.WriteByte(0x03)      // SecurityMode: user-level + encrypted passwords
-	putUint16(&body, 50)      // MaxMpxCount
-	putUint16(&body, 1)       // MaxNumberVcs
-	putUint32(&body, 16644)   // MaxBufferSize
-	putUint32(&body, 65536)   // MaxRawSize
-	putUint32(&body, 0)       // SessionKey
-	putUint32(&body, capNTLM) // Capabilities
+	body.WriteByte(0x03)    // SecurityMode: user-level + encrypted passwords
+	putUint16(&body, 50)    // MaxMpxCount
+	putUint16(&body, 1)     // MaxNumberVcs
+	putUint32(&body, 16644) // MaxBufferSize
+	putUint32(&body, 65536) // MaxRawSize
+	putUint32(&body, 0)     // SessionKey
+	caps := uint32(capNTLM)
+	if extSec {
+		caps |= capExtendedSecurity
+	}
+	putUint32(&body, caps)
 	putFiletime(&body, time.Now().UTC())
 	putUint16(&body, 0) // ServerTimeZone
-	body.WriteByte(byte(len(challenge)))
-	putUint16(&body, uint16(len(challenge)+len(domain)+len(server)))
-	body.Write(challenge)
-	body.Write(domain)
-	body.Write(server)
+
+	if extSec {
+		f2 := flags2(h) | flags2Unicode | flags2ExtendedSecurity
+		binary.LittleEndian.PutUint16(h.Flags2[:], f2)
+		blob := SPNEGONegTokenInit()
+		body.WriteByte(0) // EncryptionKeyLength: 0 for extended security
+		putUint16(&body, uint16(16+len(blob)))
+		body.Write(smb2ServerGUID[:]) // ServerGUID
+		body.Write(blob)              // SecurityBlob
+	} else {
+		challenge := make([]byte, 8)
+		if _, err := rand.Read(challenge); err != nil {
+			return h, nil, err
+		}
+		// Non-extended negotiate Domain/Server are UTF-16 in practice; nmap's
+		// smb.lua always decodes them as UTF-16 regardless of the client's Flags2.
+		f2 := flags2(h) | flags2Unicode
+		binary.LittleEndian.PutUint16(h.Flags2[:], f2)
+		domain := encodeString(primaryDomain, true)
+		server := encodeString(serverName, true)
+		body.WriteByte(byte(len(challenge)))
+		putUint16(&body, uint16(len(challenge)+len(domain)+len(server)))
+		body.Write(challenge)
+		body.Write(domain)
+		body.Write(server)
+	}
 
 	hb, err := headerBytes(h)
 	if err != nil {
@@ -553,6 +599,52 @@ func MakeSessionSetupAndXResponse(header SMBHeader, uid uint16) (SMBHeader, []by
 	body.Write(nativeOSB)
 	body.Write(nativeLMB)
 	body.Write(domainB)
+
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	return h, append(hb, body.Bytes()...), nil
+}
+
+// MakeSessionSetupESecResponse builds an SMB1 extended-security Session Setup
+// AndX reply carrying securityBlob (an SPNEGO token). When moreProcessing is
+// set the status is STATUS_MORE_PROCESSING_REQUIRED (the NTLM challenge step);
+// otherwise it is success (authentication accepted). uid is assigned to UID.
+func MakeSessionSetupESecResponse(header SMBHeader, uid uint16, securityBlob []byte, moreProcessing bool) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	h.Command = cmdSessionSetup
+	binary.LittleEndian.PutUint16(h.UID[:], uid)
+	// Keep EXTENDED_SECURITY set on the reply.
+	f2 := flags2(h) | flags2Unicode | flags2ExtendedSecurity
+	binary.LittleEndian.PutUint16(h.Flags2[:], f2)
+	if moreProcessing {
+		binary.LittleEndian.PutUint32(h.Status[:], statusMoreProcessing)
+	}
+
+	unicode := true
+	nativeOSB := encodeString(nativeOS, unicode)
+	nativeLMB := encodeString(nativeLanMan, unicode)
+
+	var body bytes.Buffer
+	body.WriteByte(4)    // WordCount
+	body.WriteByte(0xff) // AndXCommand: none
+	body.WriteByte(0)    // AndXReserved
+	putUint16(&body, 0)  // AndXOffset
+	putUint16(&body, 0)  // Action
+	putUint16(&body, uint16(len(securityBlob)))
+	// ByteCount: blob + alignment pad + native strings. The blob starts at
+	// header(32)+WC(1)+4 words(8)+ByteCount(2) = 43; the Unicode strings that
+	// follow must start on an even offset from the SMB header.
+	const blobOff = 32 + 1 + 8 + 2
+	pad := (blobOff + len(securityBlob)) % 2
+	putUint16(&body, uint16(len(securityBlob)+pad+len(nativeOSB)+len(nativeLMB)))
+	body.Write(securityBlob)
+	for i := 0; i < pad; i++ {
+		body.WriteByte(0)
+	}
+	body.Write(nativeOSB)
+	body.Write(nativeLMB)
 
 	hb, err := headerBytes(h)
 	if err != nil {
@@ -598,12 +690,35 @@ func MakeTreeConnectAndXResponse(header SMBHeader, tid uint16, share string) (SM
 	return h, append(hb, body.Bytes()...), nil
 }
 
+// MakeBadNetworkNameResponse builds the STATUS_BAD_NETWORK_NAME error reply
+// Windows sends for a Tree Connect to a share it does not have.
+func MakeBadNetworkNameResponse(header SMBHeader) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	h.Command = cmdTreeConnect
+	binary.LittleEndian.PutUint32(h.Status[:], statusBadNetworkName)
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	return h, append(hb, 0x00, 0x00, 0x00), nil
+}
+
 // MakeNtCreateAndXResponse builds an SMB_COM_NT_CREATE_ANDX success reply
-// (WordCount 34, AndX none, FILE_OPENED) assigning fid. Named-pipe fields are
-// filled so clients opening IPC$ pipes such as \svcctl keep the session open.
-func MakeNtCreateAndXResponse(header SMBHeader, fid uint16) (SMBHeader, []byte, error) {
+// (WordCount 34, AndX none, FILE_OPENED) assigning fid. When isPipe is set the
+// named-pipe fields are filled so clients opening IPC$ pipes such as \svcctl
+// keep talking; otherwise a regular disk file is reported so uploads proceed.
+func MakeNtCreateAndXResponse(header SMBHeader, fid uint16, isPipe bool) (SMBHeader, []byte, error) {
 	h := replyHeader(header)
 	h.Command = CmdNtCreateAndX
+
+	resourceType := uint16(fileTypeDisk)
+	nmPipeStatus := uint16(0)
+	extAttr := uint32(fileAttributeNormal)
+	if isPipe {
+		resourceType = fileTypeMessagePipe
+		nmPipeStatus = 0x00c5 // message-mode, connected
+		extAttr = 0
+	}
 
 	var body bytes.Buffer
 	body.WriteByte(ntCreateAndXWordCount)
@@ -614,17 +729,17 @@ func MakeNtCreateAndXResponse(header SMBHeader, fid uint16) (SMBHeader, []byte, 
 	putUint16(&body, fid)
 	putUint32(&body, fileOpened) // CreateAction: FILE_OPENED
 	var zeros8 [8]byte
-	body.Write(zeros8[:]) // CreateTime
-	body.Write(zeros8[:]) // LastAccessTime
-	body.Write(zeros8[:]) // LastWriteTime
-	body.Write(zeros8[:]) // ChangeTime
-	putUint32(&body, 0)   // ExtFileAttributes
-	body.Write(zeros8[:]) // AllocationSize
-	body.Write(zeros8[:]) // EndOfFile
-	putUint16(&body, fileTypeMessagePipe)
-	putUint16(&body, 0x00c5) // NMPipeStatus: message-mode, connected
-	body.WriteByte(0)        // Directory: false
-	putUint16(&body, 0)      // ByteCount
+	body.Write(zeros8[:])     // CreateTime
+	body.Write(zeros8[:])     // LastAccessTime
+	body.Write(zeros8[:])     // LastWriteTime
+	body.Write(zeros8[:])     // ChangeTime
+	putUint32(&body, extAttr) // ExtFileAttributes
+	body.Write(zeros8[:])     // AllocationSize
+	body.Write(zeros8[:])     // EndOfFile
+	putUint16(&body, resourceType)
+	putUint16(&body, nmPipeStatus)
+	body.WriteByte(0)   // Directory: false
+	putUint16(&body, 0) // ByteCount
 
 	hb, err := headerBytes(h)
 	if err != nil {
@@ -775,6 +890,84 @@ func WriteAndXDataLength(body []byte) uint16 {
 	return binary.LittleEndian.Uint16(body[off : off+2])
 }
 
+// WriteAndXFID returns the FID from an SMB_COM_WRITE_ANDX request body
+// (positioned after the 32-byte header).
+func WriteAndXFID(body []byte) uint16 {
+	// WordCount(1) + AndXCmd(1) + AndXRes(1) + AndXOff(2) = 5.
+	if len(body) < 7 {
+		return 0
+	}
+	return binary.LittleEndian.Uint16(body[5:7])
+}
+
+// WriteAndXData returns the written bytes from an SMB_COM_WRITE_ANDX PDU
+// (starting at the SMB header). DataOffset is measured from the SMB header
+// start. Returns nil when the fields do not fit.
+func WriteAndXData(pdu []byte) []byte {
+	// header(32) + WC(1)+AndX(3)+FID(2)+Offset(4)+Timeout(4)+WriteMode(2)+
+	// Remaining(2)+DataLenHigh(2)+DataLenLow(2)+DataOffset(2) = 32+26 = 58.
+	const lenOff = 32 + 21
+	const offOff = 32 + 23
+	if len(pdu) < offOff+2 {
+		return nil
+	}
+	dataLen := int(binary.LittleEndian.Uint16(pdu[lenOff : lenOff+2]))
+	dataOff := int(binary.LittleEndian.Uint16(pdu[offOff : offOff+2]))
+	if dataLen == 0 || dataOff > len(pdu) || dataOff+dataLen > len(pdu) {
+		return nil
+	}
+	return pdu[dataOff : dataOff+dataLen]
+}
+
+// WriteFID returns the FID from an SMB_COM_WRITE (0x0b) request body.
+func WriteFID(body []byte) uint16 {
+	// WordCount(1) + FID(2).
+	if len(body) < 3 {
+		return 0
+	}
+	return binary.LittleEndian.Uint16(body[1:3])
+}
+
+// WriteData returns the written bytes from an SMB_COM_WRITE (0x0b) PDU. The
+// layout is fixed: header(32) + WC(1) + FID(2) + Count(2) + Offset(4) +
+// Remaining(2) + ByteCount(2) + BufferFormat(1) + DataLength(2) + data.
+func WriteData(pdu []byte) []byte {
+	const countOff = 32 + 3
+	const dataOff = 32 + 16
+	if len(pdu) < dataOff {
+		return nil
+	}
+	count := int(binary.LittleEndian.Uint16(pdu[countOff : countOff+2]))
+	if count == 0 || dataOff+count > len(pdu) {
+		return nil
+	}
+	return pdu[dataOff : dataOff+count]
+}
+
+// CloseFID returns the FID from an SMB_COM_CLOSE request body.
+func CloseFID(body []byte) uint16 {
+	if len(body) < 3 {
+		return 0
+	}
+	return binary.LittleEndian.Uint16(body[1:3])
+}
+
+// MakeWriteResponse builds an SMB_COM_WRITE (0x0b) success reply acknowledging
+// count bytes written (WordCount=1).
+func MakeWriteResponse(header SMBHeader, count uint16) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	h.Command = CmdWrite
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	var body bytes.Buffer
+	body.WriteByte(1)       // WordCount
+	putUint16(&body, count) // CountOfBytesWritten
+	putUint16(&body, 0)     // ByteCount
+	return h, append(hb, body.Bytes()...), nil
+}
+
 // MakeWriteAndXResponse builds an SMB_COM_WRITE_ANDX success reply
 // acknowledging count bytes written (WordCount=6).
 func MakeWriteAndXResponse(header SMBHeader, count uint16) (SMBHeader, []byte, error) {
@@ -822,6 +1015,43 @@ func MakeReadAndXResponse(header SMBHeader) (SMBHeader, []byte, error) {
 	putUint32(&body, 0)          // Reserved2[0]
 	putUint32(&body, 0)          // Reserved2[1]
 	putUint16(&body, 0)          // ByteCount
+	return h, append(hb, body.Bytes()...), nil
+}
+
+// ReadAndXFID returns the FID from an SMB_COM_READ_ANDX request body.
+func ReadAndXFID(body []byte) uint16 {
+	if len(body) < 7 {
+		return 0
+	}
+	return binary.LittleEndian.Uint16(body[5:7])
+}
+
+// MakeReadAndXDataResponse builds an SMB_COM_READ_ANDX success reply carrying
+// data (used to return a pipe's pending DCERPC reply).
+func MakeReadAndXDataResponse(header SMBHeader, data []byte) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	h.Command = CmdReadAndX
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	const dataOffset = 60 // header(32)+WC(1)+12 words(24)+BC(2)+pad(1)
+	var body bytes.Buffer
+	body.WriteByte(12)                    // WordCount
+	body.WriteByte(0xff)                  // AndXCommand: none
+	body.WriteByte(0)                     // AndXReserved
+	putUint16(&body, 0)                   // AndXOffset
+	putUint16(&body, 0xffff)              // Remaining
+	putUint16(&body, 0)                   // DataCompactionMode
+	putUint16(&body, 0)                   // Reserved1
+	putUint16(&body, uint16(len(data)))   // DataLength
+	putUint16(&body, dataOffset)          // DataOffset
+	putUint16(&body, 0)                   // DataLengthHigh
+	putUint32(&body, 0)                   // Reserved2[0]
+	putUint32(&body, 0)                   // Reserved2[1]
+	putUint16(&body, uint16(len(data)+1)) // ByteCount (incl. pad)
+	body.WriteByte(0)                     // pad to DataOffset
+	body.Write(data)
 	return h, append(hb, body.Bytes()...), nil
 }
 

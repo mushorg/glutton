@@ -4,6 +4,7 @@ import "fmt"
 
 const (
 	CmdClose                 = 0x04
+	CmdWrite                 = 0x0b
 	CmdTransaction           = 0x25
 	CmdTransactionSecondary  = 0x26
 	CmdReadAndX              = 0x2e
@@ -23,6 +24,7 @@ const (
 
 var smb1CommandNames = map[byte]string{
 	CmdClose:                 "SMB_COM_CLOSE",
+	CmdWrite:                 "SMB_COM_WRITE",
 	CmdTransaction:           "SMB_COM_TRANSACTION",
 	CmdTransactionSecondary:  "SMB_COM_TRANSACTION_SECONDARY",
 	CmdReadAndX:              "SMB_COM_READ_ANDX",

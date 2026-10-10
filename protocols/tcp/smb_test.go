@@ -1,6 +1,7 @@
 package tcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
@@ -89,7 +90,7 @@ func TestHandleSMBMS17010Path(t *testing.T) {
 	require.Equal(t, byte(0x72), negResp[4])
 	require.Equal(t, [4]byte{}, [4]byte(negResp[5:9]))
 	negFlags2 := binary.LittleEndian.Uint16(negResp[10:12])
-	require.Equal(t, uint16(0), negFlags2&0x0800, "EXTENDED_SECURITY must be cleared")
+	require.NotEqual(t, uint16(0), negFlags2&0x0800, "EXTENDED_SECURITY echoed to a client that asked for it")
 	require.NotEqual(t, uint16(0), negFlags2&0x8000, "Unicode must be set")
 
 	// 2) Session Setup AndX (basic; body ignored by handler)
@@ -211,20 +212,22 @@ func smbHandshakeIPC(t *testing.T, client net.Conn) (uid, tid uint16) {
 	uid = binary.LittleEndian.Uint16(ssResp[28:30])
 	require.NotZero(t, uid)
 
-	path := encodeSMBPath(`\\127.0.0.1\IPC$`)
-	service := []byte("?????\x00")
-	dataBytes := append([]byte{0x00}, path...)
-	dataBytes = append(dataBytes, service...)
-	tcBody := []byte{
-		0x04, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-	}
-	binary.LittleEndian.PutUint16(tcBody[9:11], uint16(len(dataBytes)))
-	tcBody = append(tcBody, dataBytes...)
-	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x75, 0, uid, 3)), tcBody...))
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x75, 0, uid, 3)), treeConnectBody(`\\127.0.0.1\IPC$`)...))
 	tcResp := readSMBFrame(t, client)
 	tid = binary.LittleEndian.Uint16(tcResp[24:26])
 	require.NotZero(t, tid)
 	return uid, tid
+}
+
+// treeConnectBody builds a Unicode SMB_COM_TREE_CONNECT_ANDX request body.
+func treeConnectBody(path string) []byte {
+	dataBytes := append([]byte{0x00}, encodeSMBPath(path)...)
+	dataBytes = append(dataBytes, []byte("?????\x00")...)
+	tcBody := []byte{
+		0x04, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+	}
+	binary.LittleEndian.PutUint16(tcBody[9:11], uint16(len(dataBytes)))
+	return append(tcBody, dataBytes...)
 }
 
 func ntCreateAndXBody(name string) []byte {
@@ -648,4 +651,433 @@ func TestHandleSMBStoresReassembledTransaction(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, hashed)
+}
+
+func TestHandleSMBNetBIOSSessionRequest(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+
+	// Synthetic port 139 session request: called "*SMBSERVER<20>", calling "KALI<00>".
+	sessReq, err := hex.DecodeString("81000044" +
+		"20434b4644454e4543464445464643464745464643434143414341434143414341" + "00" +
+		"20454c4542454d454a43414341434143414341434143414341434143414341414100")
+	require.NoError(t, err)
+	_, err = client.Write(sessReq)
+	require.NoError(t, err)
+	resp := make([]byte, 4)
+	_, err = io.ReadFull(client, resp)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x82, 0x00, 0x00, 0x00}, resp)
+
+	keepAlive := []byte{0x85, 0x00, 0x00, 0x00}
+	_, err = client.Write(keepAlive)
+	require.NoError(t, err)
+
+	negBody := append([]byte{0x00, 0x0c, 0x00}, []byte("\x02NT LM 0.12\x00")...)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x72, 0, 0, 1)), negBody...))
+	require.Equal(t, byte(0x72), readSMBFrame(t, client)[4])
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames := ev.decoded.([]parsedSMB)
+	require.Len(t, frames, 5)
+	require.Equal(t, []parsedSMB{
+		{Direction: "read", Command: "NBSS_SESSION_REQUEST", CalledName: "*SMBSERVER", CallingName: "KALI", Payload: sessReq},
+		{Direction: "write", Command: "NBSS_POSITIVE_SESSION_RESPONSE", Payload: []byte{0x82, 0x00, 0x00, 0x00}},
+		{Direction: "read", Command: "NBSS_SESSION_KEEP_ALIVE", Payload: keepAlive},
+	}, frames[:3])
+	require.Equal(t, "SMB_COM_NEGOTIATE", frames[3].Command)
+	require.Equal(t, "write", frames[4].Direction)
+}
+
+func TestHandleSMBMalformedSessionRequestStillAccepted(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+
+	sessReq := []byte{0x81, 0x00, 0x00, 0x02, 0x20, 'A'}
+	_, err := client.Write(sessReq)
+	require.NoError(t, err)
+	resp := make([]byte, 4)
+	_, err = io.ReadFull(client, resp)
+	require.NoError(t, err)
+	require.Equal(t, byte(0x82), resp[0])
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames := ev.decoded.([]parsedSMB)
+	require.Len(t, frames, 2)
+	require.Equal(t, parsedSMB{Direction: "read", Command: "NBSS_SESSION_REQUEST", Payload: sessReq}, frames[0])
+}
+
+func TestHandleSMBRejectsNmapProbeShare(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+	uid, tid := smbHandshakeIPC(t, client)
+
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x75, 0, uid, 4)), treeConnectBody(`\\127.0.0.1\nmap-share-test`)...))
+	resp := readSMBFrame(t, client)
+	require.Equal(t, [4]byte{0xcc, 0x00, 0x00, 0xc0}, [4]byte(resp[5:9]))
+	require.Zero(t, binary.LittleEndian.Uint16(resp[24:26]), "no TID for a missing share")
+
+	// The next real share still gets the next TID.
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x75, 0, uid, 5)), treeConnectBody(`\\127.0.0.1\C$`)...))
+	resp = readSMBFrame(t, client)
+	require.Equal(t, [4]byte{}, [4]byte(resp[5:9]))
+	require.Equal(t, tid+1, binary.LittleEndian.Uint16(resp[24:26]))
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames := ev.decoded.([]parsedSMB)
+	require.Len(t, frames, 10)
+	require.Equal(t, "read", frames[6].Direction)
+	require.Equal(t, "nmap-share-test", frames[6].Path)
+	require.Equal(t, "write", frames[7].Direction)
+	require.Equal(t, "SMB_COM_TREE_CONNECT_ANDX", frames[7].Command)
+	require.Equal(t, "STATUS_BAD_NETWORK_NAME", frames[7].Status)
+	require.Equal(t, uint32(0xc00000cc), frames[7].NTStatus)
+	require.Equal(t, "C$", frames[8].Path)
+	require.Equal(t, "STATUS_SUCCESS", frames[9].Status)
+}
+
+// --- helpers for pipe/file/NTLM handler tests ---
+
+func writeAndXBody(fid uint16, data []byte) []byte {
+	b := make([]byte, 31)
+	b[0] = 14   // WordCount
+	b[1] = 0xff // AndXCommand: none
+	binary.LittleEndian.PutUint16(b[5:7], fid)
+	binary.LittleEndian.PutUint16(b[21:23], uint16(len(data))) // DataLength
+	binary.LittleEndian.PutUint16(b[23:25], 63)                // DataOffset from SMB header
+	binary.LittleEndian.PutUint16(b[29:31], uint16(len(data))) // ByteCount
+	return append(b, data...)
+}
+
+func readAndXBody(fid uint16) []byte {
+	b := make([]byte, 27)
+	b[0] = 12   // WordCount
+	b[1] = 0xff // AndXCommand: none
+	binary.LittleEndian.PutUint16(b[5:7], fid)
+	return b
+}
+
+func closeBody(fid uint16) []byte {
+	b := make([]byte, 10)
+	b[0] = 3 // WordCount
+	binary.LittleEndian.PutUint16(b[1:3], fid)
+	return b
+}
+
+func dcerpcFrameBytes(ptype byte, callID uint32, body []byte) []byte {
+	out := make([]byte, 16+len(body))
+	out[0] = 5     // version
+	out[2] = ptype // PTYPE
+	out[3] = 0x03  // first + last fragment
+	out[4] = 0x10  // little-endian drep
+	binary.LittleEndian.PutUint16(out[8:10], uint16(len(out)))
+	binary.LittleEndian.PutUint32(out[12:16], callID)
+	copy(out[16:], body)
+	return out
+}
+
+func dcerpcBind(callID uint32) []byte {
+	// srvsvc interface + NDR transfer syntax.
+	body := []byte{0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0} // max_xmit/recv, assoc
+	body = append(body, 0x01, 0x00, 0x00, 0x00)        // n_context_elem + reserved
+	body = append(body, 0x00, 0x00, 0x01, 0x00)        // p_cont_id, n_transfer_syn, reserved
+	body = append(body, 0xc8, 0x4f, 0x32, 0x4b, 0x70, 0x16, 0xd3, 0x01,
+		0x12, 0x78, 0x5a, 0x47, 0xbf, 0x6e, 0xe1, 0x88) // srvsvc UUID
+	body = append(body, 0x03, 0x00, 0x00, 0x00) // interface version 3.0
+	body = append(body, 0x04, 0x5d, 0x88, 0x8a, 0xeb, 0x1c, 0xc9, 0x11,
+		0x9f, 0xe8, 0x08, 0x00, 0x2b, 0x10, 0x48, 0x60) // NDR UUID
+	body = append(body, 0x02, 0x00, 0x00, 0x00) // transfer version 2.0
+	return dcerpcFrameBytes(0x0b, callID, body)
+}
+
+func dcerpcRequest(callID uint32, opnum uint16, stub []byte) []byte {
+	body := make([]byte, 8)
+	binary.LittleEndian.PutUint32(body[0:4], uint32(len(stub))) // alloc_hint
+	binary.LittleEndian.PutUint16(body[6:8], opnum)
+	return dcerpcFrameBytes(0x00, callID, append(body, stub...))
+}
+
+func TestHandleSMBPipeDCERPCBindAndRequest(t *testing.T) {
+	var stored [][]byte
+	orig := smbStore
+	smbStore = func(data []byte, folder string) (string, error) {
+		stored = append(stored, append([]byte(nil), data...))
+		return helpers.SHA256Hex(data), nil
+	}
+	t.Cleanup(func() { smbStore = orig })
+
+	client, hp, done := startHandleSMB(t)
+	uid, tid := smbHandshakeIPC(t, client)
+
+	// Open \svcctl, bind, then issue one request.
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdNtCreateAndX, tid, uid, 4)), ntCreateAndXBody(`\svcctl`)...))
+	fid := binary.LittleEndian.Uint16(readSMBFrame(t, client)[38:40])
+
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdWriteAndX, tid, uid, 5)), writeAndXBody(fid, dcerpcBind(0x11))...))
+	readSMBFrame(t, client)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdReadAndX, tid, uid, 6)), readAndXBody(fid)...))
+	bindAck := readSMBFrame(t, client)
+	require.True(t, bytes.Contains(bindAck, []byte{0x05, 0x00, 0x0c}), "DCERPC bind_ack returned")
+
+	stub := []byte("OpenSCManager-args")
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdWriteAndX, tid, uid, 7)), writeAndXBody(fid, dcerpcRequest(0x11, 15, stub))...))
+	readSMBFrame(t, client)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdReadAndX, tid, uid, 8)), readAndXBody(fid)...))
+	fault := readSMBFrame(t, client)
+	require.True(t, bytes.Contains(fault, []byte{0x05, 0x00, 0x03}), "DCERPC fault returned (no RPC service emulated)")
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames := ev.decoded.([]parsedSMB)
+
+	var sawBind, sawReq bool
+	for _, f := range frames {
+		if f.DCERPC == "DCERPC_BIND" {
+			require.Equal(t, "4b324fc8-1670-01d3-1278-5a47bf6ee188", f.Interface)
+			require.Equal(t, "3.0", f.InterfaceVer)
+			sawBind = true
+		}
+		if f.DCERPC == "DCERPC_REQUEST" {
+			require.NotNil(t, f.Opnum)
+			require.Equal(t, uint16(15), *f.Opnum)
+			require.Equal(t, "4b324fc8-1670-01d3-1278-5a47bf6ee188", f.Interface)
+			require.Equal(t, helpers.SHA256Hex(stub), f.PayloadHash)
+			sawReq = true
+		}
+	}
+	require.True(t, sawBind, "bind frame tagged")
+	require.True(t, sawReq, "request frame tagged with opnum + stub hash")
+	require.Equal(t, [][]byte{stub}, stored, "only the request stub was stored")
+}
+
+func TestHandleSMBFileUploadCaptured(t *testing.T) {
+	var stored []byte
+	orig := smbStore
+	smbStore = func(data []byte, folder string) (string, error) {
+		stored = append([]byte(nil), data...)
+		return helpers.SHA256Hex(data), nil
+	}
+	t.Cleanup(func() { smbStore = orig })
+
+	client, hp, done := startHandleSMB(t)
+	uid := smbHandshakeDiskShare(t, client)
+	tid := uint16(1) // the disk share's TID
+
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdNtCreateAndX, tid, uid, 4)), ntCreateAndXBody(`\payload.exe`)...))
+	createResp := readSMBFrame(t, client)
+	require.Equal(t, uint16(0), binary.LittleEndian.Uint16(createResp[96:98]), "disk file, not pipe")
+	fid := binary.LittleEndian.Uint16(createResp[38:40])
+
+	upload := bytes.Repeat([]byte("MZ..payload.."), 100)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdWriteAndX, tid, uid, 5)), writeAndXBody(fid, upload[:600])...))
+	readSMBFrame(t, client)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdWriteAndX, tid, uid, 6)), writeAndXBody(fid, upload[600:])...))
+	readSMBFrame(t, client)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdClose, tid, uid, 7)), closeBody(fid)...))
+	readSMBFrame(t, client)
+
+	ev := finishHandleSMB(t, client, done, hp)
+	require.Equal(t, upload, stored, "both write fragments reassembled on close")
+
+	frames := ev.decoded.([]parsedSMB)
+	var tagged bool
+	for _, f := range frames {
+		if f.Direction == "read" && f.Header.Command == smb.CmdNtCreateAndX {
+			require.Equal(t, `\payload.exe`, f.Path)
+			require.Equal(t, helpers.SHA256Hex(upload), f.PayloadHash)
+			tagged = true
+		}
+	}
+	require.True(t, tagged, "upload hash set on the NT Create frame")
+}
+
+// smbHandshakeDiskShare negotiates, sets up a session, and tree-connects to a
+// disk share (C$), returning the session UID. The share gets TID 1.
+func smbHandshakeDiskShare(t *testing.T, client net.Conn) (uid uint16) {
+	t.Helper()
+	negBody := append([]byte{0x00, 0x0c, 0x00}, []byte("\x02NT LM 0.12\x00")...)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x72, 0, 0, 1)), negBody...))
+	_ = readSMBFrame(t, client)
+
+	ssBody := []byte{
+		0x0d, 0xff, 0x00, 0x00, 0x00, 0xff, 0xff, 0x02, 0x00, 0x01, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	}
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x73, 0, 0, 2)), ssBody...))
+	uid = binary.LittleEndian.Uint16(readSMBFrame(t, client)[28:30])
+	require.NotZero(t, uid)
+
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x75, 0, uid, 3)), treeConnectBody(`\\127.0.0.1\C$`)...))
+	require.NotZero(t, binary.LittleEndian.Uint16(readSMBFrame(t, client)[24:26]))
+	return uid
+}
+
+func sessionSetupESecBody(blob []byte) []byte {
+	b := make([]byte, 27)
+	b[0] = 12                                                  // WordCount
+	b[1] = 0xff                                                // AndXCommand: none
+	binary.LittleEndian.PutUint16(b[15:17], uint16(len(blob))) // SecurityBlobLength
+	binary.LittleEndian.PutUint16(b[25:27], uint16(len(blob))) // ByteCount
+	return append(b, blob...)
+}
+
+func ntlmType1() []byte {
+	m := make([]byte, 16)
+	copy(m, []byte("NTLMSSP\x00"))
+	binary.LittleEndian.PutUint32(m[8:12], 1)           // NEGOTIATE
+	binary.LittleEndian.PutUint32(m[12:16], 0x00000201) // Unicode | NTLM
+	return m
+}
+
+func ntlmType3(domain, user, workstation string) []byte {
+	m := make([]byte, 64)
+	copy(m, []byte("NTLMSSP\x00"))
+	binary.LittleEndian.PutUint32(m[8:12], 3)           // AUTHENTICATE
+	binary.LittleEndian.PutUint32(m[60:64], 0x00000001) // NEGOTIATE_UNICODE
+	payload := []byte{}
+	put := func(descOff int, s string) {
+		enc := make([]byte, 0, len(s)*2)
+		for _, r := range s {
+			enc = append(enc, byte(r), byte(r>>8))
+		}
+		off := 64 + len(payload)
+		binary.LittleEndian.PutUint16(m[descOff:], uint16(len(enc)))
+		binary.LittleEndian.PutUint16(m[descOff+2:], uint16(len(enc)))
+		binary.LittleEndian.PutUint32(m[descOff+4:], uint32(off))
+		payload = append(payload, enc...)
+	}
+	// Fake NT response buffer (never parsed), then the identity fields.
+	nt := bytes.Repeat([]byte{0xAA}, 24)
+	binary.LittleEndian.PutUint16(m[20:], uint16(len(nt)))
+	binary.LittleEndian.PutUint16(m[22:], uint16(len(nt)))
+	binary.LittleEndian.PutUint32(m[24:], 64)
+	payload = append(payload, nt...)
+	put(28, domain)
+	put(36, user)
+	put(44, workstation)
+	return append(m, payload...)
+}
+
+func TestHandleSMBNTLMSSPSessionSetup(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+
+	// Negotiate with extended security advertised.
+	negBody := append([]byte{0x00, 0x0c, 0x00}, []byte("\x02NT LM 0.12\x00")...)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x72, 0, 0, 1)), negBody...))
+	negResp := readSMBFrame(t, client)
+	require.NotZero(t, binary.LittleEndian.Uint16(negResp[10:12])&0x0800, "ext-sec echoed")
+
+	// Step 1: Type 1 -> challenge with STATUS_MORE_PROCESSING_REQUIRED.
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x73, 0, 0, 2)), sessionSetupESecBody(ntlmType1())...))
+	chalResp := readSMBFrame(t, client)
+	require.Equal(t, [4]byte{0x16, 0x00, 0x00, 0xc0}, [4]byte(chalResp[5:9]), "STATUS_MORE_PROCESSING_REQUIRED")
+	require.True(t, bytes.Contains(chalResp, []byte("NTLMSSP\x00")), "challenge carries NTLMSSP")
+	uid := binary.LittleEndian.Uint16(chalResp[28:30])
+	require.NotZero(t, uid)
+
+	// Step 2: Type 3 -> success, identity recorded.
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x73, 0, uid, 3)), sessionSetupESecBody(ntlmType3("CORP", "operator", "WS7"))...))
+	okResp := readSMBFrame(t, client)
+	require.Equal(t, [4]byte{}, [4]byte(okResp[5:9]), "STATUS_SUCCESS")
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames := ev.decoded.([]parsedSMB)
+
+	var auth parsedSMB
+	for _, f := range frames {
+		if f.Direction == "read" && f.Account == "operator" {
+			auth = f
+		}
+	}
+	require.Equal(t, "operator", auth.Account)
+	require.Equal(t, "CORP", auth.Domain)
+	require.Equal(t, "WS7", auth.Workstation)
+
+	// No credential material leaks into decoded string fields.
+	require.NotContains(t, auth.Status, "\xaa")
+	require.Empty(t, auth.PayloadHash, "NTLM responses are not stored")
+}
+
+func TestHandleSMB2NegotiateAndSessionSetupNTLM(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+
+	// SMB2 Negotiate: response must advertise an NTLMSSP SPNEGO blob.
+	neg := make([]byte, 64)
+	neg[0] = 0xfe
+	copy(neg[1:4], []byte("SMB"))
+	binary.LittleEndian.PutUint16(neg[4:6], 64)
+	binary.LittleEndian.PutUint16(neg[12:14], smb.SMB2CmdNegotiate)
+	writeSMBFrame(t, client, neg)
+	negResp := readSMBFrame(t, client)
+	require.True(t, bytes.Contains(negResp, []byte{0x2b, 0x06, 0x01, 0x05, 0x05, 0x02}), "SPNEGO OID in negotiate")
+
+	// SMB2 Session Setup with an NTLMSSP Type 1 -> MORE_PROCESSING + challenge.
+	ss := make([]byte, 64+24)
+	ss[0] = 0xfe
+	copy(ss[1:4], []byte("SMB"))
+	binary.LittleEndian.PutUint16(ss[4:6], 64)
+	binary.LittleEndian.PutUint16(ss[12:14], smb.SMB2CmdSessionSetup)
+	binary.LittleEndian.PutUint16(ss[64:66], 25)   // StructureSize
+	binary.LittleEndian.PutUint16(ss[76:78], 0x58) // SecurityBufferOffset
+	binary.LittleEndian.PutUint16(ss[78:80], 16)   // SecurityBufferLength
+	ss = append(ss, ntlmType1()...)
+	writeSMBFrame(t, client, ss)
+	ssResp := readSMBFrame(t, client)
+	require.Equal(t, uint32(0xc0000016), binary.LittleEndian.Uint32(ssResp[8:12]), "MORE_PROCESSING")
+	require.True(t, bytes.Contains(ssResp, []byte("NTLMSSP\x00")), "challenge carries NTLMSSP")
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames := ev.decoded.([]parsedSMB)
+	require.Equal(t, "SMB2_NEGOTIATE", frames[0].Command)
+	require.Equal(t, "SMB2_SESSION_SETUP", frames[2].Command)
+}
+
+func TestHandleSMBFileUploadCapped(t *testing.T) {
+	origCap := maxSMBFileBuffer
+	maxSMBFileBuffer = 1024
+	t.Cleanup(func() { maxSMBFileBuffer = origCap })
+
+	var stored []byte
+	origStore := smbStore
+	smbStore = func(data []byte, folder string) (string, error) {
+		stored = append([]byte(nil), data...)
+		return helpers.SHA256Hex(data), nil
+	}
+	t.Cleanup(func() { smbStore = origStore })
+
+	client, hp, done := startHandleSMB(t)
+	uid := smbHandshakeDiskShare(t, client)
+	tid := uint16(1)
+
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdNtCreateAndX, tid, uid, 4)), ntCreateAndXBody(`\big.bin`)...))
+	fid := binary.LittleEndian.Uint16(readSMBFrame(t, client)[38:40])
+
+	// Two 800-byte writes: the handle buffer must stop at the 1024 cap.
+	chunk := bytes.Repeat([]byte("A"), 800)
+	for i, mid := 0, uint16(5); i < 2; i, mid = i+1, mid+1 {
+		writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdWriteAndX, tid, uid, mid)), writeAndXBody(fid, chunk)...))
+		readSMBFrame(t, client)
+	}
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdClose, tid, uid, 9)), closeBody(fid)...))
+	readSMBFrame(t, client)
+
+	finishHandleSMB(t, client, done, hp)
+	require.Len(t, stored, 1024, "upload buffer bounded by the cap")
+}
+
+func TestHandleSMBPipeNonDCERPCDropped(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+	uid, tid := smbHandshakeIPC(t, client)
+
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdNtCreateAndX, tid, uid, 4)), ntCreateAndXBody(`\svcctl`)...))
+	fid := binary.LittleEndian.Uint16(readSMBFrame(t, client)[38:40])
+
+	// Junk written to the pipe must not crash or produce a DCERPC frame.
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdWriteAndX, tid, uid, 5)), writeAndXBody(fid, bytes.Repeat([]byte{0x99}, 64))...))
+	readSMBFrame(t, client)
+
+	ev := finishHandleSMB(t, client, done, hp)
+	for _, f := range ev.decoded.([]parsedSMB) {
+		require.Empty(t, f.DCERPC, "non-DCERPC pipe data is not tagged")
+	}
 }
