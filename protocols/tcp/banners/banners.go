@@ -8,6 +8,7 @@ package banners
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"strconv"
 	"time"
@@ -94,6 +95,45 @@ var (
 	tlsAlert = []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28}
 )
 
+// x11Reason is Xorg's refusal for a client without authorization; nmap
+// reports it as "X11 (access denied)".
+const x11Reason = "No protocol specified\n"
+
+// isX11Setup reports whether data starts with an X11 connection setup
+// request: byte order 'l' (little-endian) or 'B' (big-endian), an unused zero
+// byte and protocol major version 11. It returns the client's byte order.
+func isX11Setup(data []byte) (binary.ByteOrder, bool) {
+	if len(data) < 12 || data[1] != 0 {
+		return nil, false
+	}
+	var order binary.ByteOrder
+	switch data[0] {
+	case 'l':
+		order = binary.LittleEndian
+	case 'B':
+		order = binary.BigEndian
+	default:
+		return nil, false
+	}
+	if order.Uint16(data[2:4]) != 11 {
+		return nil, false
+	}
+	return order, true
+}
+
+// x11Failed builds an X11 connection setup Failed reply in the client's byte
+// order: status 0, reason length, protocol 11.0, additional length in 4-byte
+// units, then the reason padded to a multiple of four.
+func x11Failed(order binary.ByteOrder, reason string) []byte {
+	padded := (len(reason) + 3) &^ 3
+	b := make([]byte, 8+padded)
+	b[1] = byte(len(reason))
+	order.PutUint16(b[2:4], 11)
+	order.PutUint16(b[6:8], uint16(padded/4))
+	copy(b[8:], reason)
+	return b
+}
+
 // httpResponse is honeytrap's IIS 6.0 reply (80_tcp) with CRLF line endings,
 // a current Date and a Content-Length matching the body.
 func httpResponse() []byte {
@@ -146,6 +186,9 @@ func ForPayload(data []byte) (Response, bool) {
 		return Response{Name: "ssh", Data: sshBanner}, true
 	case len(data) >= 3 && data[0] == 0x16 && data[1] == 0x03 && data[2] <= 0x04:
 		return Response{Name: "tls-alert", Data: tlsAlert}, true
+	}
+	if order, ok := isX11Setup(data); ok {
+		return Response{Name: "x11-denied", Data: x11Failed(order, x11Reason)}, true
 	}
 	return Response{}, false
 }

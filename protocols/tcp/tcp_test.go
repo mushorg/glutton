@@ -246,6 +246,23 @@ func TestHandleTCPSignatureBeatsPort(t *testing.T) {
 	require.Equal(t, "tls-alert", events[1].Status)
 }
 
+func TestHandleTCPX11Denied(t *testing.T) {
+	// X11 setup from Ochi event bf678cc5-ae8d-4ea2-8d97-02ca98d6e37c (tcp/6029)
+	client, hp, done := startCatchAll(t, 6029)
+
+	setup := []byte{0x6c, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	_, err := client.Write(setup)
+	require.NoError(t, err)
+	denied := append([]byte{0x00, 0x16, 0x0b, 0x00, 0x00, 0x00, 0x06, 0x00}, "No protocol specified\n\x00\x00"...)
+	require.Equal(t, denied, readAll(t, client, len(denied)))
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Command: "x11-denied", Payload: setup, PayloadHash: helpers.SHA256Hex(setup)},
+		{Direction: "write", Status: "x11-denied", Payload: denied, PayloadHash: helpers.SHA256Hex(denied)},
+	}, events)
+}
+
 func TestHandleTCPTLSAlertRecordsClientHello(t *testing.T) {
 	// ClientHello from Ochi event 5c99acb5-9d55-4846-90e7-30a6b2c0a135 (tcp/48392)
 	hello, err := os.ReadFile("../helpers/testdata/clienthello_go_mlkem.bin")
