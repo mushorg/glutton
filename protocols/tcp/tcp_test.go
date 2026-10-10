@@ -457,7 +457,9 @@ func TestHandleTCPTLSClientHelloDisconnectMidHandshake(t *testing.T) {
 				Extensions:   []uint16{11, 65281, 23, 18, 5, 10, 13, 50, 43, 51},
 				Groups:       []uint16{0x11ec, 29, 23, 24, 25},
 				JA3:          "2196848d251b217de8b2c037e356c11d",
+				JA3N:         "b7ccbdce26a8fceae75284808afcc065",
 				JA4:          "t13i131000_f57a46bbacb6_ab7e3b40a677",
+				JA4R:         "t13i131000_1301,1302,1303,c009,c00a,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,002b,0032,0033,ff01_0804,0403,0807,0805,0806,0401,0501,0601,0503,0603",
 			},
 		},
 	}, events)
@@ -469,6 +471,8 @@ func TestHandleTCPTLSClientHelloDisconnectMidHandshake(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &frame))
 	require.Equal(t, "TLS 1.3", frame["tls_version"])
 	require.Equal(t, "t13i131000_f57a46bbacb6_ab7e3b40a677", frame["ja4"])
+	require.Equal(t, "b7ccbdce26a8fceae75284808afcc065", frame["ja3n"])
+	require.Contains(t, frame, "ja4_r")
 	require.NotContains(t, frame, "sni")
 }
 

@@ -65,6 +65,10 @@ type TLSInfo struct {
 	Cipher      string   `json:"cipher,omitempty"`
 	ClientHello string   `json:"clientHello,omitempty"` // base64 of the raw ClientHello records
 	Truncated   bool     `json:"truncated,omitempty"`
+	JA3         string   `json:"ja3,omitempty"`
+	JA3N        string   `json:"ja3n,omitempty"`
+	JA4         string   `json:"ja4,omitempty"`
+	JA4R        string   `json:"ja4_r,omitempty"`
 }
 
 // New initializes the producers

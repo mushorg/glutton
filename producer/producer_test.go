@@ -210,12 +210,14 @@ func TestMakeEventTCPTLS(t *testing.T) {
 	md := connection.Metadata{TLS: &connection.TLSInfo{
 		ServerName: "mail.example.com", ALPN: []string{"pop3"}, Version: "TLS 1.3",
 		Cipher: "TLS_AES_128_GCM_SHA256", Hello: []byte{0x16, 0x03, 0x01},
+		JA3: "ja3", JA3N: "ja3n", JA4: "ja4", JA4R: "ja4_r",
 	}}
 	ev, err := p.makeEventTCP("pop3", conn, md, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, &TLSInfo{
 		ServerName: "mail.example.com", ALPN: []string{"pop3"}, Version: "TLS 1.3",
 		Cipher: "TLS_AES_128_GCM_SHA256", ClientHello: "FgMB",
+		JA3: "ja3", JA3N: "ja3n", JA4: "ja4", JA4R: "ja4_r",
 	}, ev.TLS)
 }
 

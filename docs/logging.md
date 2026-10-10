@@ -57,6 +57,10 @@ Events are emitted only when (1) `producers.enabled` is true so a producer objec
 | `cipher` | string, optional | Negotiated cipher suite. Empty (so omitted) when the handshake failed. |
 | `clientHello` | string (base64), optional | Raw ClientHello records, capped at 4 KiB. |
 | `truncated` | boolean, optional | Set when `clientHello` was cut at the cap. |
+| `ja3` | string, optional | JA3 MD5 of the ClientHello. Set whenever the recorded hello parses, also when the handshake failed. |
+| `ja3n` | string, optional | JA3 MD5 with extensions sorted, stable for clients that randomize extension order (Chrome). |
+| `ja4` | string, optional | FoxIO JA4 fingerprint, e.g. `t13d1516h2_8daaf6152771_e5627efa2ab1`. |
+| `ja4_r` | string, optional | JA4 raw form: the sorted cipher and extension lists and the signature algorithms in clear instead of hashed. |
 
 ## Decoded data
 

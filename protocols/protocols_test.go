@@ -221,6 +221,8 @@ func TestWithTLS(t *testing.T) {
 			require.Equal(t, "hello", rh.read)
 			require.Equal(t, "mail.example.com", rh.tls.ServerName)
 			require.NotEmpty(t, rh.tls.Version)
+			require.Len(t, rh.tls.JA3, 32)
+			require.Regexp(t, `^t13d\d{4}00_[0-9a-f]{12}_[0-9a-f]{12}$`, rh.tls.JA4)
 			require.Empty(t, produced, "wrapper must not produce when the handler ran")
 		})
 	}

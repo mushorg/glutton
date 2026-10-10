@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"crypto/x509"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -27,10 +28,13 @@ func TestTerminateTLS(t *testing.T) {
 		alpn  []string
 		ver   string
 		hello []byte
+		ja3   string
+		ja4   string
 	}
 	go func() {
 		c, info, err := TerminateTLS(server)
 		gotInfo.name, gotInfo.alpn, gotInfo.ver, gotInfo.hello = info.ServerName, info.ALPN, info.Version, info.Hello
+		gotInfo.ja3, gotInfo.ja4 = info.JA3, info.JA4
 		res <- result{c, err}
 	}()
 
@@ -42,6 +46,8 @@ func TestTerminateTLS(t *testing.T) {
 	require.Equal(t, []string{"pop3"}, gotInfo.alpn)
 	require.NotEmpty(t, gotInfo.ver)
 	require.Equal(t, byte(0x16), gotInfo.hello[0])
+	require.Len(t, gotInfo.ja3, 32)
+	require.Regexp(t, `^t13d\d{4}p3_[0-9a-f]{12}_[0-9a-f]{12}$`, gotInfo.ja4)
 
 	go func() { _, _ = r.conn.Write([]byte("hi")) }()
 	buf := make([]byte, 2)
@@ -57,6 +63,32 @@ func TestTerminateTLSNonTLSClient(t *testing.T) {
 	_, info, err := TerminateTLS(server)
 	require.Error(t, err)
 	require.Equal(t, []byte("USER bob\r\nPASS x\r\n"), info.Hello)
+	require.Empty(t, info.JA3)
+	require.Empty(t, info.JA4)
+}
+
+// A hello crypto/tls rejects fails the handshake but is still fingerprinted.
+func TestTerminateTLSFingerprintsRejectedHello(t *testing.T) {
+	hello := buildHello(t, tls.VersionTLS12, []uint16{0x1301, 0xc02f},
+		[]testExt{sniExt("a.example"), {0x0017, nil}, {0x0017, nil}, versionsExt(0x0304, 0x0303)})
+	want, ok := ParseClientHello(hello)
+	require.True(t, ok)
+
+	client, server := net.Pipe()
+	defer client.Close()
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	require.NoError(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+	go func() {
+		_, _ = client.Write(hello)
+		_, _ = io.Copy(io.Discard, client) // the alert
+	}()
+	_, info, err := TerminateTLS(server)
+	require.Error(t, err)
+	require.Equal(t, want.JA3, info.JA3)
+	require.Equal(t, want.JA3N, info.JA3N)
+	require.Equal(t, want.JA4, info.JA4)
+	require.Equal(t, want.JA4R, info.JA4R)
+	require.Regexp(t, `^t13d0204`, info.JA4)
 }
 
 func TestTerminateTLSSilentClient(t *testing.T) {

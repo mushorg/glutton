@@ -80,6 +80,10 @@ func fillEnvelope(event *Event, md connection.Metadata, payload []byte, decoded 
 			Cipher:      t.Cipher,
 			ClientHello: base64.StdEncoding.EncodeToString(t.Hello),
 			Truncated:   t.Truncated,
+			JA3:         t.JA3,
+			JA3N:        t.JA3N,
+			JA4:         t.JA4,
+			JA4R:        t.JA4R,
 		}
 	}
 }

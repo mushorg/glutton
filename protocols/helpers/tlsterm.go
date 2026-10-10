@@ -51,6 +51,18 @@ type recordedConn struct {
 
 func (c *recordedConn) Read(b []byte) (int, error) { return c.r.Read(b) }
 
+// fingerprintTLS sets the JA3/JA4 fingerprints of the recorded ClientHello.
+// It parses the recorded bytes rather than crypto/tls's ClientHelloInfo, so a
+// hello that crypto/tls rejects (and so fails the handshake) is still
+// fingerprinted.
+func fingerprintTLS(info *connection.TLSInfo) {
+	hello, ok := ParseClientHello(info.Hello)
+	if !ok {
+		return
+	}
+	info.JA3, info.JA3N, info.JA4, info.JA4R = hello.JA3, hello.JA3N, hello.JA4, hello.JA4R
+}
+
 // TerminateTLS runs a server-side TLS handshake on conn with a self-signed
 // certificate. On success it returns the decrypted connection. The returned
 // info always holds whatever the client sent (capped at TLSHelloLimit), so a
@@ -89,6 +101,7 @@ func TerminateTLSFromWith(cert tls.Certificate, conn net.Conn, r io.Reader) (net
 	err := tlsConn.Handshake()
 	info.Hello = rec.buf
 	info.Truncated = rec.truncated
+	fingerprintTLS(info)
 	if err != nil {
 		return nil, info, err
 	}

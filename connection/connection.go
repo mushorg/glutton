@@ -175,7 +175,8 @@ func (t *ConnTable) Get(ck CKey) Metadata {
 }
 
 // TLSInfo describes a TLS session terminated by the sensor before the
-// protocol handler ran. Hello holds the raw ClientHello records (capped).
+// protocol handler ran. Hello holds the raw ClientHello records (capped);
+// JA3, JA3N, JA4 and JA4R are its fingerprints, empty when it did not parse.
 type TLSInfo struct {
 	ServerName string
 	ALPN       []string
@@ -183,4 +184,8 @@ type TLSInfo struct {
 	Cipher     string
 	Hello      []byte
 	Truncated  bool
+	JA3        string
+	JA3N       string
+	JA4        string
+	JA4R       string
 }
