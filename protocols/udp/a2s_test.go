@@ -54,6 +54,25 @@ func TestHandleA2SInfoGetsChallenge(t *testing.T) {
 	}, events)
 }
 
+// Unterminated A2S_INFO probe (Ochi event 04a9a553-2ae9-4615-8167-e930548cc021).
+func TestHandleA2SInfoWithoutNULGetsChallenge(t *testing.T) {
+	withA2SRand(t, []byte{0xde, 0xad, 0xbe, 0xef})
+	h := &recordingHoneypot{}
+	src, dst := a2sAddrs()
+	payload, err := hex.DecodeString("ffffffff54536f7572636520456e67696e65205175657279")
+	require.NoError(t, err)
+
+	require.NoError(t, HandleA2S(context.Background(), src, dst, payload, connection.Metadata{}, testLogger{}, h))
+	require.Len(t, h.produced, 1)
+	want := []byte{0xff, 0xff, 0xff, 0xff, 0x41, 0xde, 0xad, 0xbe, 0xef}
+	require.Equal(t, [][]byte{want}, h.replies)
+	events := h.produced[0].decoded.([]parsedA2S)
+	require.Equal(t, []parsedA2S{
+		{Direction: "read", Command: "A2S_INFO", RequestType: 0x54, Query: "Source Engine Query", Payload: payload},
+		{Direction: "write", Command: "S2C_CHALLENGE", RequestType: 0x41, Challenge: "deadbeef", Status: "S2C_CHALLENGE", Payload: want},
+	}, events)
+}
+
 func TestHandleA2SInfoWithChallengeNoReply(t *testing.T) {
 	h := &recordingHoneypot{}
 	src, dst := a2sAddrs()

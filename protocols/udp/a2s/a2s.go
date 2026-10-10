@@ -107,6 +107,15 @@ func Parse(data []byte) (Request, error) {
 	case TypeInfo:
 		end := bytes.IndexByte(body, 0)
 		if end < 0 {
+			// Some scanners drop the NUL terminator; accept the exact query
+			// string, optionally followed by a challenge.
+			if rest, ok := bytes.CutPrefix(body, []byte(InfoQuery)); ok && (len(rest) == 0 || len(rest) == ChallengeLen) {
+				req.Query = InfoQuery
+				if len(rest) == ChallengeLen {
+					req.Challenge = append([]byte{}, rest...)
+				}
+				return req, nil
+			}
 			req.Query = string(body)
 			return req, errors.New("unterminated A2S_INFO query string")
 		}

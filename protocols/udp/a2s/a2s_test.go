@@ -41,6 +41,27 @@ func TestParseInfoUnterminated(t *testing.T) {
 	require.Equal(t, "Source", req.Query)
 }
 
+// Captured unterminated A2S_INFO probe (Ochi event 04a9a553-2ae9-4615-8167-e930548cc021).
+const capturedInfoNoNUL = "ffffffff54536f7572636520456e67696e65205175657279"
+
+func TestParseInfoWithoutNUL(t *testing.T) {
+	req, err := Parse(mustHex(t, capturedInfoNoNUL))
+	require.NoError(t, err)
+	require.Equal(t, TypeInfo, req.Type)
+	require.Equal(t, InfoQuery, req.Query)
+	require.Nil(t, req.Challenge)
+	require.True(t, req.WantsChallenge())
+
+	req, err = Parse(mustHex(t, capturedInfoNoNUL+"0a0b0c0d"))
+	require.NoError(t, err)
+	require.Equal(t, "0a0b0c0d", req.ChallengeHex())
+	require.False(t, req.WantsChallenge())
+
+	req, err = Parse(mustHex(t, capturedInfoNoNUL+"0a0b"))
+	require.Error(t, err)
+	require.Equal(t, TypeInfo, req.Type)
+}
+
 func TestParsePlayerAndRules(t *testing.T) {
 	req, err := Parse(mustHex(t, "ffffffff55ffffffff"))
 	require.NoError(t, err)
