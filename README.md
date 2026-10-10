@@ -38,7 +38,7 @@ make build
 sudo bin/server -i eth0 -c config/ -l /var/log/glutton.log
 ```
 
-> **SSH safety:** Glutton's iptables rule excludes one TCP port from TPROXY redirection so your SSH session survives. Both `ports.ssh` (`config/config.yaml`) and the CLI flag `-s/--ssh` (`app/server.go`) default to `2222`. If your sshd listens on a different port (the typical `22`, for example), set `ports.ssh` in your config or pass `-s <port>` explicitly to the port your sshd actually listens on before exposing the sensor, or you will lock yourself out.
+> **SSH safety:** Glutton's iptables rule excludes one TCP port from TPROXY redirection so your SSH session survives. Both `ports.ssh` (`config/config.yaml`) and the CLI flag `-s/--ssh` (`app/server.go`) default to `2222`. If your sshd listens on a different port (the typical `22`, for example), set `ports.ssh` in your config or pass `-s <port>` explicitly to the port your sshd actually listens on before exposing the sensor, or you will lock yourself out. Further ports to leave alone go in `ports.ignore.incoming` (services on this host) and `ports.ignore.outgoing` (replies from remote services the host connects to); see [Ignored ports](docs/configuration.md#ignored-ports).
 
 Edit `config/config.yaml` before deployment. Set `addresses` to your host's public IPs and review `ports.`*, `producers.`*, `capture_traffic.enabled`, `dial_timeout`, and the rules in `config/rules.yaml`. Full reference in [docs/configuration.md](docs/configuration.md).
 

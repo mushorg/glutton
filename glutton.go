@@ -44,6 +44,7 @@ type Glutton struct {
 	publicAddrs         []net.IP
 	udpGuard            *guard.Guard
 	tcpGuard            *guard.Guard
+	ignorePorts         ignoredPorts
 }
 
 //go:embed config/rules.yaml
@@ -322,12 +323,15 @@ func (g *Glutton) tcpListen() {
 func (g *Glutton) Start() error {
 	g.startMonitor()
 
-	sshPort := viper.GetUint32("ports.ssh")
-	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), sshPort); err != nil {
+	var err error
+	if g.ignorePorts, err = ignoredPortsFromConfig(); err != nil {
+		return err
+	}
+	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), g.ignorePorts); err != nil {
 		return err
 	}
 
-	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), sshPort); err != nil {
+	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), g.ignorePorts); err != nil {
 		return err
 	}
 
@@ -520,11 +524,11 @@ func (g *Glutton) Shutdown() {
 	g.cancel() // close all connection
 
 	g.Logger.Info("Flushing TCP iptables")
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
+	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), g.ignorePorts); err != nil {
 		g.Logger.Error("Failed to drop tcp iptables", producer.ErrAttr(err))
 	}
 	g.Logger.Info("Flushing UDP iptables")
-	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), uint32(viper.GetInt("ports.ssh"))); err != nil {
+	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), g.ignorePorts); err != nil {
 		g.Logger.Error("Failed to drop udp iptables", producer.ErrAttr(err))
 	}
 	if viper.GetBool("spicy.enabled") {

@@ -29,7 +29,9 @@ Source: `config/config.yaml`. Keys you'll most often touch:
 | -------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ports.tcp`                                                          | `5000`                   | Local TCP TPROXY listener port.                                                                                                                                                     |
 | `ports.udp`                                                          | `5001`                   | Local UDP TPROXY listener port.                                                                                                                                                     |
-| `ports.ssh`                                                          | `2222`                   | Destination port excluded from TPROXY redirection (see [SSH exclusion](#ssh-exclusion)).                                                                                            |
+| `ports.ssh`                                                          | `2222`                   | Destination port excluded from TPROXY redirection, added to `ports.ignore.incoming` (see [Ignored ports](#ignored-ports)). `0` adds none.                                                                                            |
+| `ports.ignore.incoming` | `[]` | Destination ports excluded from TPROXY redirection: services on this host the honeypot must not take over. At most 15 (with `ports.ssh`). |
+| `ports.ignore.outgoing` | `[]` | Source ports excluded from TPROXY redirection: replies from remote services this host connects to (e.g. `53` for DNS). At most 15. |
 | `rules_path`                                                         | `config/rules.yaml`      | Path to the rules file.                                                                                                                                                             |
 | `addresses`                                                          | `["1.2.3.4", "5.4.3.2"]` | Public addresses used for payload sanitization.                                                                                                                                     |
 | `interface`                                                          | `eth0`                   | Interface used for public IP discovery and TPROXY rule installation.                                                                                                                |
@@ -67,9 +69,20 @@ Source: `config/config.yaml`. Keys you'll most often touch:
 | `spicy.enabled`                                                      | `true`                   | Initializes Spicy/HILTI and enables Spicy-backed paths (HTTP parsing, TCP-payload protocol detection). Set `false` if you build without Spicy or want the Spicy-free dispatch path. |
 
 
-### SSH exclusion
+### Ignored ports
 
-`ports.ssh` is the destination port iptables skips when redirecting traffic into the honeypot, so your management SSH session survives. Both `ports.ssh` (default `2222`) and the CLI flag `--ssh` (default `2222`) need to match the port your sshd actually listens on. If your sshd is on `22`, pass `--ssh 22` or set `ports.ssh: 22` before exposing the sensor — otherwise the management port will be redirected into the honeypot and you'll lock yourself out.
+Glutton installs one TPROXY rule per protocol in the `mangle` `PREROUTING` chain. Ports listed here are skipped by it, so that traffic reaches the host instead of the honeypot:
+
+```
+-i eth0 -p tcp -m state ! --state ESTABLISHED,RELATED -m multiport ! --dports 22,8022 -m multiport ! --sports 53 -j TPROXY --on-port 5000 --on-ip 127.0.0.1
+```
+
+- `ports.ignore.incoming` (plus `ports.ssh`) becomes `! --dports`: new connections to these ports on the host are not redirected.
+- `ports.ignore.outgoing` becomes `! --sports`: packets from these remote ports are not redirected, for services the host itself talks to whose replies conntrack does not mark as established.
+
+Each list is sent to iptables `multiport`, which takes at most 15 ports; Glutton refuses to start with more. The same lists are used to remove the rule on shutdown, so don't edit them while Glutton runs.
+
+`ports.ssh` is your management sshd port, so your SSH session survives. Both `ports.ssh` and the CLI flag `--ssh` need to match the port your sshd actually listens on — otherwise the management port will be redirected into the honeypot and you'll lock yourself out.
 
 ## Rules
 

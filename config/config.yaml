@@ -1,7 +1,10 @@
 ports:
   tcp: 5000
   udp: 5001
-  ssh: 22
+  ssh: 22          # management sshd port; always excluded from redirection (same as listing it in ignore.incoming).
+  ignore:          # ports never redirected into the honeypot (iptables multiport, at most 15 per list).
+    incoming: []   # destination ports of traffic to services on this host.
+    outgoing: []   # source ports of replies to connections this host makes (e.g. 53 for DNS).
 
 rules_path: config/rules.yaml
 
