@@ -15,6 +15,7 @@ import (
 	"github.com/mushorg/glutton/protocols/spicy"
 	spicyHandlers "github.com/mushorg/glutton/protocols/spicy/handlers"
 	"github.com/mushorg/glutton/protocols/tcp"
+	"github.com/mushorg/glutton/protocols/tcp/adb"
 	"github.com/mushorg/glutton/protocols/tcp/mctp"
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
 	"github.com/mushorg/glutton/protocols/tcp/socks"
@@ -42,6 +43,8 @@ const (
 	// mctpPeekLen covers the "REMOTE " method prefix of an MCTP request line.
 	mctpPeekLen     = len("REMOTE ")
 	mctpPeekTimeout = 200 * time.Millisecond
+	// adbPeekLen covers a CNXN command or a "000chost" smart-socket prefix.
+	adbPeekLen = 8
 )
 
 // greetWait is how long the catch-all waits for client bytes on a
@@ -108,7 +111,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"jabber":     bindTCP(tcp.HandleJabber, log, h),
 		"pop3":       bindTCP(tcp.HandlePOP3, log, h),
 		"whois":      bindTCP(tcp.HandleWHOIS, log, h),
-		"adb":        bindTCP(tcp.HandleADB, log, h),
+		"adb":        adbOrTCP(log, h),
 		"mongodb":    bindTCP(tcp.HandleMongoDB, log, h),
 		"minecraft":  bindTCP(tcp.HandleMinecraft, log, h),
 		"socks":      bindTCP(tcp.HandleSOCKS, log, h),
@@ -183,6 +186,11 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 				return tcp.HandleRDP(ctx, bufConn, md, log, h)
 			}
 			snip = cr[:min(len(cr), 4)]
+		}
+		// ADB scanners also probe devices that moved adbd off 5555; the
+		// four-byte snip holds the whole CNXN command
+		if adb.LooksLikeADB(snip) {
+			return tcp.HandleADB(ctx, bufConn, md, log, h)
 		}
 		// HTTP on any port goes to the HTTP handler, with or without Spicy
 		if looksLikeHTTPMethodStart(snip) {
@@ -295,6 +303,31 @@ func mctpOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		}
 		if snip, err := bufConn.peek(mctpPeekLen); err == nil && mctp.LooksLikeMCTP(snip) {
 			return tcp.HandleMCTP(ctx, bufConn, md, log, h)
+		}
+		return tcp.HandleTCPWith(ctx, bufConn, md, log, h, tcp.Options{AfterTLS: httpAfterTLS(log, h)})
+	}
+}
+
+// adbOrTCP serves the ADB ports (tcp/5555, tcp/5037): ADB clients go to the
+// ADB handler; anything else on these busy ports falls back to the generic
+// TCP handler so it is still stored.
+func adbOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
+	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			log.Debug("failed to set connection timeout", producer.ErrAttr(err))
+			return conn.Close()
+		}
+		bufConn := newBufferedConn(conn)
+		// wait (up to the connection timeout) for the client to speak first
+		if _, err := bufConn.peek(1); err != nil {
+			log.Debug("failed to peek connection", producer.ErrAttr(err))
+			return conn.Close()
+		}
+		if err := bufConn.SetReadDeadline(time.Now().Add(mctpPeekTimeout)); err != nil {
+			log.Debug("failed to set peek deadline", producer.ErrAttr(err))
+		}
+		if snip, err := bufConn.peek(adbPeekLen); err == nil && adb.LooksLikeADB(snip) {
+			return tcp.HandleADB(ctx, bufConn, md, log, h)
 		}
 		return tcp.HandleTCPWith(ctx, bufConn, md, log, h, tcp.Options{AfterTLS: httpAfterTLS(log, h)})
 	}

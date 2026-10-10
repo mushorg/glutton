@@ -48,6 +48,13 @@ func (h *protocolHoneypot) MetadataByConnection(net.Conn) (connection.Metadata, 
 // drive the client side, and returns the produced handler names.
 func dispatchMCTP(t *testing.T, send func(net.Conn)) []string {
 	t.Helper()
+	return dispatchTarget(t, "mctp", 9000, send)
+}
+
+// dispatchTarget runs a TCP handler target on a loopback connection, lets
+// send drive the client side, and returns the produced handler names.
+func dispatchTarget(t *testing.T, target string, port uint16, send func(net.Conn)) []string {
+	t.Helper()
 	t.Chdir(t.TempDir()) // HandleTCP stores payloads in ./payloads
 	prev := viper.GetInt("max_tcp_payload")
 	viper.Set("max_tcp_payload", 4096)
@@ -58,7 +65,7 @@ func dispatchMCTP(t *testing.T, send func(net.Conn)) []string {
 	defer l.Close()
 
 	hp := &protocolHoneypot{produced: make(chan string, 4)}
-	handler := MapTCPProtocolHandlers(nopLogger{}, hp)["mctp"]
+	handler := MapTCPProtocolHandlers(nopLogger{}, hp)[target]
 	require.NotNil(t, handler)
 
 	done := make(chan error, 1)
@@ -68,7 +75,7 @@ func dispatchMCTP(t *testing.T, send func(net.Conn)) []string {
 			done <- err
 			return
 		}
-		done <- handler(context.Background(), conn, connection.Metadata{TargetPort: 9000})
+		done <- handler(context.Background(), conn, connection.Metadata{TargetPort: port})
 	}()
 
 	client, err := net.Dial("tcp", l.Addr().String())

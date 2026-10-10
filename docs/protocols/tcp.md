@@ -95,3 +95,7 @@ On 5900, a valid RFB ProtocolVersion reply is tagged `command` `rfb` and answere
 RDP X.224 Connection Requests (any cookie length) never reach this handler: the catch-all routes them to `rdp` on any port.
 
 Older sensors routed only 43-byte CRs, and only with Spicy enabled. Other off-port CRs got `random` writes, which is a handler artifact.
+
+## ADB
+
+An ADB transport `CNXN` (`434e584e`) never reaches this handler: the catch-all routes it to `adb` on any port. Older sensors answered off-port `CNXN` with `random`, which is a handler artifact.
