@@ -117,7 +117,7 @@ Consume `parsed.Fields` in the handler. Do not move connection lifecycle, loggin
 
 ## 7. Optional: detect from the generic TCP path
 
-The generic `tcp` target peeks at initial bytes and, when Spicy is enabled, calls the `tcp` parser to classify HTTP, RDP, or MongoDB payloads. To add a detector:
+The generic `tcp` target peeks at initial bytes. SOCKS, RDP and HTTP request lines are detected in Go; when Spicy is enabled it also calls the `tcp` parser to classify HTTP or MongoDB payloads. To add a detector:
 
 1. extend `protocols/spicy/parsers/tcp.spicy`
 2. regenerate parser artifacts with `make spicy`

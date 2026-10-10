@@ -6,7 +6,7 @@ Transport: TCP. Shared encodings and frame fields are described in [Logging and 
 
 ## Session flow
 
-Catch-all handler. Each client message is one `read` frame (capped by `max_tcp_payload`) and gets one reply, for up to 4 messages per connection.
+Catch-all handler. A plaintext HTTP request (a known method token and its space, e.g. `GET `, `POST `, `PROPFIND `) never reaches it: the dispatcher routes HTTP on any port to the `http` handler (MCP paths to `mcp`), with or without Spicy. Each client message is one `read` frame (capped by `max_tcp_payload`) and gets one reply, for up to 4 messages per connection.
 
 The connection ends with one of these `endReason` values:
 
@@ -40,7 +40,7 @@ Writes set `status` to the response name or `random`.
 
 | Port | Response | Notes |
 | --- | --- | --- |
-| 80 | `http` | |
+| 80 | `http` | Only for non-HTTP input; HTTP requests go to the `http` handler |
 | 135 | `dcerpc-bind-ack` | |
 | 139 | `netbios-session` | |
 | 389 | `ldap` | Sends nothing, as an LDAP server does with input it cannot parse |
@@ -57,7 +57,8 @@ Silent responses (`mglndd`, `ldap`) leave only the `read` frame, with no `write`
 A complete ClientHello is tagged `tls-clienthello`. The handler then:
 
 - finishes the handshake with the shared self-signed certificate (`helpers.TerminateTLSFrom`) and sets the event's `tls` object;
-- answers the next decrypted client message exactly like a plaintext first message (signature, then port response, then random bytes);
+- hands the session to the `http` handler when the first decrypted message is an HTTP request (HTTPS scanners on ports without a `tls:` rule). The produced event is then an `http` event with the `tls` object, and there is no `tcp` event and no `tls-clienthello` frame;
+- otherwise answers the next decrypted client message exactly like a plaintext first message (signature, then port response, then random bytes);
 - sends a server-first port banner inside the tunnel right after the handshake.
 
 Frames after the handshake hold plaintext. A client that hangs up during or right after the handshake leaves only the `tls-clienthello` read.

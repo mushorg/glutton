@@ -140,21 +140,44 @@ func GreetsWhenIdle(port uint16) bool {
 	return ok && resp.GreetWhenIdle
 }
 
+// Handoff offers a session the catch-all decrypted in-band to another
+// handler. It returns the connection to keep serving on (it may hold client
+// bytes it peeked) and whether it took the session; a handler that takes it
+// produces the event and closes the connection itself.
+type Handoff func(ctx context.Context, conn net.Conn, md connection.Metadata) (net.Conn, bool, error)
+
+// Options adjusts HandleTCPWith.
+type Options struct {
+	// Silent is set when the client stayed silent through the dispatch wait:
+	// greet-when-idle ports send their banner before reading.
+	Silent bool
+	// AfterTLS, if set, is offered the decrypted session after an in-band
+	// TLS handshake, so a protocol inside the tunnel (HTTPS) reaches its
+	// handler instead of the catch-all replies.
+	AfterTLS Handoff
+}
+
 // HandleTCP takes a net.Conn, captures what the client sends and answers with
 // a canned service response (by payload signature, then destination port),
 // falling back to random bytes, for up to maxExchanges client messages.
 // Server-first ports get their banner on connect.
 func HandleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
-	return handleTCP(ctx, conn, md, logger, h, false)
+	return handleTCP(ctx, conn, md, logger, h, Options{})
 }
 
 // HandleTCPSilent is HandleTCP for a client that stayed silent through the
 // dispatch wait: greet-when-idle ports send their banner before reading.
 func HandleTCPSilent(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
-	return handleTCP(ctx, conn, md, logger, h, true)
+	return handleTCP(ctx, conn, md, logger, h, Options{Silent: true})
 }
 
-func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot, silent bool) error {
+// HandleTCPWith is HandleTCP with options set by the catch-all dispatcher.
+func HandleTCPWith(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot, opts Options) error {
+	return handleTCP(ctx, conn, md, logger, h, opts)
+}
+
+func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot, opts Options) error {
+	silent := opts.Silent
 	server := tcpServer{
 		events: []parsedTCP{},
 		conn:   conn,
@@ -166,7 +189,11 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	}
 
 	endReason := connection.EndHandlerClose
+	handoff := false
 	defer func() {
+		if handoff {
+			return
+		}
 		md.EndReason = endReason
 		if err := h.ProduceTCP("tcp", conn, md, helpers.FirstOrEmpty(server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "tcp"), producer.ErrAttr(err))
@@ -239,6 +266,15 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 				if ok, err := greet(portResp); !ok {
 					return err
 				}
+			} else if opts.AfterTLS != nil {
+				// the next handler's event carries the handshake in its tls
+				// object, so the ClientHello frame is not needed there
+				next, took, err := opts.AfterTLS(ctx, server.conn, md)
+				if took {
+					handoff = true
+					return err
+				}
+				server.conn = next
 			}
 			if data, err = read(); data == nil {
 				return err

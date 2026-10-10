@@ -1,6 +1,7 @@
 package protocols
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -26,6 +27,16 @@ const mcpRequestLinePeek = 96
 
 // rdpPeekLen covers the TPKT header, X.224 LI and TPDU type of an RDP CR.
 const rdpPeekLen = 6
+
+// httpMethods are the request methods the catch-all routes to the HTTP
+// handler without Spicy; httpMethodPeek covers the longest plus its space.
+var httpMethods = [][]byte{
+	[]byte("GET "), []byte("HEAD "), []byte("POST "), []byte("PUT "),
+	[]byte("DELETE "), []byte("OPTIONS "), []byte("PATCH "), []byte("CONNECT "),
+	[]byte("TRACE "), []byte("PROPFIND "),
+}
+
+const httpMethodPeek = len("PROPFIND ")
 
 const (
 	// mctpPeekLen covers the "REMOTE " method prefix of an MCTP request line.
@@ -124,8 +135,9 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		// server-first ports (SSH, POP3, ...) greet before the client speaks,
 		// so peeking for client bytes would stall them until the timeout
+		opts := tcp.Options{AfterTLS: httpAfterTLS(log, h)}
 		if tcp.HasServerBanner(md.TargetPort) {
-			return tcp.HandleTCP(ctx, conn, md, log, h)
+			return tcp.HandleTCPWith(ctx, conn, md, log, h, opts)
 		}
 		var src net.Conn = conn
 		if tcp.GreetsWhenIdle(md.TargetPort) {
@@ -137,7 +149,8 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 				return conn.Close()
 			}
 			if silent {
-				return tcp.HandleTCPSilent(ctx, waited, md, log, h)
+				opts.Silent = true
+				return tcp.HandleTCPWith(ctx, waited, md, log, h, opts)
 			}
 			src = waited
 		}
@@ -171,6 +184,18 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 			}
 			snip = cr[:min(len(cr), 4)]
 		}
+		// HTTP on any port goes to the HTTP handler, with or without Spicy
+		if looksLikeHTTPMethodStart(snip) {
+			req, reqConn, err := peekOrClose(conn, bufConn, httpMethodPeek, log)
+			if err != nil {
+				return nil
+			}
+			bufConn = reqConn
+			if looksLikeHTTPRequest(req) {
+				return handleDetectedHTTP(ctx, bufConn, md, log, h)
+			}
+			snip = req[:min(len(req), 4)]
+		}
 		if viper.GetBool("spicy.enabled") {
 			if protocol, ok := parseTCPProtocol(snip, log); ok && protocol == "http" {
 				return handleDetectedHTTP(ctx, bufConn, md, log, h)
@@ -185,7 +210,50 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 				return tcp.HandleMongoDB(ctx, bufConn, md, log, h)
 			}
 		}
-		return tcp.HandleTCP(ctx, bufConn, md, log, h)
+		return tcp.HandleTCPWith(ctx, bufConn, md, log, h, opts)
+	}
+}
+
+// looksLikeHTTPMethodStart reports whether b could begin an HTTP request
+// line, so dispatch peeks far enough to see the whole method.
+func looksLikeHTTPMethodStart(b []byte) bool {
+	for _, m := range httpMethods {
+		n := min(len(b), len(m))
+		if n > 0 && bytes.Equal(b[:n], m[:n]) {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeHTTPRequest reports whether b starts with an HTTP method token
+// and its space.
+func looksLikeHTTPRequest(b []byte) bool {
+	for _, m := range httpMethods {
+		if bytes.HasPrefix(b, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// httpAfterTLS hands HTTP the catch-all decrypted in-band (HTTPS scanners on
+// ports without a tls: rule) to the HTTP handler. It waits for the client's
+// first message under the timeout HandleTCP set; anything else, silence
+// included, stays with the catch-all, which reads the buffered bytes or
+// error next.
+func httpAfterTLS(log interfaces.Logger, h interfaces.Honeypot) tcp.Handoff {
+	return func(ctx context.Context, conn net.Conn, md connection.Metadata) (net.Conn, bool, error) {
+		bufConn := newBufferedConn(conn)
+		if _, err := bufConn.peek(1); err != nil {
+			return bufConn, false, nil
+		}
+		// a TLS record is decrypted whole, so the method is normally buffered
+		snip, _ := bufConn.peek(min(bufConn.r.Buffered(), httpMethodPeek))
+		if !looksLikeHTTPRequest(snip) {
+			return bufConn, false, nil
+		}
+		return bufConn, true, handleDetectedHTTP(ctx, bufConn, md, log, h)
 	}
 }
 
@@ -228,7 +296,7 @@ func mctpOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		if snip, err := bufConn.peek(mctpPeekLen); err == nil && mctp.LooksLikeMCTP(snip) {
 			return tcp.HandleMCTP(ctx, bufConn, md, log, h)
 		}
-		return tcp.HandleTCP(ctx, bufConn, md, log, h)
+		return tcp.HandleTCPWith(ctx, bufConn, md, log, h, tcp.Options{AfterTLS: httpAfterTLS(log, h)})
 	}
 }
 
@@ -239,6 +307,9 @@ func handleDetectedHTTP(ctx context.Context, bufConn BufferedConn, md connection
 	}
 	// httpConn holds the bytes it peeked even when the request is shorter
 	// than the peek, so it must be used either way
+	if !viper.GetBool("spicy.enabled") {
+		return tcp.HandleHTTP(ctx, httpConn, md, log, h)
+	}
 	return spicyHandlers.HandleHTTP(ctx, httpConn, md, log, h)
 }
 

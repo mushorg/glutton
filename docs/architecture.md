@@ -64,12 +64,12 @@ The UDP handler map includes `sip` (UDP/5060 OPTIONS/REGISTER/INVITE replies wit
 
 Spicy is optional, gated by `spicy.enabled`. When on, the Spicy/HILTI runtime is initialized and compiled parser modules are registered. Current usage:
 
-- `TCP::Protocol` inspects raw TCP payload bytes in the generic `tcp` handler path; detected HTTP, RDP, or MongoDB payloads route to more specific handling.
+- `TCP::Protocol` inspects raw TCP payload bytes in the generic `tcp` handler path; detected HTTP or MongoDB payloads route to more specific handling. (HTTP request lines and RDP Connection Requests are also detected in Go, without Spicy.)
 - `HTTP::Request` parses HTTP request bytes for the Spicy HTTP handler path.
 
 Spicy does not replace Go protocol handlers. The parser extracts fields from bytes; Go still owns reads, writes, fake responses, logging, producer calls, timeouts, and fallback behavior.
 
-One routing wrinkle: a rule with target `http` calls the Go HTTP handler directly. The Spicy HTTP handler is reached *only* from the generic `tcp` catch-all path when Spicy detection classifies the payload as HTTP. If Spicy HTTP parsing fails, the connection falls back to the generic TCP handler with the buffered request bytes prepended.
+One routing wrinkle: a rule with target `http` calls the Go HTTP handler directly. The generic `tcp` catch-all routes HTTP (plaintext, or decrypted after it terminated a ClientHello in-band) to the Spicy HTTP handler when `spicy.enabled` is on and to the Go HTTP handler otherwise. If Spicy HTTP parsing fails, the connection falls back to the generic TCP handler with the buffered request bytes prepended.
 
 ## Output
 

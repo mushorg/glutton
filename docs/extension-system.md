@@ -61,7 +61,7 @@ Current Spicy-backed paths:
 - `HTTP::Request` is registered as parser key `http`.
 - `TCP::Protocol` is registered as parser key `tcp`.
 - The generic TCP handler path can use `TCP::Protocol` to detect HTTP, RDP, or MongoDB.
-- HTTP payloads detected through the generic TCP path can be handled by `protocols/spicy/handlers/http.go`.
+- HTTP payloads detected through the generic TCP path are handled by `protocols/spicy/handlers/http.go` when Spicy is enabled, and by the Go handler in `protocols/tcp/http.go` otherwise.
 
 A rule target of `http` calls the Go HTTP handler in `protocols/tcp/http.go`; it does not auto-select the Spicy HTTP handler.
 
