@@ -109,6 +109,56 @@ func TestHandleHTTPKeepAliveOneEvent(t *testing.T) {
 	require.Equal(t, "/wallet", events[2].Path)
 }
 
+func TestHandleHTTPSeleniumGrid(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{TargetPort: 4444}, &recordingLogger{}, hp)
+	}()
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write(httpTestRequest("GET", "/wd/hub/status", "", nil))
+	require.NoError(t, err)
+	status, headers, body := readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Contains(t, string(body), "Selenium Grid ready.")
+	sessionID := sessionCookieFromHeaders(t, headers)
+
+	greed := []byte(`{"capabilities":{"alwaysMatch":{"browserName":"chrome","goog:chromeOptions":` +
+		`{"binary":"/bin/sh","args":["-c","id"]}}}}`)
+	_, err = client.Write(httpTestRequest("POST", "/session", sessionID, greed))
+	require.NoError(t, err)
+	status, _, body = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusInternalServerError, status)
+	require.Contains(t, string(body), "session not created")
+
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "http", produced.protocol)
+	events, ok := produced.decoded.([]parsedHTTP)
+	require.True(t, ok)
+	require.Len(t, events, 4)
+	require.Empty(t, events[0].Binary)
+	require.Equal(t, "200", events[1].Status)
+	require.Equal(t, "POST", events[2].Command)
+	require.Equal(t, "chrome", events[2].Browser)
+	require.Equal(t, "/bin/sh", events[2].Binary)
+	require.Equal(t, []string{"-c", "id"}, events[2].Args)
+	require.Equal(t, "500", events[3].Status)
+}
+
 func TestHandleHTTPParameters(t *testing.T) {
 	withHTTPSessionIdle(t, 50*time.Millisecond)
 

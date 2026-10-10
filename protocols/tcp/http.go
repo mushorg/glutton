@@ -18,6 +18,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/mushorg/glutton/protocols/tcp/selenium"
 )
 
 const (
@@ -123,6 +124,10 @@ type parsedHTTP struct {
 	SessionID  string     `json:"session_id,omitempty"`
 	DestPort   uint16     `json:"dest_port,omitempty"` // set on reads; sessions can span ports
 	SrcPort    string     `json:"src_port,omitempty"`  // set on reads; sessions can span connections
+	Browser    string     `json:"browser,omitempty"`   // Selenium new-session browserName
+	Binary     string     `json:"binary,omitempty"`    // Selenium new-session browser binary
+	Args       []string   `json:"args,omitempty"`      // Selenium new-session browser args
+	Truncated  bool       `json:"truncated,omitempty"` // a Selenium binary/args cap applied
 	Payload    []byte     `json:"payload,omitempty"`   // raw HTTP request or response bytes
 }
 
@@ -223,7 +228,7 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 	}
 
 	_, srcPort, _ := net.SplitHostPort(s.conn.RemoteAddr().String())
-	s.record(parsedHTTP{
+	frame := parsedHTTP{
 		Direction:  "read",
 		DestPort:   md.TargetPort,
 		SrcPort:    srcPort,
@@ -234,7 +239,18 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 		Host:       req.Host,
 		UserAgent:  req.UserAgent(),
 		Payload:    raw,
-	})
+	}
+	grid := selenium.IsGridRequest(md.TargetPort, path)
+	if grid {
+		if sess, ok := selenium.NewSessionRequest(req.Method, path, body); ok {
+			frame.Browser, frame.Binary, frame.Args, frame.Truncated = sess.Browser, sess.Binary, sess.Args, sess.Truncated
+		}
+	}
+	s.record(frame)
+
+	if grid {
+		return s.write(selenium.Respond(req.Method, path, body))
+	}
 
 	switch req.Method {
 	case http.MethodPost:

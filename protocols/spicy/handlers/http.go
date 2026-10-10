@@ -18,6 +18,7 @@ import (
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/spicy"
 	"github.com/mushorg/glutton/protocols/tcp"
+	"github.com/mushorg/glutton/protocols/tcp/selenium"
 )
 
 const maxHTTPRequests = 50
@@ -32,7 +33,11 @@ type parsedHTTP struct {
 	Query      string     `json:"query,omitempty"`
 	Parameters url.Values `json:"parameters,omitempty"` // parsed query key/values
 	Status     string     `json:"status,omitempty"`
-	Payload    []byte     `json:"payload,omitempty"` // raw HTTP request or response bytes
+	Browser    string     `json:"browser,omitempty"`   // Selenium new-session browserName
+	Binary     string     `json:"binary,omitempty"`    // Selenium new-session browser binary
+	Args       []string   `json:"args,omitempty"`      // Selenium new-session browser args
+	Truncated  bool       `json:"truncated,omitempty"` // a Selenium binary/args cap applied
+	Payload    []byte     `json:"payload,omitempty"`   // raw HTTP request or response bytes
 }
 
 // httpParameters parses a raw query string into url.Values, or nil when empty.
@@ -214,6 +219,9 @@ func (s *httpServer) write(data []byte) error {
 }
 
 func (s *httpServer) buildResponse(ctx context.Context, method, uriRaw, path string, body []byte, md connection.Metadata, log interfaces.Logger, hp interfaces.Honeypot) []byte {
+	if selenium.IsGridRequest(md.TargetPort, path) {
+		return selenium.Respond(method, path, body)
+	}
 	switch method {
 	case "POST":
 		if resp := ethereumRPCResponse(body); resp != nil {
@@ -331,14 +339,20 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 			slog.String("query", query),
 		)
 
-		server.events = append(server.events, parsedHTTP{
+		frame := parsedHTTP{
 			Direction:  "read",
 			Command:    method,
 			Path:       path,
 			Query:      query,
 			Parameters: httpParameters(query),
 			Payload:    append([]byte(nil), raw...),
-		})
+		}
+		if selenium.IsGridRequest(md.TargetPort, path) {
+			if sess, ok := selenium.NewSessionRequest(method, path, body); ok {
+				frame.Browser, frame.Binary, frame.Args, frame.Truncated = sess.Browser, sess.Binary, sess.Args, sess.Truncated
+			}
+		}
+		server.events = append(server.events, frame)
 
 		resp := server.buildResponse(ctx, method, uriRaw, path, body, md, log, hp)
 		if resp != nil {

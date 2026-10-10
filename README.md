@@ -66,6 +66,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | VMware "hyper/send"         | `* hyper/send` request-body exploit      |
 | Ethereum JSON-RPC           | `POST` body containing `eth_blockNumber` |
 | Wallet probes               | URIs containing `wallet`                 |
+| Selenium Grid               | `POST /session` browser-binary payloads  |
 | SMTP                        | mail submission probes                   |
 | RDP                         | Remote Desktop handshake                 |
 | SMB                         | Windows file-sharing probes              |

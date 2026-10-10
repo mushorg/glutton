@@ -78,6 +78,11 @@ func buildHTTPRequest(method, target, body string, headers ...string) string {
 
 func runHTTPHandler(t *testing.T, request string) (*mockConn, []parsedHTTP) {
 	t.Helper()
+	return runHTTPHandlerOnPort(t, request, 80)
+}
+
+func runHTTPHandlerOnPort(t *testing.T, request string, port uint16) (*mockConn, []parsedHTTP) {
+	t.Helper()
 	ensureSpicyInitialized()
 
 	conn := newMockConn(request)
@@ -92,7 +97,7 @@ func runHTTPHandler(t *testing.T, request string) (*mockConn, []parsedHTTP) {
 		Return(nil)
 
 	md := connection.Metadata{
-		TargetPort: 80,
+		TargetPort: port,
 		Rule:       &rules.Rule{Target: "http"},
 	}
 
@@ -344,4 +349,46 @@ func TestHandleHTTPSingleProduce(t *testing.T) {
 	md := connection.Metadata{TargetPort: 80, Rule: &rules.Rule{Target: "http"}}
 	require.NoError(t, HandleHTTP(context.Background(), conn, md, logger, honeypot))
 	honeypot.AssertExpectations(t)
+}
+
+// seleniumGreedBody is shaped like a SeleniumGreed new-session request with a
+// harmless payload (synthetic, not captured).
+const seleniumGreedBody = `{"capabilities":{"alwaysMatch":{"browserName":"chrome","goog:chromeOptions":` +
+	`{"binary":"/usr/bin/python3","args":["-cimport base64;exec(base64.b64decode(b'aW1wb3J0IG9z'))"]}}}}`
+
+func TestHandleHTTPSeleniumGrid(t *testing.T) {
+	request := buildHTTPRequest("GET", "/status", "") +
+		buildHTTPRequest("POST", "/wd/hub/session", seleniumGreedBody, "Content-Type: application/json; charset=utf-8")
+	conn, events := runHTTPHandlerOnPort(t, request, 4444)
+
+	require.Contains(t, conn.Written(), "Selenium Grid ready.")
+	require.Len(t, events, 4)
+	require.Equal(t, "/status", events[0].Path)
+	require.Empty(t, events[0].Binary)
+	require.Equal(t, "200", events[1].Status)
+
+	require.Equal(t, "read", events[2].Direction)
+	require.Equal(t, "POST", events[2].Command)
+	require.Equal(t, "/wd/hub/session", events[2].Path)
+	require.Equal(t, "chrome", events[2].Browser)
+	require.Equal(t, "/usr/bin/python3", events[2].Binary)
+	require.Equal(t, []string{"-cimport base64;exec(base64.b64decode(b'aW1wb3J0IG9z'))"}, events[2].Args)
+	require.False(t, events[2].Truncated)
+
+	require.Equal(t, "write", events[3].Direction)
+	require.Equal(t, "500", events[3].Status)
+	require.Contains(t, string(events[3].Payload), `"error": "session not created"`)
+}
+
+func TestHandleHTTPSeleniumOnlyOnGridPortOrHubPath(t *testing.T) {
+	// /wd/hub is the Grid on any port
+	conn, events := runHTTPHandler(t, buildHTTPRequest("GET", "/wd/hub/status", ""))
+	require.Contains(t, conn.Written(), "Selenium Grid ready.")
+	require.Equal(t, "200", events[1].Status)
+
+	// a bare /status off the Grid port keeps the generic reply, and a
+	// session-shaped POST there records no Selenium fields
+	conn, events = runHTTPHandler(t, buildHTTPRequest("POST", "/session", seleniumGreedBody))
+	require.NotContains(t, conn.Written(), "session not created")
+	require.Empty(t, events[0].Binary)
 }
