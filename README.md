@@ -82,6 +82,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | Jabber/XMPP                 | instant messaging stream                 |
 | ADB                         | Android Debug Bridge probes              |
 | MongoDB                     | wire protocol queries                    |
+| Minecraft (Java)            | server-list ping, login attempts on tcp/25565 |
 | HiSilicon DVR (MCTP)        | `HI_SRDK_*` control calls on tcp/9000    |
 | Catch-all service banners   | SSH/POP3/RFB greetings, MSSQL/AJP/RPC replies |
 | DICOM                       | PACS associations, C-ECHO/C-FIND/C-STORE |

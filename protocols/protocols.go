@@ -93,6 +93,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"whois":      bindTCP(tcp.HandleWHOIS, log, h),
 		"adb":        bindTCP(tcp.HandleADB, log, h),
 		"mongodb":    bindTCP(tcp.HandleMongoDB, log, h),
+		"minecraft":  bindTCP(tcp.HandleMinecraft, log, h),
 		"http":       bindTCP(tcp.HandleHTTP, log, h),
 		"mcp":        bindTCP(tcp.HandleMCP, log, h),
 		"modbus":     bindTCP(tcp.HandleModbus, log, h),
