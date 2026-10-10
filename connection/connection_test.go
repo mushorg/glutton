@@ -2,7 +2,12 @@ package connection
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 
@@ -91,4 +96,43 @@ func TestFlushOlderThan(t *testing.T) {
 	table.FlushOlderThan(time.Duration(0))
 	m := table.Get(localhost1234Key)
 	require.Empty(t, m)
+}
+
+func TestEndReasonFromRead(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{nil, EndClientClose},
+		{io.EOF, EndClientClose},
+		{net.ErrClosed, EndClientClose},
+		{os.ErrDeadlineExceeded, EndTimeout},
+		{context.DeadlineExceeded, EndTimeout},
+		{fmt.Errorf("read: %w", syscall.ECONNRESET), EndClientReset},
+		{io.ErrUnexpectedEOF, EndReadError},
+		{errors.New("invalid length"), EndReadError},
+	} {
+		require.Equal(t, tc.want, EndReasonFromRead(tc.err), "%v", tc.err)
+	}
+}
+
+func TestEndReasonFromReadTCPReset(t *testing.T) {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+
+	client, err := net.Dial("tcp4", ln.Addr().String())
+	require.NoError(t, err)
+	server, err := ln.Accept()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = server.Close() })
+
+	// linger 0 makes Close send RST instead of FIN
+	require.NoError(t, client.(*net.TCPConn).SetLinger(0))
+	require.NoError(t, client.Close())
+
+	require.NoError(t, server.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, err = server.Read(make([]byte, 1))
+	require.Error(t, err)
+	require.Equal(t, EndClientReset, EndReasonFromRead(err))
 }

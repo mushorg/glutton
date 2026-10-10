@@ -36,7 +36,7 @@ Producer events follow the `producer.Event` schema:
 | `payload` | string (base64), optional | First-frame payload bytes. |
 | `payloadHash` | string (hex), optional | SHA-256 of the (sanitized) top-level payload. |
 | `frameCount` | number, optional | Number of decoded frames when `decoded` is a slice. Omitted when 0. |
-| `endReason` | string, optional | Why the session ended (`client_close`, `timeout`, `handler_close`, `read_error`, `write_error`, `max_frames`, `evicted`). `evicted` means the handler's session table was full and the least recently active session was flushed early. Omitted by handlers that do not set it. |
+| `endReason` | string, optional | Why the session ended (`client_close`, `client_reset`, `timeout`, `handler_close`, `read_error`, `write_error`, `max_frames`, `evicted`). `client_reset` means the client aborted the connection with a TCP RST instead of closing it. `evicted` means the handler's session table was full and the least recently active session was flushed early. Omitted by handlers that do not set it. |
 | `tls` | object, optional | Present only when the sensor terminated TLS. See [TLS details](#tls-details). |
 | `scanner` | string, optional | Scanner classification from `scanner.Classify(...)`. Omitted when empty. |
 | `decoded` | array, object or `null`, optional | Handler-specific decoded data. See [Decoded data](#decoded-data). |

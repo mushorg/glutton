@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mushorg/glutton/rules"
@@ -47,7 +48,9 @@ func NewConnKeyFromNetConn(conn net.Conn) (CKey, error) {
 }
 
 const (
-	EndClientClose  = "client_close"
+	EndClientClose = "client_close"
+	// EndClientReset marks a session the client aborted with a TCP RST.
+	EndClientReset  = "client_reset"
 	EndTimeout      = "timeout"
 	EndHandlerClose = "handler_close"
 	EndReadError    = "read_error"
@@ -68,6 +71,9 @@ func EndReasonFromRead(err error) string {
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 		return EndClientClose
+	}
+	if errors.Is(err, syscall.ECONNRESET) {
+		return EndClientReset
 	}
 	var nerr net.Error
 	if errors.As(err, &nerr) && nerr.Timeout() {
