@@ -23,6 +23,9 @@ type Response struct {
 	// silent for a short wait, so ports shared with client-first protocols
 	// (HTTP on 4444) still route those clients by their first bytes.
 	GreetWhenIdle bool
+	// Silent means the client's bytes get no reply, as a real service does
+	// with input it cannot parse.
+	Silent bool
 }
 
 // now is replaced in tests for a stable HTTP Date header.
@@ -174,6 +177,9 @@ func ForPort(port uint16) (Response, bool) {
 		return Response{Name: "ajp-404", Data: ajp404}, true
 	case 4444:
 		return Response{Name: "cmd-shell", Data: cmdShellBanner, GreetWhenIdle: true}, true
+	case 389:
+		// LDAP servers drop input that is not an LDAPMessage they answer
+		return Response{Name: "ldap", Silent: true}, true
 	}
 	return Response{}, false
 }
@@ -186,6 +192,11 @@ func ForPayload(data []byte) (Response, bool) {
 		return Response{Name: "ssh", Data: sshBanner}, true
 	case len(data) >= 3 && data[0] == 0x16 && data[1] == 0x03 && data[2] <= 0x04:
 		return Response{Name: "tls-alert", Data: tlsAlert}, true
+	case mglnddProbe.Match(data):
+		return Response{Name: "mglndd", Silent: true}, true
+	}
+	if msgID, ok := ldapRootDSEQuery(data); ok {
+		return Response{Name: "ldap-rootdse", Data: ldapRootDSEReply(msgID)}, true
 	}
 	if order, ok := isX11Setup(data); ok {
 		return Response{Name: "x11-denied", Data: x11Failed(order, x11Reason)}, true

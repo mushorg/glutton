@@ -207,19 +207,22 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 		server.captureRead(data, payloadHash, command)
 
-		reply, status := sigResp.Data, sigResp.Name
+		resp := sigResp
 		switch {
 		case matched:
 		case hasPortResp && !greeted:
-			reply, status = portResp.Data, portResp.Name
+			resp = portResp
 		default:
-			if reply, err = randomReply(); err != nil {
+			if resp.Data, err = randomReply(); err != nil {
 				logger.Error("Failed to generate random reply", slog.String("handler", "tcp"), producer.ErrAttr(err))
 				return nil
 			}
-			status = "random"
+			resp.Name = "random"
 		}
-		if err := server.write(reply, status); err != nil {
+		if resp.Silent {
+			return nil
+		}
+		if err := server.write(resp.Data, resp.Name); err != nil {
 			logger.Error("write error", slog.String("handler", "tcp"), producer.ErrAttr(err))
 			endReason = connection.EndWriteError
 		}

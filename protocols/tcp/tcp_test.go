@@ -1,6 +1,7 @@
 package tcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -260,6 +261,60 @@ func TestHandleTCPX11Denied(t *testing.T) {
 	require.Equal(t, []parsedTCP{
 		{Direction: "read", Command: "x11-denied", Payload: setup, PayloadHash: helpers.SHA256Hex(setup)},
 		{Direction: "write", Status: "x11-denied", Payload: denied, PayloadHash: helpers.SHA256Hex(denied)},
+	}, events)
+}
+
+func TestHandleTCPSilentReplies(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		port    uint16
+		data    []byte
+		command string
+	}{
+		// Ochi event 326742f1-0f6b-42c7-891f-c01081fc0166
+		{"mglndd on ldap", 389, []byte("MGLNDD_1.2.3.4_389\n"), "mglndd"},
+		{"mglndd elsewhere", 9999, []byte("MGLNDD_1.2.3.4_9999\n"), "mglndd"},
+		{"non-ber on ldap", 389, []byte("GET / HTTP/1.0\r\n\r\n"), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, hp, done := startCatchAll(t, tc.port)
+
+			_, err := client.Write(tc.data)
+			require.NoError(t, err)
+			// the handler closes without writing anything
+			reply, err := io.ReadAll(client)
+			require.NoError(t, err)
+			require.Empty(t, reply)
+
+			events := finishCatchAll(t, client, hp, done)
+			require.Equal(t, []parsedTCP{
+				{Direction: "read", Command: tc.command, Payload: tc.data, PayloadHash: helpers.SHA256Hex(tc.data)},
+			}, events)
+		})
+	}
+}
+
+func TestHandleTCPLDAPRootDSE(t *testing.T) {
+	client, hp, done := startCatchAll(t, 389)
+
+	// nmap ldap-rootdse: messageID 7, base "", scope baseObject, (objectClass=*)
+	search := append([]byte{
+		0x30, 0x25, 0x02, 0x01, 0x07, 0x63, 0x20, 0x04, 0x00, 0x0a, 0x01, 0x00,
+		0x0a, 0x01, 0x00, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x01, 0x01, 0x00, 0x87, 0x0b,
+	}, append([]byte("objectClass"), 0x30, 0x00)...)
+	_, err := client.Write(search)
+	require.NoError(t, err)
+	want, ok := banners.ForPayload(search)
+	require.True(t, ok)
+	reply := readAll(t, client, len(want.Data))
+	require.Equal(t, want.Data, reply)
+	// SearchResultDone success echoing messageID 7
+	require.True(t, bytes.HasSuffix(reply, []byte{0x30, 0x0c, 0x02, 0x01, 0x07, 0x65, 0x07, 0x0a, 0x01, 0x00, 0x04, 0x00, 0x04, 0x00}))
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Command: "ldap-rootdse", Payload: search, PayloadHash: helpers.SHA256Hex(search)},
+		{Direction: "write", Status: "ldap-rootdse", Payload: reply, PayloadHash: helpers.SHA256Hex(reply)},
 	}, events)
 }
 
