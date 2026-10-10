@@ -428,12 +428,14 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 					return err
 				}
 				reply := resp[n.Int64()]
-				if err := s.write(reply + "\r\n"); err != nil {
-					return err
-				}
-				// sh already emits a prompt; do not append "> " after it.
+				out := reply + "\r\n"
+				// sh emits a real shell prompt (dollar + space, no CRLF); do not append "> ".
 				if reply == "$" {
+					out = "$ "
 					skipPrompt = true
+				}
+				if err := s.write(out); err != nil {
+					return err
 				}
 			} else {
 				// /bin/busybox YDKBI

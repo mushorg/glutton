@@ -80,6 +80,9 @@ func Classify(ip net.IP) (scannerName, srcPtr string, err error) {
 		if strings.HasSuffix(name, "onyphe.net.") {
 			return "onyphe", srcPtr, nil
 		}
+		if strings.HasSuffix(name, "criminalip.com.") {
+			return "criminalip", srcPtr, nil
+		}
 	}
 	return "", srcPtr, nil
 }
