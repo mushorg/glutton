@@ -48,9 +48,21 @@ type parsedSMB struct {
 	Opnum          *uint16       `json:"opnum,omitempty"`
 	TotalDataCount uint32        `json:"total_data_count,omitempty"`
 	PayloadHash    string        `json:"payload_hash,omitempty"`
+	Shellcode      []string      `json:"shellcode,omitempty"`    // shellcode heuristics that matched the captured payload
+	XORKey         string        `json:"xor_key,omitempty"`      // recovered DoublePulsar XOR key (hex)
+	DecodedHash    string        `json:"decoded_hash,omitempty"` // content hash of the de-obfuscated payload
 	Payload        []byte        `json:"payload,omitempty"`
 	Truncated      bool          `json:"truncated,omitempty"`
 }
+
+// txKind distinguishes how a reassembled transaction payload should be handled
+// once complete.
+type txKind int
+
+const (
+	txNtTransact   txKind = iota // NT_TRANSACT overflow data, captured as-is
+	txDoublePulsar               // TRANS2 SESSION_SETUP data, XOR-obfuscated
+)
 
 var smbReadRand = rand.Read
 
@@ -64,6 +76,7 @@ type smbServer struct {
 	txOpen       bool
 	txBuf        []byte
 	txEvent      int
+	txKind       txKind
 	tidIsIPC     map[uint16]bool
 	handles      map[uint16]*smbHandle
 	challenge    [8]byte
@@ -171,11 +184,17 @@ func (ss *smbServer) nextFID() uint16 {
 	return ss.fid
 }
 
-// flushTx stores the reassembled transaction data and tags the NT_TRANSACT
-// read frame that started it with the content hash.
+// flushTx stores the reassembled transaction data and tags the read frame that
+// started it with the content hash. NT_TRANSACT overflow data (EternalBlue) is
+// stored as seen; TRANS2 SESSION_SETUP data (DoublePulsar) is also XOR-recovered
+// and the de-obfuscated payload stored alongside it. Either way the captured
+// bytes are scanned for shellcode.
 func (ss *smbServer) flushTx(logger interfaces.Logger) {
 	buf := ss.txBuf
+	kind := ss.txKind
 	ss.txBuf = nil
+	ss.txKind = txNtTransact
+	ss.txOpen = false
 	if len(buf) == 0 {
 		return
 	}
@@ -184,9 +203,96 @@ func (ss *smbServer) flushTx(logger interfaces.Logger) {
 		logger.Error("Failed to store SMB transaction payload", slog.String("protocol", "smb"), producer.ErrAttr(err))
 		return
 	}
-	if ss.txEvent < len(ss.events) {
-		ss.events[ss.txEvent].PayloadHash = hash
+	if ss.txEvent < 0 || ss.txEvent >= len(ss.events) {
+		return
 	}
+	ev := &ss.events[ss.txEvent]
+	ev.PayloadHash = hash
+	if res := helpers.DetectShellcode(buf); len(res.Indicators) > 0 {
+		ev.Shellcode = res.Indicators
+	}
+	if kind != txDoublePulsar {
+		return
+	}
+	// The honeypot never completed the DoublePulsar ping handshake, so the XOR
+	// key the attacker used is unknown; recover it from the captured bytes.
+	key, plain, ok := recoverDoublePulsarXOR(buf)
+	if !ok {
+		return
+	}
+	ev.XORKey = fmt.Sprintf("%08x", key)
+	if dh, err := smbStore(plain, filepath.Join("payloads", "smb")); err != nil {
+		logger.Error("Failed to store decoded DoublePulsar payload", slog.String("protocol", "smb"), producer.ErrAttr(err))
+	} else {
+		ev.DecodedHash = dh
+	}
+	if res := helpers.DetectShellcode(plain); len(res.Indicators) > 0 {
+		ev.Shellcode = res.Indicators
+	}
+}
+
+const (
+	// dpProbeLen bounds how many leading bytes the XOR-key search inspects. The
+	// DoublePulsar key repeats every 4 bytes, so a prefix is enough to find it.
+	dpProbeLen = 1024
+	// dpMinScore is the shellcode score a decoded probe must reach for the
+	// recovered key to be accepted, keeping false positives from the 64K-seed
+	// brute force low.
+	dpMinScore = 3
+	// dpGoodScore stops the search early once a key decodes to an obviously
+	// executable payload.
+	dpGoodScore = 6
+)
+
+// recoverDoublePulsarXOR brute-forces the DoublePulsar XOR key over every
+// signature seed and keeps the one whose plaintext looks most like an executable
+// payload. It returns the recovered key and the fully de-obfuscated buffer, or
+// ok=false when no seed produces a convincing decode.
+func recoverDoublePulsarXOR(buf []byte) (key uint32, plain []byte, ok bool) {
+	probe := buf
+	if len(probe) > dpProbeLen {
+		probe = probe[:dpProbeLen]
+	}
+	scratch := make([]byte, len(probe))
+	bestScore := 0
+	var bestKey uint32
+	for s := 0; s <= 0xffff; s++ {
+		candidate := smb.DoublePulsarXORKey(uint32(s))
+		smb.XORInto(scratch, probe, candidate)
+		if res := helpers.DetectShellcode(scratch); res.Score > bestScore {
+			bestScore = res.Score
+			bestKey = candidate
+			if bestScore >= dpGoodScore {
+				break
+			}
+		}
+	}
+	if bestScore < dpMinScore {
+		return 0, nil, false
+	}
+	return bestKey, smb.XORApply(buf, bestKey), true
+}
+
+// beginDoublePulsar starts reassembling a DoublePulsar TRANS2 SESSION_SETUP
+// payload. The data arrives XOR-obfuscated, in the initial request and (for
+// larger payloads) across TRANSACTION2_SECONDARY fragments. It is stored and
+// decoded by flushTx once the final fragment lands, or at connection end.
+func (ss *smbServer) beginDoublePulsar(total uint32, readIdx int, pdu []byte, truncated bool, logger interfaces.Logger) {
+	ss.flushTx(logger) // flush any prior transaction first
+	ss.txTotal = total
+	ss.txEvent = readIdx
+	ss.txKind = txDoublePulsar
+	ss.txOpen = false
+	if total == 0 || total > maxSMBTxBuffer || truncated {
+		return
+	}
+	ss.txBuf = make([]byte, total)
+	n := copy(ss.txBuf, smb.Trans2Data(pdu))
+	if uint32(n) >= total {
+		ss.flushTx(logger) // single-fragment payload: complete now
+		return
+	}
+	ss.txOpen = true
 }
 
 // writeNBSS sends a NetBIOS session control packet (already framed).
@@ -469,6 +575,9 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 	case smb.CmdTransaction2:
 		if s, ok := smb.Trans2Setup(smbBuf.Bytes()); ok {
 			setup = smb.Trans2SetupName(s)
+			if s == smb.Trans2SessionSetup {
+				totalDataCount = smb.Trans2TotalDataCount(smbBuf.Bytes())
+			}
 		}
 	case smb.CmdNtTransact:
 		totalDataCount = smb.NtTransactTotalDataCount(smbBuf.Bytes())
@@ -523,6 +632,11 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 		responseHeader, resp, err = smb.MakeHeaderResponse(header)
 	case smb.CmdTransaction2:
 		setup, setupOK := smb.Trans2Setup(smbBuf.Bytes())
+		if setupOK && setup == smb.Trans2SessionSetup {
+			// DoublePulsar smuggles its (XOR-obfuscated) payload here, split
+			// across TRANS2 SESSION_SETUP + TRANSACTION2_SECONDARY fragments.
+			ss.beginDoublePulsar(totalDataCount, readIdx, pdu, frame.truncated, logger)
+		}
 		responseHeader, resp, err = smb.MakeComTransaction2Reply(header, setup, setupOK)
 	case smb.CmdTransaction:
 		responseHeader, resp, err = smb.MakeComTransactionResponse(header)
@@ -532,6 +646,7 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 		ss.txTotal = totalDataCount
 		ss.txOpen = totalDataCount > 0
 		ss.txEvent = len(ss.events) - 1
+		ss.txKind = txNtTransact
 		if ss.txOpen && totalDataCount <= maxSMBTxBuffer && !frame.truncated {
 			ss.txBuf = make([]byte, totalDataCount)
 			copy(ss.txBuf, smb.NtTransactData(pdu))

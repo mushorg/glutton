@@ -22,11 +22,12 @@ import (
 )
 
 type parsedTCP struct {
-	Direction   string `json:"direction,omitempty"`
-	Command     string `json:"command,omitempty"` // matched payload signature on reads
-	Status      string `json:"status,omitempty"`  // canned response name, or "random", on writes
-	Payload     []byte `json:"payload,omitempty"`
-	PayloadHash string `json:"payload_hash,omitempty"`
+	Direction   string   `json:"direction,omitempty"`
+	Command     string   `json:"command,omitempty"` // matched payload signature on reads
+	Status      string   `json:"status,omitempty"`  // canned response name, or "random", on writes
+	Payload     []byte   `json:"payload,omitempty"`
+	PayloadHash string   `json:"payload_hash,omitempty"`
+	Shellcode   []string `json:"shellcode,omitempty"` // shellcode heuristics that matched the read payload
 	// TLS ClientHello fingerprint fields (tls_version, ja3, ja4, ...) on a
 	// tls-clienthello or tls-alert read, flattened into the frame.
 	*helpers.ClientHello
@@ -74,13 +75,17 @@ func (s *tcpServer) write(data []byte, status string) error {
 }
 
 func (s *tcpServer) captureRead(data []byte, payloadHash, command string, hello *helpers.ClientHello) {
-	s.events = append(s.events, parsedTCP{
+	ev := parsedTCP{
 		Direction:   "read",
 		Command:     command,
 		PayloadHash: payloadHash,
 		Payload:     data,
 		ClientHello: hello,
-	})
+	}
+	if res := helpers.DetectShellcode(data); len(res.Indicators) > 0 {
+		ev.Shellcode = res.Indicators
+	}
+	s.events = append(s.events, ev)
 }
 
 // readPayload reads one client message: until a short read, a read error, or

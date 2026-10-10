@@ -23,8 +23,11 @@ fields are described in [Logging and producers](../logging.md#decoded-data).
 | `interface` / `interface_version` | pipe writes | Bound RPC interface UUID and version. |
 | `opnum` | DCERPC request | Operation number of the RPC call. |
 | `called_name` / `calling_name` | NBSS session request | Called NetBIOS name (`*SMBSERVER`) / client host name. |
-| `total_data_count` | NT Transact reads | Declared total transaction data length. |
-| `payload_hash` | read | SHA-256 of stored content: reassembled NT Transact data, a captured file upload (on its NT Create frame), or a DCERPC request stub. |
+| `total_data_count` | NT Transact / Trans2 Session Setup reads | Declared total transaction data length. |
+| `payload_hash` | read | SHA-256 of stored content: reassembled NT Transact or Trans2 Session Setup data, a captured file upload (on its NT Create frame), or a DCERPC request stub. |
+| `shellcode` | read | Heuristic indicators (`pe-dos-stub`, `fstenv-getpc`, `msf-x64-prologue`, …) matched in the reassembled payload; absent when nothing matched. |
+| `xor_key` | Trans2 Session Setup reads | Recovered DoublePulsar XOR key (hex), set when the obfuscated payload was successfully de-obfuscated. |
+| `decoded_hash` | Trans2 Session Setup reads | SHA-256 of the de-obfuscated DoublePulsar payload, also stored under `payloads/smb/`. |
 | `payload` | all | Raw wire bytes, length prefix included. |
 | `truncated` | all | A capture cap dropped trailing bytes. |
 
@@ -56,4 +59,21 @@ SMB2 grooms. The initial NT_TRANSACT data and its secondary fragments are
 reassembled by `DataDisplacement` (up to 4 MiB), stored with `helpers.Store`
 under `payloads/smb/`, and the SHA-256 is set as `payload_hash` on the
 NT_TRANSACT read frame. Echo copies the request data back.
+
+**DoublePulsar (Trans2 Session Setup).** The DoublePulsar implant protocol
+smuggles its payload through `SMB_COM_TRANSACTION2` with the `TRANS2_SESSION_SETUP`
+subcommand, obfuscated with a repeating 4-byte XOR key and (for larger payloads)
+split across `TRANSACTION2_SECONDARY` fragments. The request data is reassembled
+the same way as NT_TRANSACT (regardless of the honeypot's reply, so the payload is
+captured even though the ping handshake is not emulated) and stored under
+`payloads/smb/`. The honeypot never completed the ping, so the key is unknown; it
+is recovered by trying every 16-bit signature seed and keeping the one whose
+plaintext scores highest in the shellcode heuristics. On success the read frame
+gets `xor_key`, the de-obfuscated payload is stored and its hash set as
+`decoded_hash`, and `shellcode` reflects the decoded bytes.
+
+**Shellcode heuristics.** Every reassembled transaction payload (NT_TRANSACT
+overflow data and decoded DoublePulsar payloads) is scanned for common
+x86/x64 shellcode and embedded-PE indicators (`helpers.DetectShellcode`); matches
+are listed in `shellcode`. This is advisory triage, not a verdict.
 

@@ -79,6 +79,7 @@ Array-of-frames `decoded` entries share these JSON names when the handler fills 
 - `sip`: `from`, `to`, `call_id`, `username`, and `variant`/`visit` on writes.
 - `jabber`, `smtp`, `opcua`, `mqtt`, `dicom`, `pop3`: `username` (and `password` on `jabber`).
 - `dtls`, `jabber`: `server_name`.
+- `smb`, `tcp`: `shellcode` on a read, listing shellcode/PE heuristics matched in the captured payload; `smb` also sets `xor_key` and `decoded_hash` when a DoublePulsar payload was de-obfuscated.
 
 Example shape:
 

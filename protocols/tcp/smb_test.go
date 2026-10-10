@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -1080,4 +1081,116 @@ func TestHandleSMBPipeNonDCERPCDropped(t *testing.T) {
 	for _, f := range ev.decoded.([]parsedSMB) {
 		require.Empty(t, f.DCERPC, "non-DCERPC pipe data is not tagged")
 	}
+}
+
+// smbTrans2SessionSetupBody builds an SMB_COM_TRANSACTION2 TRANS2_SESSION_SETUP
+// request body (after the 32-byte header) that carries data in a single fragment.
+func smbTrans2SessionSetupBody(data []byte) []byte {
+	const dataStart = 33 // data begins here within the body
+	body := make([]byte, dataStart+len(data))
+	body[0] = 15                                                     // WordCount
+	binary.LittleEndian.PutUint16(body[3:5], uint16(len(data)))      // TotalDataCount
+	binary.LittleEndian.PutUint16(body[23:25], uint16(len(data)))    // DataCount
+	binary.LittleEndian.PutUint16(body[25:27], uint16(32+dataStart)) // DataOffset from header
+	body[27] = 1                                                     // SetupCount
+	binary.LittleEndian.PutUint16(body[29:31], uint16(smb.Trans2SessionSetup))
+	binary.LittleEndian.PutUint16(body[31:33], uint16(len(data))) // ByteCount
+	copy(body[dataStart:], data)
+	return body
+}
+
+// dpTestPayload is a plausible decoded DoublePulsar payload: strong enough
+// shellcode indicators that the correct XOR key wins the brute-force search.
+var dpTestPayload = []byte("MZ\x90\x00\x03......This program cannot be run in DOS mode.$PE\x00\x00\xd9\x74\x24\xf4")
+
+func TestHandleSMBDoublePulsarSingleFragment(t *testing.T) {
+	var stored [][]byte
+	orig := smbStore
+	smbStore = func(data []byte, folder string) (string, error) {
+		stored = append(stored, append([]byte(nil), data...))
+		return helpers.SHA256Hex(data), nil
+	}
+	t.Cleanup(func() { smbStore = orig })
+
+	const seed = 0x4142
+	key := smb.DoublePulsarXORKey(seed)
+	cipher := smb.XORApply(dpTestPayload, key)
+
+	client, hp, done := startHandleSMB(t)
+	body := smbTrans2SessionSetupBody(cipher)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdTransaction2, 1, 1, 1)), body...))
+	readSMBFrame(t, client)
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames := ev.decoded.([]parsedSMB)
+
+	var tagged *parsedSMB
+	for i := range frames {
+		if frames[i].Direction == "read" && frames[i].Header.Command == smb.CmdTransaction2 {
+			tagged = &frames[i]
+		}
+	}
+	require.NotNil(t, tagged, "expected the TRANS2 read frame")
+	require.Equal(t, fmt.Sprintf("%08x", key), tagged.XORKey)
+	require.NotEmpty(t, tagged.Shellcode)
+	require.Equal(t, helpers.SHA256Hex(cipher), tagged.PayloadHash)
+	require.Equal(t, helpers.SHA256Hex(dpTestPayload), tagged.DecodedHash)
+
+	// The raw (obfuscated) blob and the decoded payload are both stored.
+	require.Contains(t, stored, cipher)
+	require.Contains(t, stored, dpTestPayload)
+}
+
+func TestHandleSMBDoublePulsarReassemblesFragments(t *testing.T) {
+	var stored [][]byte
+	orig := smbStore
+	smbStore = func(data []byte, folder string) (string, error) {
+		stored = append(stored, append([]byte(nil), data...))
+		return helpers.SHA256Hex(data), nil
+	}
+	t.Cleanup(func() { smbStore = orig })
+
+	const seed = 0x1337
+	key := smb.DoublePulsarXORKey(seed)
+	cipher := smb.XORApply(dpTestPayload, key)
+	split := 16 // byte boundary between the two fragments
+
+	client, hp, done := startHandleSMB(t)
+
+	// Initial TRANS2 SESSION_SETUP carrying the first fragment and the total size.
+	first := cipher[:split]
+	const dataStart = 33
+	body := make([]byte, dataStart+len(first))
+	body[0] = 15
+	binary.LittleEndian.PutUint16(body[3:5], uint16(len(cipher)))    // TotalDataCount
+	binary.LittleEndian.PutUint16(body[23:25], uint16(len(first)))   // DataCount (this fragment)
+	binary.LittleEndian.PutUint16(body[25:27], uint16(32+dataStart)) // DataOffset
+	body[27] = 1
+	binary.LittleEndian.PutUint16(body[29:31], uint16(smb.Trans2SessionSetup))
+	copy(body[dataStart:], first)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdTransaction2, 1, 1, 1)), body...))
+	readSMBFrame(t, client)
+
+	// Final TRANSACTION2_SECONDARY with the rest at displacement == split.
+	rest := cipher[split:]
+	secBody := smbTrans2SecondaryBody(uint16(split), uint16(len(rest)))
+	binary.LittleEndian.PutUint16(secBody[13:15], 32+uint16(len(secBody))) // DataOffset
+	secBody = append(secBody, rest...)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdTransaction2Secondary, 1, 1, 2)), secBody...))
+	readSMBFrame(t, client)
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames := ev.decoded.([]parsedSMB)
+
+	var tagged *parsedSMB
+	for i := range frames {
+		if frames[i].Direction == "read" && frames[i].Header.Command == smb.CmdTransaction2 {
+			tagged = &frames[i]
+		}
+	}
+	require.NotNil(t, tagged)
+	require.Equal(t, fmt.Sprintf("%08x", key), tagged.XORKey)
+	require.Equal(t, helpers.SHA256Hex(dpTestPayload), tagged.DecodedHash)
+	require.Contains(t, stored, cipher)        // reassembled obfuscated blob
+	require.Contains(t, stored, dpTestPayload) // decoded payload
 }
