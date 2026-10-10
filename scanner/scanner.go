@@ -68,6 +68,15 @@ func Classify(ip net.IP) (scannerName, srcPtr string, err error) {
 		if strings.HasSuffix(name, "rwth-aachen.de.") {
 			return "rwth", srcPtr, nil
 		}
+		if strings.HasSuffix(name, "shadowserver.io.") {
+			return "shadowserver", srcPtr, nil
+		}
+		if strings.HasSuffix(name, "censys.io.") {
+			return "censys", srcPtr, nil
+		}
+		if strings.HasSuffix(name, "infrawat.ch") {
+			return "infrawat", srcPtr, nil
+		}
 	}
 	return "", srcPtr, nil
 }
