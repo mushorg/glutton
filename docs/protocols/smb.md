@@ -1,0 +1,7 @@
+# `smb` decoded data
+
+Transport: TCP. Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
+
+**`decoded`:** Array of per-direction frames: `direction`, `header`, `command`, `path`, `setup`, `status`, `nt_status`, `account`, `native_os`, `native_lanman`, `total_data_count`, `payload_hash`, `payload`, `truncated`
+
+Direct TCP (port 445) length-prefixed SMB1 and SMB2. `command` is the opcode name. Tree Connect sets `path` to the share (`IPC$`); NT Create AndX sets `path` to the filename. Trans2 frames set `setup` (`TRANS2_SESSION_SETUP`, …). NT Transact reads set `total_data_count`. Secondary fragments (`0x33` / `0x26` / `0xa1`) get no reply until the one that completes an open NT_TRANSACT (`DataDisplacement + DataCount >= TotalDataCount`), which is answered with `STATUS_INVALID_PARAMETER`; Echo copies request data. EternalBlue-class traffic can be `SMB_COM_NT_TRANSACT` (`0xa0`, often `total_data_count` `0x103d0`) plus many `0x33` sprays on one TCP session (not only `0xa1` / SMB2 grooms). Writes set `status` / `nt_status`. The initial NT_TRANSACT data plus secondary fragments are reassembled by `DataDisplacement` (up to 4 MiB) and stored with `helpers.Store` under `payloads/smb/`; the SHA-256 is set as `payload_hash` on the NT_TRANSACT read frame. Session Setup copies Native OS/LanMan and account (no password). `header` JSON uses numeric tid/uid/mid/pid and hex `flags2`.

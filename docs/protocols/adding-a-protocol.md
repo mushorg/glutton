@@ -59,7 +59,7 @@ func HandleExample(ctx context.Context, conn net.Conn, md connection.Metadata, l
 
 Style references in-tree: `protocols/tcp/http.go`, `protocols/tcp/tcp.go`, `protocols/tcp/mongodb.go` cover different interaction depths and decoded shapes.
 
-For array-of-frames handlers, JSON field names should match the shared contract in `AGENTS.md` and `docs/logging.md`: `direction`, `payload`, plus `command` / `path` / `status` / `truncated` when those facts are already parsed. Do not add a shared Go frame type.
+For array-of-frames handlers, JSON field names should match the shared contract in `AGENTS.md` and `docs/logging.md` (document the decoded shape in `docs/protocols/<name>.md` and link it from the handler table in `docs/logging.md`): `direction`, `payload`, plus `command` / `path` / `status` / `truncated` when those facts are already parsed. Do not add a shared Go frame type.
 
 ## 3. Register the handler
 

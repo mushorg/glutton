@@ -155,7 +155,7 @@ Decoded JSON field names are the contract with Ochi/analysis. Keep `direction` a
    - assert exactly one produced event, its protocol name, and the full `[]parsedX` slice;
    - cover malformed input / early disconnect so the deferred produce path is exercised;
    - unit-test pure parsing/response functions separately (see `protocols/tcp/smb/smb_test.go`).
-5. Docs in the same PR: handler key list in `docs/configuration.md`, decoded shape in `docs/logging.md` 
+5. Docs in the same PR: handler key list in `docs/configuration.md`, decoded shape in `docs/protocols/<name>.md` (and a row in the handler table in `docs/logging.md`)
 
 ## Verify
 

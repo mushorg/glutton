@@ -4,7 +4,51 @@ nav:
   - Getting started: setup.md
   - Configuration: configuration.md
   - Architecture: architecture.md
-  - Logging and producers: logging.md
+  - Logging and producers:
+      - Overview: logging.md
+  - Decoded data by handler:
+      - "http": protocols/http.md
+      - "tcp": protocols/tcp.md
+      - "udp": protocols/udp.md
+      - "proxy_tcp, proxy_udp": protocols/proxy.md
+      - "sip": protocols/sip.md
+      - "openvpn": protocols/openvpn.md
+      - "mdns": protocols/mdns.md
+      - "l2tp": protocols/l2tp.md
+      - "raknet": protocols/raknet.md
+      - "kerberos": protocols/kerberos.md
+      - "ike": protocols/ike.md
+      - "coap": protocols/coap.md
+      - "a2s": protocols/a2s.md
+      - "ddp": protocols/ddp.md
+      - "rtps": protocols/rtps.md
+      - "wsdiscovery": protocols/wsdiscovery.md
+      - "knx": protocols/knx.md
+      - "dtls": protocols/dtls.md
+      - "mqtt": protocols/mqtt.md
+      - "memcache": protocols/memcache.md
+      - "modbus": protocols/modbus.md
+      - "dnp3": protocols/dnp3.md
+      - "enip": protocols/enip.md
+      - "opcua": protocols/opcua.md
+      - "mctp": protocols/mctp.md
+      - "dicom": protocols/dicom.md
+      - "mongodb": protocols/mongodb.md
+      - "minecraft": protocols/minecraft.md
+      - "socks": protocols/socks.md
+      - "mcp": protocols/mcp.md
+      - "telnet": protocols/telnet.md
+      - "smtp": protocols/smtp.md
+      - "ftp": protocols/ftp.md
+      - "rfb": protocols/rfb.md
+      - "iscsi": protocols/iscsi.md
+      - "bittorrent": protocols/bittorrent.md
+      - "jabber": protocols/jabber.md
+      - "pop3": protocols/pop3.md
+      - "whois": protocols/whois.md
+      - "adb": protocols/adb.md
+      - "smb": protocols/smb.md
+      - "rdp": protocols/rdp.md
   - Extending:
       - Extension system: extension-system.md
       - Adding a protocol: protocols/adding-a-protocol.md
