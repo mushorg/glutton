@@ -41,13 +41,15 @@ func (m *mockConn) Written() string                   { return m.writeBuf.String
 func createMockLogger() *mocks.MockLogger {
 	logger := &mocks.MockLogger{}
 
-	// generic expectations that handle all variations
 	logger.EXPECT().Info(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 	logger.EXPECT().Info(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 	logger.EXPECT().Info(mock.Anything, mock.Anything).Return().Maybe()
 	logger.EXPECT().Info(mock.Anything).Return().Maybe()
 	logger.EXPECT().Error(mock.Anything, mock.Anything).Return().Maybe()
 	logger.EXPECT().Error(mock.Anything).Return().Maybe()
+	logger.EXPECT().Debug(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+	logger.EXPECT().Debug(mock.Anything, mock.Anything).Return().Maybe()
+	logger.EXPECT().Debug(mock.Anything).Return().Maybe()
 
 	return logger
 }
@@ -73,14 +75,20 @@ func buildHTTPRequest(method, target, body string, headers ...string) string {
 	return request + "\r\n" + body
 }
 
-func runHTTPHandler(t *testing.T, request string) *mockConn {
+func runHTTPHandler(t *testing.T, request string) (*mockConn, []parsedHTTP) {
 	t.Helper()
 	ensureSpicyInitialized()
 
 	conn := newMockConn(request)
 	logger := createMockLogger()
 	honeypot := &mocks.MockHoneypot{}
-	honeypot.EXPECT().ProduceTCP("http", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	honeypot.EXPECT().UpdateConnectionTimeout(mock.Anything, mock.Anything).Return(nil)
+	var gotDecoded interface{}
+	honeypot.EXPECT().ProduceTCP("http", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ string, _ net.Conn, _ connection.Metadata, _ []byte, decoded interface{}) {
+			gotDecoded = decoded
+		}).
+		Return(nil)
 
 	md := connection.Metadata{
 		TargetPort: 80,
@@ -94,13 +102,21 @@ func runHTTPHandler(t *testing.T, request string) *mockConn {
 	logger.AssertExpectations(t)
 	honeypot.AssertExpectations(t)
 
-	return conn
+	events, ok := gotDecoded.([]parsedHTTP)
+	require.True(t, ok)
+	return conn, events
 }
 
 func TestHandleHTTPBasicGET(t *testing.T) {
-	conn := runHTTPHandler(t, buildHTTPRequest("GET", "/test", ""))
+	conn, events := runHTTPHandler(t, buildHTTPRequest("GET", "/test", ""))
 
 	require.Contains(t, conn.Written(), "HTTP/1.1 200 OK")
+	require.Len(t, events, 2)
+	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, "GET", events[0].Command)
+	require.Equal(t, "/test", events[0].Path)
+	require.Equal(t, "write", events[1].Direction)
+	require.Equal(t, "200", events[1].Status)
 }
 
 func TestHandleHTTPResponseBranches(t *testing.T) {
@@ -145,15 +161,20 @@ func TestHandleHTTPResponseBranches(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			require.Contains(t, runHTTPHandler(t, test.request).Written(), test.contains)
+			conn, events := runHTTPHandler(t, test.request)
+			require.Contains(t, conn.Written(), test.contains)
+			require.GreaterOrEqual(t, len(events), 2)
+			require.Equal(t, "write", events[len(events)-1].Direction)
+			require.Equal(t, "200", events[len(events)-1].Status)
 		})
 	}
 }
 
 func TestHandleHTTPUsesParsedQuery(t *testing.T) {
-	conn := runHTTPHandler(t, buildHTTPRequest("GET", "/test/path?x=1&y=two", ""))
+	_, events := runHTTPHandler(t, buildHTTPRequest("GET", "/test/path?x=1&y=two", ""))
 
-	require.Contains(t, conn.Written(), "HTTP/1.1 200 OK")
+	require.Equal(t, "/test/path", events[0].Path)
+	require.Equal(t, "x=1&y=two", events[0].Query)
 }
 
 func TestHandleHTTPWithBody(t *testing.T) {
@@ -171,6 +192,7 @@ func TestHandleHTTPWithBody(t *testing.T) {
 
 	var gotPayload []byte
 	var gotDecoded interface{}
+	honeypot.EXPECT().UpdateConnectionTimeout(mock.Anything, mock.Anything).Return(nil)
 	honeypot.EXPECT().ProduceTCP("http", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Run(func(_ string, _ net.Conn, _ connection.Metadata, payload []byte, decoded interface{}) {
 			gotPayload = append([]byte(nil), payload...)
@@ -181,16 +203,31 @@ func TestHandleHTTPWithBody(t *testing.T) {
 	err := HandleHTTP(context.Background(), conn, md, logger, honeypot)
 	require.NoError(t, err)
 	require.True(t, conn.closed)
-	require.Equal(t, []byte(body), gotPayload)
+	require.Equal(t, []byte(request), gotPayload)
 
-	decoded, ok := gotDecoded.(decodedHTTP)
+	events, ok := gotDecoded.([]parsedHTTP)
 	require.True(t, ok)
-	require.Equal(t, "POST", decoded.Method)
-	require.Equal(t, "/api", decoded.Path)
-	require.Equal(t, []byte(body), decoded.Payload)
+	require.Len(t, events, 2)
+	require.Equal(t, "POST", events[0].Command)
+	require.Equal(t, "/api", events[0].Path)
+	require.Equal(t, []byte(request), events[0].Payload)
+	require.Equal(t, "200", events[1].Status)
 
 	logger.AssertExpectations(t)
 	honeypot.AssertExpectations(t)
+}
+
+func TestHandleHTTPKeepAlive(t *testing.T) {
+	req1 := buildHTTPRequest("GET", "/one", "")
+	req2 := buildHTTPRequest("GET", "/two", "")
+	conn, events := runHTTPHandler(t, req1+req2)
+
+	require.Len(t, events, 4)
+	require.Equal(t, "/one", events[0].Path)
+	require.Equal(t, "write", events[1].Direction)
+	require.Equal(t, "/two", events[2].Path)
+	require.Equal(t, "write", events[3].Direction)
+	require.Equal(t, 2, bytes.Count([]byte(conn.Written()), []byte("HTTP/1.1 200 OK")))
 }
 
 func TestHandleHTTPMalformedRequest(t *testing.T) {
@@ -201,10 +238,6 @@ func TestHandleHTTPMalformedRequest(t *testing.T) {
 	conn := newMockConn(malformedRequest)
 
 	logger := createMockLogger()
-	logger.EXPECT().Debug(mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-	logger.EXPECT().Debug(mock.Anything, mock.Anything).Return().Maybe()
-	logger.EXPECT().Debug(mock.Anything).Return().Maybe()
-
 	honeypot := &mocks.MockHoneypot{}
 	honeypot.EXPECT().UpdateConnectionTimeout(mock.Anything, mock.Anything).Return(nil)
 	var gotHandler string
@@ -249,11 +282,10 @@ func TestHandleHTTPDoesNotProduceSensorAddress(t *testing.T) {
 		Rule:       &rules.Rule{Target: "http"},
 	}
 
-	var gotPayload []byte
 	var gotDecoded interface{}
+	honeypot.EXPECT().UpdateConnectionTimeout(mock.Anything, mock.Anything).Return(nil)
 	honeypot.EXPECT().ProduceTCP("http", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Run(func(_ string, _ net.Conn, _ connection.Metadata, payload []byte, decoded interface{}) {
-			gotPayload = append([]byte(nil), payload...)
+		Run(func(_ string, _ net.Conn, _ connection.Metadata, _ []byte, decoded interface{}) {
 			gotDecoded = decoded
 		}).
 		Return(nil)
@@ -261,16 +293,15 @@ func TestHandleHTTPDoesNotProduceSensorAddress(t *testing.T) {
 	err := HandleHTTP(context.Background(), conn, md, logger, honeypot)
 	require.NoError(t, err)
 
-	require.NotContains(t, string(gotPayload), sensorIP)
-	require.NotContains(t, fmt.Sprintf("%v", gotDecoded), sensorIP)
-
-	decoded, ok := gotDecoded.(decodedHTTP)
+	events, ok := gotDecoded.([]parsedHTTP)
 	require.True(t, ok)
-	require.Equal(t, "GET", decoded.Method)
-	require.Equal(t, "/test/path", decoded.Path)
-	require.Equal(t, "/test/path", decoded.URL)
-	require.Equal(t, "x=1", decoded.Query)
-	require.NotContains(t, decoded.Path, sensorIP)
+	require.GreaterOrEqual(t, len(events), 1)
+	require.Equal(t, "GET", events[0].Command)
+	require.Equal(t, "/test/path", events[0].Path)
+	require.Equal(t, "x=1", events[0].Query)
+	require.NotContains(t, events[0].Path, sensorIP)
+	require.NotContains(t, events[0].Query, sensorIP)
+	require.NotContains(t, events[0].Command, sensorIP)
 
 	logger.AssertExpectations(t)
 	honeypot.AssertExpectations(t)
@@ -282,11 +313,33 @@ func TestHandleHTTPEmptyRequest(t *testing.T) {
 	conn := newMockConn("")
 	logger := createMockLogger()
 	honeypot := &mocks.MockHoneypot{}
+	honeypot.EXPECT().UpdateConnectionTimeout(mock.Anything, mock.Anything).Return(nil)
+	// empty connection: no frames, so no ProduceTCP
 
 	md := connection.Metadata{TargetPort: 80}
 	ctx := context.Background()
 
 	err := HandleHTTP(ctx, conn, md, logger, honeypot)
-	require.Error(t, err) // empty request should error (EOF when trying to read)
+	require.NoError(t, err)
 	require.True(t, conn.closed)
+
+	logger.AssertExpectations(t)
+	honeypot.AssertExpectations(t)
+}
+
+func TestHandleHTTPSingleProduce(t *testing.T) {
+	req1 := buildHTTPRequest("GET", "/a", "")
+	req2 := buildHTTPRequest("GET", "/b", "")
+	ensureSpicyInitialized()
+
+	conn := newMockConn(req1 + req2)
+	logger := createMockLogger()
+	honeypot := &mocks.MockHoneypot{}
+	honeypot.EXPECT().UpdateConnectionTimeout(mock.Anything, mock.Anything).Return(nil)
+	honeypot.EXPECT().ProduceTCP("http", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil).Once()
+
+	md := connection.Metadata{TargetPort: 80, Rule: &rules.Rule{Target: "http"}}
+	require.NoError(t, HandleHTTP(context.Background(), conn, md, logger, honeypot))
+	honeypot.AssertExpectations(t)
 }

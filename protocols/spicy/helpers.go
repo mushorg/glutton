@@ -16,45 +16,53 @@ import (
 // package level regex to match conlen header in HTTP requests
 var contentLenRE = regexp.MustCompile(`(?i)Content-Length:\s*(\d+)`)
 
+// MaxHTTPBody is the abuse cap on Content-Length for Spicy HTTP reads.
+const MaxHTTPBody = 1 << 20 // 1 MiB
+
+// ReadHTTPMessage reads one HTTP request (headers + Content-Length body) from r.
+// Partial bytes are returned alongside any error so the caller can still capture them.
+func ReadHTTPMessage(r *bufio.Reader, maxBody int) ([]byte, error) {
+	raw := make([]byte, 0, 4096)
+	for {
+		line, err := r.ReadBytes('\n')
+		if len(line) > 0 {
+			raw = append(raw, line...)
+		}
+		if err != nil {
+			if len(raw) > 0 {
+				return raw, err
+			}
+			return nil, err
+		}
+		if bytes.Equal(line, []byte("\r\n")) {
+			break
+		}
+	}
+
+	clen := 0
+	if m := contentLenRE.FindSubmatch(raw); m != nil {
+		clen, _ = strconv.Atoi(string(m[1]))
+	}
+	if clen < 0 || clen > maxBody {
+		return raw, fmt.Errorf("Content-Length %d exceeds maximum %d", clen, maxBody)
+	}
+	if clen > 0 {
+		body := make([]byte, clen)
+		if _, err := io.ReadFull(r, body); err != nil {
+			return raw, err
+		}
+		raw = append(raw, body...)
+	}
+	return raw, nil
+}
+
 // reads protocol-specific initial data from a network connection and
 // returns the complete protocol message as a byte slice.
 func ReadInitialBytes(protocol string, conn net.Conn) ([]byte, error) {
 	switch protocol {
 
 	case "http":
-		const maxHTTPBody = 1 << 20 // 1 MiB limit (abuse cap, not HTTP limit)
-
-		r := bufio.NewReader(conn)
-		raw := make([]byte, 0, 4096)
-
-		for {
-			line, err := r.ReadBytes('\n')
-			if err != nil {
-				return nil, err
-			}
-			raw = append(raw, line...)
-			if bytes.Equal(line, []byte("\r\n")) {
-				break
-			}
-		}
-
-		var clen int
-		if m := contentLenRE.FindSubmatch(raw); m != nil {
-			clen, _ = strconv.Atoi(string(m[1]))
-		}
-
-		if clen > maxHTTPBody {
-			return nil, fmt.Errorf("Content-Length %d exceeds maximum %d", clen, maxHTTPBody)
-		}
-
-		if clen > 0 {
-			body := make([]byte, clen)
-			if _, err := io.ReadFull(r, body); err != nil {
-				return nil, err
-			}
-			raw = append(raw, body...)
-		}
-		return raw, nil
+		return ReadHTTPMessage(bufio.NewReader(conn), MaxHTTPBody)
 
 	case "dns":
 		var lenBuf [2]byte

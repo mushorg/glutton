@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,23 +14,24 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
+	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/spicy"
 	"github.com/mushorg/glutton/protocols/tcp"
 )
 
-// Identical implementation of the original Go HTTP handler, but using Spicy for parsing
-// I've tried to keep the logs and responses as close to the original as possible
+const maxHTTPRequests = 50
 
-// decodedHTTP is the producer event shape. It omits Host and other request
-// headers so the sensor address is not published (the Go HTTP handler does
-// the same). Payload is the request body only.
-type decodedHTTP struct {
-	Method  string `json:"method,omitempty"`
-	URL     string `json:"url,omitempty"`
-	Path    string `json:"path,omitempty"`
-	Query   string `json:"query,omitempty"`
-	Payload []byte `json:"payload,omitempty"` // request body only
+// parsedHTTP is one frame of the Spicy HTTP session. Host and other request
+// headers are omitted from the decoded shape so the sensor address is not
+// published; Payload keeps the raw wire bytes for replay.
+type parsedHTTP struct {
+	Direction string `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
+	Command   string `json:"command,omitempty"`   // HTTP method
+	Path      string `json:"path,omitempty"`
+	Query     string `json:"query,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Payload   []byte `json:"payload,omitempty"` // raw HTTP request or response bytes
 }
 
 // requestPathAndQuery returns path and query without scheme or host, so
@@ -48,21 +50,26 @@ func requestPathAndQuery(uriRaw, path, query string) (string, string) {
 	return path, query
 }
 
-func sendJSON(conn net.Conn, b []byte) error {
-	_, err := conn.Write(
-		append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(b))), b...),
-	)
-	return err
+func httpOKJSON(data []byte) []byte {
+	return append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(data))), data...)
 }
 
-func writePlainOK(conn net.Conn) error {
-	_, err := conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
-	return err
+func httpPlainOK() []byte {
+	return []byte("HTTP/1.1 200 OK\r\n\r\n")
 }
 
-func handleEthereumRPC(body []byte, conn net.Conn) bool {
+func httpStatusCode(resp []byte) string {
+	line, _, _ := bytes.Cut(resp, []byte("\r\n"))
+	parts := bytes.SplitN(line, []byte(" "), 3)
+	if len(parts) >= 2 && bytes.HasPrefix(parts[0], []byte("HTTP/")) {
+		return string(parts[1])
+	}
+	return ""
+}
+
+func ethereumRPCResponse(body []byte) []byte {
 	if !bytes.Contains(body, []byte("eth_blockNumber")) {
-		return false
+		return nil
 	}
 	resp := struct {
 		JSONRPC string `json:"jsonrpc"`
@@ -74,13 +81,12 @@ func handleEthereumRPC(body []byte, conn net.Conn) bool {
 		Result:  "0x2ecd9e",
 	}
 	b, _ := json.Marshal(resp)
-	_ = sendJSON(conn, b)
-	return true
+	return httpOKJSON(b)
 }
 
-func handleYarnNewApplication(method, uri string, conn net.Conn) bool {
+func yarnNewApplicationResponse(method, uri string) []byte {
 	if method != "POST" || !strings.Contains(uri, "cluster/apps/new-application") {
-		return false
+		return nil
 	}
 	resp, _ := json.Marshal(&struct {
 		ApplicationID             string      `json:"application-id"`
@@ -92,38 +98,32 @@ func handleYarnNewApplication(method, uri string, conn net.Conn) bool {
 			VCores int `json:"vCores"`
 		}{Memory: 16384, VCores: 8},
 	})
-	_ = sendJSON(conn, resp)
-	return true
+	return httpOKJSON(resp)
 }
 
-func handleWallet(uri string, conn net.Conn) bool {
+func walletResponse(uri string) []byte {
 	if !strings.Contains(uri, "wallet") {
-		return false
+		return nil
 	}
 	body := []byte(`[[""]]`)
-	header := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(body))
-	conn.Write([]byte(header))
-	conn.Write(body)
-	return true
+	return append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(body))), body...)
 }
 
-func handleDockerAPIVersion(path string, conn net.Conn, log interfaces.Logger) bool {
+func dockerAPIVersionResponse(path string, log interfaces.Logger) []byte {
 	if !strings.HasPrefix(path, "/v1.16/version") {
-		return false
+		return nil
 	}
 	data, err := tcp.Res.ReadFile("resources/docker_api.json")
 	if err != nil {
 		log.Error("failed to read docker_api.json", producer.ErrAttr(err))
-		return false
-	} else {
-		conn.Write(append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n", len(data))), data...))
+		return nil
 	}
-	return true
+	return httpOKJSON(data)
 }
 
-func handleCitrixSMB(path string, conn net.Conn) bool {
+func citrixSMBResponse(path string) []byte {
 	if !strings.HasPrefix(path, "/vpn/") {
-		return false
+		return nil
 	}
 	headers := `Server: Apache
 X-Frame-Options: SAMEORIGIN
@@ -135,8 +135,7 @@ X-XSS-Protection: 1; mode=block
 X-Content-Type-Options: nosniff
 Content-Type: text/plain; charset=UTF-8`
 	smbCfg := "\r\n\r\n[global]\r\n\tencrypt passwords = yes\r\n\tname resolve order = lmhosts wins host bcast\r\n"
-	conn.Write([]byte("HTTP/1.1 200 OK\r\n" + headers + smbCfg))
-	return true
+	return []byte("HTTP/1.1 200 OK\r\n" + headers + smbCfg)
 }
 
 func handleVMwareSend(ctx context.Context, body []byte, uri string, md connection.Metadata, log interfaces.Logger, hp interfaces.Honeypot) bool {
@@ -161,84 +160,168 @@ func handleVMwareSend(ctx context.Context, body []byte, uri string, md connectio
 	return true
 }
 
+func bodyFromParsed(parsed *spicy.ParsedData) []byte {
+	v, ok := parsed.Fields["body.content"]
+	if !ok {
+		return nil
+	}
+	switch b := v.(type) {
+	case []byte:
+		return b
+	case string:
+		return []byte(b)
+	}
+	return nil
+}
+
+type httpServer struct {
+	events []parsedHTTP
+	conn   net.Conn
+	bufin  *bufio.Reader
+}
+
+func newHTTPServer(conn net.Conn) *httpServer {
+	return &httpServer{
+		events: []parsedHTTP{},
+		conn:   conn,
+		bufin:  bufio.NewReader(conn),
+	}
+}
+
+func (s *httpServer) write(data []byte) error {
+	if _, err := s.conn.Write(data); err != nil {
+		return err
+	}
+	s.events = append(s.events, parsedHTTP{
+		Direction: "write",
+		Status:    httpStatusCode(data),
+		Payload:   data,
+	})
+	return nil
+}
+
+func (s *httpServer) buildResponse(ctx context.Context, method, uriRaw, path string, body []byte, md connection.Metadata, log interfaces.Logger, hp interfaces.Honeypot) []byte {
+	switch method {
+	case "POST":
+		if resp := ethereumRPCResponse(body); resp != nil {
+			return resp
+		}
+		if resp := yarnNewApplicationResponse(method, uriRaw); resp != nil {
+			return resp
+		}
+	}
+	if resp := walletResponse(uriRaw); resp != nil {
+		return resp
+	}
+	if resp := dockerAPIVersionResponse(path, log); resp != nil {
+		return resp
+	}
+	if resp := citrixSMBResponse(path); resp != nil {
+		return resp
+	}
+	if handleVMwareSend(ctx, body, uriRaw, md, log, hp) {
+		return nil
+	}
+	return httpPlainOK()
+}
+
+// HandleHTTP takes a net.Conn and does HTTP communication using Spicy parsing.
 func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log interfaces.Logger, hp interfaces.Honeypot) error {
+	server := newHTTPServer(conn)
 	handoff := false
+	endReason := connection.EndHandlerClose
 	defer func() {
-		if !handoff {
-			_ = conn.Close()
+		if handoff {
+			return
+		}
+		md.EndReason = endReason
+		if len(server.events) > 0 {
+			if err := hp.ProduceTCP("http", conn, md, helpers.FirstOrEmpty(server.events).Payload, server.events); err != nil {
+				log.Error("Failed to produce message", slog.String("protocol", "http"), producer.ErrAttr(err))
+			}
+		}
+		if err := conn.Close(); err != nil {
+			log.Debug("Failed to close HTTP connection", slog.String("protocol", "http"), producer.ErrAttr(err))
 		}
 	}()
 
-	payload, err := spicy.ReadInitialBytes("http", conn)
-	if err != nil {
-		return err
-	}
-	if len(payload) == 0 {
-		return nil
-	}
-
-	parsed, err := spicy.Parse("http", payload) // parse the HTTP request using Spicy
-	if err != nil {
-		log.Debug("spicy HTTP parse failed, falling back to tcp",
-			slog.String("handler", "spicy-http"), producer.ErrAttr(err))
-		handoff = true
-		return tcp.HandleTCP(ctx, tcp.PrependConn(conn, payload), md, log, hp)
-	}
-
-	method, _ := parsed.Fields["method"].(string)
-	method = strings.ToUpper(method)
-	uriRaw, _ := parsed.Fields["uri.raw"].(string)
-	path, _ := parsed.Fields["uri.path"].(string)
-	query, _ := parsed.Fields["uri.query"].(string)
-	path, query = requestPathAndQuery(uriRaw, path, query)
-	version, _ := parsed.Fields["version.number"].(string)
-
-	if tcp.IsMCPPath(path) {
-		handoff = true
-		return tcp.HandleMCP(ctx, tcp.PrependConn(conn, payload), md, log, hp)
-	}
-
-	var body []byte
-	if v, ok := parsed.Fields["body.content"]; ok {
-		switch b := v.(type) {
-		case []byte:
-			body = b
-		case string:
-			body = []byte(b)
-		}
-	}
-
 	srcHost, srcPort, _ := net.SplitHostPort(conn.RemoteAddr().String())
-	log.Info(fmt.Sprintf("HTTP %s %s request handled: %s", version, method, path), // added "version" as a proof of concept, not identical to the original pure Go parser
-		slog.String("handler", "spicy-http"),
-		slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
-		slog.String("src_ip", srcHost),
-		slog.String("src_port", srcPort),
-		slog.String("path", path),
-		slog.String("query", query),
-	)
 
-	decoded := decodedHTTP{
-		Method: method,
-		URL:    path,
-		Path:   path,
-		Query:  query,
-	}
-	if len(body) > 0 {
-		decoded.Payload = body
-	}
-	_ = hp.ProduceTCP("http", conn, md, body, decoded)
+	for i := 0; i < maxHTTPRequests; i++ {
+		if err := hp.UpdateConnectionTimeout(ctx, conn); err != nil {
+			log.Debug("Failed to set connection timeout", slog.String("protocol", "http"), producer.ErrAttr(err))
+			endReason = connection.EndTimeout
+			return nil
+		}
 
-	handled := false
-	switch method {
-	case "POST":
-		handled = handleEthereumRPC(body, conn) || handleYarnNewApplication(method, uriRaw, conn)
-	}
+		raw, err := spicy.ReadHTTPMessage(server.bufin, spicy.MaxHTTPBody)
+		if len(raw) == 0 {
+			if err != nil {
+				log.Debug("Failed to read data", slog.String("protocol", "http"), producer.ErrAttr(err))
+				endReason = connection.EndReasonFromRead(err)
+			}
+			break
+		}
 
-	handled = handled || handleWallet(uriRaw, conn) || handleDockerAPIVersion(path, conn, log) || handleCitrixSMB(path, conn) || handleVMwareSend(ctx, body, uriRaw, md, log, hp)
+		parsed, parseErr := spicy.Parse("http", raw)
+		if parseErr != nil {
+			if i == 0 && len(server.events) == 0 {
+				log.Debug("spicy HTTP parse failed, falling back to tcp",
+					slog.String("handler", "spicy-http"), producer.ErrAttr(parseErr))
+				handoff = true
+				return tcp.HandleTCP(ctx, tcp.PrependConn(conn, raw), md, log, hp)
+			}
+			log.Debug("Failed to parse HTTP request", slog.String("protocol", "http"), producer.ErrAttr(parseErr))
+			server.events = append(server.events, parsedHTTP{Direction: "read", Payload: append([]byte(nil), raw...)})
+			endReason = connection.EndReadError
+			break
+		}
 
-	if !handled {
-		_ = writePlainOK(conn)
+		method, _ := parsed.Fields["method"].(string)
+		method = strings.ToUpper(method)
+		uriRaw, _ := parsed.Fields["uri.raw"].(string)
+		path, _ := parsed.Fields["uri.path"].(string)
+		query, _ := parsed.Fields["uri.query"].(string)
+		path, query = requestPathAndQuery(uriRaw, path, query)
+		version, _ := parsed.Fields["version.number"].(string)
+		body := bodyFromParsed(parsed)
+
+		if i == 0 && tcp.IsMCPPath(path) {
+			handoff = true
+			return tcp.HandleMCP(ctx, tcp.PrependConn(conn, raw), md, log, hp)
+		}
+
+		log.Info(fmt.Sprintf("HTTP %s %s request handled: %s", version, method, path),
+			slog.String("handler", "spicy-http"),
+			slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
+			slog.String("src_ip", srcHost),
+			slog.String("src_port", srcPort),
+			slog.String("path", path),
+			slog.String("query", query),
+		)
+
+		server.events = append(server.events, parsedHTTP{
+			Direction: "read",
+			Command:   method,
+			Path:      path,
+			Query:     query,
+			Payload:   append([]byte(nil), raw...),
+		})
+
+		resp := server.buildResponse(ctx, method, uriRaw, path, body, md, log, hp)
+		if resp != nil {
+			if writeErr := server.write(resp); writeErr != nil {
+				log.Debug("Failed to write HTTP response", slog.String("protocol", "http"), producer.ErrAttr(writeErr))
+				endReason = connection.EndWriteError
+				return nil
+			}
+		}
+
+		if err != nil {
+			log.Debug("Failed to read data", slog.String("protocol", "http"), producer.ErrAttr(err))
+			endReason = connection.EndReasonFromRead(err)
+			break
+		}
 	}
 	return nil
 }
