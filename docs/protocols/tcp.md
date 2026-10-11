@@ -45,7 +45,7 @@ Writes set `status` to the response name or `random`.
 | 135 | `dcerpc-bind-ack` | |
 | 139 | `netbios-session` | |
 | 389 | `ldap` | Sends nothing, as an LDAP server does with input it cannot parse |
-| 1433 | `mssql-prelogin` | |
+| 1433 | `mssql-prelogin` | Only on sensors without the `mssql` rule, and only for the first message; the next one (a LOGIN7) ends the session instead of getting the PRELOGIN reply again. A TDS PRELOGIN on any port goes to the [`mssql`](mssql.md) handler |
 | 4444 | `cmd-shell` | See [Server-first banners](#server-first-banners) |
 | 4899 | `radmin` | |
 | 8009 | `ajp-404` | |

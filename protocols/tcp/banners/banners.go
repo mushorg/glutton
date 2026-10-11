@@ -35,6 +35,10 @@ type Response struct {
 	// Close means the service hangs up after this reply (HTTP sends
 	// Connection: close), so no further client messages are answered.
 	Close bool
+	// Once means the port response only answers the first client message;
+	// the catch-all ends the session on the next one instead of replaying it
+	// (a TDS PRELOGIN reply sent back to a LOGIN7 fingerprints the sensor).
+	Once bool
 }
 
 // now is replaced in tests for a stable HTTP Date header.
@@ -215,7 +219,7 @@ func ForPort(port uint16) (Response, bool) {
 	case 139:
 		return Response{Name: "netbios-session", Data: netbiosSession}, true
 	case 1433:
-		return Response{Name: "mssql-prelogin", Data: mssqlPrelogin}, true
+		return Response{Name: "mssql-prelogin", Data: mssqlPrelogin, Once: true}, true
 	case 4899:
 		return Response{Name: "radmin", Data: radminReply}, true
 	case 8009:

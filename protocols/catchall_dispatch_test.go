@@ -12,6 +12,7 @@ import (
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/spicy"
 	"github.com/mushorg/glutton/protocols/tcp/banners"
+	"github.com/mushorg/glutton/protocols/tcp/mssql"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
@@ -283,6 +284,42 @@ func TestCatchAllShortTPKTPrefixStaysTCP(t *testing.T) {
 
 	// shorter than the RDP peek: still handled, not dropped
 	_, err := client.Write([]byte{0x03, 0x00, 0x00, 0x2f})
+	require.NoError(t, err)
+	// the catch-all waits for a next message: read just the reply
+	reply := make([]byte, 4096)
+	n, err := client.Read(reply)
+	require.NoError(t, err)
+	require.NotZero(t, n)
+
+	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllRoutesOffPortMSSQL(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 14330)
+
+	// Nmap PRELOGIN from Ochi event 024dea0c-f1a6-418f-b1a0-c2f50b093e1e
+	prelogin := []byte{
+		0x12, 0x01, 0x00, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x15, 0x00, 0x06, 0x01, 0x00, 0x1b,
+		0x00, 0x01, 0x02, 0x00, 0x1c, 0x00, 0x0c, 0x03, 0x00, 0x28, 0x00, 0x04, 0xff, 0x08, 0x00, 0x01,
+		0x55, 0x00, 0x00, 0x02, 0x4d, 0x53, 0x53, 0x51, 0x4c, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x00,
+		0x00, 0x00, 0x31, 0x32,
+	}
+	_, err := client.Write(prelogin)
+	require.NoError(t, err)
+	want := mssql.BuildPreloginResponse()
+	reply := make([]byte, len(want))
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
+	require.Equal(t, want, reply)
+
+	require.Equal(t, "mssql", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllPreloginLookalikeStaysTCP(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 9999)
+
+	// type 0x12 but not a final packet starting with the VERSION option
+	_, err := client.Write([]byte{0x12, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x42, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 	require.NoError(t, err)
 	// the catch-all waits for a next message: read just the reply
 	reply := make([]byte, 4096)

@@ -18,6 +18,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/adb"
 	"github.com/mushorg/glutton/protocols/tcp/mctp"
 	"github.com/mushorg/glutton/protocols/tcp/minecraft"
+	"github.com/mushorg/glutton/protocols/tcp/mssql"
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
 	"github.com/mushorg/glutton/protocols/tcp/rtsp"
 	"github.com/mushorg/glutton/protocols/tcp/socks"
@@ -34,6 +35,9 @@ const rtspLinePeek = 256
 
 // rdpPeekLen covers the TPKT header, X.224 LI and TPDU type of an RDP CR.
 const rdpPeekLen = 6
+
+// mssqlPeekLen covers the TDS header and the first PRELOGIN option token.
+const mssqlPeekLen = mssql.HeaderLen + 1
 
 // httpMethods are the request methods the catch-all routes to the HTTP
 // handler without Spicy; httpMethodPeek covers the longest plus its space.
@@ -120,6 +124,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"whois":      bindTCP(tcp.HandleWHOIS, log, h),
 		"adb":        adbOrTCP(log, h),
 		"mongodb":    bindTCP(tcp.HandleMongoDB, log, h),
+		"mssql":      bindTCP(tcp.HandleMSSQL, log, h),
 		"minecraft":  bindTCP(tcp.HandleMinecraft, log, h),
 		"socks":      bindTCP(tcp.HandleSOCKS, log, h),
 		"http":       bindTCP(tcp.HandleHTTP, log, h),
@@ -199,6 +204,19 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 				return tcp.HandleRDP(ctx, bufConn, md, log, h)
 			}
 			snip = cr[:min(len(cr), 4)]
+		}
+		// SQL Server scanners send PRELOGIN to moved instances on any port;
+		// check the header and first option token, not just the type byte
+		if snip[0] == mssql.TypePrelogin {
+			pre, preConn, err := peekOrClose(conn, bufConn, mssqlPeekLen, log)
+			if err != nil {
+				return nil
+			}
+			bufConn = preConn
+			if mssql.LooksLikePrelogin(pre) {
+				return tcp.HandleMSSQL(ctx, bufConn, md, log, h)
+			}
+			snip = pre[:min(len(pre), 4)]
 		}
 		// ADB scanners also probe devices that moved adbd off 5555; the
 		// four-byte snip holds the whole CNXN command

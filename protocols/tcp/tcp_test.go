@@ -154,8 +154,8 @@ func readReply(t *testing.T, conn net.Conn) []byte {
 
 func TestHandleTCPAnswersFollowUps(t *testing.T) {
 	// a client that keeps talking gets a reply per message
-	client, hp, done := startCatchAll(t, 1433)
-	want, _ := banners.ForPort(1433)
+	client, hp, done := startCatchAll(t, 135)
+	want, _ := banners.ForPort(135)
 
 	prelogin := []byte{0x12, 0x01, 0x00, 0x2f, 0x00, 0x00, 0x01, 0x00}
 	for range 2 {
@@ -175,9 +175,9 @@ func TestHandleTCPAnswersFollowUps(t *testing.T) {
 	hash := helpers.SHA256Hex(prelogin)
 	require.Equal(t, []parsedTCP{
 		{Direction: "read", Payload: prelogin, PayloadHash: hash},
-		{Direction: "write", Status: "mssql-prelogin", Payload: want.Data, PayloadHash: helpers.SHA256Hex(want.Data)},
+		{Direction: "write", Status: "dcerpc-bind-ack", Payload: want.Data, PayloadHash: helpers.SHA256Hex(want.Data)},
 		{Direction: "read", Payload: prelogin, PayloadHash: hash},
-		{Direction: "write", Status: "mssql-prelogin", Payload: want.Data, PayloadHash: helpers.SHA256Hex(want.Data)},
+		{Direction: "write", Status: "dcerpc-bind-ack", Payload: want.Data, PayloadHash: helpers.SHA256Hex(want.Data)},
 		{Direction: "read", Command: "ssh", Payload: ssh, PayloadHash: helpers.SHA256Hex(ssh)},
 		{Direction: "write", Status: "ssh", Payload: sshBanner.Data, PayloadHash: helpers.SHA256Hex(sshBanner.Data)},
 	}, events)
@@ -320,6 +320,35 @@ func TestHandleTCPPortReply(t *testing.T) {
 	require.Empty(t, events[0].Command)
 	require.Equal(t, prelogin, events[0].Payload)
 	require.Equal(t, "mssql-prelogin", events[1].Status)
+}
+
+func TestHandleTCPOncePortReplyEndsSession(t *testing.T) {
+	// a LOGIN7 after the PRELOGIN reply ends the session instead of getting
+	// the PRELOGIN reply again (Ochi event 024dea0c-f1a6-418f-b1a0-c2f50b093e1e)
+	client, hp, done := startCatchAll(t, 1433)
+	want, _ := banners.ForPort(1433)
+
+	prelogin := []byte{0x12, 0x01, 0x00, 0x2f, 0x00, 0x00, 0x01, 0x00}
+	_, err := client.Write(prelogin)
+	require.NoError(t, err)
+	require.Equal(t, want.Data, readAll(t, client, len(want.Data)))
+	login := []byte{0x10, 0x01, 0x00, 0x0c, 0x00, 0x00, 0x01, 0x00, 0xbb, 0x00, 0x00, 0x00}
+	_, err = client.Write(login)
+	require.NoError(t, err)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not end the session")
+	}
+	produced := <-hp.produced
+	require.Equal(t, connection.EndHandlerClose, produced.endReason)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Payload: prelogin, PayloadHash: helpers.SHA256Hex(prelogin)},
+		{Direction: "write", Status: "mssql-prelogin", Payload: want.Data, PayloadHash: helpers.SHA256Hex(want.Data)},
+		{Direction: "read", Payload: login, PayloadHash: helpers.SHA256Hex(login)},
+	}, produced.decoded.([]parsedTCP))
 }
 
 func TestHandleTCPSignatureBeatsPort(t *testing.T) {

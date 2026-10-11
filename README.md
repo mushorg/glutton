@@ -82,6 +82,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | Jabber/XMPP                 | instant messaging stream                 |
 | ADB                         | Android Debug Bridge connect, shell, push |
 | MongoDB                     | wire protocol queries                    |
+| Microsoft SQL Server (TDS)  | PRELOGIN, LOGIN7 usernames, NTLM info probes on tcp/1433, any port |
 | Minecraft (Java)            | server-list ping, login attempts on tcp/25565 |
 | SOCKS 4/4a/5 proxy          | open-proxy checks on tcp/1080, 4145, any port |
 | HiSilicon DVR (MCTP)        | `HI_SRDK_*` control calls on tcp/9000    |

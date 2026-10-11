@@ -342,6 +342,8 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		resp := sigResp
 		switch {
 		case matched:
+		case hasPortResp && !greeted && portResp.Once && round > 1:
+			return nil
 		case hasPortResp && !greeted:
 			resp = portResp
 		default:
