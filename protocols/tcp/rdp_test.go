@@ -15,6 +15,7 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -292,6 +293,13 @@ var rdpCRTLSOnly = func() []byte {
 	return b
 }()
 
+// rdpCRHybridOnly requests only CredSSP/NLA, so the Confirm cannot prefer TLS.
+var rdpCRHybridOnly = func() []byte {
+	b := append([]byte(nil), rdpCRHello...)
+	b[len(b)-4] = 0x02
+	return b
+}()
+
 func startRDPTLS(t *testing.T, cr []byte) (*tls.Conn, []byte, <-chan error, *fakeHoneypot) {
 	t.Helper()
 	client, serverConn := net.Pipe()
@@ -319,10 +327,13 @@ func TestHandleRDPSelectsSingleProtocol(t *testing.T) {
 	tlsClient, cc, _, _ := startRDPTLS(t, rdpCRHello)
 	_ = tlsClient.Close()
 	require.Equal(t, byte(0x02), cc[11], "RDP_NEG_RSP")
-	require.Equal(t, []byte{0x02, 0x00, 0x00, 0x00}, cc[15:19], "HYBRID only, not TLS|CredSSP")
+	require.Equal(t, []byte{0x01, 0x00, 0x00, 0x00}, cc[15:19], "TLS when the client offers it, so any password can reach Client Info")
 
 	_, cc, _, _ = startRDPTLS(t, rdpCRTLSOnly)
 	require.Equal(t, []byte{0x01, 0x00, 0x00, 0x00}, cc[15:19])
+
+	_, cc, _, _ = startRDPTLS(t, rdpCRHybridOnly)
+	require.Equal(t, []byte{0x02, 0x00, 0x00, 0x00}, cc[15:19], "HYBRID when the client does not offer TLS")
 }
 
 func TestHandleRDPRecordsTSRequestAfterTLS(t *testing.T) {
@@ -377,7 +388,7 @@ func TestHandleRDPMCSOverTLS(t *testing.T) {
 }
 
 func TestHandleRDPCredSSPExchange(t *testing.T) {
-	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHello)
+	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHybridOnly)
 
 	// Send NTLM Negotiate inside a TSRequest.
 	_, err := tlsClient.Write(rdp.WrapTSRequest(makeNTLMNegotiate()))
@@ -579,7 +590,7 @@ func rdpCommands(events []parsedRDP) []string {
 }
 
 func TestHandleRDPClientInfoOverTLS(t *testing.T) {
-	tlsClient, _, done, hp := startRDPTLS(t, rdpCRTLSOnly)
+	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHello)
 
 	_, err := tlsClient.Write(rdpMCSConnectInitial)
 	require.NoError(t, err)
@@ -743,8 +754,132 @@ func TestHandleRDPPartialTPKTAtDisconnect(t *testing.T) {
 	require.True(t, events[2].Truncated)
 }
 
+func TestHandleRDPNLAAcceptList(t *testing.T) {
+	const password = "Password1"
+	viper.Set("rdp.credentials", []rdp.Account{{Username: "administrator", Password: password}})
+	t.Cleanup(func() { viper.Set("rdp.credentials", nil) })
+
+	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHybridOnly)
+	certs := tlsClient.ConnectionState().PeerCertificates
+	require.NotEmpty(t, certs)
+	pub := rdp.SubjectPublicKey(certs[0])
+
+	_, err := tlsClient.Write(rdp.WrapTSRequest(makeNTLMNegotiate()))
+	require.NoError(t, err)
+	chal := make([]byte, 2048)
+	n, err := tlsClient.Read(chal)
+	require.NoError(t, err)
+
+	auth, sess, err := rdp.BuildClientAuthenticate(chal[:n], "administrator", "WORKGROUP", password, pub)
+	require.NoError(t, err)
+	_, err = tlsClient.Write(auth)
+	require.NoError(t, err)
+	confirm := make([]byte, 1024)
+	cn, err := tlsClient.Read(confirm)
+	require.NoError(t, err)
+	require.Equal(t, byte(0x30), confirm[0])
+	require.NotEqual(t, rdp.BuildTSRequestError(rdp.StatusLogonFailure), confirm[:cn])
+
+	_, err = tlsClient.Write(sess.ClientAuthInfo("WORKGROUP", "administrator", password))
+	require.NoError(t, err)
+	_, err = tlsClient.Write(rdpMCSConnectInitial)
+	require.NoError(t, err)
+	mcs := make([]byte, 512)
+	mn, err := tlsClient.Read(mcs)
+	require.NoError(t, err)
+	require.True(t, bytes.Contains(mcs[:mn], []byte{0x7f, 0x66}))
+	require.NoError(t, tlsClient.Close())
+	waitRDPDone(t, done)
+
+	produced := waitProduced(t, hp)
+	events := produced.decoded.([]parsedRDP)
+	require.GreaterOrEqual(t, len(events), 11)
+	require.Equal(t, "NTLMAuthenticate", events[6].Command)
+	require.True(t, events[6].NLAAccepted)
+	require.Equal(t, "administrator", events[6].NTLMUser)
+	require.Equal(t, "write", events[7].Direction)
+	require.Equal(t, "TSRequest", events[7].Command)
+	require.Equal(t, rdp.StatusNLAAccepted, events[7].Status)
+	require.True(t, events[7].NLAAccepted)
+	require.Equal(t, "TSRequest", events[8].Command)
+	require.True(t, events[8].NLAAccepted)
+	require.Equal(t, "administrator", events[8].NTLMUser)
+	require.Equal(t, "MCSConnectInitial", events[9].Command)
+	require.Equal(t, "MCSConnectResponse", events[10].Command)
+
+	raw, err := json.Marshal(events)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), password)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+}
+
+func TestHandleRDPNLAWrongPassword(t *testing.T) {
+	viper.Set("rdp.credentials", []rdp.Account{{Username: "administrator", Password: "Password1"}})
+	t.Cleanup(func() { viper.Set("rdp.credentials", nil) })
+
+	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHybridOnly)
+	certs := tlsClient.ConnectionState().PeerCertificates
+	require.NotEmpty(t, certs)
+	pub := rdp.SubjectPublicKey(certs[0])
+
+	_, err := tlsClient.Write(rdp.WrapTSRequest(makeNTLMNegotiate()))
+	require.NoError(t, err)
+	chal := make([]byte, 2048)
+	n, err := tlsClient.Read(chal)
+	require.NoError(t, err)
+
+	auth, _, err := rdp.BuildClientAuthenticate(chal[:n], "administrator", "WORKGROUP", "wrong", pub)
+	require.NoError(t, err)
+	_, err = tlsClient.Write(auth)
+	require.NoError(t, err)
+	failure := make([]byte, 64)
+	fn, err := tlsClient.Read(failure)
+	require.NoError(t, err)
+	require.Equal(t, rdp.BuildTSRequestError(rdp.StatusLogonFailure), failure[:fn])
+	waitRDPDone(t, done)
+
+	events := waitProduced(t, hp).decoded.([]parsedRDP)
+	require.Len(t, events, 8)
+	require.Equal(t, "NTLMAuthenticate", events[6].Command)
+	require.False(t, events[6].NLAAccepted)
+	require.Equal(t, "STATUS_LOGON_FAILURE", events[7].Status)
+}
+
+func TestHandleRDPNLANoAccounts(t *testing.T) {
+	viper.Set("rdp.credentials", nil)
+	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHybridOnly)
+	certs := tlsClient.ConnectionState().PeerCertificates
+	require.NotEmpty(t, certs)
+	pub := rdp.SubjectPublicKey(certs[0])
+
+	_, err := tlsClient.Write(rdp.WrapTSRequest(makeNTLMNegotiate()))
+	require.NoError(t, err)
+	chal := make([]byte, 2048)
+	n, err := tlsClient.Read(chal)
+	require.NoError(t, err)
+
+	auth, _, err := rdp.BuildClientAuthenticate(chal[:n], "administrator", "WORKGROUP", "Password1", pub)
+	require.NoError(t, err)
+	_, err = tlsClient.Write(auth)
+	require.NoError(t, err)
+	failure := make([]byte, 64)
+	fn, err := tlsClient.Read(failure)
+	require.NoError(t, err)
+	require.Equal(t, rdp.BuildTSRequestError(rdp.StatusLogonFailure), failure[:fn])
+	waitRDPDone(t, done)
+
+	events := waitProduced(t, hp).decoded.([]parsedRDP)
+	require.Len(t, events, 8)
+	require.Equal(t, "STATUS_LOGON_FAILURE", events[7].Status)
+	require.False(t, events[6].NLAAccepted)
+}
+
 func TestHandleRDPNTLMVersion(t *testing.T) {
-	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHello)
+	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHybridOnly)
 	_, err := tlsClient.Write(rdp.WrapTSRequest(makeNTLMNegotiate()))
 	require.NoError(t, err)
 	_, err = tlsClient.Read(make([]byte, 512))
@@ -760,7 +895,7 @@ func TestHandleRDPNTLMVersion(t *testing.T) {
 }
 
 func TestHandleRDPCredSSPSPNEGONegotiate(t *testing.T) {
-	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHello)
+	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHybridOnly)
 
 	// Captured from Ochi event 9f62fb02-056c-4b1d-9cd5-17a7c51923ec.
 	raw, err := hex.DecodeString("3059a003020106a1523050304ea04c044a604806062b0601050502a03e303ca00e300c060a2b06010401823702020aa22a04284e544c4d5353500001000000058208e0" +

@@ -55,6 +55,7 @@ const (
 
 	StatusValidClient            = "STATUS_VALID_CLIENT"
 	StatusServerDeniedConnection = "ERRINFO_SERVER_DENIED_CONNECTION"
+	StatusNLAAccepted            = "NLA_ACCEPTED"
 )
 
 // MCSDomainType returns the DomainMCSPDU choice of an X.224 DT, or -1 when

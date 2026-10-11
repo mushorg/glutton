@@ -3,6 +3,7 @@ package tcp
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -32,6 +33,7 @@ type parsedRDP struct {
 	// response in Payload it is all that is needed to crack the exchange.
 	NTLMServerChallenge string          `json:"ntlm_server_challenge,omitempty"`
 	NTResponseLen       int             `json:"nt_response_len,omitempty"`
+	NLAAccepted         bool            `json:"nla_accepted,omitempty"`
 	SPNEGO              bool            `json:"spnego,omitempty"`
 	ChannelID           uint16          `json:"channel_id,omitempty"`
 	ClientData          *rdp.ClientData `json:"client_data,omitempty"`
@@ -59,6 +61,8 @@ type rdpServer struct {
 	pending  []byte
 	selected uint32
 	logger   interfaces.Logger
+	// nla is set after an accept-list match so the follow-up authInfo can be opened.
+	nla *rdp.NLASession
 }
 
 // rdpWriteRecorder copies what is written to the connection while on is set,
@@ -262,6 +266,13 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		return certErr
 	}
 
+	var subjectPublicKey []byte
+	if len(rdpCert.Certificate) > 0 {
+		if c, err := x509.ParseCertificate(rdpCert.Certificate[0]); err == nil {
+			subjectPublicKey = rdp.SubjectPublicKey(c)
+		}
+	}
+
 	buffer := make([]byte, rdpMaxReceive)
 	// rd is the raw connection until the client starts TLS, then the decrypted one.
 	rd := conn
@@ -362,12 +373,30 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 				fr.NTLMVersion = parsed.NTLMVersion
 				fr.NTResponseLen = parsed.NTResponseLen
 				fr.NTLMServerChallenge = hex.EncodeToString(serverChallenge)
-				server.events = append(server.events, fr)
 				logger.Debug("rdp CredSSP NTLM Authenticate",
 					slog.String("protocol", "rdp"),
 					slog.String("domain", parsed.Domain),
 					slog.String("user", parsed.Username),
 				)
+				if out, user, ok := rdp.MatchAccount(parsed, serverChallenge, subjectPublicKey); ok {
+					fr.NLAAccepted = true
+					server.events = append(server.events, fr)
+					logger.Debug("rdp CredSSP NLA accepted", slog.String("protocol", "rdp"), slog.String("user", user))
+					if err := server.writeFrame(parsedRDP{
+						Command:     rdp.CmdTSRequest,
+						Status:      rdp.StatusNLAAccepted,
+						NLAAccepted: true,
+						NTLMUser:    user,
+						Payload:     out.Reply,
+					}); err != nil {
+						logger.Debug("Failed to write CredSSP confirmation", slog.String("protocol", "rdp"), producer.ErrAttr(err))
+						endReason = connection.EndWriteError
+						return nil
+					}
+					server.nla = out.Session
+					continue
+				}
+				server.events = append(server.events, fr)
 				// Fail the logon like Windows does so brute-forcers see a bad
 				// password, not a dropped connection, and try their next guess.
 				if err := server.writeFrame(parsedRDP{
@@ -380,6 +409,16 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 				return nil
 			default:
 				fr.Command = rdp.CmdTSRequest
+				if server.nla != nil && len(parsed.AuthInfo) > 0 {
+					if domain, user, ok := server.nla.OpenAuthInfo(parsed.AuthInfo); ok {
+						fr.NTLMDomain = domain
+						fr.NTLMUser = user
+						fr.NLAAccepted = true
+					}
+					server.events = append(server.events, fr)
+					logger.Debug("rdp CredSSP authInfo", slog.String("protocol", "rdp"), slog.String("user", fr.NTLMUser))
+					continue
+				}
 				server.events = append(server.events, fr)
 				logger.Debug("rdp CredSSP TSRequest", slog.String("protocol", "rdp"), slog.Int("bytes", len(raw)))
 				return nil

@@ -53,27 +53,44 @@ type ParsedCredSSP struct {
 	// SPNEGO is set when the NTLM message arrived inside a SPNEGO token
 	// (GSS NegTokenInit or NegTokenResp), as Windows clients send it.
 	SPNEGO         bool   `json:"spnego,omitempty"`
-	NegotiateFlags uint32 `json:"negotiate_flags,omitempty"` // set on Type 1 (Negotiate)
+	NegotiateFlags uint32 `json:"negotiate_flags,omitempty"` // Type 1 and Type 3
 	Domain         string `json:"domain,omitempty"`
 	Username       string `json:"username,omitempty"`
 	Workstation    string `json:"workstation,omitempty"`
 	// NTLMVersion is "NTLMv1", "NTLMv2", or "anonymous", from the length of
-	// the Type 3 NtChallengeResponse. The response itself is not kept.
+	// the Type 3 NtChallengeResponse.
 	NTLMVersion string `json:"ntlm_version,omitempty"`
 	// NTResponseLen is the NtChallengeResponse length on Type 3.
 	NTResponseLen int `json:"nt_response_len,omitempty"`
+	// Fields below are inputs to NLA verification (MS-NLMP 2.2.2.6, MS-CSSP 2.2.1).
+	// They are not copied onto decoded frames.
+	NtChallengeResponse       []byte `json:"-"`
+	EncryptedRandomSessionKey []byte `json:"-"`
+	CredSSPVersion            int    `json:"-"`
+	ClientNonce               []byte `json:"-"`
+	PubKeyAuth                []byte `json:"-"`
+	AuthInfo                  []byte `json:"-"`
 }
 
 // ParseCredSSP extracts structured data from a CredSSP TSRequest.
 // For a Type 1 (Negotiate) it populates NegotiateFlags.
-// For a Type 3 (Authenticate) it populates Domain, Username, and Workstation
-// from the UTF-16LE payload fields.
+// For a Type 3 (Authenticate) it populates Domain, Username, Workstation,
+// NtChallengeResponse, EncryptedRandomSessionKey, and NegotiateFlags.
+// Version, clientNonce, pubKeyAuth, and authInfo come from the TSRequest wrapper.
 func ParseCredSSP(data []byte) ParsedCredSSP {
+	version, pubKeyAuth, authInfo, clientNonce := tsRequestFields(data)
+	out := ParsedCredSSP{
+		CredSSPVersion: version,
+		PubKeyAuth:     pubKeyAuth,
+		AuthInfo:       authInfo,
+		ClientNonce:    clientNonce,
+	}
 	ntlm, wrapped := unwrapSPNEGO(negoTokenFromTSRequest(data))
 	if len(ntlm) < 12 || string(ntlm[:8]) != ntlmSig {
-		return ParsedCredSSP{}
+		return out
 	}
-	out := ParsedCredSSP{SPNEGO: wrapped, NTLMType: int(binary.LittleEndian.Uint32(ntlm[8:12]))}
+	out.SPNEGO = wrapped
+	out.NTLMType = int(binary.LittleEndian.Uint32(ntlm[8:12]))
 	switch out.NTLMType {
 	case NTLMMsgNegotiate:
 		if len(ntlm) >= 16 {
@@ -83,12 +100,31 @@ func ParseCredSSP(data []byte) ParsedCredSSP {
 		out.Domain = readNTLMUTF16Field(ntlm, 28)
 		out.Username = readNTLMUTF16Field(ntlm, 36)
 		out.Workstation = readNTLMUTF16Field(ntlm, 44)
+		out.NtChallengeResponse = readNTLMField(ntlm, 20)
 		if len(ntlm) >= 22 {
 			out.NTResponseLen = int(binary.LittleEndian.Uint16(ntlm[20:22]))
 			out.NTLMVersion = ntlmVersion(out.NTResponseLen)
 		}
+		// Full AUTHENTICATE_MESSAGE (MS-NLMP 2.2.1.3) is 64 bytes before payload
+		// (EncryptedRandomSessionKeyFields at 52, NegotiateFlags at 60). The
+		// short 56-byte form used by older tests keeps flags at 52.
+		if authenticatePayloadOff(ntlm) >= 64 && len(ntlm) >= 64 {
+			out.NegotiateFlags = binary.LittleEndian.Uint32(ntlm[60:64])
+			out.EncryptedRandomSessionKey = readNTLMField(ntlm, 52)
+		} else if len(ntlm) >= 56 {
+			out.NegotiateFlags = binary.LittleEndian.Uint32(ntlm[52:56])
+		}
 	}
 	return out
+}
+
+// authenticatePayloadOff is the DomainName offset, which is the start of the
+// payload for a typical Type 3 (Lm/Nt responses may sit there too when empty).
+func authenticatePayloadOff(ntlm []byte) int {
+	if len(ntlm) < 36 {
+		return 0
+	}
+	return int(binary.LittleEndian.Uint32(ntlm[32:36]))
 }
 
 // ntlmVersion classifies an NtChallengeResponse by length (MS-NLMP 2.2.2.6,
@@ -228,13 +264,57 @@ func unwrapSPNEGO(tok []byte) ([]byte, bool) {
 // WrapTSRequest wraps an NTLM message in a CredSSP TSRequest (version 6).
 // Structure: SEQUENCE { [0] INTEGER 6, [1] SEQUENCE OF { SEQUENCE { [0] OCTET STRING ntlm } } }
 func WrapTSRequest(ntlm []byte) []byte {
-	octet := derTLV(0x04, ntlm)
-	ctx0 := derTLV(0xa0, octet)
-	item := derTLV(0x30, ctx0)
-	seqOf := derTLV(0x30, item)
-	negoTokens := derTLV(0xa1, seqOf)
-	version := []byte{0xa0, 0x03, 0x02, 0x01, 0x06}
-	return derTLV(0x30, append(version, negoTokens...))
+	return wrapTSRequest(6, ntlm, nil, nil, nil)
+}
+
+// BuildTSRequestPubKeyAuth builds a TSRequest carrying only the server's
+// sealed pubKeyAuth confirmation (MS-CSSP 2.2.1).
+func BuildTSRequestPubKeyAuth(version int, pubKeyAuth []byte) []byte {
+	if version <= 0 {
+		version = 6
+	}
+	return wrapTSRequest(version, nil, pubKeyAuth, nil, nil)
+}
+
+// wrapTSRequest builds a CredSSP TSRequest with the given optional fields.
+func wrapTSRequest(version int, ntlm, pubKeyAuth, authInfo, clientNonce []byte) []byte {
+	var b []byte
+	b = append(b, derTLV(0xa0, derIntTLV(version))...)
+	if len(ntlm) > 0 {
+		octet := derTLV(0x04, ntlm)
+		ctx0 := derTLV(0xa0, octet)
+		item := derTLV(0x30, ctx0)
+		seqOf := derTLV(0x30, item)
+		b = append(b, derTLV(0xa1, seqOf)...)
+	}
+	if len(authInfo) > 0 {
+		b = append(b, derTLV(0xa2, derTLV(0x04, authInfo))...)
+	}
+	if len(pubKeyAuth) > 0 {
+		b = append(b, derTLV(0xa3, derTLV(0x04, pubKeyAuth))...)
+	}
+	if len(clientNonce) > 0 {
+		b = append(b, derTLV(0xa5, derTLV(0x04, clientNonce))...)
+	}
+	return derTLV(0x30, b)
+}
+
+func derIntTLV(n int) []byte {
+	if n < 0 {
+		n = 0
+	}
+	if n < 0x80 {
+		return derTLV(0x02, []byte{byte(n)})
+	}
+	var v []byte
+	for n > 0 {
+		v = append([]byte{byte(n)}, v...)
+		n >>= 8
+	}
+	if v[0]&0x80 != 0 {
+		v = append([]byte{0}, v...)
+	}
+	return derTLV(0x02, v)
 }
 
 // negoTokenFromTSRequest extracts the raw NTLM bytes nested inside a CredSSP TSRequest.
@@ -250,6 +330,53 @@ func negoTokenFromTSRequest(data []byte) []byte {
 		}
 	}
 	return nil
+}
+
+// tsRequestFields reads version [0], authInfo [2], pubKeyAuth [3], and
+// clientNonce [5] from a TSRequest (MS-CSSP 2.2.1).
+func tsRequestFields(data []byte) (version int, pubKeyAuth, authInfo, clientNonce []byte) {
+	inner := derValue(data, 0x30)
+	for len(inner) > 0 {
+		var tag byte
+		var val []byte
+		tag, val, inner = derNext(inner)
+		switch tag {
+		case 0xa0:
+			version = derInteger(val)
+		case 0xa2:
+			authInfo = append([]byte(nil), derValue(val, 0x04)...)
+		case 0xa3:
+			pubKeyAuth = append([]byte(nil), derValue(val, 0x04)...)
+		case 0xa5:
+			clientNonce = append([]byte(nil), derValue(val, 0x04)...)
+		}
+	}
+	return
+}
+
+func derInteger(val []byte) int {
+	content := derValue(val, 0x02)
+	if len(content) == 0 {
+		return 0
+	}
+	n := 0
+	for _, b := range content {
+		n = n<<8 | int(b)
+	}
+	return n
+}
+
+// readNTLMField copies the byte field described at fieldOff (len/maxlen/offset).
+func readNTLMField(data []byte, fieldOff int) []byte {
+	if fieldOff+8 > len(data) {
+		return nil
+	}
+	l := int(binary.LittleEndian.Uint16(data[fieldOff:]))
+	o := int(binary.LittleEndian.Uint32(data[fieldOff+4:]))
+	if l == 0 || o < 0 || o+l > len(data) {
+		return nil
+	}
+	return append([]byte(nil), data[o:o+l]...)
 }
 
 // buildNTLMChallenge builds an NTLM Type 2 Challenge.

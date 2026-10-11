@@ -87,14 +87,16 @@ func RequestedMask(pdu ConnectionRequestPDU) uint32 {
 }
 
 // SelectProtocol picks the single protocol a server answers with
-// (MS-RDPBCGR 2.2.1.2.1 allows exactly one): CredSSP if offered, else TLS,
-// else standard RDP security.
+// (MS-RDPBCGR 2.2.1.2.1 allows exactly one): TLS if offered, else CredSSP,
+// else standard RDP security. TLS is preferred so Client Info (and any
+// password) arrives in the tunnel; CredSSP can only complete for a password
+// the sensor knows (see rdp.credentials).
 func SelectProtocol(requested uint32) uint32 {
 	switch {
-	case requested&ProtocolHybrid != 0:
-		return ProtocolHybrid
 	case requested&ProtocolSSL != 0:
 		return ProtocolSSL
+	case requested&ProtocolHybrid != 0:
+		return ProtocolHybrid
 	default:
 		return ProtocolRDP
 	}

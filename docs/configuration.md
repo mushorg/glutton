@@ -78,9 +78,16 @@ Source: `config/config.yaml`. Keys you'll most often touch:
 | `pve.node_name` | *(random, e.g. `pve1`)* | TCP HTTP on tcp/8006 (Proxmox VE persona): node name in the login page title and the TLS certificate (CN `<node_name>.<domain>`, SAN). When unset one of a few common PVE hostnames is picked once per process. |
 | `pve.domain` | *(random, e.g. `lan`)* | Proxmox VE persona: DNS domain of the node certificate CN. When unset one of a few common LAN domains is picked once per process. |
 | `rdp.domain_name`                                                    | `WORKGROUP`              | TCP RDP: the NetBIOS domain/workgroup name used in the NTLM Challenge TargetInfo. |
+| `rdp.credentials`                                                    | `[]`                     | TCP RDP: optional NLA passwords (`{username, password}`; username is ignored). Needed only for clients that offer CredSSP and not TLS — those cannot complete NLA without a password the sensor knows. A typical TLS\|CredSSP probe is answered with TLS, so any password arrives in Client Info and this list is unused. Empty (the default) is fine. Use weak placeholders only. |
 | `dnp3.address`                                                       | `10`                     | TCP DNP3: the outstation link address the handler answers as. `REQUEST_LINK_STATUS` gets `LINK_STATUS`; `RESET_LINK_STATES`, `TEST_LINK_STATES` and `CONFIRMED_USER_DATA` get `ACK`. Frames for any other address (including broadcast) get no reply. Link layer only: no application-layer responses. |
 | `spicy.enabled`                                                      | `true`                   | Initializes Spicy/HILTI and enables Spicy-backed paths (HTTP parsing, TCP-payload protocol detection). Set `false` if you build without Spicy or want the Spicy-free dispatch path. |
 
+```yaml
+rdp:
+  credentials:
+    - username: administrator
+      password: Password1
+```
 
 ### Ignored ports
 

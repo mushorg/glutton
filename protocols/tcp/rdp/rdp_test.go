@@ -50,9 +50,10 @@ func TestConnectionConfirm(t *testing.T) {
 }
 
 func TestSelectProtocol(t *testing.T) {
-	require.Equal(t, ProtocolHybrid, SelectProtocol(0x3))
-	require.Equal(t, ProtocolHybrid, SelectProtocol(0xb))
+	require.Equal(t, ProtocolSSL, SelectProtocol(0x3))
+	require.Equal(t, ProtocolSSL, SelectProtocol(0xb))
 	require.Equal(t, ProtocolSSL, SelectProtocol(0x1))
+	require.Equal(t, ProtocolHybrid, SelectProtocol(0x2))
 	require.Equal(t, ProtocolRDP, SelectProtocol(0x0))
 	require.Equal(t, ProtocolRDP, SelectProtocol(0x4))
 }
