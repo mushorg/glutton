@@ -107,12 +107,12 @@ func TestHandleRTSPSession(t *testing.T) {
 		{Direction: "write", Status: "200", CSeq: "1", Payload: options},
 		{Direction: "read", Command: "DESCRIBE", Path: "/Streaming/Channels/101", CSeq: "2", UserAgent: "LibVLC/3.0.18 (LIVE555 Streaming Media v2016.11.28)", Payload: rtspDescribe},
 		{Direction: "write", Status: "401", CSeq: "2", Payload: challenge},
-		{Direction: "read", Command: "DESCRIBE", Path: "/Streaming/Channels/101", CSeq: "3", AuthScheme: "basic", Username: "admin", Payload: rtspDescribeBasic},
+		{Direction: "read", Command: "DESCRIBE", Path: "/Streaming/Channels/101", CSeq: "3", AuthScheme: "basic", Username: "admin", Password: "12345", Payload: rtspDescribeBasic},
 		{Direction: "write", Status: "401", CSeq: "3", Payload: retry},
 	}, produced.decoded)
 }
 
-func TestHandleRTSPCredentialsNotInDecoded(t *testing.T) {
+func TestHandleRTSPCredentialsInDecoded(t *testing.T) {
 	client, r, hp, done := startRTSP(t)
 	digest := []byte("DESCRIBE rtsp://1.2.3.4/cam/realmonitor RTSP/1.0\r\nCSeq: 4\r\n" +
 		`Authorization: Digest username="admin", realm="Login to 7K02D8APAZ1C3F9", nonce="00112233445566778899aabbccddeeff", uri="rtsp://1.2.3.4/cam/realmonitor", response="6629fae49393a05397450978507c4ef1"` + "\r\n\r\n")
@@ -129,16 +129,12 @@ func TestHandleRTSPCredentialsNotInDecoded(t *testing.T) {
 	frames := produced.decoded.([]parsedRTSP)
 	require.Len(t, frames, 6)
 	require.Equal(t, "admin", frames[0].Username)
+	require.Equal(t, "12345", frames[0].Password)
 	require.Equal(t, "digest", frames[2].AuthScheme)
 	require.Equal(t, "admin", frames[2].Username)
 	require.Equal(t, "6629fae49393a05397450978507c4ef1", frames[2].DigestResponse)
-	require.Equal(t, parsedRTSP{Direction: "read", Command: "DESCRIBE", Path: "/live", CSeq: "5", AuthScheme: "uri", Username: "root", Payload: inURI}, frames[4])
-	// passwords (12345 in Basic, pass in the URI) stay in the raw payload only
-	for _, f := range frames {
-		fields := strings.Join([]string{f.Command, f.Path, f.CSeq, f.UserAgent, f.AuthScheme, f.Username, f.DigestResponse}, " ")
-		require.NotContains(t, fields, "12345")
-		require.NotContains(t, fields, "pass")
-	}
+	require.Empty(t, frames[2].Password)
+	require.Equal(t, parsedRTSP{Direction: "read", Command: "DESCRIBE", Path: "/live", CSeq: "5", AuthScheme: "uri", Username: "root", Password: "pass", Payload: inURI}, frames[4])
 }
 
 func TestHandleRTSPEarlyDisconnectStillProduces(t *testing.T) {

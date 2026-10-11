@@ -31,16 +31,19 @@ type parsedRDP struct {
 	NTLMVersion     string `json:"ntlm_version,omitempty"`
 	// NTLMServerChallenge is the hex Type 2 challenge we sent; with the NT
 	// response in Payload it is all that is needed to crack the exchange.
-	NTLMServerChallenge string          `json:"ntlm_server_challenge,omitempty"`
-	NTResponseLen       int             `json:"nt_response_len,omitempty"`
-	NLAAccepted         bool            `json:"nla_accepted,omitempty"`
-	SPNEGO              bool            `json:"spnego,omitempty"`
-	ChannelID           uint16          `json:"channel_id,omitempty"`
-	ClientData          *rdp.ClientData `json:"client_data,omitempty"`
-	ClientInfo          *rdp.ClientInfo `json:"client_info,omitempty"`
-	Header              *rdp.TKIPHeader `json:"header,omitempty"`
-	Payload             []byte          `json:"payload,omitempty"`
-	Truncated           bool            `json:"truncated,omitempty"`
+	NTLMServerChallenge string `json:"ntlm_server_challenge,omitempty"`
+	NTResponseLen       int    `json:"nt_response_len,omitempty"`
+	NLAAccepted         bool   `json:"nla_accepted,omitempty"`
+	// NLAPassword is the plaintext password from the decrypted CredSSP
+	// TSPasswordCreds (only reachable after NLA was accepted).
+	NLAPassword string          `json:"nla_password,omitempty"`
+	SPNEGO      bool            `json:"spnego,omitempty"`
+	ChannelID   uint16          `json:"channel_id,omitempty"`
+	ClientData  *rdp.ClientData `json:"client_data,omitempty"`
+	ClientInfo  *rdp.ClientInfo `json:"client_info,omitempty"`
+	Header      *rdp.TKIPHeader `json:"header,omitempty"`
+	Payload     []byte          `json:"payload,omitempty"`
+	Truncated   bool            `json:"truncated,omitempty"`
 }
 
 const (
@@ -410,9 +413,10 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			default:
 				fr.Command = rdp.CmdTSRequest
 				if server.nla != nil && len(parsed.AuthInfo) > 0 {
-					if domain, user, ok := server.nla.OpenAuthInfo(parsed.AuthInfo); ok {
+					if domain, user, password, ok := server.nla.OpenAuthInfo(parsed.AuthInfo); ok {
 						fr.NTLMDomain = domain
 						fr.NTLMUser = user
+						fr.NLAPassword = password
 						fr.NLAAccepted = true
 					}
 					server.events = append(server.events, fr)

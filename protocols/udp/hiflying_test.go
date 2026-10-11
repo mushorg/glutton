@@ -94,7 +94,7 @@ func TestHandleHiFlyingCommandSession(t *testing.T) {
 	require.Len(t, sendHiFlying(t, h, src, "AT+VER\r"), 1)
 }
 
-func TestHandleHiFlyingMasksSecrets(t *testing.T) {
+func TestHandleHiFlyingRecordsSecrets(t *testing.T) {
 	withHiFlyingState(t)
 	h := &recordingHoneypot{}
 	src, _ := hiflyingAddrs()
@@ -102,9 +102,12 @@ func TestHandleHiFlyingMasksSecrets(t *testing.T) {
 	sendHiFlying(t, h, src, "+ok")
 
 	events := sendHiFlying(t, h, src, "AT+WSKEY=WPA2PSK,AES,hunter22\r")
-	require.Equal(t, parsedHiFlying{Direction: "read", Command: "AT+WSKEY", Path: "WPA2PSK,AES,***", Payload: []byte("AT+WSKEY=WPA2PSK,AES,***\r")}, events[0])
-	require.Equal(t, []byte("AT+WSKEY=WPA2PSK,AES,***\r"), h.produced[len(h.produced)-1].payload)
-	require.NotContains(t, string(h.produced[len(h.produced)-1].payload), "hunter22")
+	require.Equal(t, parsedHiFlying{Direction: "read", Command: "AT+WSKEY", Path: "WPA2PSK,AES,hunter22", Password: "hunter22", Payload: []byte("AT+WSKEY=WPA2PSK,AES,hunter22\r")}, events[0])
+	require.Equal(t, []byte("AT+WSKEY=WPA2PSK,AES,hunter22\r"), h.produced[len(h.produced)-1].payload)
+
+	events = sendHiFlying(t, h, src, "AT+WEBU=admin,admin123\r")
+	require.Equal(t, "admin", events[0].Username)
+	require.Equal(t, "admin123", events[0].Password)
 }
 
 func TestHandleHiFlyingUnknown(t *testing.T) {

@@ -224,15 +224,11 @@ func TestHandleHTTPProxmox(t *testing.T) {
 	require.Equal(t, "POST", events[2].Command)
 	require.Equal(t, "/api2/json/access/ticket", events[2].Path)
 	require.Equal(t, "root@pam", events[2].Username)
+	require.Equal(t, "hunter2", events[2].Password)
 	require.Equal(t, "401", events[3].Status)
 	require.Equal(t, "/api2/json/version", events[4].Path)
 	require.Equal(t, "401", events[5].Status)
-
-	// the password stays only in the raw request payload
-	for _, ev := range events {
-		require.NotContains(t, ev.Username, "hunter2")
-		require.NotContains(t, ev.Query, "hunter2")
-	}
+	require.Contains(t, string(events[2].Payload), "password=hunter2")
 }
 
 func TestHandleHTTPParameters(t *testing.T) {
@@ -272,6 +268,41 @@ func TestHandleHTTPParameters(t *testing.T) {
 		"q":    {"lfi"},
 		"file": {"../../etc/passwd"},
 	}, events[0].Parameters)
+}
+
+func TestHandleHTTPBasicAuth(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	req := httpTestRequest("GET", "/admin", "", nil)
+	req = bytes.Replace(req, []byte("\r\n\r\n"), []byte("\r\nAuthorization: Basic YWRtaW46aHVudGVyMg==\r\n\r\n"), 1) // admin:hunter2
+	_, err := client.Write(req)
+	require.NoError(t, err)
+	_, _, _ = readHTTPResponse(t, client)
+
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	events, ok := produced.decoded.([]parsedHTTP)
+	require.True(t, ok)
+	require.GreaterOrEqual(t, len(events), 1)
+	require.Equal(t, "admin", events[0].Username)
+	require.Equal(t, "hunter2", events[0].Password)
 }
 
 func TestHandleHTTPSessionGroupsAcrossConnections(t *testing.T) {

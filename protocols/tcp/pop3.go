@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"strings"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
@@ -25,7 +26,9 @@ type parsedPOP3 struct {
 	Direction string `json:"direction,omitempty"`
 	Command   string `json:"command,omitempty"`  // upper-cased POP3 verb on read frames
 	Status    string `json:"status,omitempty"`   // +OK or -ERR on write frames
-	Username  string `json:"username,omitempty"` // USER argument; PASS is never parsed
+	Username  string `json:"username,omitempty"` // USER argument, or APOP name
+	Password  string `json:"password,omitempty"` // PASS argument
+	Digest    string `json:"digest,omitempty"`   // APOP MD5 digest
 	Payload   []byte `json:"payload,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 }
@@ -81,8 +84,15 @@ func HandlePOP3(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 		line = append([]byte(nil), line...)
 		cmd := pop3.ParseCommand(string(line))
 		frame := parsedPOP3{Direction: "read", Command: cmd.Verb, Payload: line, Truncated: truncated}
-		if cmd.Verb == "USER" {
+		switch cmd.Verb {
+		case "USER":
 			frame.Username = cmd.Arg
+		case "PASS":
+			frame.Password = cmd.Arg
+		case "APOP":
+			name, digest, _ := strings.Cut(cmd.Arg, " ")
+			frame.Username = name
+			frame.Digest = strings.TrimSpace(digest)
 		}
 		events = append(events, frame)
 		if truncated {

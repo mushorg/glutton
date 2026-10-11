@@ -82,6 +82,7 @@ func TestMapTCPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "minecraft", "expected Minecraft handler")
 	require.Contains(t, m, "mssql", "expected MSSQL handler")
 	require.Contains(t, m, "firebird", "expected Firebird handler")
+	require.Contains(t, m, "redis", "expected Redis handler")
 	require.Contains(t, m, "postgres", "expected PostgreSQL handler")
 	require.Contains(t, m, "socks", "expected SOCKS handler")
 	require.Contains(t, m, "dnp3", "expected DNP3 handler")

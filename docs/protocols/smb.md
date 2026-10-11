@@ -16,7 +16,9 @@ fields are described in [Logging and producers](../logging.md#decoded-data).
 | `path` | reads | Tree Connect share (`IPC$`), or NT Create AndX filename. |
 | `setup` | Trans2 | TRANS2 subcommand name (`TRANS2_SESSION_SETUP`, …). |
 | `status` / `nt_status` | writes | NT status name and numeric code. |
-| `account` | Session Setup | Client account / NTLM user name (never the password / NTLM response). |
+| `account` | Session Setup | Client account / NTLM user name. |
+| `password` | basic Session Setup | Plaintext password guess (OEM or Unicode password field that is not a 24-byte or NTLMv2 challenge response). Passwords are guessing attempts and are recorded as sent. |
+| `lm_response` / `ntlm_response` | basic Session Setup | Hex of the OEM (LM/LMv2) and Unicode (NTLM/NTLMv2) password fields when they are challenge responses. NTLMSSP (extended security) responses stay in the raw `payload`. |
 | `domain` / `workstation` | NTLM auth | Domain and workstation from an NTLMSSP AUTHENTICATE. |
 | `native_os` / `native_lanman` | Session Setup | Client-advertised OS / LAN Manager strings. |
 | `dcerpc` | pipe writes | DCERPC PDU type (`DCERPC_BIND`, `DCERPC_REQUEST`). |
@@ -42,7 +44,7 @@ fields are described in [Logging and producers](../logging.md#decoded-data).
 **Tree Connect.** `path` is the share. `IPC$` and ordinary shares are accepted;
 nmap's `nmap-share-test` probe share is answered with `STATUS_BAD_NETWORK_NAME`.
 
-**Session Setup / NTLM.** Basic Session Setup copies `native_os` / `native_lanman` / `account`. Extended-security Session Setup drives SPNEGO/NTLMSSP: a Type 1 NEGOTIATE is answered with a Type 2 CHALLENGE and `STATUS_MORE_PROCESSING_REQUIRED`; a Type 3 AUTHENTICATE is accepted and its `account` / `domain` / `workstation` recorded. The NTLM challenge-response (credential material) is never parsed or stored. The Negotiate reply advertises extended security only to a client that asked for it.
+**Session Setup / NTLM.** Basic Session Setup copies `native_os` / `native_lanman` / `account`, plus `password` when the client sent a plaintext password (or `lm_response` / `ntlm_response` hex when it sent challenge responses). Extended-security Session Setup drives SPNEGO/NTLMSSP: a Type 1 NEGOTIATE is answered with a Type 2 CHALLENGE and `STATUS_MORE_PROCESSING_REQUIRED`; a Type 3 AUTHENTICATE is accepted and its `account` / `domain` / `workstation` recorded. The NTLMSSP challenge-response is not decoded; it remains in the raw `payload`. The Negotiate reply advertises extended security only to a client that asked for it.
 
 **NT Create AndX.** `path` is the requested filename. A handle opened on an `IPC$` tree is a named pipe; on any other share it is a disk file.
 

@@ -2,7 +2,7 @@
 
 Transport: TCP. Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `status`, `pdu_type`, `called_ae`, `calling_ae`, `application_context`, `abstract_syntaxes`, `transfer_syntaxes`, `implementation_class_uid`, `implementation_version`, `username`, `message_id`, `sop_class_uid`, `sop_instance_uid`, `move_destination`, `query`, `payload_hash`, `payload`, `truncated`
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `status`, `pdu_type`, `called_ae`, `calling_ae`, `application_context`, `abstract_syntaxes`, `transfer_syntaxes`, `implementation_class_uid`, `implementation_version`, `username`, `password`, `message_id`, `sop_class_uid`, `sop_instance_uid`, `move_destination`, `query`, `payload_hash`, `payload`, `truncated`
 
 The handler speaks the DICOM Upper Layer protocol used by PACS and imaging devices on tcp/104 and tcp/11112. One event is produced per TCP session.
 
@@ -16,7 +16,8 @@ The handler speaks the DICOM Upper Layer protocol used by PACS and imaging devic
 | `called_ae`, `calling_ae`, `path` | A-ASSOCIATE-RQ | AE titles; `path` copies `called_ae`. |
 | `abstract_syntaxes`, `transfer_syntaxes` | A-ASSOCIATE-RQ | Proposed SOP classes and transfer syntaxes. |
 | `implementation_class_uid`, `implementation_version` | A-ASSOCIATE-RQ | Client implementation, e.g. `OFFIS_DCMTK_360` for DCMTK tools. |
-| `username` | A-ASSOCIATE-RQ | User identity username. Passcodes are never copied into `decoded`. |
+| `username` | A-ASSOCIATE-RQ | User identity username. |
+| `password` | A-ASSOCIATE-RQ | User identity passcode (identity type 2, username and passcode), plaintext. |
 | `message_id`, `sop_class_uid`, `sop_instance_uid` | DIMSE frames | From the command set. On writes, `message_id` is the request being answered. |
 | `move_destination` | C-MOVE-RQ | AE title the client asked the images to be sent to. |
 | `query` | C-FIND/C-GET/C-MOVE-RQ | Search keys from the identifier (see below). |

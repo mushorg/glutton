@@ -665,20 +665,17 @@ func TestHandleRDPClientInfoOverTLS(t *testing.T) {
 	ci := events[19]
 	require.Equal(t, info, ci.Payload)
 	require.Equal(t, uint16(1003), ci.ChannelID)
-	require.Equal(t, &rdp.ClientInfo{Domain: "CORP", Username: "administrator", PasswordLen: 11}, ci.ClientInfo)
+	require.Equal(t, &rdp.ClientInfo{Domain: "CORP", Username: "administrator", Password: "Winter2024!"}, ci.ClientInfo)
 
 	require.Equal(t, "STATUS_VALID_CLIENT", events[20].Status)
 	require.Equal(t, "ERRINFO_SERVER_DENIED_CONNECTION", events[21].Status)
 	require.Equal(t, tail, append(append(append([]byte{}, events[20].Payload...), events[21].Payload...), events[22].Payload...))
 
-	// The password only exists inside the raw payload; no decoded field names it.
-	for _, e := range events {
-		e.Payload = nil
-		js, err := json.Marshal(e)
-		require.NoError(t, err)
-		require.NotContains(t, string(js), "Winter2024!")
-		require.NotContains(t, string(js), `"password"`)
-	}
+	// The password guess is a decoded field.
+	ci.Payload = nil
+	js, err := json.Marshal(ci)
+	require.NoError(t, err)
+	require.Contains(t, string(js), `"password":"Winter2024!"`)
 }
 
 func TestHandleRDPReassemblesSplitPDUs(t *testing.T) {
@@ -725,7 +722,7 @@ func TestHandleRDPReassemblesSplitPDUs(t *testing.T) {
 	}, rdpCommands(events))
 	require.Equal(t, rdpMCSConnectInitial, events[2].Payload, "reassembled PDU is one frame")
 	require.Equal(t, "guest", events[6].ClientInfo.Username)
-	require.Zero(t, events[6].ClientInfo.PasswordLen)
+	require.Empty(t, events[6].ClientInfo.Password)
 }
 
 func TestHandleRDPPartialTPKTAtDisconnect(t *testing.T) {
@@ -804,12 +801,13 @@ func TestHandleRDPNLAAcceptList(t *testing.T) {
 	require.Equal(t, "TSRequest", events[8].Command)
 	require.True(t, events[8].NLAAccepted)
 	require.Equal(t, "administrator", events[8].NTLMUser)
+	require.Equal(t, password, events[8].NLAPassword)
 	require.Equal(t, "MCSConnectInitial", events[9].Command)
 	require.Equal(t, "MCSConnectResponse", events[10].Command)
 
-	raw, err := json.Marshal(events)
+	raw, err := json.Marshal(events[8])
 	require.NoError(t, err)
-	require.NotContains(t, string(raw), password)
+	require.Contains(t, string(raw), `"nla_password":"`+password+`"`)
 	select {
 	case extra := <-hp.produced:
 		t.Fatalf("expected a single produced event, got another: %+v", extra)

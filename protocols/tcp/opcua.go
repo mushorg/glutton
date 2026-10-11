@@ -27,6 +27,7 @@ type parsedOPCUA struct {
 	ApplicationURI  string `json:"application_uri,omitempty"`
 	ApplicationName string `json:"application_name,omitempty"`
 	Username        string `json:"username,omitempty"`
+	Password        string `json:"password,omitempty"`
 	Payload         []byte `json:"payload,omitempty"`
 }
 
@@ -52,6 +53,7 @@ func parsedFromFrame(direction string, f opcua.Frame) parsedOPCUA {
 		ApplicationURI:  f.ApplicationURI,
 		ApplicationName: f.ApplicationName,
 		Username:        f.Username,
+		Password:        f.Password,
 		Payload:         f.Payload,
 	}
 }

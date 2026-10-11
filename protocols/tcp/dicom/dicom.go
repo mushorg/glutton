@@ -181,6 +181,7 @@ type AssociateRQ struct {
 	UserIdentityType       byte
 	UserIdentityResponse   bool
 	Username               string
+	Password               string // passcode of a username-and-passcode identity
 
 	rawCalledAE  []byte
 	rawCallingAE []byte
@@ -309,7 +310,7 @@ func (rq *AssociateRQ) parseUserInfo(b []byte) error {
 			rq.ImplementationVersion = strings.TrimSpace(string(s.value))
 		case itemUserIdentity:
 			// type, positive-response-requested, 2-byte primary length, primary,
-			// 2-byte secondary length, secondary (passcode, not recorded).
+			// 2-byte secondary length, secondary (passcode).
 			if len(s.value) < 4 {
 				err = ErrMalformed
 				continue
@@ -324,6 +325,14 @@ func (rq *AssociateRQ) parseUserInfo(b []byte) error {
 			// 1 = username, 2 = username and passcode
 			if rq.UserIdentityType == 1 || rq.UserIdentityType == 2 {
 				rq.Username = string(s.value[4 : 4+n])
+			}
+			if rq.UserIdentityType == 2 && len(s.value) >= 6+n {
+				m := int(binary.BigEndian.Uint16(s.value[4+n : 6+n]))
+				if len(s.value) < 6+n+m {
+					err = ErrMalformed
+					continue
+				}
+				rq.Password = string(s.value[6+n : 6+n+m])
 			}
 		}
 	}

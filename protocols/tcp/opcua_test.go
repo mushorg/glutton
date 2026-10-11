@@ -214,7 +214,7 @@ func TestHandleOPCUAOversizeDoesNotUnboundedRead(t *testing.T) {
 	require.Equal(t, "opcua", ev.protocol)
 }
 
-func TestHandleOPCUAActivateSessionOmitsPassword(t *testing.T) {
+func TestHandleOPCUAActivateSessionRecordsPassword(t *testing.T) {
 	client, hp, done := startOPCUA(t)
 
 	hel, err := opcua.EncodeHello("opc.tcp://1.2.3.4:4840")
@@ -261,6 +261,8 @@ func TestHandleOPCUAActivateSessionOmitsPassword(t *testing.T) {
 	for _, f := range frames {
 		if f.Direction == "read" && f.Service == "ActivateSession" {
 			require.Equal(t, "admin", f.Username)
+			require.Equal(t, "secret-password", f.Password)
+			require.Contains(t, string(f.Payload), "secret-password")
 			sawUser = true
 		}
 		if f.Service == "CreateSession" && f.Direction == "read" {

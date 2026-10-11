@@ -58,9 +58,9 @@ func TestHandleFTPLoginAndQuit(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, []parsedFTP{
 		{Direction: "write", Status: "220", Payload: []byte("220 Welcome\r\n")},
-		{Direction: "read", Command: "USER", Payload: []byte("USER anonymous\r\n")},
+		{Direction: "read", Command: "USER", Username: "anonymous", Payload: []byte("USER anonymous\r\n")},
 		{Direction: "write", Status: "331", Payload: []byte("331 Ok.\r\n")},
-		{Direction: "read", Command: "PASS", Payload: []byte("PASS ftp\r\n")},
+		{Direction: "read", Command: "PASS", Password: "ftp", Payload: []byte("PASS ftp\r\n")},
 		{Direction: "write", Status: "230", Payload: []byte("230 Ok.\r\n")},
 		{Direction: "read", Command: "QUIT", Payload: []byte("QUIT\r\n")},
 		{Direction: "write", Status: "221", Payload: []byte("221 Goodbye.\r\n")},

@@ -80,8 +80,10 @@ type parsedSMTP struct {
 	Status  string `json:"status,omitempty"`  // SMTP reply code on write frames
 	Mailbox string `json:"mailbox,omitempty"` // MAIL FROM / RCPT TO address
 	Params  string `json:"params,omitempty"`  // ESMTP parameters after the address
-	// Username is the AUTH PLAIN/LOGIN identity. The password is not stored.
+	// Username and Password are the AUTH PLAIN/LOGIN credentials, set on the
+	// frame that carried them.
 	Username  string `json:"username,omitempty"`
+	Password  string `json:"password,omitempty"`
 	Payload   []byte `json:"payload,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"` // a line or DATA cap dropped bytes
 }
@@ -190,6 +192,11 @@ func (s *smtpServer) setUsername(user string) {
 	s.events[len(s.events)-1].Username = user
 }
 
+// setPassword records an AUTH password on the most recent read frame
+func (s *smtpServer) setPassword(pass string) {
+	s.events[len(s.events)-1].Password = pass
+}
+
 // auth runs an AUTH PLAIN or AUTH LOGIN exchange and returns the final reply.
 // Every attempt fails, so each credential guess becomes its own exchange.
 // The returned end reason is set when err is not nil.
@@ -211,8 +218,9 @@ func (s *smtpServer) auth(arg string) (string, string, error) {
 		if initial == "*" {
 			return replyAuthCancel, "", nil
 		}
-		if user, ok := smtp.DecodePlain(initial); ok {
+		if user, pass, ok := smtp.DecodePlain(initial); ok {
 			s.setUsername(user)
+			s.setPassword(pass)
 		}
 	case "LOGIN":
 		if initial == "" {
@@ -240,6 +248,9 @@ func (s *smtpServer) auth(arg string) (string, string, error) {
 		}
 		if line == "*" {
 			return replyAuthCancel, "", nil
+		}
+		if pass, ok := smtp.DecodeLogin(line); ok {
+			s.setPassword(pass)
 		}
 	default:
 		return replyAuthMech, "", nil

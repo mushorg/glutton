@@ -14,7 +14,7 @@ Transport: TCP (tcp/3050, and any port where the catch-all sees a Firebird `op_c
 | `os_user`, `client_host` | read `connect` / attach | User identification `CNCT_user`/`CNCT_host`, or DPB `isc_dpb_os_user`/`isc_dpb_host_name` |
 | `login`, `auth_plugin` | read `connect` | Firebird 3+ `CNCT_login` and `CNCT_plugin_name` |
 | `username` | read attach | DPB/SPB `isc_dpb_user_name` |
-| `password_set` | read attach | A password (`isc_dpb_password` or `isc_dpb_password_enc`) was sent. It is never decoded or recorded |
+| `password` | read `connect` / attach | The password as sent: `CNCT_passwd` on `connect`; DPB/SPB `isc_dpb_password` in plaintext, or the `isc_dpb_password_enc` bytes as sent (as a string) |
 | `role`, `charset`, `process_id`, `process_name`, `client_version` | read attach | DPB `isc_dpb_sql_role_name`, `isc_dpb_lc_ctype`, `isc_dpb_process_id`, `isc_dpb_process_name`, `isc_dpb_client_version` |
 | `status` | write | `accept`, `reject`, `login_failed` |
 | `protocol_version` | write `accept` | Accepted protocol version (10, 11 or 12) |

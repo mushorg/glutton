@@ -75,9 +75,9 @@ Value encodings inside `decoded` follow Go's `encoding/json`:
 Array-of-frames `decoded` entries share these JSON names when the handler fills them: `direction`, `payload`, `command` (leaf operation), `path`, `status` (writes), `truncated`. Handler-specific fields sit beside them. A display that shows only the shared fields hides the most useful data for most handlers, so show every key a frame carries and use the per-handler page linked in the table below to order them. Some fields are easy to miss but matter for reading a session:
 
 - `http`: `dest_port` and `src_port` on reads, because a session can span connections and ports while the top-level `dstPort`/`srcPort` belong to the first connection.
-- `rdp`: `ntlm_domain`, `ntlm_user`, `ntlm_workstation` and `ntlm_version` on the `NTLMAuthenticate` frame; `nla_accepted` when a listed NLA password matched (username stays in `ntlm_user`; the password is never a decoded field); `client_data` (client name, build, screen, keyboard, channels) on `MCSConnectInitial`; `client_info` (domain, username, `password_len`) on `ClientInfo`. Most probes never do NLA: the Confirm prefers TLS, and the password is only in the Client Info `payload`.
+- `rdp`: `ntlm_domain`, `ntlm_user`, `ntlm_workstation` and `ntlm_version` on the `NTLMAuthenticate` frame; `nla_accepted` when a listed NLA password matched, then `ntlm_user` and `nla_password` from the decrypted authInfo; `client_data` (client name, build, screen, keyboard, channels) on `MCSConnectInitial`; `client_info` (domain, username, `password`) on `ClientInfo`. Most probes never do NLA: the Confirm prefers TLS, so the password arrives in `client_info`.
 - `sip`: `from`, `to`, `call_id`, `username`, and `variant`/`visit` on writes.
-- `jabber`, `smtp`, `opcua`, `mqtt`, `dicom`, `pop3`: `username` (and `password` on `jabber`).
+- `ssh`, `telnet`, `jabber`, `smtp`, `opcua`, `mqtt`, `dicom`, `pop3`, `ftp`, `http`, `rtsp`, `socks`, `hiflying`, `mssql`, `firebird`, `postgres`, `smb`: `username` (or `user`) and `password` as the client sent them. Passwords are guessing attempts, not confidential data, so they are recorded in plaintext. `smb` also sets `lm_response`/`ntlm_response` (hex) for basic Session Setup challenge responses.
 - `dtls`, `jabber`: `server_name`.
 - `smb`, `tcp`: `shellcode` on a read, listing shellcode/PE heuristics matched in the captured payload; `smb` also sets `xor_key` and `decoded_hash` when a DoublePulsar payload was de-obfuscated, and `variant`/`visit` on emulated DoublePulsar replies.
 
@@ -147,6 +147,7 @@ Example shape:
 | `mssql` | TCP | [protocols/mssql.md](protocols/mssql.md) |
 | `firebird` | TCP | [protocols/firebird.md](protocols/firebird.md) |
 | `postgres` | TCP | [protocols/postgres.md](protocols/postgres.md) |
+| `redis` | TCP | [protocols/redis.md](protocols/redis.md) |
 | `minecraft` | TCP | [protocols/minecraft.md](protocols/minecraft.md) |
 | `socks` | TCP | [protocols/socks.md](protocols/socks.md) |
 | `mcp` | TCP | [protocols/mcp.md](protocols/mcp.md) |

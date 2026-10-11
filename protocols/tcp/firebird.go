@@ -49,9 +49,10 @@ type parsedFirebird struct {
 	// op_connect user identification and attach parameters
 	OSUser     string `json:"os_user,omitempty"`
 	ClientHost string `json:"client_host,omitempty"`
-	// op_attach, op_create, op_service_attach; the password is never recorded
+	// op_attach, op_create, op_service_attach (password also CNCT_passwd of
+	// op_connect); passwords are guessing attempts and recorded as sent
 	Username      string `json:"username,omitempty"`
-	PasswordSet   bool   `json:"password_set,omitempty"`
+	Password      string `json:"password,omitempty"`
 	Role          string `json:"role,omitempty"`
 	Charset       string `json:"charset,omitempty"`
 	ProcessID     uint32 `json:"process_id,omitempty"`
@@ -103,6 +104,7 @@ func (s *firebirdServer) handleConnect(c firebird.Connect) (done bool, err error
 	f.ClientArch = c.ClientArch
 	f.OSUser = c.OSUser
 	f.ClientHost = c.Host
+	f.Password = c.Password
 	f.Login = c.Login
 	f.AuthPlugin = c.Plugin
 	for _, p := range c.Protocols {
@@ -130,7 +132,7 @@ func (s *firebirdServer) handleAttach(a firebird.Attach) error {
 	f := s.lastRead()
 	f.Path = a.File
 	f.Username = a.Username
-	f.PasswordSet = a.PasswordSet
+	f.Password = a.Password
 	f.Role = a.Role
 	f.Charset = a.Charset
 	f.ProcessID = a.ProcessID

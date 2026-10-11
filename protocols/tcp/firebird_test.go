@@ -109,7 +109,7 @@ func TestHandleFirebirdNmapProbe(t *testing.T) {
 	}, events)
 }
 
-func TestHandleFirebirdServiceAttachLoginFailedOmitsPassword(t *testing.T) {
+func TestHandleFirebirdServiceAttachLoginFailedRecordsPassword(t *testing.T) {
 	client, hp, done := startFirebird(t)
 
 	writeFirebird(t, client, firebirdNmapConnect)
@@ -125,7 +125,7 @@ func TestHandleFirebirdServiceAttachLoginFailedOmitsPassword(t *testing.T) {
 	_, events := finishFirebird(t, client, hp, done)
 	attachRead := parsedFirebird{
 		Direction: "read", Command: "service_attach", Path: "service_mgr", Payload: attach,
-		Username: "SYSDBA", PasswordSet: true,
+		Username: "SYSDBA", Password: "masterkey",
 	}
 	failed := parsedFirebird{Direction: "write", Status: "login_failed", Payload: loginFailed, ErrorCode: firebird.ISCLogin}
 	require.Equal(t, []parsedFirebird{
@@ -134,13 +134,10 @@ func TestHandleFirebirdServiceAttachLoginFailedOmitsPassword(t *testing.T) {
 		attachRead, failed, attachRead, failed,
 	}, events)
 
-	// only the raw payload carries the password; no decoded field does
-	for i := range events {
-		events[i].Payload = nil
-	}
-	encoded, err := json.Marshal(events)
+	// the guessed password is in the decoded frame, not only the raw payload
+	encoded, err := json.Marshal(attachRead)
 	require.NoError(t, err)
-	require.NotContains(t, string(encoded), "masterkey")
+	require.Contains(t, string(encoded), `"password":"masterkey"`)
 }
 
 func TestHandleFirebirdRejectsUnsupportedProtocols(t *testing.T) {

@@ -87,6 +87,7 @@ func TestParseAssociateRQUserIdentity(t *testing.T) {
 	rq, err := ParseAssociateRQ(appendPDU(PDUAssociateRQ, body))
 	require.NoError(t, err)
 	require.Equal(t, "admin", rq.Username)
+	require.Equal(t, "secret", rq.Password)
 	require.Equal(t, byte(2), rq.UserIdentityType)
 	require.True(t, rq.UserIdentityResponse)
 

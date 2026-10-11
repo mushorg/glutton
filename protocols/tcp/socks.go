@@ -26,7 +26,8 @@ type parsedSOCKS struct {
 	Version     int    `json:"version,omitempty"`
 	Host        string `json:"host,omitempty"`
 	Port        int    `json:"port,omitempty"`
-	User        string `json:"user,omitempty"` // SOCKS4 userid or RFC 1929 username; passwords are never kept
+	User        string `json:"user,omitempty"`     // SOCKS4 userid or RFC 1929 username
+	Password    string `json:"password,omitempty"` // RFC 1929 password
 	Methods     []int  `json:"methods,omitempty"`
 	Payload     []byte `json:"payload,omitempty"`
 	PayloadHash string `json:"payload_hash,omitempty"`
@@ -235,6 +236,7 @@ func HandleSOCKS(ctx context.Context, conn net.Conn, md connection.Metadata, log
 				Command:   "socks5-auth",
 				Version:   socks.Version5,
 				User:      auth.User,
+				Password:  auth.Password,
 				Payload:   auth.Raw,
 			})
 			if err != nil {

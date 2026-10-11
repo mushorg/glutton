@@ -10,7 +10,7 @@ Transport: TCP (tcp/1433, and any port where the catch-all sees a TDS PRELOGIN).
 | `client_version`, `encryption`, `instance`, `thread_id` | read `prelogin` | PRELOGIN VERSION (`major.minor.build.subbuild`), ENCRYPTION (`off`/`on`/`not_sup`/`req`), INSTOPT and THREADID options |
 | `tds_version` | read `login7` | LOGIN7 TDSVersion, e.g. `0x71000001` (TDS 7.1), `0x74000004` (TDS 7.4) |
 | `username`, `hostname`, `app_name`, `server_name`, `client_interface`, `database`, `language`, `client_id` | read `login7` | LOGIN7 strings; `client_id` is the client MAC |
-| `password_set` | read `login7` | The client sent a SQL password. The password itself is never decoded or recorded |
+| `password` | read `login7` | The SQL password the client sent, unscrambled (XOR 0xA5, nibble swap) and decoded from UTF-16LE |
 | `integrated_auth` | read `login7` | OptionFlags2 `fIntSecurity`: Windows (SSPI) authentication |
 | `ntlm_type`, `ntlm_domain`, `ntlm_user`, `ntlm_workstation`, `ntlm_version` | read `login7` / `sspi` | NTLMSSP message type from the SSPI blob; identity and `NTLMv1`/`NTLMv2`/`anonymous` from an AUTHENTICATE. Response hashes are never recorded |
 | `status` | write | `prelogin`, `sspi-challenge`, `login-failed` |

@@ -58,6 +58,7 @@ type parsedMQTT struct {
 	Packet    string   `json:"packet,omitempty"`
 	ClientID  string   `json:"client_id,omitempty"`
 	Username  string   `json:"username,omitempty"`
+	Password  string   `json:"password,omitempty"`
 	Topic     string   `json:"topic,omitempty"`
 	Topics    []string `json:"topics,omitempty"`
 	QoS       uint8    `json:"qos,omitempty"`
@@ -189,7 +190,9 @@ func decodeMQTT(first byte, body []byte) parsedMQTT {
 			rest = rest2
 		}
 		if connectFlags&0x40 != 0 {
-			_, _, _ = mqttString(rest) // password, not stored
+			if pass, _, ok := mqttString(rest); ok {
+				frame.Password = pass
+			}
 		}
 	case mqttPUBLISH:
 		frame.QoS = (flags >> 1) & 0x03

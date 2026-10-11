@@ -120,7 +120,7 @@ func TestHandleSOCKS5NoAuth(t *testing.T) {
 	}, frames)
 }
 
-func TestHandleSOCKS5UserPassOmitsPassword(t *testing.T) {
+func TestHandleSOCKS5UserPassRecordsPassword(t *testing.T) {
 	client, hp, done := startSOCKS(t, 4096)
 
 	require.Equal(t, []byte{0x05, 0x02}, socksExchange(t, client, []byte{0x05, 0x02, 0x00, 0x02}, 2))
@@ -130,12 +130,9 @@ func TestHandleSOCKS5UserPassOmitsPassword(t *testing.T) {
 
 	frames := finishSOCKS(t, client, hp, done)
 	require.Len(t, frames, 6)
-	require.Equal(t, parsedSOCKS{Direction: "read", Command: "socks5-auth", Version: 5, User: "admin", Payload: []byte("\x01\x05admin\x0a**********")}, frames[2])
+	require.Equal(t, parsedSOCKS{Direction: "read", Command: "socks5-auth", Version: 5, User: "admin", Password: "secret-pw!", Payload: []byte("\x01\x05admin\x0asecret-pw!")}, frames[2])
 	require.Equal(t, "granted", frames[3].Status)
 	require.Equal(t, "192.0.2.1:443", frames[4].Path)
-	for _, f := range frames {
-		require.NotContains(t, string(f.Payload), "secret-pw")
-	}
 }
 
 func TestHandleSOCKS5NoAcceptableMethod(t *testing.T) {

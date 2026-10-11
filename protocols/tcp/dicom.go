@@ -42,6 +42,7 @@ type parsedDICOM struct {
 	ImplementationClassUID string            `json:"implementation_class_uid,omitempty"`
 	ImplementationVersion  string            `json:"implementation_version,omitempty"`
 	Username               string            `json:"username,omitempty"`
+	Password               string            `json:"password,omitempty"`
 	MessageID              uint16            `json:"message_id,omitempty"`
 	SOPClassUID            string            `json:"sop_class_uid,omitempty"`
 	SOPInstanceUID         string            `json:"sop_instance_uid,omitempty"`
@@ -122,6 +123,7 @@ func (s *dicomServer) handleAssociate(pdu []byte) (dicom.AssociateRQ, bool, erro
 		ImplementationClassUID: rq.ImplementationClassUID,
 		ImplementationVersion:  rq.ImplementationVersion,
 		Username:               rq.Username,
+		Password:               rq.Password,
 		Payload:                pdu,
 	})
 	if err != nil {

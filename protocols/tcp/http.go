@@ -108,7 +108,8 @@ type parsedHTTP struct {
 	Query      string          `json:"query,omitempty"`
 	Parameters url.Values      `json:"parameters,omitempty"` // parsed query key/values
 	Host       string          `json:"host,omitempty"`
-	Username   string          `json:"username,omitempty"` // Proxmox VE login (never the password)
+	Username   string          `json:"username,omitempty"` // HTTP Basic or Proxmox VE login
+	Password   string          `json:"password,omitempty"` // HTTP Basic or Proxmox VE login
 	UserAgent  string          `json:"user_agent,omitempty"`
 	Status     string          `json:"status,omitempty"`
 	SessionID  string          `json:"session_id,omitempty"`
@@ -231,6 +232,9 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 		UserAgent:  req.UserAgent(),
 		Payload:    raw,
 	}
+	if user, pass, ok := req.BasicAuth(); ok {
+		frame.Username, frame.Password = user, pass
+	}
 	grid := selenium.IsGridRequest(md.TargetPort, path)
 	if grid {
 		if sess, ok := selenium.NewSessionRequest(req.Method, path, body); ok {
@@ -239,7 +243,9 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 	}
 	proxmox := md.TargetPort == pve.Port
 	if proxmox {
-		frame.Username, _ = pve.LoginUsername(req.Method, path, body)
+		if user, pass, ok := pve.LoginCredentials(req.Method, path, body); ok {
+			frame.Username, frame.Password = user, pass
+		}
 	}
 	frame.Citrix = citrix.Inspect(req.Method, path, req.Header, body)
 	s.record(frame)

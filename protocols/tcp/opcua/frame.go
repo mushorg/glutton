@@ -1,8 +1,10 @@
 package opcua
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io"
+	"unicode/utf8"
 
 	"github.com/gopcua/opcua/ua"
 	"github.com/gopcua/opcua/uacp"
@@ -37,7 +39,10 @@ type Frame struct {
 	ApplicationURI  string
 	ApplicationName string
 	Username        string
-	Payload         []byte
+	// Password is the UserName token password as sent: plaintext for an
+	// unencrypted token, hex of the ciphertext when EncryptionAlgorithm is set.
+	Password string
+	Payload  []byte
 }
 
 // ReadMessage reads one length-prefixed UACP message. It rejects claimed
@@ -159,6 +164,7 @@ func fillFromService(f *Frame, svc interface{}) {
 		if t != nil && t.UserIdentityToken != nil {
 			if tok, ok := t.UserIdentityToken.Value.(*ua.UserNameIdentityToken); ok && tok != nil {
 				f.Username = tok.UserName
+				f.Password = tokenPassword(tok)
 			}
 		}
 	case *ua.ActivateSessionResponse:
@@ -231,4 +237,16 @@ func EncodeReverseHello(serverURI, endpointURL string) ([]byte, error) {
 		return nil, err
 	}
 	return EncodeUACP(uacp.MessageTypeReverseHello, uacp.ChunkTypeFinal, body)
+}
+
+// tokenPassword renders a UserName token password. Unencrypted tokens carry
+// the plaintext; encrypted ones (or non-UTF-8 bytes) are recorded as hex.
+func tokenPassword(tok *ua.UserNameIdentityToken) string {
+	if len(tok.Password) == 0 {
+		return ""
+	}
+	if tok.EncryptionAlgorithm == "" && utf8.Valid(tok.Password) {
+		return string(tok.Password)
+	}
+	return hex.EncodeToString(tok.Password)
 }

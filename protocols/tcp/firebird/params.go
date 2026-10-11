@@ -25,11 +25,12 @@ const (
 	tagOSUser        = 83
 )
 
-// Params holds the attach parameters worth recording. The password (plain or
-// isc_dpb_password_enc) is never kept, only that one was sent.
+// Params holds the attach parameters worth recording. Password is the
+// isc_dpb_password as sent, or the isc_dpb_password_enc bytes as sent; both are
+// guessing attempts and recorded in full.
 type Params struct {
 	Username      string
-	PasswordSet   bool
+	Password      string
 	Role          string
 	Charset       string
 	ProcessID     uint32
@@ -97,7 +98,7 @@ func parseClumplets(b []byte, wide bool) Params {
 		case tagUserName:
 			p.Username = string(val)
 		case tagPassword, tagPasswordEnc:
-			p.PasswordSet = true
+			p.Password = string(val)
 		case tagSQLRoleName:
 			p.Role = string(val)
 		case tagLCCtype:

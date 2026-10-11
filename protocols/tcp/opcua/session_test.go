@@ -99,4 +99,5 @@ func TestSessionActivateSession(t *testing.T) {
 	require.NotEmpty(t, actReply, "expected ActivateSession response")
 	require.Equal(t, "ActivateSession", Parse(actReply).Service)
 	require.Equal(t, "admin", f.Username)
+	require.Equal(t, "secret-password", f.Password)
 }

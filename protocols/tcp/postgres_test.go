@@ -98,7 +98,7 @@ func TestHandlePostgresSSLRequestDeclined(t *testing.T) {
 	require.Equal(t, []parsedPostgres{postgresSSLRead, postgresSSLWrite}, events)
 }
 
-func TestHandlePostgresPasswordFailedOmitsPassword(t *testing.T) {
+func TestHandlePostgresPasswordFailedRecordsPassword(t *testing.T) {
 	client, hp, done := startPostgres(t)
 
 	writePostgres(t, client, postgresSSLRequest)
@@ -126,20 +126,17 @@ func TestHandlePostgresPasswordFailedOmitsPassword(t *testing.T) {
 			Params: map[string]string{"client_encoding": "UTF8"},
 		},
 		{Direction: "write", Command: "AuthenticationMD5Password", Payload: authMD5},
-		{Direction: "read", Command: "PasswordMessage", Payload: password, PasswordSet: true},
+		{Direction: "read", Command: "PasswordMessage", Payload: password, Password: "md5c0ffeec0ffeec0ffeec0ffeec0ffee12"},
 		{
 			Direction: "write", Command: "ErrorResponse", Status: "28P01",
 			Message: `password authentication failed for user "postgres"`, Payload: failed.Build(),
 		},
 	}, events)
 
-	// only the raw payload carries the password hash; no decoded field does
-	for i := range events {
-		events[i].Payload = nil
-	}
-	encoded, err := json.Marshal(events)
+	// the md5 hash string the client sent is in the decoded frame
+	encoded, err := json.Marshal(events[4])
 	require.NoError(t, err)
-	require.NotContains(t, string(encoded), "c0ffee")
+	require.Contains(t, string(encoded), `"password":"md5c0ffeec0ffeec0ffeec0ffeec0ffee12"`)
 }
 
 func TestHandlePostgresNegotiatesMinorVersion(t *testing.T) {

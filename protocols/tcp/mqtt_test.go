@@ -12,11 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func mqttConnectPacket(clientID, username string) []byte {
+func mqttConnectPacket(clientID, username string, password ...string) []byte {
 	body := []byte{0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04}
 	flags := byte(0x02) // clean session
 	if username != "" {
 		flags |= 0x80
+	}
+	if len(password) > 0 {
+		flags |= 0x40
 	}
 	body = append(body, flags, 0x00, 0x3c)
 	idLen := make([]byte, 2)
@@ -28,6 +31,12 @@ func mqttConnectPacket(clientID, username string) []byte {
 		binary.BigEndian.PutUint16(uLen, uint16(len(username)))
 		body = append(body, uLen...)
 		body = append(body, []byte(username)...)
+	}
+	if len(password) > 0 {
+		pLen := make([]byte, 2)
+		binary.BigEndian.PutUint16(pLen, uint16(len(password[0])))
+		body = append(body, pLen...)
+		body = append(body, []byte(password[0])...)
 	}
 	return encodeMQTT(mqttCONNECT, 0, body)
 }
@@ -94,7 +103,7 @@ func TestHandleMQTTConnectPing(t *testing.T) {
 	}()
 
 	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
-	_, err := client.Write(mqttConnectPacket("sensor-1", "user"))
+	_, err := client.Write(mqttConnectPacket("sensor-1", "user", "hunter2"))
 	require.NoError(t, err)
 	connack := readMQTTPacket(t, client)
 	require.Equal(t, byte(mqttCONNACK<<4), connack[0])
@@ -118,6 +127,7 @@ func TestHandleMQTTConnectPing(t *testing.T) {
 		require.Equal(t, "CONNECT", events[0].Command)
 		require.Equal(t, "sensor-1", events[0].ClientID)
 		require.Equal(t, "user", events[0].Username)
+		require.Equal(t, "hunter2", events[0].Password)
 		require.Equal(t, "CONNACK", events[1].Packet)
 		require.Equal(t, "PINGREQ", events[2].Packet)
 		require.Equal(t, "PINGRESP", events[3].Packet)

@@ -41,8 +41,9 @@ type parsedPostgres struct {
 	User            string            `json:"user,omitempty"`
 	ApplicationName string            `json:"application_name,omitempty"`
 	Params          map[string]string `json:"params,omitempty"` // the other startup parameters
-	// PasswordMessage; the password is never recorded
-	PasswordSet bool `json:"password_set,omitempty"`
+	// PasswordMessage as sent (md5 hash string under md5 auth); it is a
+	// guessing attempt and recorded in full
+	Password string `json:"password,omitempty"`
 	// ErrorResponse
 	Message string `json:"message,omitempty"`
 }
@@ -213,7 +214,7 @@ func HandlePostgres(ctx context.Context, conn net.Conn, md connection.Metadata, 
 			}
 			switch msg.Type {
 			case 'p':
-				server.lastRead().PasswordSet = len(msg.Body()) > 1
+				server.lastRead().Password = msg.Password()
 				err = server.writeError(postgres.PasswordFailed(server.user))
 			case 'X':
 				return nil

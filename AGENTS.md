@@ -128,7 +128,7 @@ func HandleX(ctx context.Context, conn net.Conn, md connection.Metadata, logger 
 - **TLS**: do not hand-roll implicit TLS in a handler. Set `tls: true` (implicit TLS) or `tls: auto` (sniff for a ClientHello on ports that carry both) on the rule; `protocols/tls.go` (via `helpers.TerminateTLS`) decrypts first and passes your handler a plaintext `net.Conn`, with SNI/ALPN/ClientHello on `md.TLS` and the produced event's `tls` field. STARTTLS (or TLS auto-detected mid-stream, as in `jabber.go`) stays in the handler and uses `helpers.TerminateTLSFrom` over its buffered reader.
 - **Do not export** handler internals; only `HandleX` is exported from `protocols/tcp`.
 
-Decoded JSON field names are the contract with Ochi/analysis. Keep `direction` and `payload`. When the handler already parsed it, also set `command` (leaf operation, not only the outer PDU), `path`, `status` on writes, and `truncated` when a capture cap applied. Handler-specific extras (`native_os`, `cookie`, `user_agent`, `nt_status`) are fine beside these. Do not introduce a shared Go frame type.
+Decoded JSON field names are the contract with Ochi/analysis. Keep `direction` and `payload`. When the handler already parsed it, also set `command` (leaf operation, not only the outer PDU), `path`, `status` on writes, and `truncated` when a capture cap applied. Handler-specific extras (`native_os`, `cookie`, `user_agent`, `nt_status`) are fine beside these. Credentials the client sends are guessing attempts, not confidential data: record them in plaintext (`username`, `password`) and never mask, hash, or reduce them to a `password_set` flag. Do not introduce a shared Go frame type.
 
 ## Reference implementations
 

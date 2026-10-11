@@ -50,10 +50,10 @@ type parsedMSSQL struct {
 	Encryption    string `json:"encryption,omitempty"`
 	Instance      string `json:"instance,omitempty"`
 	ThreadID      uint32 `json:"thread_id,omitempty"`
-	// LOGIN7; the password is never recorded
+	// LOGIN7; the password is a guessing attempt and recorded as sent
 	TDSVersion      string `json:"tds_version,omitempty"`
 	Username        string `json:"username,omitempty"`
-	PasswordSet     bool   `json:"password_set,omitempty"`
+	Password        string `json:"password,omitempty"`
 	Hostname        string `json:"hostname,omitempty"`
 	AppName         string `json:"app_name,omitempty"`
 	ServerName      string `json:"server_name,omitempty"`
@@ -162,7 +162,7 @@ func (s *mssqlServer) handleLogin7(login mssql.Login7) (done bool, err error) {
 	f := s.lastRead()
 	f.TDSVersion = mssql.TDSVersionString(login.TDSVersion)
 	f.Username = login.UserName
-	f.PasswordSet = login.PasswordSet
+	f.Password = login.Password
 	f.Hostname = login.HostName
 	f.AppName = login.AppName
 	f.ServerName = login.ServerName

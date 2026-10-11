@@ -227,7 +227,7 @@ func TestHandleMSSQLNTLMAuthenticateLoginFailed(t *testing.T) {
 	require.Equal(t, parsedMSSQL{Direction: "write", Status: "login-failed", Payload: want, ErrorNumber: mssql.ErrLoginFailed}, events[3])
 }
 
-func TestHandleMSSQLSQLAuthLoginFailedOmitsPassword(t *testing.T) {
+func TestHandleMSSQLSQLAuthLoginFailedRecordsPassword(t *testing.T) {
 	client, hp, done := startMSSQL(t)
 
 	writeTDS(t, client, nmapMSSQLPrelogin)
@@ -245,15 +245,14 @@ func TestHandleMSSQLSQLAuthLoginFailedOmitsPassword(t *testing.T) {
 	require.Len(t, events, 4)
 	require.Equal(t, parsedMSSQL{
 		Direction: "read", Command: "login7", Payload: login,
-		TDSVersion: "0x74000004", Username: "sa", PasswordSet: true,
+		TDSVersion: "0x74000004", Username: "sa", Password: "Hunter2!",
 		Hostname: "WS01", AppName: "OSQL-32", ClientInterface: "ODBC", Database: "master",
 	}, events[2])
 	require.Equal(t, mssql.ErrLoginFailed, int(events[3].ErrorNumber))
 
 	out, err := json.Marshal(events)
 	require.NoError(t, err)
-	require.NotContains(t, string(out), "Hunter2!")
-	require.NotContains(t, string(out), `"password"`)
+	require.Contains(t, string(out), `"password":"Hunter2!"`)
 }
 
 func TestHandleMSSQLEarlyDisconnectStillProduces(t *testing.T) {

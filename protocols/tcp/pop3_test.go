@@ -64,6 +64,8 @@ func TestHandlePOP3Session(t *testing.T) {
 	expect("+OK\r\n")
 	send("PASS hunter2\r\n")
 	expect("-ERR [AUTH] Authentication failed.\r\n")
+	send("APOP mrose c4c9334bac560ecc979e58001b3e22fb\r\n")
+	expect("-ERR [AUTH] Authentication failed.\r\n")
 	send("QUIT\r\n")
 	expect("+OK Logging out.\r\n")
 
@@ -71,7 +73,9 @@ func TestHandlePOP3Session(t *testing.T) {
 		{Direction: "write", Status: "+OK", Payload: []byte("+OK Dovecot ready.\r\n")},
 		{Direction: "read", Command: "USER", Username: "bob", Payload: []byte("USER bob\r\n")},
 		{Direction: "write", Status: "+OK", Payload: []byte("+OK\r\n")},
-		{Direction: "read", Command: "PASS", Payload: []byte("PASS hunter2\r\n")},
+		{Direction: "read", Command: "PASS", Password: "hunter2", Payload: []byte("PASS hunter2\r\n")},
+		{Direction: "write", Status: "-ERR", Payload: []byte("-ERR [AUTH] Authentication failed.\r\n")},
+		{Direction: "read", Command: "APOP", Username: "mrose", Digest: "c4c9334bac560ecc979e58001b3e22fb", Payload: []byte("APOP mrose c4c9334bac560ecc979e58001b3e22fb\r\n")},
 		{Direction: "write", Status: "-ERR", Payload: []byte("-ERR [AUTH] Authentication failed.\r\n")},
 		{Direction: "read", Command: "QUIT", Payload: []byte("QUIT\r\n")},
 		{Direction: "write", Status: "+OK", Payload: []byte("+OK Logging out.\r\n")},

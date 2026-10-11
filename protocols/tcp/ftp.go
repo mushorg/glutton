@@ -38,6 +38,8 @@ type parsedFTP struct {
 	Direction   string `json:"direction,omitempty"`
 	Command     string `json:"command,omitempty"`
 	Path        string `json:"path,omitempty"`
+	Username    string `json:"username,omitempty"` // USER argument
+	Password    string `json:"password,omitempty"` // PASS argument
 	Status      string `json:"status,omitempty"`
 	Payload     []byte `json:"payload,omitempty"`
 	PayloadHash string `json:"payload_hash,omitempty"`
@@ -65,18 +67,32 @@ func ftpVerbAndPath(msg string) (cmd, path string) {
 	return cmd, path
 }
 
+// ftpArg returns everything after the verb with the line ending and
+// surrounding whitespace removed, so arguments with spaces stay intact.
+func ftpArg(msg string) string {
+	_, arg, _ := strings.Cut(strings.TrimSpace(msg), " ")
+	return strings.TrimSpace(arg)
+}
+
 func (s *ftpServer) read(_ interfaces.Logger, _ interfaces.Honeypot) (string, error) {
 	msg, err := bufio.NewReader(s.conn).ReadString('\n')
 	if err != nil {
 		return msg, err
 	}
 	cmd, path := ftpVerbAndPath(msg)
-	s.events = append(s.events, parsedFTP{
+	frame := parsedFTP{
 		Direction: "read",
 		Command:   cmd,
 		Path:      path,
 		Payload:   []byte(msg),
-	})
+	}
+	switch cmd {
+	case "USER":
+		frame.Username = ftpArg(msg)
+	case "PASS":
+		frame.Password = ftpArg(msg)
+	}
+	s.events = append(s.events, frame)
 	return msg, nil
 }
 

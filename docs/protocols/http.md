@@ -6,7 +6,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 
 ## `http` (Go)
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `user_agent`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `session_id`, `dest_port`, `src_port`, `payload`
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `session_id`, `dest_port`, `src_port`, `payload`
 
 ### Frame fields
 
@@ -17,7 +17,8 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 | `parameters` | reads | Parsed query map. |
 | `dest_port`, `src_port` | reads | Ports of the connection the frame arrived on (see [Sessions](#sessions)). |
 | `status` | writes | Response status, e.g. `200`. |
-| `username`, `browser`, `binary`, `args`, `citrix`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
+| `username`, `password` | reads | `Authorization: Basic` credentials, or the Proxmox VE ticket login form (see [Emulated applications](#emulated-applications)). |
+| `browser`, `binary`, `args`, `citrix`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
 
 ### Sessions
 
@@ -56,7 +57,7 @@ Package: `protocols/tcp/pve`. Every path on tcp/8006 is answered as a `pveproxy`
 | Other `/api2/*` | `401 No ticket` |
 | Anything else | `404` |
 
-Ticket reads set `username` from the form `username` field, with `@realm` appended when `realm` is sent separately. The password is never decoded.
+Ticket reads set `username` from the form `username` field, with `@realm` appended when `realm` is sent separately, and `password` from the form `password` field (both capped at 256 bytes).
 
 The default rule terminates TLS on tcp/8006 (`tls: auto`) with a node certificate signed by a per-sensor `PVE Cluster Manager CA`, so the event carries a `tls` object.
 

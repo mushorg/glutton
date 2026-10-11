@@ -37,6 +37,9 @@ type parsedSMB struct {
 	Status         string        `json:"status,omitempty"`
 	NTStatus       uint32        `json:"nt_status,omitempty"`
 	Account        string        `json:"account,omitempty"`
+	Password       string        `json:"password,omitempty"`      // plaintext password from a basic Session Setup
+	LMResponse     string        `json:"lm_response,omitempty"`   // hex LM/LMv2 response from a basic Session Setup
+	NTLMResponse   string        `json:"ntlm_response,omitempty"` // hex NTLM/NTLMv2 response from a basic Session Setup
 	NativeOS       string        `json:"native_os,omitempty"`
 	NativeLanMan   string        `json:"native_lanman,omitempty"`
 	Domain         string        `json:"domain,omitempty"`
@@ -576,8 +579,8 @@ func (ss *smbServer) sessionSetup(header smb.SMBHeader, body []byte, readIdx int
 	}
 }
 
-// recordNTLMIdentity sets the non-secret identity fields on a read frame. The
-// NTLM response hashes are never recorded.
+// recordNTLMIdentity sets the NTLMSSP Type 3 identity fields on a read frame.
+// The NTLM responses stay in the raw payload.
 func (ss *smbServer) recordNTLMIdentity(id smb.NTLMIdentity, readIdx int) {
 	if readIdx < 0 || readIdx >= len(ss.events) {
 		return
@@ -680,7 +683,7 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 
 	path := ""
 	setup := ""
-	account, nativeOS, nativeLanMan := "", "", ""
+	var id smb.SessionSetupFields
 	var totalDataCount uint32
 	switch header.Command {
 	case smb.CmdNtCreateAndX:
@@ -688,8 +691,7 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 	case smb.CmdTreeConnectAndX:
 		path = smb.TreeConnectShare(header, smbBuf.Bytes())
 	case smb.CmdSessionSetupAndX:
-		id := smb.SessionSetupIdentity(header, smbBuf.Bytes())
-		account, nativeOS, nativeLanMan = id.Account, id.NativeOS, id.NativeLanMan
+		id = smb.SessionSetupIdentity(header, smbBuf.Bytes())
 	case smb.CmdTransaction2:
 		if s, ok := smb.Trans2Setup(smbBuf.Bytes()); ok {
 			setup = smb.Trans2SetupName(s)
@@ -706,9 +708,12 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 		Command:        smb.CommandName(header.Command),
 		Path:           path,
 		Setup:          setup,
-		Account:        account,
-		NativeOS:       nativeOS,
-		NativeLanMan:   nativeLanMan,
+		Account:        id.Account,
+		Password:       id.Password,
+		LMResponse:     id.LMResponse,
+		NTLMResponse:   id.NTLMResponse,
+		NativeOS:       id.NativeOS,
+		NativeLanMan:   id.NativeLanMan,
 		TotalDataCount: totalDataCount,
 		Payload:        frame.payload,
 		Truncated:      frame.truncated,

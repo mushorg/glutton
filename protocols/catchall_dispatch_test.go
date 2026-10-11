@@ -424,3 +424,31 @@ func TestCatchAllPicksAmongMatchingProtocols(t *testing.T) {
 	require.Equal(t, []int{2}, choices)
 	require.Equal(t, []string{"c"}, handled)
 }
+
+func TestCatchAllRoutesOffPortRedis(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 16379)
+
+	// nmap's redis-server probe, synthetic
+	_, err := client.Write([]byte("*1\r\n$4\r\nPING\r\n"))
+	require.NoError(t, err)
+	reply := make([]byte, len("+PONG\r\n"))
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
+	require.Equal(t, "+PONG\r\n", string(reply))
+
+	require.Equal(t, "redis", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllRESPLookalikeStaysTCP(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 9999)
+
+	// a '*' that is not followed by a multibulk count and bulk marker
+	_, err := client.Write([]byte("*** hello there\r\n"))
+	require.NoError(t, err)
+	reply := make([]byte, 4096)
+	n, err := client.Read(reply)
+	require.NoError(t, err)
+	require.NotZero(t, n)
+
+	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
+}

@@ -30,8 +30,9 @@ const (
 	sspiLongSentinel = 0xffff
 )
 
-// Login7 holds the LOGIN7 fields the handler records. The password is never
-// decoded; PasswordSet only says whether the client sent one.
+// Login7 holds the LOGIN7 fields the handler records. Password is the SQL
+// password the client sent, unscrambled; it is a guessing attempt and recorded
+// in full.
 type Login7 struct {
 	TDSVersion      uint32
 	PacketSize      uint32
@@ -41,7 +42,7 @@ type Login7 struct {
 	IntegratedAuth  bool
 	HostName        string
 	UserName        string
-	PasswordSet     bool
+	Password        string
 	AppName         string
 	ServerName      string
 	ClientInterface string
@@ -68,8 +69,7 @@ func ParseLogin7(data []byte) (Login7, error) {
 	}
 	l.HostName = utf16Field(data, offHostName)
 	l.UserName = utf16Field(data, offUserName)
-	_, pwLen := field(data, offPassword)
-	l.PasswordSet = pwLen > 0
+	l.Password = passwordField(data, offPassword)
 	l.AppName = utf16Field(data, offAppName)
 	l.ServerName = utf16Field(data, offServerName)
 	l.ClientInterface = utf16Field(data, offCltIntName)
@@ -118,6 +118,21 @@ func utf16Field(data []byte, at int) string {
 		return ""
 	}
 	return ntlm.DecodeUTF16LE(data[off : off+chars*2])
+}
+
+// passwordField decodes the LOGIN7 password: each byte was nibble-swapped and
+// then XORed with 0xA5 (MS-TDS 2.2.6.4), over UTF-16LE.
+func passwordField(data []byte, at int) string {
+	off, chars := field(data, at)
+	if chars == 0 {
+		return ""
+	}
+	b := make([]byte, chars*2)
+	for i, c := range data[off : off+chars*2] {
+		c ^= 0xa5
+		b[i] = c<<4 | c>>4
+	}
+	return ntlm.DecodeUTF16LE(b)
 }
 
 func allZero(b []byte) bool {

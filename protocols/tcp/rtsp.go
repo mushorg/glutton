@@ -33,6 +33,7 @@ type parsedRTSP struct {
 	UserAgent      string `json:"user_agent,omitempty"`
 	AuthScheme     string `json:"auth_scheme,omitempty"` // basic, digest, or uri (credentials in the URI)
 	Username       string `json:"username,omitempty"`
+	Password       string `json:"password,omitempty"`
 	DigestResponse string `json:"digest_response,omitempty"`
 	Payload        []byte `json:"payload,omitempty"`
 	Truncated      bool   `json:"truncated,omitempty"`
@@ -70,9 +71,9 @@ func (s *rtspServer) read() (rtsp.Request, error) {
 	}
 	if value := req.Header("Authorization"); value != "" {
 		auth := rtsp.ParseAuthorization(value)
-		frame.AuthScheme, frame.Username, frame.DigestResponse = auth.Scheme, auth.Username, auth.Response
-	} else if user := req.URIUsername(); user != "" {
-		frame.AuthScheme, frame.Username = "uri", user
+		frame.AuthScheme, frame.Username, frame.Password, frame.DigestResponse = auth.Scheme, auth.Username, auth.Password, auth.Response
+	} else if user, pass := req.URICredentials(); user != "" {
+		frame.AuthScheme, frame.Username, frame.Password = "uri", user, pass
 	}
 	s.events = append(s.events, frame)
 	return req, err

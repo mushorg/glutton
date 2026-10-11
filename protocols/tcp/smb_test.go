@@ -993,7 +993,7 @@ func TestHandleSMBNTLMSSPSessionSetup(t *testing.T) {
 	require.Equal(t, "CORP", auth.Domain)
 	require.Equal(t, "WS7", auth.Workstation)
 
-	// No credential material leaks into decoded string fields.
+	// The NTLMSSP response is not parsed into the status field.
 	require.NotContains(t, auth.Status, "\xaa")
 	require.Empty(t, auth.PayloadHash, "NTLM responses are not stored")
 }
@@ -1193,4 +1193,50 @@ func TestHandleSMBDoublePulsarReassemblesFragments(t *testing.T) {
 	require.Equal(t, helpers.SHA256Hex(dpTestPayload), tagged.DecodedHash)
 	require.Contains(t, stored, cipher)        // reassembled obfuscated blob
 	require.Contains(t, stored, dpTestPayload) // decoded payload
+}
+
+func TestHandleSMBBasicSessionSetupPlaintextPassword(t *testing.T) {
+	client, hp, done := startHandleSMB(t)
+
+	utf16 := func(s string) []byte {
+		var out []byte
+		for _, r := range s {
+			out = binary.LittleEndian.AppendUint16(out, uint16(r))
+		}
+		return append(out, 0, 0)
+	}
+	password := utf16("Winter2024!")
+	password = password[:len(password)-2] // password field is not NUL-terminated
+	data := append([]byte{}, password...)
+	data = append(data, 0) // pad to 2-byte alignment (32+29+22 is odd)
+	for _, s := range []string{"administrator", "WORKGROUP", "Unix", "Samba"} {
+		data = append(data, utf16(s)...)
+	}
+	body := []byte{
+		0x0d,       // WordCount
+		0xff, 0x00, // AndX none
+		0x00, 0x00, // AndXOffset
+		0xff, 0xff, // MaxBuffer
+		0x02, 0x00, // MaxMpx
+		0x01, 0x00, // VcNumber
+		0x00, 0x00, 0x00, 0x00, // SessionKey
+		0x00, 0x00, // OEMPasswordLen
+		byte(len(password)), 0x00, // UnicodePasswordLen
+		0x00, 0x00, 0x00, 0x00, // Reserved
+		0x00, 0x00, 0x00, 0x00, // Capabilities
+	}
+	body = binary.LittleEndian.AppendUint16(body, uint16(len(data)))
+	body = append(body, data...)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(0x73, 0, 0, 1)), body...))
+	ssResp := readSMBFrame(t, client)
+	require.Equal(t, byte(0x73), ssResp[4])
+
+	ev := finishHandleSMB(t, client, done, hp)
+	frames := ev.decoded.([]parsedSMB)
+	require.Equal(t, "read", frames[0].Direction)
+	require.Equal(t, "administrator", frames[0].Account)
+	require.Equal(t, "Winter2024!", frames[0].Password)
+	require.Empty(t, frames[0].NTLMResponse)
+	require.Equal(t, "Unix", frames[0].NativeOS)
+	require.Equal(t, "Samba", frames[0].NativeLanMan)
 }

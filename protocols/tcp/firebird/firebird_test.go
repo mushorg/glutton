@@ -99,7 +99,7 @@ func TestReadServiceAttachSPB2(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint32(OpServiceAttach), p.Op)
 	require.Equal(t, pkt, p.Raw)
-	require.Equal(t, Attach{File: "service_mgr", Params: Params{Username: "SYSDBA", PasswordSet: true}}, p.Attach)
+	require.Equal(t, Attach{File: "service_mgr", Params: Params{Username: "SYSDBA", Password: "masterkey"}}, p.Attach)
 }
 
 func TestReadAttachDPB1(t *testing.T) {
@@ -117,12 +117,18 @@ func TestReadAttachDPB1(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, Attach{File: "/opt/firebird/employee.fdb", Params: Params{
 		Username:    "SYSDBA",
-		PasswordSet: true,
+		Password:    "xxxx",
 		Charset:     "UTF8",
 		Role:        "RDB",
 		ProcessID:   12345,
 		ProcessName: "/usr/bin/isq",
 	}}, p.Attach)
+}
+
+func TestParseUserIDPassword(t *testing.T) {
+	var c Connect
+	c.parseUserID([]byte("\x01\x04user\x02\x09masterkey\x04\x04host"))
+	require.Equal(t, Connect{OSUser: "user", Password: "masterkey", Host: "host"}, c)
 }
 
 func TestParseWideParams(t *testing.T) {

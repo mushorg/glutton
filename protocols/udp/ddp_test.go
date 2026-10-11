@@ -70,7 +70,7 @@ func TestHandleDDPSearchCRLFPS4(t *testing.T) {
 	require.Equal(t, "PS4", events[1].HostType)
 }
 
-func TestHandleDDPWakeupNoReplyNoCredential(t *testing.T) {
+func TestHandleDDPWakeupNoReplyRecordsCredential(t *testing.T) {
 	withDDPState(t)
 	h := &recordingHoneypot{}
 	src, dst := ddpAddrs()
@@ -81,12 +81,12 @@ func TestHandleDDPWakeupNoReplyNoCredential(t *testing.T) {
 	require.Empty(t, h.replies)
 	events := h.produced[0].decoded.([]parsedDDP)
 	require.Equal(t, []parsedDDP{{
-		Direction:             "read",
-		Command:               "WAKEUP",
-		Version:               "00020020",
-		ClientType:            "vr",
-		UserCredentialPresent: true,
-		Payload:               payload,
+		Direction:      "read",
+		Command:        "WAKEUP",
+		Version:        "00020020",
+		ClientType:     "vr",
+		UserCredential: "31337",
+		Payload:        payload,
 	}}, events)
 }
 
