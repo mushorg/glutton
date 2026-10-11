@@ -245,3 +245,31 @@ func TestVendorIDs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"4048b7d56ebce88525e7de7f00d6c2d3"}, parsed.VendorIDHex())
 }
+
+func TestFindPrefixedHeader(t *testing.T) {
+	// Ochi event 306d8af0-184a-4c02-93e9-5131686e1fba: 16 ASCII bytes before the header on udp/4500
+	prefixed := append([]byte("000000009mb4qlve"), censysRead1...)
+	off, ok := FindPrefixedHeader(prefixed)
+	require.True(t, ok)
+	require.Equal(t, 16, off)
+	require.False(t, LooksLikeIKE(prefixed), "the generic peek stays strict")
+
+	_, ok = FindPrefixedHeader(censysRead1)
+	require.False(t, ok, "offset 0 is not a prefix")
+	_, ok = FindPrefixedHeader(append(bytes.Repeat([]byte{0x41}, 33), censysRead1...))
+	require.False(t, ok, "prefix longer than 32 bytes")
+	_, ok = FindPrefixedHeader(append([]byte("0000000000000000"), censysRead1[:200]...))
+	require.False(t, ok, "length field does not cover the rest")
+	_, ok = FindPrefixedHeader(bytes.Repeat([]byte{0x41}, 64))
+	require.False(t, ok)
+}
+
+func TestHeaderValid(t *testing.T) {
+	m, _ := Parse(censysRead1[:200])
+	require.True(t, m.HeaderValid(), "truncated body, valid header")
+
+	m, _ = Parse(append([]byte("000000009mb4qlve"), censysRead1...))
+	require.False(t, m.HeaderValid(), "prefix bytes read as a header")
+
+	require.False(t, Message{}.HeaderValid())
+}

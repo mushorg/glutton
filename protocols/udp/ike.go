@@ -35,6 +35,7 @@ type parsedIKE struct {
 	Notifies   []string `json:"notifies,omitempty"`
 	VendorIDs  []string `json:"vendor_ids,omitempty"` // hex
 	NATT       bool     `json:"nat_t,omitempty"`      // non-ESP marker present (udp/4500)
+	Prefix     string   `json:"prefix,omitempty"`     // hex of non-IKE bytes before the header
 	Payload    []byte   `json:"payload,omitempty"`
 	Truncated  bool     `json:"truncated,omitempty"`
 }
@@ -62,7 +63,8 @@ func ikeFrame(direction string, m ike.Message) parsedIKE {
 // HandleIKE parses an IKE (ISAKMP) datagram on udp/500 or udp/4500 and
 // answers IKEv2 IKE_SA_INIT requests like a gateway that accepts legacy
 // proposals but requires a 2048-bit or EC Diffie-Hellman group. IKEv1 and
-// other exchanges are recorded without a reply.
+// other exchanges are recorded without a reply, as are messages behind a
+// non-standard prefix.
 func HandleIKE(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	payload := make([]byte, min(len(data), maxIKEPayload))
 	copy(payload, data[:len(payload)])
@@ -82,12 +84,24 @@ func HandleIKE(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	}
 
 	msgBytes, natt := ike.StripNonESPMarker(payload)
+	var prefix []byte
+	if !natt && !ike.LooksLikeIKE(payload) {
+		if off, ok := ike.FindPrefixedHeader(payload); ok {
+			prefix, msgBytes = payload[:off], payload[off:]
+		}
+	}
 	msg, err := ike.Parse(msgBytes)
 	frame := parsedIKE{Direction: "read"}
-	if len(msgBytes) >= ike.HeaderLen {
+	switch {
+	case msg.HeaderValid():
 		frame = ikeFrame("read", msg)
+	case len(msgBytes) >= ike.HeaderLen:
+		frame.Command = "malformed"
 	}
 	frame.NATT = natt
+	if prefix != nil {
+		frame.Prefix = hex.EncodeToString(prefix)
+	}
 	frame.Payload = payload
 	frame.Truncated = truncated
 	events = append(events, frame)
@@ -104,7 +118,12 @@ func HandleIKE(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 		slog.Int("dest_port", dstAddr.Port),
 		slog.String("version", frame.Version),
 		slog.String("exchange", frame.Command),
+		slog.Int("prefix_len", len(prefix)),
 	)
+	if prefix != nil {
+		// a gateway reads a datagram without the non-ESP marker as ESP and drops it
+		return nil
+	}
 
 	reply, ok, err := ike.BuildReply(msg, ikeRand)
 	if err != nil {

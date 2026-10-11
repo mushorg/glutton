@@ -20,6 +20,8 @@ const (
 	HeaderLen = 28
 	// nonESPMarkerLen is the zero prefix of IKE on the NAT-T port (RFC 3948).
 	nonESPMarkerLen = 4
+	// maxPrefixLen bounds the search for an IKE header behind other bytes.
+	maxPrefixLen = 32
 
 	// Version bytes (major << 4 | minor).
 	VersionV1 byte = 0x10
@@ -223,6 +225,14 @@ func (m Message) isSAInitRequest() bool {
 		m.SPIr == [8]byte{} && m.MessageID == 0
 }
 
+// HeaderValid reports whether the parsed header has an IKEv1/IKEv2 version
+// and a length field that covers at least the header itself. Parse fills the
+// header fields from any 28 bytes; callers use this before trusting them.
+func (m Message) HeaderValid() bool {
+	major := m.Version >> 4
+	return (major == VersionV1>>4 || major == VersionV2>>4) && m.Length >= HeaderLen
+}
+
 // StripNonESPMarker removes the 4 zero bytes that precede IKE on the NAT-T
 // port when the rest is a complete IKE message, and reports whether it did.
 func StripNonESPMarker(data []byte) ([]byte, bool) {
@@ -241,6 +251,25 @@ func StripNonESPMarker(data []byte) ([]byte, bool) {
 // (after an optional non-ESP marker).
 func LooksLikeIKE(data []byte) bool {
 	data, _ = StripNonESPMarker(data)
+	return isMessage(data)
+}
+
+// FindPrefixedHeader finds a complete IKE message behind a short
+// non-standard prefix (not the non-ESP marker), as some scanners send to
+// udp/4500, and returns its offset. A real gateway drops such datagrams as
+// ESP; the handler only records them.
+func FindPrefixedHeader(data []byte) (int, bool) {
+	for off := 1; off <= maxPrefixLen && len(data)-off >= HeaderLen; off++ {
+		if isMessage(data[off:]) {
+			return off, true
+		}
+	}
+	return 0, false
+}
+
+// isMessage reports whether data starts with an IKE header of a known
+// version and exchange type whose length field covers exactly data.
+func isMessage(data []byte) bool {
 	if len(data) < HeaderLen || data[16] == payloadNone {
 		return false
 	}
