@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"math/rand/v2"
 	"net"
 	"os"
 	"strings"
@@ -177,102 +179,55 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		if err != nil {
 			return nil
 		}
-		// SSH clients on moved ports send their identification string first
-		if bytes.HasPrefix(snip, []byte("SSH-")) {
-			return tcp.HandleSSH(ctx, bufConn, md, log, h)
+		// peek far enough for every protocol the first bytes could start
+		var gated []catchAllMatcher
+		need, lineMax := 0, 0
+		for _, m := range catchAllMatchers {
+			n, ok := m.peek(snip)
+			if !ok {
+				continue
+			}
+			gated = append(gated, m)
+			if m.line {
+				lineMax = max(lineMax, n)
+			} else {
+				need = max(need, n)
+			}
 		}
-		// proxy checkers send SOCKS requests to any port; the request is the
-		// whole first segment, so peek for all of it before deciding
-		if snip[0] == socks.Version4 || snip[0] == socks.Version5 {
-			req, reqConn, err := peekOrClose(conn, bufConn, socks.MaxSOCKS4Request, log)
+		if need > len(snip) {
+			more, moreConn, err := peekOrClose(conn, bufConn, need, log)
 			if err != nil {
 				return nil
 			}
-			bufConn = reqConn
-			if socks.LooksLikeSOCKS(req) {
-				return tcp.HandleSOCKS(ctx, bufConn, md, log, h)
-			}
-			snip = req[:min(len(req), 4)]
+			bufConn = moreConn
+			snip = more[:min(len(more), 4)]
 		}
-		// RDP scanners probe moved RDP on any port; the CR's TPKT length
-		// varies with the cookie, so check the framing rather than a prefix
-		if snip[0] == 0x03 {
-			cr, crConn, err := peekOrClose(conn, bufConn, rdpPeekLen, log)
-			if err != nil {
-				return nil
-			}
-			bufConn = crConn
-			if rdp.LooksLikeConnectionRequest(cr) {
-				return tcp.HandleRDP(ctx, bufConn, md, log, h)
-			}
-			snip = cr[:min(len(cr), 4)]
-		}
-		// SQL Server scanners send PRELOGIN to moved instances on any port;
-		// check the header and first option token, not just the type byte
-		if snip[0] == mssql.TypePrelogin {
-			pre, preConn, err := peekOrClose(conn, bufConn, mssqlPeekLen, log)
-			if err != nil {
-				return nil
-			}
-			bufConn = preConn
-			if mssql.LooksLikePrelogin(pre) {
-				return tcp.HandleMSSQL(ctx, bufConn, md, log, h)
-			}
-			snip = pre[:min(len(pre), 4)]
-		}
-		// Firebird scanners (nmap, Shodan) send op_connect to moved servers;
-		// check the operation and connect version, not just the opcode
-		if bytes.Equal(snip, []byte{0, 0, 0, firebird.OpConnect}) {
-			cnct, cnctConn, err := peekOrClose(conn, bufConn, firebird.ConnectPeekLen, log)
-			if err != nil {
-				return nil
-			}
-			bufConn = cnctConn
-			if firebird.LooksLikeConnect(cnct) {
-				return tcp.HandleFirebird(ctx, bufConn, md, log, h)
-			}
-			snip = cnct[:min(len(cnct), 4)]
-		}
-		// ADB scanners also probe devices that moved adbd off 5555; the
-		// four-byte snip holds the whole CNXN command
-		if adb.LooksLikeADB(snip) {
-			return tcp.HandleADB(ctx, bufConn, md, log, h)
-		}
-		// Minecraft server-list scanners (matscan) ping any port; the
-		// Handshake is short and arrives whole, so peek for all of it
-		if n, ok := minecraft.HandshakeLen(snip); ok {
-			hs, hsConn, err := peekOrClose(conn, bufConn, n, log)
-			if err != nil {
-				return nil
-			}
-			bufConn = hsConn
-			if minecraft.LooksLikeHandshake(hs) {
-				return tcp.HandleMinecraft(ctx, bufConn, md, log, h)
-			}
-			snip = hs[:min(len(hs), 4)]
-		}
-		// camera scanners probe RTSP on any port; it shares OPTIONS and the
-		// request-line shape with HTTP, so check the version before HTTP
-		if rtsp.MayStart(snip) {
+		if lineMax > 0 {
 			if err := bufConn.SetReadDeadline(time.Now().Add(mctpPeekTimeout)); err != nil {
 				log.Debug("failed to set peek deadline", producer.ErrAttr(err))
 			}
 			// a timeout still leaves the bytes that arrived
-			if line, _ := bufConn.peekLine(rtspLinePeek); rtsp.LooksLikeRTSP(line) {
-				return tcp.HandleRTSP(ctx, bufConn, md, log, h)
+			_, _ = bufConn.peekLine(lineMax)
+		}
+		buf, _ := bufConn.peek(bufConn.r.Buffered())
+		var candidates []catchAllMatcher
+		for _, m := range gated {
+			if m.match(buf) {
+				candidates = append(candidates, m)
 			}
 		}
-		// HTTP on any port goes to the HTTP handler, with or without Spicy
-		if looksLikeHTTPMethodStart(snip) {
-			req, reqConn, err := peekOrClose(conn, bufConn, httpMethodPeek, log)
-			if err != nil {
-				return nil
+		if len(candidates) > 0 {
+			m := candidates[0]
+			if len(candidates) > 1 {
+				names := make([]string, len(candidates))
+				for i, c := range candidates {
+					names[i] = c.name
+				}
+				m = candidates[pickDispatch(len(candidates))]
+				log.Debug("several protocols match the first client bytes",
+					slog.String("protocol", "tcp"), slog.Any("candidates", names), slog.String("picked", m.name))
 			}
-			bufConn = reqConn
-			if looksLikeHTTPRequest(req) {
-				return handleDetectedHTTP(ctx, bufConn, md, log, h)
-			}
-			snip = req[:min(len(req), 4)]
+			return m.handle(ctx, bufConn, md, log, h)
 		}
 		if viper.GetBool("spicy.enabled") {
 			if protocol, ok := parseTCPProtocol(snip, log); ok && protocol == "http" {
@@ -291,6 +246,120 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		return tcp.HandleTCPWith(ctx, bufConn, md, log, h, opts)
 	}
 }
+
+// catchAllMatcher detects one protocol the catch-all hands to a dedicated
+// handler instead of answering with a canned banner.
+type catchAllMatcher struct {
+	name string
+	// peek reports whether snip (up to the first four client bytes) could
+	// start the protocol, and how many bytes match needs to see.
+	peek func(snip []byte) (int, bool)
+	// line peeks up to the end of the request line (at most the peek
+	// length) instead of waiting for all of the bytes.
+	line bool
+	// match checks every buffered client byte, which may be more than the
+	// peek length.
+	match  func(b []byte) bool
+	handle func(context.Context, BufferedConn, connection.Metadata, interfaces.Logger, interfaces.Honeypot) error
+}
+
+// fixedPeek gates on a check of the first bytes and peeks n of them.
+func fixedPeek(n int, gate func(snip []byte) bool) func([]byte) (int, bool) {
+	return func(snip []byte) (int, bool) { return n, gate(snip) }
+}
+
+func asBuffered(fn tcpHandler) func(context.Context, BufferedConn, connection.Metadata, interfaces.Logger, interfaces.Honeypot) error {
+	return func(ctx context.Context, conn BufferedConn, md connection.Metadata, log interfaces.Logger, h interfaces.Honeypot) error {
+		return fn(ctx, conn, md, log, h)
+	}
+}
+
+// catchAllMatchers are evaluated together on the first client bytes; when
+// several match, pickDispatch chooses the handler.
+var catchAllMatchers = []catchAllMatcher{
+	{
+		// SSH clients on moved ports send their identification string first
+		name:   "ssh",
+		peek:   fixedPeek(4, func(snip []byte) bool { return bytes.HasPrefix(snip, []byte("SSH-")) }),
+		match:  func(b []byte) bool { return bytes.HasPrefix(b, []byte("SSH-")) },
+		handle: asBuffered(tcp.HandleSSH),
+	},
+	{
+		// proxy checkers send SOCKS requests to any port; the request is the
+		// whole first segment, so peek for all of it before deciding
+		name: "socks",
+		peek: fixedPeek(socks.MaxSOCKS4Request, func(snip []byte) bool {
+			return snip[0] == socks.Version4 || snip[0] == socks.Version5
+		}),
+		match:  func(b []byte) bool { return socks.LooksLikeSOCKS(b[:min(len(b), socks.MaxSOCKS4Request)]) },
+		handle: asBuffered(tcp.HandleSOCKS),
+	},
+	{
+		// RDP scanners probe moved RDP on any port; the CR's TPKT length
+		// varies with the cookie, so check the framing rather than a prefix
+		name:   "rdp",
+		peek:   fixedPeek(rdpPeekLen, func(snip []byte) bool { return snip[0] == 0x03 }),
+		match:  rdp.LooksLikeConnectionRequest,
+		handle: asBuffered(tcp.HandleRDP),
+	},
+	{
+		// SQL Server scanners send PRELOGIN to moved instances on any port;
+		// check the header and first option token, not just the type byte
+		name:   "mssql",
+		peek:   fixedPeek(mssqlPeekLen, func(snip []byte) bool { return snip[0] == mssql.TypePrelogin }),
+		match:  mssql.LooksLikePrelogin,
+		handle: asBuffered(tcp.HandleMSSQL),
+	},
+	{
+		// Firebird scanners (nmap, Shodan) send op_connect to moved servers;
+		// check the operation and connect version, not just the opcode
+		name: "firebird",
+		peek: fixedPeek(firebird.ConnectPeekLen, func(snip []byte) bool {
+			return bytes.Equal(snip, []byte{0, 0, 0, firebird.OpConnect})
+		}),
+		match:  firebird.LooksLikeConnect,
+		handle: asBuffered(tcp.HandleFirebird),
+	},
+	{
+		// ADB scanners also probe devices that moved adbd off 5555; the
+		// four-byte snip holds the whole CNXN command
+		name:   "adb",
+		peek:   fixedPeek(4, adb.LooksLikeADB),
+		match:  func(b []byte) bool { return adb.LooksLikeADB(b[:min(len(b), 4)]) },
+		handle: asBuffered(tcp.HandleADB),
+	},
+	{
+		// Minecraft server-list scanners (matscan) ping any port; the
+		// Handshake is short and arrives whole, so peek for all of it
+		name:   "minecraft",
+		peek:   minecraft.HandshakeLen,
+		match:  minecraft.LooksLikeHandshake,
+		handle: asBuffered(tcp.HandleMinecraft),
+	},
+	{
+		// camera scanners probe RTSP on any port; it shares OPTIONS and the
+		// request-line shape with HTTP, so it peeks the whole request line
+		name:   "rtsp",
+		peek:   fixedPeek(rtspLinePeek, rtsp.MayStart),
+		line:   true,
+		match:  func(b []byte) bool { return rtsp.LooksLikeRTSP(b[:min(len(b), rtspLinePeek)]) },
+		handle: asBuffered(tcp.HandleRTSP),
+	},
+	{
+		// HTTP on any port goes to the HTTP handler, with or without Spicy;
+		// an RTSP request line (OPTIONS ... RTSP/1.0) is not HTTP
+		name: "http",
+		peek: fixedPeek(httpMethodPeek, looksLikeHTTPMethodStart),
+		match: func(b []byte) bool {
+			return looksLikeHTTPRequest(b) && !rtsp.LooksLikeRTSP(b[:min(len(b), rtspLinePeek)])
+		},
+		handle: handleDetectedHTTP,
+	},
+}
+
+// pickDispatch chooses among n matching protocols; it is replaced in tests
+// for a deterministic choice.
+var pickDispatch = func(n int) int { return rand.IntN(n) }
 
 // looksLikeHTTPMethodStart reports whether b could begin an HTTP request
 // line, so dispatch peeks far enough to see the whole method.

@@ -202,3 +202,32 @@ func TestHTTP2ReplyFrames(t *testing.T) {
 	require.Empty(t, frames[2].payload)
 	require.Equal(t, make([]byte, 8), frames[3].payload) // last stream 0, NO_ERROR
 }
+
+func TestForPayloadPicksAmongCandidates(t *testing.T) {
+	origMatchers, origPick := payloadMatchers, pickCandidate
+	t.Cleanup(func() { payloadMatchers, pickCandidate = origMatchers, origPick })
+
+	always := func(name string) func([]byte) (Response, bool) {
+		return func([]byte) (Response, bool) { return Response{Name: name}, true }
+	}
+	never := func([]byte) (Response, bool) { return Response{Name: "never"}, false }
+	payloadMatchers = []func([]byte) (Response, bool){always("a"), never, always("b")}
+
+	var got []Response
+	pickCandidate = func(candidates []Response) Response {
+		got = candidates
+		return candidates[len(candidates)-1]
+	}
+	resp, ok := ForPayload([]byte("x"))
+	require.True(t, ok)
+	require.Equal(t, "b", resp.Name)
+	require.Equal(t, []Response{{Name: "a"}, {Name: "b"}}, got)
+
+	// the default picker only returns a matching candidate
+	pickCandidate = origPick
+	for range 20 {
+		resp, ok := ForPayload([]byte("x"))
+		require.True(t, ok)
+		require.Contains(t, []string{"a", "b"}, resp.Name)
+	}
+}

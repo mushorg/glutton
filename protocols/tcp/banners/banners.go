@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"math/rand/v2"
 	"strconv"
 	"time"
 
@@ -242,34 +243,72 @@ func ForPort(port uint16) (Response, bool) {
 	return Response{}, false
 }
 
-// ForPayload matches the first client bytes against protocol signatures; it
-// takes precedence over the port response.
-func ForPayload(data []byte) (Response, bool) {
-	switch {
-	case bytes.HasPrefix(data, []byte("SSH-")):
-		return Response{Name: "ssh", Data: sshBanner}, true
-	case helpers.LooksLikeTLSHandshakeRecord(data):
-		return Response{Name: "tls-alert", Data: tlsAlert}, true
-	case bytes.HasPrefix(data, h2Preface):
-		return Response{Name: "http2-settings", Data: h2Reply}, true
-	case mglnddProbe.Match(data):
-		return Response{Name: "mglndd", Silent: true}, true
-	}
-	if msgID, ok := ldapRootDSEQuery(data); ok {
+// payloadMatchers are the client-first protocol signatures ForPayload checks.
+// Each returns the response for data and whether it matched.
+var payloadMatchers = []func(data []byte) (Response, bool){
+	func(data []byte) (Response, bool) {
+		return Response{Name: "ssh", Data: sshBanner}, bytes.HasPrefix(data, []byte("SSH-"))
+	},
+	func(data []byte) (Response, bool) {
+		return Response{Name: "tls-alert", Data: tlsAlert}, helpers.LooksLikeTLSHandshakeRecord(data)
+	},
+	func(data []byte) (Response, bool) {
+		return Response{Name: "http2-settings", Data: h2Reply}, bytes.HasPrefix(data, h2Preface)
+	},
+	func(data []byte) (Response, bool) {
+		return Response{Name: "mglndd", Silent: true}, mglnddProbe.Match(data)
+	},
+	func(data []byte) (Response, bool) {
+		msgID, ok := ldapRootDSEQuery(data)
+		if !ok {
+			return Response{}, false
+		}
 		return Response{Name: "ldap-rootdse", Data: ldapRootDSEReply(msgID)}, true
-	}
-	if resp, ok := bitcoinReply(data); ok {
-		return resp, true
-	}
-	if isFoxHello(data) {
+	},
+	bitcoinReply,
+	func(data []byte) (Response, bool) {
+		if !isFoxHello(data) {
+			return Response{}, false
+		}
 		return Response{Name: "niagara-fox-hello", Data: foxHello(foxIdentity)}, true
-	}
-	if isTNSConnect(data) {
+	},
+	func(data []byte) (Response, bool) {
+		if !isTNSConnect(data) {
+			return Response{}, false
+		}
 		// the listener hangs up after refusing a connect
 		return Response{Name: "tns-refuse", Data: tnsRefuse(tnsRefuseData), Close: true}, true
-	}
-	if order, ok := isX11Setup(data); ok {
+	},
+	func(data []byte) (Response, bool) {
+		order, ok := isX11Setup(data)
+		if !ok {
+			return Response{}, false
+		}
 		return Response{Name: "x11-denied", Data: x11Failed(order, x11Reason)}, true
+	},
+}
+
+// pickCandidate chooses among the responses of every matching signature; it
+// is replaced in tests for a deterministic choice.
+var pickCandidate = func(candidates []Response) Response {
+	return candidates[rand.IntN(len(candidates))]
+}
+
+// ForPayload matches the first client bytes against protocol signatures; it
+// takes precedence over the port response. Every signature is evaluated and,
+// when several match, one of their responses is picked at random.
+func ForPayload(data []byte) (Response, bool) {
+	var candidates []Response
+	for _, match := range payloadMatchers {
+		if resp, ok := match(data); ok {
+			candidates = append(candidates, resp)
+		}
 	}
-	return Response{}, false
+	switch len(candidates) {
+	case 0:
+		return Response{}, false
+	case 1:
+		return candidates[0], true
+	}
+	return pickCandidate(candidates), true
 }

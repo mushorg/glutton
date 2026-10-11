@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/spicy"
 	"github.com/mushorg/glutton/protocols/tcp/banners"
 	"github.com/mushorg/glutton/protocols/tcp/firebird"
@@ -359,4 +360,38 @@ func TestCatchAllConnectLookalikeStaysTCP(t *testing.T) {
 	require.NotZero(t, n)
 
 	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllPicksAmongMatchingProtocols(t *testing.T) {
+	origMatchers, origPick := catchAllMatchers, pickDispatch
+	t.Cleanup(func() { catchAllMatchers, pickDispatch = origMatchers, origPick })
+
+	var handled []string
+	stub := func(name string, need int, matches bool) catchAllMatcher {
+		return catchAllMatcher{
+			name:  name,
+			peek:  fixedPeek(need, func([]byte) bool { return true }),
+			match: func(b []byte) bool { return matches && string(b) == "ABCDEFGH" },
+			handle: func(_ context.Context, conn BufferedConn, _ connection.Metadata, _ interfaces.Logger, _ interfaces.Honeypot) error {
+				handled = append(handled, name)
+				return conn.Close()
+			},
+		}
+	}
+	// the longest peek covers every gated matcher before any match runs
+	catchAllMatchers = []catchAllMatcher{stub("a", 4, true), stub("b", 8, false), stub("c", 8, true)}
+
+	var choices []int
+	pickDispatch = func(n int) int {
+		choices = append(choices, n)
+		return n - 1
+	}
+	names := dispatchTarget(t, "tcp", 7001, func(c net.Conn) {
+		_, err := c.Write([]byte("ABCDEFGH"))
+		require.NoError(t, err)
+		_, _ = c.Read(make([]byte, 1))
+	})
+	require.Empty(t, names)
+	require.Equal(t, []int{2}, choices)
+	require.Equal(t, []string{"c"}, handled)
 }

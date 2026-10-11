@@ -18,7 +18,7 @@ The connection ends with one of these `endReason` values:
 
 The reply is a canned service response from `protocols/tcp/banners` (from honeytrap, per mushorg/glutton#53). It is picked in this order:
 
-1. **Payload signature.** Sets `command` on the read.
+1. **Payload signature.** Sets `command` on the read. Every signature is checked; if more than one matches, one of them is picked at random.
 2. **Destination port.**
 3. **Random bytes** otherwise.
 
