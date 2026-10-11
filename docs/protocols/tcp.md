@@ -32,6 +32,7 @@ Writes set `status` to the response name or `random`.
 | TLS handshake record (`16 03 00`–`04`, or TLCP `16 01 01` from GmSSL/Tongsuo) that is not a complete ClientHello | `tls-alert` | TLS alert |
 | Complete TLS ClientHello | `tls-clienthello` | TLS handshake, see [TLS ClientHello](#tls-clienthello) |
 | HTTP/2 client preface `PRI * HTTP/2.0` (h2c prior knowledge) | `http2-settings` | nginx-style SETTINGS, WINDOW_UPDATE, SETTINGS ACK and GOAWAY (NO_ERROR) on stream 0 |
+| Oracle TNS CONNECT (packet type `01`, version 300–319, connect descriptor in the packet) | `tns-refuse` | Oracle 19c listener REFUSE (`ERR=12504`, `VSNNUM=318767104`), then the connection closes |
 | X11 connection setup | `x11-denied` | Setup Failed reply "No protocol specified" in the client's byte order |
 | LDAP root DSE search (empty base, scope baseObject) | `ldap-rootdse` | OpenLDAP-style SearchResultEntry plus SearchResultDone, echoing the messageID |
 | Bitcoin mainnet P2P message (magic `f9 be b4 d9`, NUL-padded printable command) | `bitcoin-<command>` (`bitcoin` for an unlisted command) | `version` gets a Bitcoin Core 28.1 `version` (protocol 70016, current timestamp, start height grown from the 2024 halving, zeroed addresses) plus `verack`; a `ping` gets a `pong` with its nonce; other messages get no reply and the connection stays open |

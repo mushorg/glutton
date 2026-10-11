@@ -408,6 +408,31 @@ func TestHandleTCPX11Denied(t *testing.T) {
 	}, events)
 }
 
+func TestHandleTCPTNSRefuse(t *testing.T) {
+	// LZR Oracle probe from Ochi event 0120c865-1ddd-4a2d-aa00-ad87334839cc (tcp/3309)
+	client, hp, done := startCatchAll(t, 3309)
+
+	probe, err := hex.DecodeString(
+		"006d0000010000000138012c0c412000ffff7f08000001000033003a00000800" +
+			"4141" + "000000000000000000000000000000000000000000000000")
+	require.NoError(t, err)
+	probe = append(probe, "(DESCRIPTION=(CONNECT_DATA=(CID=(PROGRAM=lzrORA))))"...)
+	_, err = client.Write(probe)
+	require.NoError(t, err)
+	want, ok := banners.ForPayload(probe)
+	require.True(t, ok)
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	require.Equal(t, want.Data, reply)
+
+	produced := finishCatchAllProduced(t, client, hp, done)
+	require.Equal(t, connection.EndHandlerClose, produced.endReason)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Command: "tns-refuse", Payload: probe, PayloadHash: helpers.SHA256Hex(probe)},
+		{Direction: "write", Status: "tns-refuse", Payload: want.Data, PayloadHash: helpers.SHA256Hex(want.Data)},
+	}, produced.decoded)
+}
+
 func TestHandleTCPSilentReplies(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

@@ -264,6 +264,10 @@ func ForPayload(data []byte) (Response, bool) {
 	if isFoxHello(data) {
 		return Response{Name: "niagara-fox-hello", Data: foxHello(foxIdentity)}, true
 	}
+	if isTNSConnect(data) {
+		// the listener hangs up after refusing a connect
+		return Response{Name: "tns-refuse", Data: tnsRefuse(tnsRefuseData), Close: true}, true
+	}
 	if order, ok := isX11Setup(data); ok {
 		return Response{Name: "x11-denied", Data: x11Failed(order, x11Reason)}, true
 	}
