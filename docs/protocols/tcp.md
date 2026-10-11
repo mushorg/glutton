@@ -34,6 +34,7 @@ Writes set `status` to the response name or `random`.
 | HTTP/2 client preface `PRI * HTTP/2.0` (h2c prior knowledge) | `http2-settings` | nginx-style SETTINGS, WINDOW_UPDATE, SETTINGS ACK and GOAWAY (NO_ERROR) on stream 0 |
 | X11 connection setup | `x11-denied` | Setup Failed reply "No protocol specified" in the client's byte order |
 | LDAP root DSE search (empty base, scope baseObject) | `ldap-rootdse` | OpenLDAP-style SearchResultEntry plus SearchResultDone, echoing the messageID |
+| Bitcoin mainnet P2P message (magic `f9 be b4 d9`, NUL-padded printable command) | `bitcoin-<command>` (`bitcoin` for an unlisted command) | `version` gets a Bitcoin Core 28.1 `version` (protocol 70016, current timestamp, start height grown from the 2024 halving, zeroed addresses) plus `verack`; a `ping` gets a `pong` with its nonce; other messages get no reply and the connection stays open |
 | `MGLNDD_<ip>_<port>` scanner probe | `mglndd` | None |
 
 ### Port responses
@@ -49,8 +50,9 @@ Writes set `status` to the response name or `random`.
 | 4899 | `radmin` | |
 | 8009 | `ajp-404` | |
 | 8126 | `statsd-stats` | Etsy statsd management console `stats` block ending in `END\n\n`, with uptime and `last_*` deltas from the clock |
+| 8333 | `bitcoin` | Sends nothing and hangs up, as bitcoind does with bytes that are not its network magic |
 
-Silent responses (`mglndd`, `ldap`) leave only the `read` frame, with no `write`. Clients that send nothing get no reply.
+Silent responses (`mglndd`, `ldap`, `bitcoin` on 8333) leave only the `read` frame, with no `write`. A Bitcoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message. Clients that send nothing get no reply.
 
 ## TLS ClientHello
 

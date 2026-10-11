@@ -3,7 +3,10 @@ package tcp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net"
@@ -387,6 +390,7 @@ func TestHandleTCPSilentReplies(t *testing.T) {
 		{"mglndd on ldap", 389, []byte("MGLNDD_1.2.3.4_389\n"), "mglndd"},
 		{"mglndd elsewhere", 9999, []byte("MGLNDD_1.2.3.4_9999\n"), "mglndd"},
 		{"non-ber on ldap", 389, []byte("GET / HTTP/1.0\r\n\r\n"), ""},
+		{"no magic on bitcoin", 8333, []byte("\x16\x00junk\r\n"), ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client, hp, done := startCatchAll(t, tc.port)
@@ -427,6 +431,54 @@ func TestHandleTCPLDAPRootDSE(t *testing.T) {
 	require.Equal(t, []parsedTCP{
 		{Direction: "read", Command: "ldap-rootdse", Payload: search, PayloadHash: helpers.SHA256Hex(search)},
 		{Direction: "write", Status: "ldap-rootdse", Payload: reply, PayloadHash: helpers.SHA256Hex(reply)},
+	}, events)
+}
+
+// btcMsg frames a mainnet Bitcoin P2P message.
+func btcMsg(command string, payload []byte) []byte {
+	sum := sha256.Sum256(payload)
+	sum = sha256.Sum256(sum[:])
+	b := append([]byte{0xf9, 0xbe, 0xb4, 0xd9}, make([]byte, 20)...)
+	copy(b[4:16], command)
+	binary.LittleEndian.PutUint32(b[16:20], uint32(len(payload)))
+	copy(b[20:24], sum[:4])
+	return append(b, payload...)
+}
+
+func TestHandleTCPBitcoinHandshake(t *testing.T) {
+	client, hp, done := startCatchAll(t, 8333)
+
+	// version from Ochi event d268c172-a0c7-4e2f-9277-be1d97cc7b86
+	version, err := hex.DecodeString("f9beb4d976657273696f6e000000000055000000cdea8e08409c00000100000000000000" +
+		"dea61666000000000100000000000000578b7fa2000000000000000000000000208d0100" +
+		"0000000000000a96000a000000000000000000000000afa852734183843401a100000000" +
+		"00")
+	require.NoError(t, err)
+	_, err = client.Write(version)
+	require.NoError(t, err)
+	// version (24 + 102) then verack (24)
+	reply := readAll(t, client, 150)
+	require.Equal(t, append([]byte{0xf9, 0xbe, 0xb4, 0xd9}, "version\x00\x00\x00\x00\x00"...), reply[:16])
+	require.Equal(t, btcMsg("verack", nil), reply[126:])
+
+	// verack + getaddr need no answer; the next ping still gets its pong
+	verack := append(btcMsg("verack", nil), btcMsg("getaddr", nil)...)
+	_, err = client.Write(verack)
+	require.NoError(t, err)
+	nonce := []byte{8, 7, 6, 5, 4, 3, 2, 1}
+	ping := btcMsg("ping", nonce)
+	_, err = client.Write(ping)
+	require.NoError(t, err)
+	pong := readAll(t, client, 32)
+	require.Equal(t, btcMsg("pong", nonce), pong)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Command: "bitcoin-version", Payload: version, PayloadHash: helpers.SHA256Hex(version)},
+		{Direction: "write", Status: "bitcoin-version", Payload: reply, PayloadHash: helpers.SHA256Hex(reply)},
+		{Direction: "read", Command: "bitcoin-verack", Payload: verack, PayloadHash: helpers.SHA256Hex(verack)},
+		{Direction: "read", Command: "bitcoin-ping", Payload: ping, PayloadHash: helpers.SHA256Hex(ping)},
+		{Direction: "write", Status: "bitcoin-ping", Payload: pong, PayloadHash: helpers.SHA256Hex(pong)},
 	}, events)
 }
 

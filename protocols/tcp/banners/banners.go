@@ -29,6 +29,9 @@ type Response struct {
 	// Silent means the client's bytes get no reply, as a real service does
 	// with input it cannot parse.
 	Silent bool
+	// NoReply means the client's bytes get no reply but the connection stays
+	// open for its next message, as a peer does with one that needs no answer.
+	NoReply bool
 	// Close means the service hangs up after this reply (HTTP sends
 	// Connection: close), so no further client messages are answered.
 	Close bool
@@ -224,6 +227,9 @@ func ForPort(port uint16) (Response, bool) {
 	case 389:
 		// LDAP servers drop input that is not an LDAPMessage they answer
 		return Response{Name: "ldap", Silent: true}, true
+	case 8333:
+		// bitcoind disconnects a peer whose first bytes are not its network magic
+		return Response{Name: "bitcoin", Silent: true}, true
 	}
 	return Response{}, false
 }
@@ -243,6 +249,9 @@ func ForPayload(data []byte) (Response, bool) {
 	}
 	if msgID, ok := ldapRootDSEQuery(data); ok {
 		return Response{Name: "ldap-rootdse", Data: ldapRootDSEReply(msgID)}, true
+	}
+	if resp, ok := bitcoinReply(data); ok {
+		return resp, true
 	}
 	if order, ok := isX11Setup(data); ok {
 		return Response{Name: "x11-denied", Data: x11Failed(order, x11Reason)}, true
