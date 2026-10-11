@@ -114,6 +114,9 @@ func (p *Producer) makeEventTCP(handler string, conn net.Conn, md connection.Met
 		Decoded:   decoded,
 	}
 	fillEnvelope(&event, md, payload, decoded, p.sensorVersion)
+	if event.Scanner == "" {
+		event.Scanner = scanner.ClassifyPayload(handler, event.PayloadHash)
+	}
 	return &event, nil
 }
 
@@ -144,5 +147,8 @@ func (p *Producer) makeEventUDP(handler string, srcAddr, dstAddr *net.UDPAddr, m
 		Decoded:   decoded,
 	}
 	fillEnvelope(&event, md, payload, decoded, p.sensorVersion)
+	if event.Scanner == "" {
+		event.Scanner = scanner.ClassifyPayload(handler, event.PayloadHash)
+	}
 	return &event, nil
 }

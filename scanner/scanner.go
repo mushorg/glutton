@@ -94,3 +94,19 @@ func IsScanner(ip net.IP) (bool, string, error) {
 	}
 	return name != "", name, nil
 }
+
+// payloadFleets labels scanner fleets that are recognized by what they send
+// rather than where they come from, keyed by handler and the SHA-256 of the
+// event's top-level payload. These are behavioral labels, not attributions.
+var payloadFleets = map[string]map[string]string{
+	// X.224 CR without cookie, requesting TLS|CredSSP|EarlyAuth, followed by an
+	// SPNEGO NTLM login for Administrator (Ochi 9f62fb02, f28ba1c0).
+	"rdp": {
+		"0003c8efa0acdc0c6540f4bdb920f6bcabdd01d0ed98e0f21938144c44e121a5": "rdp-nla-prober",
+	},
+}
+
+// ClassifyPayload returns the fleet label for a handler and payload hash, or "".
+func ClassifyPayload(handler, payloadHash string) string {
+	return payloadFleets[handler][payloadHash]
+}

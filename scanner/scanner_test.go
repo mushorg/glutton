@@ -19,3 +19,10 @@ func TestIsScanner(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, matched, "IP should be a scanner")
 }
+
+func TestClassifyPayload(t *testing.T) {
+	const h = "0003c8efa0acdc0c6540f4bdb920f6bcabdd01d0ed98e0f21938144c44e121a5"
+	require.Equal(t, "rdp-nla-prober", ClassifyPayload("rdp", h))
+	require.Empty(t, ClassifyPayload("tcp", h))
+	require.Empty(t, ClassifyPayload("rdp", "deadbeef"))
+}

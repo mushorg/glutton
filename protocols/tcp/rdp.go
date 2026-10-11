@@ -3,6 +3,7 @@ package tcp
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,21 +19,26 @@ import (
 // parsedRDP is one frame of an RDP session. Header is nil for TLS and CredSSP
 // frames (they carry no TPKT framing); it is set for all X.224/TPKT PDUs.
 type parsedRDP struct {
-	Direction       string          `json:"direction,omitempty"`
-	Command         string          `json:"command,omitempty"`
-	Status          string          `json:"status,omitempty"`
-	Cookie          string          `json:"cookie,omitempty"`
-	Protocols       string          `json:"protocols,omitempty"`
-	NTLMDomain      string          `json:"ntlm_domain,omitempty"`
-	NTLMUser        string          `json:"ntlm_user,omitempty"`
-	NTLMWorkstation string          `json:"ntlm_workstation,omitempty"`
-	NTLMVersion     string          `json:"ntlm_version,omitempty"`
-	ChannelID       uint16          `json:"channel_id,omitempty"`
-	ClientData      *rdp.ClientData `json:"client_data,omitempty"`
-	ClientInfo      *rdp.ClientInfo `json:"client_info,omitempty"`
-	Header          *rdp.TKIPHeader `json:"header,omitempty"`
-	Payload         []byte          `json:"payload,omitempty"`
-	Truncated       bool            `json:"truncated,omitempty"`
+	Direction       string `json:"direction,omitempty"`
+	Command         string `json:"command,omitempty"`
+	Status          string `json:"status,omitempty"`
+	Cookie          string `json:"cookie,omitempty"`
+	Protocols       string `json:"protocols,omitempty"`
+	NTLMDomain      string `json:"ntlm_domain,omitempty"`
+	NTLMUser        string `json:"ntlm_user,omitempty"`
+	NTLMWorkstation string `json:"ntlm_workstation,omitempty"`
+	NTLMVersion     string `json:"ntlm_version,omitempty"`
+	// NTLMServerChallenge is the hex Type 2 challenge we sent; with the NT
+	// response in Payload it is all that is needed to crack the exchange.
+	NTLMServerChallenge string          `json:"ntlm_server_challenge,omitempty"`
+	NTResponseLen       int             `json:"nt_response_len,omitempty"`
+	SPNEGO              bool            `json:"spnego,omitempty"`
+	ChannelID           uint16          `json:"channel_id,omitempty"`
+	ClientData          *rdp.ClientData `json:"client_data,omitempty"`
+	ClientInfo          *rdp.ClientInfo `json:"client_info,omitempty"`
+	Header              *rdp.TKIPHeader `json:"header,omitempty"`
+	Payload             []byte          `json:"payload,omitempty"`
+	Truncated           bool            `json:"truncated,omitempty"`
 }
 
 const (
@@ -260,6 +266,7 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	// rd is the raw connection until the client starts TLS, then the decrypted one.
 	rd := conn
 	var ntlmNegotiateFlags uint32
+	var serverChallenge []byte
 	tlsDone := false
 	for {
 		if len(server.events) >= rdpMaxFrames {
@@ -326,14 +333,16 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			switch parsed.NTLMType {
 			case rdp.NTLMMsgNegotiate:
 				fr.Command = rdp.CmdNTLMNegotiate
+				fr.SPNEGO = parsed.SPNEGO
 				ntlmNegotiateFlags = parsed.NegotiateFlags
 				server.events = append(server.events, fr)
 				logger.Debug("rdp CredSSP NTLM Negotiate", slog.String("protocol", "rdp"), slog.Int("bytes", len(raw)))
 				computer, domain := rdp.Identity()
-				resp, err := rdp.BuildTSRequestChallengeWith(rdp.NTLMChallengeOptions{
+				resp, nonce, err := rdp.BuildTSRequestChallengeNonce(rdp.NTLMChallengeOptions{
 					Computer:    computer,
 					Domain:      domain,
 					ClientFlags: ntlmNegotiateFlags,
+					SPNEGO:      parsed.SPNEGO,
 				})
 				if err != nil {
 					endReason = connection.EndWriteError
@@ -343,18 +352,31 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 					endReason = connection.EndWriteError
 					return err
 				}
+				serverChallenge = nonce
 			case rdp.NTLMMsgAuthenticate:
 				fr.Command = rdp.CmdNTLMAuthenticate
+				fr.SPNEGO = parsed.SPNEGO
 				fr.NTLMDomain = parsed.Domain
 				fr.NTLMUser = parsed.Username
 				fr.NTLMWorkstation = parsed.Workstation
 				fr.NTLMVersion = parsed.NTLMVersion
+				fr.NTResponseLen = parsed.NTResponseLen
+				fr.NTLMServerChallenge = hex.EncodeToString(serverChallenge)
 				server.events = append(server.events, fr)
 				logger.Debug("rdp CredSSP NTLM Authenticate",
 					slog.String("protocol", "rdp"),
 					slog.String("domain", parsed.Domain),
 					slog.String("user", parsed.Username),
 				)
+				// Fail the logon like Windows does so brute-forcers see a bad
+				// password, not a dropped connection, and try their next guess.
+				if err := server.writeFrame(parsedRDP{
+					Command: rdp.CmdTSRequest,
+					Status:  "STATUS_LOGON_FAILURE",
+					Payload: rdp.BuildTSRequestError(rdp.StatusLogonFailure),
+				}); err != nil {
+					logger.Debug("Failed to write CredSSP error", slog.String("protocol", "rdp"), producer.ErrAttr(err))
+				}
 				return nil
 			default:
 				fr.Command = rdp.CmdTSRequest

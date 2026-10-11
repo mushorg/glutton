@@ -1,6 +1,7 @@
 package rdp
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"time"
@@ -48,7 +49,10 @@ const filetimeEpochDiff = int64(116444736000000000)
 
 // ParsedCredSSP holds data extracted from a CredSSP TSRequest.
 type ParsedCredSSP struct {
-	NTLMType       int    `json:"ntlm_type,omitempty"`
+	NTLMType int `json:"ntlm_type,omitempty"`
+	// SPNEGO is set when the NTLM message arrived inside a SPNEGO token
+	// (GSS NegTokenInit or NegTokenResp), as Windows clients send it.
+	SPNEGO         bool   `json:"spnego,omitempty"`
 	NegotiateFlags uint32 `json:"negotiate_flags,omitempty"` // set on Type 1 (Negotiate)
 	Domain         string `json:"domain,omitempty"`
 	Username       string `json:"username,omitempty"`
@@ -56,6 +60,8 @@ type ParsedCredSSP struct {
 	// NTLMVersion is "NTLMv1", "NTLMv2", or "anonymous", from the length of
 	// the Type 3 NtChallengeResponse. The response itself is not kept.
 	NTLMVersion string `json:"ntlm_version,omitempty"`
+	// NTResponseLen is the NtChallengeResponse length on Type 3.
+	NTResponseLen int `json:"nt_response_len,omitempty"`
 }
 
 // ParseCredSSP extracts structured data from a CredSSP TSRequest.
@@ -63,11 +69,11 @@ type ParsedCredSSP struct {
 // For a Type 3 (Authenticate) it populates Domain, Username, and Workstation
 // from the UTF-16LE payload fields.
 func ParseCredSSP(data []byte) ParsedCredSSP {
-	ntlm := negoTokenFromTSRequest(data)
+	ntlm, wrapped := unwrapSPNEGO(negoTokenFromTSRequest(data))
 	if len(ntlm) < 12 || string(ntlm[:8]) != ntlmSig {
 		return ParsedCredSSP{}
 	}
-	out := ParsedCredSSP{NTLMType: int(binary.LittleEndian.Uint32(ntlm[8:12]))}
+	out := ParsedCredSSP{SPNEGO: wrapped, NTLMType: int(binary.LittleEndian.Uint32(ntlm[8:12]))}
 	switch out.NTLMType {
 	case NTLMMsgNegotiate:
 		if len(ntlm) >= 16 {
@@ -78,7 +84,8 @@ func ParseCredSSP(data []byte) ParsedCredSSP {
 		out.Username = readNTLMUTF16Field(ntlm, 36)
 		out.Workstation = readNTLMUTF16Field(ntlm, 44)
 		if len(ntlm) >= 22 {
-			out.NTLMVersion = ntlmVersion(int(binary.LittleEndian.Uint16(ntlm[20:22])))
+			out.NTResponseLen = int(binary.LittleEndian.Uint16(ntlm[20:22]))
+			out.NTLMVersion = ntlmVersion(out.NTResponseLen)
 		}
 	}
 	return out
@@ -110,6 +117,9 @@ type NTLMChallengeOptions struct {
 	ClientFlags uint32
 	// Now is used for the MsvAvTimestamp AvPair. Zero → time.Now().
 	Now time.Time
+	// SPNEGO wraps the Challenge in a NegTokenResp, which is what a client
+	// expects when its Negotiate arrived inside SPNEGO.
+	SPNEGO bool
 }
 
 // BuildTSRequestChallenge builds a CredSSP TSRequest carrying a random NTLM
@@ -123,14 +133,96 @@ func BuildTSRequestChallenge() ([]byte, error) {
 // options. It is used by the RDP handler so the Challenge identity matches the
 // TLS certificate and so that VERSION is included when the client asks for it.
 func BuildTSRequestChallengeWith(opts NTLMChallengeOptions) ([]byte, error) {
+	out, _, err := BuildTSRequestChallengeNonce(opts)
+	return out, err
+}
+
+// BuildTSRequestChallengeNonce is BuildTSRequestChallengeWith that also
+// returns the 8-byte server challenge, which is needed to crack the
+// NTLMv2 response the client sends in its Authenticate.
+func BuildTSRequestChallengeNonce(opts NTLMChallengeOptions) (tsRequest, serverChallenge []byte, err error) {
 	challenge := make([]byte, 8)
 	if _, err := rand.Read(challenge); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if opts.Now.IsZero() {
 		opts.Now = time.Now()
 	}
-	return WrapTSRequest(buildNTLMChallenge(challenge, opts)), nil
+	msg := buildNTLMChallenge(challenge, opts)
+	if opts.SPNEGO {
+		msg = wrapNegTokenResp(msg)
+	}
+	return WrapTSRequest(msg), challenge, nil
+}
+
+// StatusLogonFailure is NTSTATUS STATUS_LOGON_FAILURE.
+const StatusLogonFailure uint32 = 0xC000006D
+
+// BuildTSRequestError builds the CredSSP TSRequest a Windows server sends when
+// authentication fails: SEQUENCE { [0] version 6, [4] errorCode NTSTATUS }.
+func BuildTSRequestError(status uint32) []byte {
+	// DER INTEGER is signed: prefix 0x00 when the high bit is set.
+	code := []byte{byte(status >> 24), byte(status >> 16), byte(status >> 8), byte(status)}
+	if code[0]&0x80 != 0 {
+		code = append([]byte{0}, code...)
+	}
+	version := derTLV(0xa0, derTLV(0x02, []byte{0x06}))
+	return derTLV(0x30, append(version, derTLV(0xa4, derTLV(0x02, code))...))
+}
+
+var (
+	// oidSPNEGO is 1.3.6.1.5.5.2 (value bytes only).
+	oidSPNEGO = []byte{0x2b, 0x06, 0x01, 0x05, 0x05, 0x02}
+	// oidNTLMSSP is 1.3.6.1.4.1.311.2.2.10 (value bytes only).
+	oidNTLMSSP = []byte{0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37, 0x02, 0x02, 0x0a}
+)
+
+// wrapNegTokenResp builds a SPNEGO NegTokenResp (RFC 4178) with negState
+// accept-incomplete, supportedMech NTLMSSP and the NTLM message as responseToken.
+func wrapNegTokenResp(ntlm []byte) []byte {
+	var b []byte
+	b = append(b, derTLV(0xa0, derTLV(0x0a, []byte{0x01}))...)
+	b = append(b, derTLV(0xa1, derTLV(0x06, oidNTLMSSP))...)
+	b = append(b, derTLV(0xa2, derTLV(0x04, ntlm))...)
+	return derTLV(0xa1, derTLV(0x30, b))
+}
+
+// unwrapSPNEGO returns the NTLM message inside a SPNEGO token and whether the
+// token was SPNEGO. Accepted forms: GSS InitialContextToken (0x60) carrying a
+// NegTokenInit, a bare NegTokenInit (0xa0) and a NegTokenResp (0xa1). Anything
+// else (raw NTLM, malformed DER) is returned unchanged with false.
+func unwrapSPNEGO(tok []byte) ([]byte, bool) {
+	if len(tok) < 2 {
+		return tok, false
+	}
+	var neg []byte // the [0] NegTokenInit or [1] NegTokenResp
+	switch tok[0] {
+	case 0x60:
+		inner := derValue(tok, 0x60)
+		t, oid, rest := derNext(inner)
+		if t != 0x06 || !bytes.Equal(oid, oidSPNEGO) {
+			return tok, false
+		}
+		neg = rest
+	case 0xa0, 0xa1:
+		neg = tok
+	default:
+		return tok, false
+	}
+	if len(neg) == 0 || (neg[0] != 0xa0 && neg[0] != 0xa1) {
+		return tok, false
+	}
+	seq := derValue(derValue(neg, neg[0]), 0x30)
+	for len(seq) > 0 {
+		var tag byte
+		var val []byte
+		tag, val, seq = derNext(seq)
+		// mechToken (NegTokenInit) and responseToken (NegTokenResp) are both [2].
+		if tag == 0xa2 {
+			return derValue(val, 0x04), true
+		}
+	}
+	return nil, true
 }
 
 // WrapTSRequest wraps an NTLM message in a CredSSP TSRequest (version 6).

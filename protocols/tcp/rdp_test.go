@@ -393,6 +393,11 @@ func TestHandleRDPCredSSPExchange(t *testing.T) {
 	// Send NTLM Authenticate inside a TSRequest.
 	_, err = tlsClient.Write(rdp.WrapTSRequest(makeNTLMAuthenticate("ACME", "jsmith")))
 	require.NoError(t, err)
+	failure := make([]byte, 64)
+	fn, err := tlsClient.Read(failure)
+	require.NoError(t, err)
+	// SEQUENCE { [0] 6, [4] INTEGER 0xC000006D }
+	require.Equal(t, []byte{0x30, 0x0e, 0xa0, 0x03, 0x02, 0x01, 0x06, 0xa4, 0x07, 0x02, 0x05, 0x00, 0xc0, 0x00, 0x00, 0x6d}, failure[:fn])
 
 	select {
 	case err := <-done:
@@ -403,8 +408,8 @@ func TestHandleRDPCredSSPExchange(t *testing.T) {
 
 	produced := waitProduced(t, hp)
 	events := produced.decoded.([]parsedRDP)
-	// CR, CC, TLSClientHello, TLSHandshake, NTLMNegotiate, NTLMChallenge, NTLMAuthenticate
-	require.Len(t, events, 7)
+	// CR, CC, TLSClientHello, TLSHandshake, NTLMNegotiate, NTLMChallenge, NTLMAuthenticate, TSRequest error
+	require.Len(t, events, 8)
 
 	require.Equal(t, "NTLMNegotiate", events[4].Command)
 	require.Equal(t, "read", events[4].Direction)
@@ -418,6 +423,11 @@ func TestHandleRDPCredSSPExchange(t *testing.T) {
 	require.Equal(t, "read", events[6].Direction)
 	require.Equal(t, "ACME", events[6].NTLMDomain)
 	require.Equal(t, "jsmith", events[6].NTLMUser)
+	require.Len(t, events[6].NTLMServerChallenge, 16, "hex of the 8-byte server challenge")
+	require.Equal(t, 0, events[6].NTResponseLen)
+	require.Equal(t, "write", events[7].Direction)
+	require.Equal(t, "TSRequest", events[7].Command)
+	require.Equal(t, "STATUS_LOGON_FAILURE", events[7].Status)
 
 	select {
 	case extra := <-hp.produced:
@@ -741,8 +751,40 @@ func TestHandleRDPNTLMVersion(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tlsClient.Write(rdp.WrapTSRequest(makeNTLMAuthenticate("ACME", "jsmith")))
 	require.NoError(t, err)
+	_, err = tlsClient.Read(make([]byte, 64))
+	require.NoError(t, err)
 	waitRDPDone(t, done)
 
 	events := waitProduced(t, hp).decoded.([]parsedRDP)
 	require.Equal(t, "anonymous", events[6].NTLMVersion, "empty NtChallengeResponse")
+}
+
+func TestHandleRDPCredSSPSPNEGONegotiate(t *testing.T) {
+	tlsClient, _, done, hp := startRDPTLS(t, rdpCRHello)
+
+	// Captured from Ochi event 9f62fb02-056c-4b1d-9cd5-17a7c51923ec.
+	raw, err := hex.DecodeString("3059a003020106a1523050304ea04c044a604806062b0601050502a03e303ca00e300c060a2b06010401823702020aa22a04284e544c4d5353500001000000058208e0" +
+		"00000000000000000000000000000000" + "0a0039380000000f")
+	require.NoError(t, err)
+	_, err = tlsClient.Write(raw)
+	require.NoError(t, err)
+
+	buf := make([]byte, 1024)
+	n, err := tlsClient.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, byte(0x30), buf[0])
+	require.Contains(t, string(buf[:n]), "NTLMSSP\x00\x02\x00\x00\x00")
+	require.Contains(t, string(buf[:n]), "\x0a\x01\x01", "negState accept-incomplete")
+	require.NoError(t, tlsClient.Close())
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	events := waitProduced(t, hp).decoded.([]parsedRDP)
+	require.Equal(t, "NTLMNegotiate", events[4].Command)
+	require.True(t, events[4].SPNEGO)
+	require.Equal(t, "NTLMChallenge", events[5].Command)
 }

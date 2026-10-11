@@ -1,6 +1,8 @@
 package rdp
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -37,4 +39,18 @@ func TestIdentityFromViper(t *testing.T) {
 	computer, domain := Identity()
 	require.Equal(t, "MYSERVER", computer)
 	require.Equal(t, "CORP", domain)
+}
+
+func TestPersistedComputerNameStable(t *testing.T) {
+	dir := t.TempDir()
+	a := persistedComputerName(dir)
+	require.Regexp(t, computerNameRE, a)
+	require.Equal(t, a, persistedComputerName(dir), "same var-dir, same name")
+	require.NotEqual(t, a, persistedComputerName(t.TempDir()), "different sensor, different name")
+}
+
+func TestPersistedComputerNameIgnoresGarbage(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rdp_computer_name"), []byte("bad"), 0o644))
+	require.Regexp(t, computerNameRE, persistedComputerName(dir))
 }
