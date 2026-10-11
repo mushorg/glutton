@@ -47,7 +47,7 @@ Events are emitted only when (1) `producers.enabled` is true so a producer objec
 
 ### TLS details
 
-`tls` is set when the rule has `tls: true`, or `tls: auto` and the client opened with a ClientHello, or when the `tcp` catch-all terminated a complete ClientHello itself (its first `decoded` frame is then the raw `tls-clienthello` read, followed by a `tls-handshake` write for the server flight; if the decrypted traffic is HTTP, the event is an `http` event instead and has no such frames). `decoded` and `payload` then hold the decrypted plaintext protocol, so a display should say that the session was TLS. When the handshake fails mid-flight there is no top-level `tls` object, but the catch-all still records the `tls-handshake` write.
+`tls` is set when the rule has `tls: true`, or `tls: auto` and the client opened with a ClientHello, or when the `tcp` catch-all terminated a complete ClientHello itself (its first `decoded` frame is then the raw `tls-clienthello` read, followed by a `tls-handshake` write for the server flight; if the decrypted traffic is HTTP, the event is an `http` event instead and has no such frames). `decoded` and `payload` then hold the decrypted plaintext protocol, so a display should say that the session was TLS. When the handshake fails mid-flight there is no top-level `tls` object, but the catch-all still records the `tls-handshake` write. If the honeypot could not send its flight (`endReason` `write_error`), that write has an `error` field (`reply over budget` when the `tcp_reply_limit` guard dropped it, otherwise `write failed`) and may have no `payload`.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -161,6 +161,7 @@ Example shape:
 | `jabber` | TCP | [protocols/jabber.md](protocols/jabber.md) |
 | `pop3` | TCP | [protocols/pop3.md](protocols/pop3.md) |
 | `whois` | TCP | [protocols/whois.md](protocols/whois.md) |
+| `ident` | TCP | [protocols/ident.md](protocols/ident.md) |
 | `adb` | TCP | [protocols/adb.md](protocols/adb.md) |
 | `smb` | TCP | [protocols/smb.md](protocols/smb.md) |
 | `rdp` | TCP | [protocols/rdp.md](protocols/rdp.md) |

@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/guard"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/banners"
@@ -642,6 +644,46 @@ func TestHandleTCPTLSClientHelloOchiMidHandshakeRecordsWrite(t *testing.T) {
 	require.Equal(t, []string{"http/1.1"}, events[0].ClientHello.ALPN)
 	require.Equal(t, "t12i4905h1_730fb1b0ac6a_22a92d800fe4", events[0].ClientHello.JA4)
 	requireTLSHandshakeWrite(t, events[1])
+}
+
+// limitedConn rejects every write like a guard.Conn over its reply budget.
+type limitedConn struct{ net.Conn }
+
+func (limitedConn) Write([]byte) (int, error) { return 0, guard.ErrLimited }
+
+func TestHandleTCPTLSHandshakeWriteLimited(t *testing.T) {
+	// Ochi event a5b61788-ad65-4f9e-b391-9d03d156cc7d: same JA4 as 406ec717
+	// on tcp/15780, but no server flight went out; the event had only the
+	// read frame and endReason read_error.
+	client, hp, done := startCatchAllWith(t, 15780, func(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+		return HandleTCP(ctx, limitedConn{Conn: conn}, md, logger, h)
+	})
+	_, err := client.Write(tlsMidhsOchi406ec717)
+	require.NoError(t, err)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	produced := waitProduced(t, hp)
+	require.Equal(t, "tcp", produced.protocol)
+	require.Empty(t, hp.produced, "exactly one event per session")
+	require.Nil(t, produced.tls)
+	require.Equal(t, connection.EndWriteError, produced.endReason)
+	events := produced.decoded.([]parsedTCP)
+	require.Len(t, events, 2)
+	require.Equal(t, "tls-clienthello", events[0].Command)
+	require.Equal(t, tlsMidhsOchi406ec717, events[0].Payload)
+	require.Equal(t, "t12i4905h1_730fb1b0ac6a_22a92d800fe4", events[0].ClientHello.JA4)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "tls-handshake", Error: "reply over budget"}, events[1])
+}
+
+func TestWriteErrorName(t *testing.T) {
+	require.Empty(t, writeErrorName(nil))
+	require.Equal(t, "reply over budget", writeErrorName(fmt.Errorf("tls: %w", guard.ErrLimited)))
+	require.Equal(t, "write failed", writeErrorName(io.ErrClosedPipe))
 }
 
 func TestHandleTCPTLCPClientHello(t *testing.T) {

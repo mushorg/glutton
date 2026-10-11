@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
+	"github.com/mushorg/glutton/protocols/guard"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/banners"
@@ -28,6 +30,7 @@ type parsedTCP struct {
 	Payload     []byte   `json:"payload,omitempty"`
 	PayloadHash string   `json:"payload_hash,omitempty"`
 	Shellcode   []string `json:"shellcode,omitempty"` // shellcode heuristics that matched the read payload
+	Error       string   `json:"error,omitempty"`     // why a write failed (tls-handshake writes): "reply over budget" or "write failed"
 	// TLS ClientHello fingerprint fields (tls_version, ja3, ja4, ...) on a
 	// tls-clienthello or tls-alert read, flattened into the frame.
 	*helpers.ClientHello
@@ -53,11 +56,13 @@ type tcpServer struct {
 }
 
 // tcpWriteRecorder copies what is written to the connection while on is set,
-// so the server's side of the TLS handshake can be stored as one frame.
+// so the server's side of the TLS handshake can be stored as one frame. err
+// keeps the first write error seen while on.
 type tcpWriteRecorder struct {
 	net.Conn
 	buf bytes.Buffer
 	on  bool
+	err error
 }
 
 func (c *tcpWriteRecorder) Write(b []byte) (int, error) {
@@ -65,7 +70,23 @@ func (c *tcpWriteRecorder) Write(b []byte) (int, error) {
 	if c.on && n > 0 {
 		c.buf.Write(b[:n])
 	}
+	if c.on && err != nil && c.err == nil {
+		c.err = err
+	}
 	return n, err
+}
+
+// writeErrorName names a failed write for the error field of a write frame:
+// empty for nil, "reply over budget" when the reply guard dropped it.
+func writeErrorName(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, guard.ErrLimited):
+		return "reply over budget"
+	default:
+		return "write failed"
+	}
 }
 
 func randomReply() ([]byte, error) {
@@ -281,18 +302,23 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			rec := &tcpWriteRecorder{Conn: conn, on: true}
 			tlsConn, info, err := helpers.TerminateTLSFrom(rec, io.MultiReader(bytes.NewReader(data), conn))
 			rec.on = false
-			if rec.buf.Len() > 0 {
-				hs := append([]byte(nil), rec.buf.Bytes()...)
-				server.events = append(server.events, parsedTCP{
-					Direction:   "write",
-					Status:      tlsHandshake,
-					PayloadHash: helpers.SHA256Hex(hs),
-					Payload:     hs,
-				})
+			// A failed write still gets a frame (possibly without payload),
+			// so the event shows the honeypot tried to answer and why it could not.
+			if rec.buf.Len() > 0 || rec.err != nil {
+				frame := parsedTCP{Direction: "write", Status: tlsHandshake, Error: writeErrorName(rec.err)}
+				if rec.buf.Len() > 0 {
+					frame.Payload = append([]byte(nil), rec.buf.Bytes()...)
+					frame.PayloadHash = helpers.SHA256Hex(frame.Payload)
+				}
+				server.events = append(server.events, frame)
 			}
 			if err != nil {
 				logger.Debug("TLS handshake failed", slog.String("protocol", "tcp"), producer.ErrAttr(err))
-				endReason = connection.EndReasonFromRead(err)
+				if rec.err != nil {
+					endReason = connection.EndWriteError
+				} else {
+					endReason = connection.EndReasonFromRead(err)
+				}
 				return nil
 			}
 			md.TLS = info

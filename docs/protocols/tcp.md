@@ -2,7 +2,7 @@
 
 Transport: TCP. Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `status`, `payload`, `payload_hash`, `shellcode` (heuristic indicators matched in a read payload, when any), and on `tls-clienthello` / `tls-alert` reads `tls_version`, `cipher_suites`, `extensions`, `groups`, `sni`, `alpn`, `ja3`, `ja3n`, `ja4`, `ja4_r`. A completed or partial TLS termination adds a `write` with `status` `tls-handshake` holding the server flight (and any fatal alert).
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `status`, `payload`, `payload_hash`, `shellcode` (heuristic indicators matched in a read payload, when any), and on `tls-clienthello` / `tls-alert` reads `tls_version`, `cipher_suites`, `extensions`, `groups`, `sni`, `alpn`, `ja3`, `ja3n`, `ja4`, `ja4_r`. A completed or partial TLS termination adds a `write` with `status` `tls-handshake` holding the server flight (and any fatal alert). When a handshake write failed, that frame also has `error` (`reply over budget` when the `tcp_reply_limit` guard dropped it, otherwise `write failed`) and may have no `payload`.
 
 ## Session flow
 
@@ -62,7 +62,7 @@ Silent responses (`mglndd`, `ldap`, `bitcoin` on 8333, `niagara-fox` on 1911) le
 A complete ClientHello is tagged `tls-clienthello`. The handler then:
 
 - finishes the handshake with the shared self-signed certificate (`helpers.TerminateTLSFrom`) and sets the event's `tls` object;
-- records a `write` frame with `status` `tls-handshake` for the server's handshake flight (also when the client hangs up mid-handshake or crypto/tls sends a fatal alert);
+- records a `write` frame with `status` `tls-handshake` for the server's handshake flight (also when the client hangs up mid-handshake or crypto/tls sends a fatal alert). If a handshake write fails, the frame is still recorded, with an `error` field (`reply over budget` for a `tcp_reply_limit` drop, otherwise `write failed`) and only the bytes that went out, and the event's `endReason` is `write_error`;
 - hands the session to the `http` handler when the first decrypted message is an HTTP request (HTTPS scanners on ports without a `tls:` rule). The produced event is then an `http` event with the `tls` object, and there is no `tcp` event and no `tls-clienthello` frame;
 - otherwise answers the next decrypted client message exactly like a plaintext first message (signature, then port response, then random bytes);
 - sends a server-first port banner inside the tunnel right after the handshake.

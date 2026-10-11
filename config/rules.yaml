@@ -41,6 +41,9 @@ rules:
   - match: tcp dst port 43
     type: conn_handler
     target: whois
+  - match: tcp dst port 113
+    type: conn_handler
+    target: ident
   - match: tcp dst port 11211
     type: conn_handler
     target: memcache
