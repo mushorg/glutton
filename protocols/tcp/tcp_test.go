@@ -430,6 +430,15 @@ func TestHandleTCPLDAPRootDSE(t *testing.T) {
 	}, events)
 }
 
+func requireTLSHandshakeWrite(t *testing.T, ev parsedTCP) {
+	t.Helper()
+	require.Equal(t, "write", ev.Direction)
+	require.Equal(t, "tls-handshake", ev.Status)
+	require.NotEmpty(t, ev.Payload)
+	require.Equal(t, byte(0x16), ev.Payload[0], "server flight starts with a handshake record")
+	require.Equal(t, helpers.SHA256Hex(ev.Payload), ev.PayloadHash)
+}
+
 func TestHandleTCPTLSClientHelloDisconnectMidHandshake(t *testing.T) {
 	// ClientHello from Ochi event 5c99acb5-9d55-4846-90e7-30a6b2c0a135 (tcp/48392)
 	hello, err := os.ReadFile("../helpers/testdata/clienthello_go_mlkem.bin")
@@ -445,24 +454,24 @@ func TestHandleTCPTLSClientHelloDisconnectMidHandshake(t *testing.T) {
 	produced := finishCatchAllProduced(t, client, hp, done)
 	require.Nil(t, produced.tls, "no TLS session was established")
 	events := produced.decoded.([]parsedTCP)
-	require.Equal(t, []parsedTCP{
-		{
-			Direction:   "read",
-			Command:     "tls-clienthello",
-			Payload:     hello,
-			PayloadHash: helpers.SHA256Hex(hello),
-			ClientHello: &helpers.ClientHello{
-				Version:      "TLS 1.3",
-				CipherSuites: []uint16{0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc009, 0xc013, 0xc00a, 0xc014, 0x1301, 0x1302, 0x1303},
-				Extensions:   []uint16{11, 65281, 23, 18, 5, 10, 13, 50, 43, 51},
-				Groups:       []uint16{0x11ec, 29, 23, 24, 25},
-				JA3:          "2196848d251b217de8b2c037e356c11d",
-				JA3N:         "b7ccbdce26a8fceae75284808afcc065",
-				JA4:          "t13i131000_f57a46bbacb6_ab7e3b40a677",
-				JA4R:         "t13i131000_1301,1302,1303,c009,c00a,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,002b,0032,0033,ff01_0804,0403,0807,0805,0806,0401,0501,0601,0503,0603",
-			},
+	require.Len(t, events, 2)
+	require.Equal(t, parsedTCP{
+		Direction:   "read",
+		Command:     "tls-clienthello",
+		Payload:     hello,
+		PayloadHash: helpers.SHA256Hex(hello),
+		ClientHello: &helpers.ClientHello{
+			Version:      "TLS 1.3",
+			CipherSuites: []uint16{0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc009, 0xc013, 0xc00a, 0xc014, 0x1301, 0x1302, 0x1303},
+			Extensions:   []uint16{11, 65281, 23, 18, 5, 10, 13, 50, 43, 51},
+			Groups:       []uint16{0x11ec, 29, 23, 24, 25},
+			JA3:          "2196848d251b217de8b2c037e356c11d",
+			JA3N:         "b7ccbdce26a8fceae75284808afcc065",
+			JA4:          "t13i131000_f57a46bbacb6_ab7e3b40a677",
+			JA4R:         "t13i131000_1301,1302,1303,c009,c00a,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,002b,0032,0033,ff01_0804,0403,0807,0805,0806,0401,0501,0601,0503,0603",
 		},
-	}, events)
+	}, events[0])
+	requireTLSHandshakeWrite(t, events[1])
 
 	// fingerprint fields are flattened into the read frame
 	raw, err := json.Marshal(events[0])
@@ -474,6 +483,29 @@ func TestHandleTCPTLSClientHelloDisconnectMidHandshake(t *testing.T) {
 	require.Equal(t, "b7ccbdce26a8fceae75284808afcc065", frame["ja3n"])
 	require.Contains(t, frame, "ja4_r")
 	require.NotContains(t, frame, "sni")
+}
+
+// Ochi event 406ec717-1e7e-4c86-a8df-368e9076bf1b: TLS 1.2 ClientHello
+// (ALPN http/1.1, no SNI) on tcp/50268; client left mid-handshake.
+var tlsMidhsOchi406ec717 = []byte("\x16\x03\x01\x00\xdd\x01\x00\x00\xd9\x03\x03`\x9a\x95\xceQr\xaeS\xf3\xc0\x1a!\xfe\xb1\x15\x96\xb0\xa7/\xcep^\xa7j\x9e\xca\x12\x16\xe1\xd3\xe4C\x00\x00b\xc00\xc0,\xc0/\xc0+\x00\x9f\x00\x9e\xc02\xc0.\xc01\xc0-\x00\xa5\x00\xa1\x00\xa4\x00\xa0\xc0(\xc0$\xc0\x14\xc0\n\xc0*\xc0&\xc0\x0f\xc0\x05\xc0'\xc0#\xc0\x13\xc0\t\xc0)\xc0%\xc0\x0e\xc0\x04\x00k\x00i\x00h\x009\x007\x006\x00g\x00?\x00>\x003\x001\x000\x00\x9d\x00\x9c\x00=\x005\x00<\x00/\x00\xff\x01\x00\x00N\x00\x0b\x00\x04\x03\x00\x01\x02\x00\n\x00\n\x00\x08\x00\x17\x00\x19\x00\x18\x00\x16\x00\r\x00 \x00\x1e\x06\x01\x06\x02\x06\x03\x05\x01\x05\x02\x05\x03\x04\x01\x04\x02\x04\x03\x03\x01\x03\x02\x03\x03\x02\x01\x02\x02\x02\x03\x00\x0f\x00\x01\x01\x00\x10\x00\x0b\x00\t\x08http/1.1")
+
+func TestHandleTCPTLSClientHelloOchiMidHandshakeRecordsWrite(t *testing.T) {
+	client, hp, done := startCatchAll(t, 50268)
+	_, err := client.Write(tlsMidhsOchi406ec717)
+	require.NoError(t, err)
+	require.Equal(t, byte(0x16), readAll(t, client, 5)[0])
+
+	produced := finishCatchAllProduced(t, client, hp, done)
+	require.Nil(t, produced.tls)
+	events := produced.decoded.([]parsedTCP)
+	require.Len(t, events, 2)
+	require.Equal(t, "tls-clienthello", events[0].Command)
+	require.Equal(t, tlsMidhsOchi406ec717, events[0].Payload)
+	require.NotNil(t, events[0].ClientHello)
+	require.Equal(t, "TLS 1.2", events[0].ClientHello.Version)
+	require.Equal(t, []string{"http/1.1"}, events[0].ClientHello.ALPN)
+	require.Equal(t, "t12i4905h1_730fb1b0ac6a_22a92d800fe4", events[0].ClientHello.JA4)
+	requireTLSHandshakeWrite(t, events[1])
 }
 
 func TestHandleTCPTLCPClientHello(t *testing.T) {
@@ -494,7 +526,7 @@ func TestHandleTCPTLCPClientHello(t *testing.T) {
 	produced := finishCatchAllProduced(t, client, hp, done)
 	require.Nil(t, produced.tls, "no TLS session was established")
 	events := produced.decoded.([]parsedTCP)
-	require.Len(t, events, 1)
+	require.Len(t, events, 2)
 	require.Equal(t, "read", events[0].Direction)
 	require.Equal(t, "tls-clienthello", events[0].Command)
 	require.Equal(t, hello, events[0].Payload)
@@ -503,6 +535,7 @@ func TestHandleTCPTLCPClientHello(t *testing.T) {
 	require.Equal(t, "TLS 1.3", events[0].ClientHello.Version)
 	require.Equal(t, "snongel.com", events[0].ClientHello.SNI)
 	require.Equal(t, "t13d1715h2_e08a0f08260f_de4a06bb82e3", events[0].ClientHello.JA4)
+	requireTLSHandshakeWrite(t, events[1])
 }
 
 // startCatchAllTCP runs the catch-all on a loopback TCP connection; a TLS 1.3
@@ -556,14 +589,15 @@ func TestHandleTCPTLSTerminatesAndReplies(t *testing.T) {
 	require.Equal(t, "TLS 1.3", produced.tls.Version)
 	require.Empty(t, produced.tls.ServerName)
 	events := produced.decoded.([]parsedTCP)
-	require.Len(t, events, 3)
+	require.Len(t, events, 4)
 	require.Equal(t, "read", events[0].Direction)
 	require.Equal(t, "tls-clienthello", events[0].Command)
 	require.NotNil(t, events[0].ClientHello)
 	require.Equal(t, "TLS 1.3", events[0].ClientHello.Version)
 	require.Equal(t, byte(0x16), events[0].Payload[0])
-	require.Equal(t, parsedTCP{Direction: "read", Payload: req, PayloadHash: helpers.SHA256Hex(req)}, events[1])
-	require.Equal(t, parsedTCP{Direction: "write", Status: "http", Payload: reply, PayloadHash: helpers.SHA256Hex(reply)}, events[2])
+	requireTLSHandshakeWrite(t, events[1])
+	require.Equal(t, parsedTCP{Direction: "read", Payload: req, PayloadHash: helpers.SHA256Hex(req)}, events[2])
+	require.Equal(t, parsedTCP{Direction: "write", Status: "http", Payload: reply, PayloadHash: helpers.SHA256Hex(reply)}, events[3])
 }
 
 func TestHandleTCPTLSHandshakeOnlyClient(t *testing.T) {
@@ -576,8 +610,9 @@ func TestHandleTCPTLSHandshakeOnlyClient(t *testing.T) {
 	require.NotNil(t, produced.tls)
 	require.Equal(t, connection.EndClientClose, produced.endReason)
 	events := produced.decoded.([]parsedTCP)
-	require.Len(t, events, 1)
+	require.Len(t, events, 2)
 	require.Equal(t, "tls-clienthello", events[0].Command)
+	requireTLSHandshakeWrite(t, events[1])
 }
 
 func TestHandleTCPTLSAlertMalformedHello(t *testing.T) {

@@ -39,6 +39,9 @@ const (
 	tlsAlert = "tls-alert"
 	// tlsClientHello tags a complete ClientHello the catch-all terminated.
 	tlsClientHello = "tls-clienthello"
+	// tlsHandshake is the status on the write frame that holds the server's
+	// TLS handshake flight (and any alert sent when the handshake fails).
+	tlsHandshake = "tls-handshake"
 	// maxExchanges caps the client messages the catch-all answers on one
 	// connection (a TLS ClientHello does not count).
 	maxExchanges = 4
@@ -47,6 +50,22 @@ const (
 type tcpServer struct {
 	events []parsedTCP
 	conn   net.Conn
+}
+
+// tcpWriteRecorder copies what is written to the connection while on is set,
+// so the server's side of the TLS handshake can be stored as one frame.
+type tcpWriteRecorder struct {
+	net.Conn
+	buf bytes.Buffer
+	on  bool
+}
+
+func (c *tcpWriteRecorder) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	if c.on && n > 0 {
+		c.buf.Write(b[:n])
+	}
+	return n, err
 }
 
 func randomReply() ([]byte, error) {
@@ -257,7 +276,20 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 				endReason = connection.EndTimeout
 				return err
 			}
-			tlsConn, info, err := helpers.TerminateTLSFrom(conn, io.MultiReader(bytes.NewReader(data), conn))
+			// Record the server flight (and any fatal alert) so a client that
+			// hangs up mid-handshake still shows that the honeypot answered.
+			rec := &tcpWriteRecorder{Conn: conn, on: true}
+			tlsConn, info, err := helpers.TerminateTLSFrom(rec, io.MultiReader(bytes.NewReader(data), conn))
+			rec.on = false
+			if rec.buf.Len() > 0 {
+				hs := append([]byte(nil), rec.buf.Bytes()...)
+				server.events = append(server.events, parsedTCP{
+					Direction:   "write",
+					Status:      tlsHandshake,
+					PayloadHash: helpers.SHA256Hex(hs),
+					Payload:     hs,
+				})
+			}
 			if err != nil {
 				logger.Debug("TLS handshake failed", slog.String("protocol", "tcp"), producer.ErrAttr(err))
 				endReason = connection.EndReasonFromRead(err)
@@ -322,10 +354,12 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		if resp.Silent {
 			return nil
 		}
-		if err := server.write(resp.Data, resp.Name); err != nil {
-			logger.Error("write error", slog.String("handler", "tcp"), producer.ErrAttr(err))
-			endReason = connection.EndWriteError
-			return nil
+		if !resp.NoReply {
+			if err := server.write(resp.Data, resp.Name); err != nil {
+				logger.Error("write error", slog.String("handler", "tcp"), producer.ErrAttr(err))
+				endReason = connection.EndWriteError
+				return nil
+			}
 		}
 		if resp.Close {
 			return nil

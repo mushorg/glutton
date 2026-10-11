@@ -153,11 +153,13 @@ func TestCatchAllTLSNonHTTPStaysTCP(t *testing.T) {
 	})
 	require.Equal(t, "tcp", ev.protocol)
 	require.NotNil(t, ev.md.TLS)
-	require.Len(t, ev.frames, 3)
+	require.Len(t, ev.frames, 4)
 	require.Equal(t, "tls-clienthello", ev.frames[0]["command"])
-	require.Equal(t, "read", ev.frames[1]["direction"])
-	require.Equal(t, "write", ev.frames[2]["direction"])
-	require.Equal(t, "random", ev.frames[2]["status"])
+	require.Equal(t, "write", ev.frames[1]["direction"])
+	require.Equal(t, "tls-handshake", ev.frames[1]["status"])
+	require.Equal(t, "read", ev.frames[2]["direction"])
+	require.Equal(t, "write", ev.frames[3]["direction"])
+	require.Equal(t, "random", ev.frames[3]["status"])
 }
 
 func TestCatchAllTLSHandshakeOnly(t *testing.T) {
@@ -167,8 +169,10 @@ func TestCatchAllTLSHandshakeOnly(t *testing.T) {
 	require.Equal(t, "tcp", ev.protocol)
 	require.NotNil(t, ev.md.TLS)
 	require.Equal(t, connection.EndClientClose, ev.md.EndReason)
-	require.Len(t, ev.frames, 1)
+	require.Len(t, ev.frames, 2)
 	require.Equal(t, "tls-clienthello", ev.frames[0]["command"])
+	require.Equal(t, "write", ev.frames[1]["direction"])
+	require.Equal(t, "tls-handshake", ev.frames[1]["status"])
 }
 
 func TestCatchAllUppercaseNonHTTPStaysTCP(t *testing.T) {

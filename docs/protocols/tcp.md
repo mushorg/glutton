@@ -2,7 +2,7 @@
 
 Transport: TCP. Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `status`, `payload`, `payload_hash`, `shellcode` (heuristic indicators matched in a read payload, when any), and on `tls-clienthello` / `tls-alert` reads `tls_version`, `cipher_suites`, `extensions`, `groups`, `sni`, `alpn`, `ja3`, `ja3n`, `ja4`, `ja4_r`
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `status`, `payload`, `payload_hash`, `shellcode` (heuristic indicators matched in a read payload, when any), and on `tls-clienthello` / `tls-alert` reads `tls_version`, `cipher_suites`, `extensions`, `groups`, `sni`, `alpn`, `ja3`, `ja3n`, `ja4`, `ja4_r`. A completed or partial TLS termination adds a `write` with `status` `tls-handshake` holding the server flight (and any fatal alert).
 
 ## Session flow
 
@@ -57,11 +57,12 @@ Silent responses (`mglndd`, `ldap`) leave only the `read` frame, with no `write`
 A complete ClientHello is tagged `tls-clienthello`. The handler then:
 
 - finishes the handshake with the shared self-signed certificate (`helpers.TerminateTLSFrom`) and sets the event's `tls` object;
+- records a `write` frame with `status` `tls-handshake` for the server's handshake flight (also when the client hangs up mid-handshake or crypto/tls sends a fatal alert);
 - hands the session to the `http` handler when the first decrypted message is an HTTP request (HTTPS scanners on ports without a `tls:` rule). The produced event is then an `http` event with the `tls` object, and there is no `tcp` event and no `tls-clienthello` frame;
 - otherwise answers the next decrypted client message exactly like a plaintext first message (signature, then port response, then random bytes);
 - sends a server-first port banner inside the tunnel right after the handshake.
 
-Frames after the handshake hold plaintext. A client that hangs up during or right after the handshake leaves only the `tls-clienthello` read.
+Frames after the handshake hold plaintext. A client that hangs up during or right after the handshake leaves the `tls-clienthello` read and the `tls-handshake` write (no top-level `tls` object when the handshake never completed).
 
 ### Fingerprint fields
 
@@ -77,7 +78,7 @@ A `tls-clienthello` read, and a `tls-alert` read that still parses, carries the 
 | `ja4` | FoxIO JA4 string |
 | `ja4_r` | Raw JA4: sorted cipher and extension lists, signature algorithms in clear |
 
-Parsing uses `helpers.ParseClientHello`, a lenient parser that reassembles a hello split over several records. It still fingerprints hellos crypto/tls rejects, such as duplicate extensions or an SNI with a trailing dot. Such a hello is tagged `tls-clienthello`, crypto/tls then fails the handshake with a `decode_error` alert, and only the read frame remains.
+Parsing uses `helpers.ParseClientHello`, a lenient parser that reassembles a hello split over several records. It still fingerprints hellos crypto/tls rejects, such as duplicate extensions or an SNI with a trailing dot. Such a hello is tagged `tls-clienthello`; crypto/tls then fails the handshake with a `decode_error` alert, and the `tls-handshake` write holds that alert flight.
 
 ## Server-first banners
 
