@@ -44,6 +44,9 @@ rules:
   - match: tcp dst port 113
     type: conn_handler
     target: ident
+  - match: tcp dst port 111
+    type: conn_handler
+    target: rpcbind
   - match: tcp dst port 11211
     type: conn_handler
     target: memcache
@@ -149,6 +152,9 @@ rules:
   - match: udp dst port 48899
     type: conn_handler
     target: hiflying
+  - match: udp dst port 111
+    type: conn_handler
+    target: rpcbind
   - match: udp
     type: conn_handler
     target: udp

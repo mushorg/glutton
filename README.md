@@ -88,6 +88,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | Redis                       | INFO recon, cron/SSH-key writes, rogue-master SLAVEOF, AUTH guesses on tcp/6379, any port |
 | Minecraft (Java)            | server-list ping, login attempts on tcp/25565 |
 | SOCKS 4/4a/5 proxy          | open-proxy checks on tcp/1080, 4145, any port |
+| ONC RPC portmapper/rpcbind  | `rpcinfo`-style DUMP/GETPORT probes on tcp/111, udp/111 |
 | HiSilicon DVR (MCTP)        | `HI_SRDK_*` control calls on tcp/9000    |
 | RTSP (IP cameras)           | OPTIONS/DESCRIBE and credential attempts on tcp/554, 8554, 10554 |
 | Catch-all service banners   | POP3/RFB greetings, MSSQL/AJP/RPC replies |

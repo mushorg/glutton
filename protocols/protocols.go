@@ -104,6 +104,7 @@ func MapUDPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"rtps":        bindUDP(udp.HandleRTPS, log, h),
 		"wsdiscovery": bindUDP(udp.HandleWSDiscovery, log, h),
 		"hiflying":    bindUDP(udp.HandleHiFlying, log, h),
+		"rpcbind":     bindUDP(udp.HandleRPCBind, log, h),
 		"proxy_udp":   bindUDP(udp.HandleProxyUDP, log, h),
 		"udp":         bindUDP(udp.HandleUDP, log, h),
 	}
@@ -128,6 +129,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"pop3":       bindTCP(tcp.HandlePOP3, log, h),
 		"whois":      bindTCP(tcp.HandleWHOIS, log, h),
 		"ident":      bindTCP(tcp.HandleIdent, log, h),
+		"rpcbind":    bindTCP(tcp.HandleRPCBind, log, h),
 		"adb":        adbOrTCP(log, h),
 		"mongodb":    bindTCP(tcp.HandleMongoDB, log, h),
 		"mssql":      bindTCP(tcp.HandleMSSQL, log, h),
