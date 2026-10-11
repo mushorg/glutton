@@ -12,6 +12,7 @@ import (
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/spicy"
 	"github.com/mushorg/glutton/protocols/tcp/banners"
+	"github.com/mushorg/glutton/protocols/tcp/firebird"
 	"github.com/mushorg/glutton/protocols/tcp/mssql"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
@@ -322,6 +323,36 @@ func TestCatchAllPreloginLookalikeStaysTCP(t *testing.T) {
 	_, err := client.Write([]byte{0x12, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x42, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 	require.NoError(t, err)
 	// the catch-all waits for a next message: read just the reply
+	reply := make([]byte, 4096)
+	n, err := client.Read(reply)
+	require.NoError(t, err)
+	require.NotZero(t, n)
+
+	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllRoutesOffPortFirebird(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 13050)
+
+	// nmap op_connect from Ochi event e0fc5f6b-f5e3-4d4f-b68d-e2366279125c
+	probe := []byte("\x00\x00\x00\x01\x00\x00\x00\x13\x00\x00\x00\x02\x00\x00\x00$\x00\x00\x00\x0bservice_mgr\x00\x00\x00\x00\x02\x00\x00\x00\x13\x01\x08scanner \x04\x05nmap \x06\x00\x00\x00\x00\x00\x08\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x03\x00\x00\x00\x02\x00\x00\x00\n\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x03\x00\x00\x00\x04")
+	_, err := client.Write(probe)
+	require.NoError(t, err)
+	want := firebird.BuildAccept(firebird.Protocol{Version: firebird.ProtocolVersion10, Arch: firebird.ArchGeneric, MaxType: 3})
+	reply := make([]byte, len(want))
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
+	require.Equal(t, want, reply)
+
+	require.Equal(t, "firebird", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllConnectLookalikeStaysTCP(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 9999)
+
+	// opcode 1 but an operation that is not an attach
+	_, err := client.Write([]byte{0, 0, 0, 1, 0, 0, 0, 0x42, 0, 0, 0, 2, 0, 0, 0, 0x24})
+	require.NoError(t, err)
 	reply := make([]byte, 4096)
 	n, err := client.Read(reply)
 	require.NoError(t, err)

@@ -16,6 +16,7 @@ import (
 	spicyHandlers "github.com/mushorg/glutton/protocols/spicy/handlers"
 	"github.com/mushorg/glutton/protocols/tcp"
 	"github.com/mushorg/glutton/protocols/tcp/adb"
+	"github.com/mushorg/glutton/protocols/tcp/firebird"
 	"github.com/mushorg/glutton/protocols/tcp/mctp"
 	"github.com/mushorg/glutton/protocols/tcp/minecraft"
 	"github.com/mushorg/glutton/protocols/tcp/mssql"
@@ -125,6 +126,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"adb":        adbOrTCP(log, h),
 		"mongodb":    bindTCP(tcp.HandleMongoDB, log, h),
 		"mssql":      bindTCP(tcp.HandleMSSQL, log, h),
+		"firebird":   bindTCP(tcp.HandleFirebird, log, h),
 		"minecraft":  bindTCP(tcp.HandleMinecraft, log, h),
 		"socks":      bindTCP(tcp.HandleSOCKS, log, h),
 		"http":       bindTCP(tcp.HandleHTTP, log, h),
@@ -217,6 +219,19 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 				return tcp.HandleMSSQL(ctx, bufConn, md, log, h)
 			}
 			snip = pre[:min(len(pre), 4)]
+		}
+		// Firebird scanners (nmap, Shodan) send op_connect to moved servers;
+		// check the operation and connect version, not just the opcode
+		if bytes.Equal(snip, []byte{0, 0, 0, firebird.OpConnect}) {
+			cnct, cnctConn, err := peekOrClose(conn, bufConn, firebird.ConnectPeekLen, log)
+			if err != nil {
+				return nil
+			}
+			bufConn = cnctConn
+			if firebird.LooksLikeConnect(cnct) {
+				return tcp.HandleFirebird(ctx, bufConn, md, log, h)
+			}
+			snip = cnct[:min(len(cnct), 4)]
 		}
 		// ADB scanners also probe devices that moved adbd off 5555; the
 		// four-byte snip holds the whole CNXN command

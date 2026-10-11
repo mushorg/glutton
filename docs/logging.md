@@ -145,6 +145,7 @@ Example shape:
 | `dicom` | TCP | [protocols/dicom.md](protocols/dicom.md) |
 | `mongodb` | TCP | [protocols/mongodb.md](protocols/mongodb.md) |
 | `mssql` | TCP | [protocols/mssql.md](protocols/mssql.md) |
+| `firebird` | TCP | [protocols/firebird.md](protocols/firebird.md) |
 | `minecraft` | TCP | [protocols/minecraft.md](protocols/minecraft.md) |
 | `socks` | TCP | [protocols/socks.md](protocols/socks.md) |
 | `mcp` | TCP | [protocols/mcp.md](protocols/mcp.md) |

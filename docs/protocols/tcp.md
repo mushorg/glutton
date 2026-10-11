@@ -102,6 +102,10 @@ RDP X.224 Connection Requests (any cookie length) never reach this handler: the 
 
 Older sensors routed only 43-byte CRs, and only with Spicy enabled. Other off-port CRs got `random` writes, which is a handler artifact.
 
+## Firebird
+
+A Firebird `op_connect` (`00000001`, an attach/create/service-attach operation, connect version 2 or 3) never reaches this handler: the catch-all routes it to [`firebird`](firebird.md) on any port, and tcp/3050 has a `firebird` rule. Older sensors answered it with `random`, which is a handler artifact.
+
 ## ADB
 
 An ADB transport `CNXN` (`434e584e`) never reaches this handler: the catch-all routes it to `adb` on any port. Older sensors answered off-port `CNXN` with `random`, which is a handler artifact.

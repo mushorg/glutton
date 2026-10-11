@@ -54,6 +54,9 @@ rules:
   - match: tcp dst port 1433
     type: conn_handler
     target: mssql
+  - match: tcp dst port 3050
+    type: conn_handler
+    target: firebird
   - match: tcp dst port 502
     type: conn_handler
     target: modbus
