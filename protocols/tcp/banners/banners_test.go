@@ -42,7 +42,11 @@ func TestForPort(t *testing.T) {
 		require.True(t, bytes.HasPrefix(resp.Data, c.prefix), "%d: %q", c.port, resp.Data)
 	}
 
-	resp, ok := ForPort(389)
+	resp, ok := ForPort(49)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "tacacs", Silent: true}, resp)
+
+	resp, ok = ForPort(389)
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "ldap", Silent: true}, resp)
 

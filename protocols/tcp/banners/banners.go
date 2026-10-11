@@ -229,6 +229,10 @@ func ForPort(port uint16) (Response, bool) {
 		return Response{Name: "statsd-stats", Data: statsdStats()}, true
 	case 4444:
 		return Response{Name: "cmd-shell", Data: cmdShellBanner, GreetWhenIdle: true}, true
+	case 49:
+		// tac_plus disconnects without a reply on a bad header; AUTHEN
+		// STARTs are matched in ForPayload
+		return Response{Name: "tacacs", Silent: true}, true
 	case 389:
 		// LDAP servers drop input that is not an LDAPMessage they answer
 		return Response{Name: "ldap", Silent: true}, true
@@ -285,6 +289,13 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	},
 	func(data []byte) (Response, bool) {
 		return Response{Name: "teamviewer-pingok", Data: tvPingOK}, isTVPing(data)
+	},
+	func(data []byte) (Response, bool) {
+		if !isTacacsAuthenStart(data) {
+			return Response{}, false
+		}
+		// tac_plus closes a session without single-connect after the reply
+		return Response{Name: "tacacs-authen-error", Data: tacacsAuthenError(data, tacacsKey), Close: true}, true
 	},
 	func(data []byte) (Response, bool) {
 		order, ok := isX11Setup(data)
