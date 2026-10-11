@@ -149,6 +149,9 @@ rules:
   - match: udp dst port 3671
     type: conn_handler
     target: knx
+  - match: udp dst port 520
+    type: conn_handler
+    target: rip
   - match: udp dst port 3702
     type: conn_handler
     target: wsdiscovery
