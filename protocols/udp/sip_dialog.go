@@ -32,12 +32,15 @@ const (
 	// active dialog is produced with endReason evicted. Worst case memory is
 	// about maxSIPDialogs * maxSIPDialogFrames * maxSIPPayload (32 MiB).
 	maxSIPDialogs = 256
-	// defaultSIPRejectInvites is how many new INVITE dialogs per source visit
-	// get 404 before calls are answered (config key sip.reject_invites).
-	// Toll-fraud tools stop at the first prefix that rings, so a few failures
-	// make them reveal more of their dial-prefix list. The count lives in the
-	// recall store and starts over when a source returns after
-	// recall.visit_gap.
+	// defaultSIPRejectInvites is how many new INVITE dialogs in a source's
+	// first visit get 404 before calls are answered (config key
+	// sip.reject_invites). Toll-fraud tools stop at the first prefix that
+	// rings, so a few failures make them reveal more of their dial-prefix
+	// list. Only the first visit rejects: a scanner that sends one INVITE per
+	// visit would otherwise get 404 every time and never see a call ring, be
+	// challenged or be busied by the later variants. The count lives in the
+	// recall store, so it starts over once the source is forgotten
+	// (recall.ttl or eviction).
 	defaultSIPRejectInvites = 2
 )
 
@@ -87,12 +90,13 @@ func sipRejectInvites() int {
 	return defaultSIPRejectInvites
 }
 
-// sipRejectInvite counts a new INVITE dialog in the source's visit and
+// sipRejectInvite counts a new INVITE dialog in the source's first visit and
 // reports whether it is among the first sip.reject_invites of that visit.
-// Without a visit (recall disabled) nothing is rejected.
+// Later visits and sources without a visit (recall disabled) are never
+// rejected.
 func sipRejectInvite(ip net.IP, v sipVisit) bool {
 	limit := sipRejectInvites()
-	if limit <= 0 || v.store == nil {
+	if limit <= 0 || v.store == nil || v.number != 1 {
 		return false
 	}
 	n := v.store.Count("sip", ip, "invite")

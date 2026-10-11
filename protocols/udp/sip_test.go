@@ -865,10 +865,61 @@ func TestHandleSIPInviteRejected(t *testing.T) {
 	advance(59 * time.Minute)
 	sendSIP(t, h, pplsipSrc, inviteWithCallID("call-5"))
 	require.True(t, strings.HasPrefix(string(h.replies[len(h.replies)-1]), "SIP/2.0 180 Ringing\r\n"))
-	// a new visit starts the count over, before its variant applies
+	// only the first visit rejects: visit 2 (auth) challenges right away
 	advance(time.Hour)
 	sendSIP(t, h, pplsipSrc, inviteWithCallID("call-6"))
-	require.True(t, strings.HasPrefix(string(h.replies[len(h.replies)-1]), "SIP/2.0 404 Not Found\r\n"))
+	require.True(t, strings.HasPrefix(string(h.replies[len(h.replies)-1]), "SIP/2.0 401 Unauthorized\r\n"))
+}
+
+// A scanner that sends one INVITE per visit gets the 404 on its first visit
+// only; later visits reach their variant (auth 401, busy 180 then 486,
+// answer 180 then 200).
+func TestHandleSIPInviteRejectFirstVisitOnly(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	sipRejectLimit = 2
+	advance := stubSIPRecall(t)
+	h := &recordingHoneypot{}
+	last := func() string { return string(h.replies[len(h.replies)-1]) }
+
+	// visit 1: rejected; the scanner never ACKs and the 404 times out
+	sendSIP(t, h, pplsipSrc, inviteWithCallID("visit-1"))
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 404 Not Found\r\n"))
+	for _, d := range []time.Duration{sipT1, 2 * sipT1, 4 * sipT1, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2} {
+		timers.fire(t, d)
+	}
+	require.Len(t, h.produced, 1)
+	require.Equal(t, []string{"answer/1", "answer/1"}, writeVariants(t, h.produced[0].decoded)[:2])
+	require.Equal(t, []string{"100", "404"}, statuses(summarizeSIP(t, h.produced[0].decoded))[:2])
+
+	// visit 2 (auth): challenged, not rejected
+	advance(time.Hour)
+	sendSIP(t, h, pplsipSrc, inviteWithCallID("visit-2"))
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 401 Unauthorized\r\n"))
+	for _, d := range []time.Duration{sipT1, 2 * sipT1, 4 * sipT1, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2} {
+		timers.fire(t, d)
+	}
+	require.Len(t, h.produced, 2)
+	require.Equal(t, "auth/2", writeVariants(t, h.produced[1].decoded)[0])
+
+	// visit 3 (busy): rings, then 486
+	advance(time.Hour)
+	sendSIP(t, h, pplsipSrc, inviteWithCallID("visit-3"))
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 180 Ringing\r\n"))
+	timers.fire(t, sipRing)
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 486 Busy Here\r\n"))
+	for _, d := range []time.Duration{sipT1, 2 * sipT1, 4 * sipT1, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2} {
+		timers.fire(t, d)
+	}
+	require.Len(t, h.produced, 3)
+
+	// visit 4 (answer): rings, then 200 with SDP
+	advance(time.Hour)
+	sendSIP(t, h, pplsipSrc, inviteWithCallID("visit-4"))
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 180 Ringing\r\n"))
+	timers.fire(t, sipRing)
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 200 OK\r\n"))
+	require.Contains(t, last(), "Content-Type: application/sdp\r\n")
 }
 
 func TestHandleSIPInviteRejectNeedsRecall(t *testing.T) {
