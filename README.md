@@ -73,6 +73,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | FTP                         | file transfer commands                   |
 | SIP                         | VoIP signaling traffic                   |
 | RFB/VNC                     | remote framebuffer auth                  |
+| SPICE                       | QEMU/KVM console link and password       |
 | Telnet                      | interactive login attempts               |
 | MQTT                        | IoT pub/sub messages                     |
 | CoAP                        | UDP IoT GET/POST/PUT/DELETE probes       |

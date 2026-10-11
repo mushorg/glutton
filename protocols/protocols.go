@@ -27,6 +27,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/redis"
 	"github.com/mushorg/glutton/protocols/tcp/rtsp"
 	"github.com/mushorg/glutton/protocols/tcp/socks"
+	"github.com/mushorg/glutton/protocols/tcp/spice"
 	"github.com/mushorg/glutton/protocols/udp"
 	"github.com/spf13/viper"
 )
@@ -65,6 +66,11 @@ const (
 // greetWait is how long the catch-all waits for client bytes on a
 // greet-when-idle port before sending the banner; a var so tests can shorten it.
 var greetWait = 2 * time.Second
+
+// spiceWait is how long the RFB ports wait for a SPICE link message before
+// sending the RFB banner. SPICE clients speak first, right after connecting;
+// RFB clients wait for the server. A var so tests can change it.
+var spiceWait = 300 * time.Millisecond
 
 type TCPHandlerFunc func(ctx context.Context, conn net.Conn, md connection.Metadata) error
 
@@ -120,7 +126,8 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"smb":        bindTCP(tcp.HandleSMB, log, h),
 		"ftp":        bindTCP(tcp.HandleFTP, log, h),
 		"sip":        bindTCP(tcp.HandleSIP, log, h),
-		"rfb":        bindTCP(tcp.HandleRFB, log, h),
+		"rfb":        rfbOrSPICE(log, h),
+		"spice":      bindTCP(tcp.HandleSPICE, log, h),
 		"telnet":     bindTCP(tcp.HandleTelnet, log, h),
 		"mqtt":       bindTCP(tcp.HandleMQTT, log, h),
 		"iscsi":      bindTCP(tcp.HandleISCSI, log, h),
@@ -354,6 +361,14 @@ var catchAllMatchers = []catchAllMatcher{
 		handle: asBuffered(tcp.HandleADB),
 	},
 	{
+		// SPICE scanners send the link message to QEMU/KVM consoles on any
+		// port; the four-byte snip holds the whole "REDQ" magic
+		name:   "spice",
+		peek:   fixedPeek(len(spice.Magic), spice.LooksLikeSPICE),
+		match:  spice.LooksLikeSPICE,
+		handle: asBuffered(tcp.HandleSPICE),
+	},
+	{
 		// Minecraft server-list scanners (matscan) ping any port; the
 		// Handshake is short and arrives whole, so peek for all of it
 		name:   "minecraft",
@@ -495,6 +510,29 @@ func rtspOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 			return tcp.HandleRTSP(ctx, bufConn, md, log, h)
 		}
 		return catchAll(ctx, bufConn, md)
+	}
+}
+
+// rfbOrSPICE serves the VNC ports (tcp/5900-5910), which QEMU/KVM hosts also
+// use for SPICE consoles: a client that opens with the SPICE link magic within
+// spiceWait goes to the SPICE handler; everyone else, silent RFB clients and
+// clients that disconnect included, gets the RFB handshake.
+func rfbOrSPICE(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
+	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		waited, silent, err := waitForClient(conn, spiceWait)
+		if err != nil {
+			log.Debug("failed to wait for client", slog.String("protocol", "rfb"), producer.ErrAttr(err))
+		}
+		if err == nil && !silent {
+			if err := waited.SetReadDeadline(time.Now().Add(mctpPeekTimeout)); err != nil {
+				log.Debug("failed to set peek deadline", producer.ErrAttr(err))
+			}
+			// a short peek (deadline, early close) is not SPICE
+			if snip, _ := waited.peek(len(spice.Magic)); spice.LooksLikeSPICE(snip) {
+				return tcp.HandleSPICE(ctx, waited, md, log, h)
+			}
+		}
+		return tcp.HandleRFB(ctx, waited, md, log, h)
 	}
 }
 

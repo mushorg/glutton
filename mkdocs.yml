@@ -41,6 +41,7 @@ nav:
       - "smtp": protocols/smtp.md
       - "ftp": protocols/ftp.md
       - "rfb": protocols/rfb.md
+      - "spice": protocols/spice.md
       - "iscsi": protocols/iscsi.md
       - "bittorrent": protocols/bittorrent.md
       - "jabber": protocols/jabber.md

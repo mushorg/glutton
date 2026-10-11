@@ -157,6 +157,7 @@ Example shape:
 | `ssh` | TCP | [protocols/ssh.md](protocols/ssh.md) |
 | `ftp` | TCP | [protocols/ftp.md](protocols/ftp.md) |
 | `rfb` | TCP | [protocols/rfb.md](protocols/rfb.md) |
+| `spice` | TCP | [protocols/spice.md](protocols/spice.md) |
 | `iscsi` | TCP | [protocols/iscsi.md](protocols/iscsi.md) |
 | `bittorrent` | TCP | [protocols/bittorrent.md](protocols/bittorrent.md) |
 | `jabber` | TCP | [protocols/jabber.md](protocols/jabber.md) |

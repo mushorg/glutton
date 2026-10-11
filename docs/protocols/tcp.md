@@ -106,6 +106,10 @@ Older sensors routed only 43-byte CRs, and only with Spicy enabled. Other off-po
 
 A Firebird `op_connect` (`00000001`, an attach/create/service-attach operation, connect version 2 or 3) never reaches this handler: the catch-all routes it to [`firebird`](firebird.md) on any port, and tcp/3050 has a `firebird` rule. Older sensors answered it with `random`, which is a handler artifact.
 
+## SPICE
+
+A SPICE link message (`REDQ` magic) never reaches this handler: the catch-all routes it to [`spice`](spice.md) on any port except 5900, where it sends the RFB banner first. The `rfb` rule on 5900-5910 hands SPICE clients to `spice` too. Older sensors answered it with `random`, which is a handler artifact.
+
 ## Redis
 
 A RESP multibulk request (`*N\r\n$`, as sent by redis-cli, client libraries and nmap) never reaches this handler: the catch-all routes it to [`redis`](redis.md) on any port, and tcp/6379 has a `redis` rule. Inline commands (`INFO\r\n`) stay here off-port, since they cannot be told apart from other text consoles. Older sensors answered RESP with `random`, which is a handler artifact.

@@ -1,6 +1,6 @@
 # `rfb` decoded data
 
-Transport: TCP. Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
+Transport: TCP. The `rfb` target first waits up to 300 ms for client bytes, so the server banner goes out 300 ms after the connection is accepted; a client that opens with the SPICE `REDQ` magic is handed to [`spice`](spice.md) instead. Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
 
 **`decoded`:** Array of per-direction frames: `direction`, `command`, `status`, `version`, `security_type`, `challenge`, `response`, `key`, `text`, `encodings`, `payload`, `truncated`
 
