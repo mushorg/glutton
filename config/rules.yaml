@@ -44,6 +44,9 @@ rules:
   - match: tcp dst port 113
     type: conn_handler
     target: ident
+  - match: tcp dst port 5009
+    type: conn_handler
+    target: acpp
   - match: tcp dst port 111
     type: conn_handler
     target: rpcbind

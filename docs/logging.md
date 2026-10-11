@@ -162,6 +162,7 @@ Example shape:
 | `pop3` | TCP | [protocols/pop3.md](protocols/pop3.md) |
 | `whois` | TCP | [protocols/whois.md](protocols/whois.md) |
 | `ident` | TCP | [protocols/ident.md](protocols/ident.md) |
+| `acpp` | TCP | [protocols/acpp.md](protocols/acpp.md) |
 | `rpcbind` | TCP/UDP | [protocols/rpcbind.md](protocols/rpcbind.md) |
 | `adb` | TCP | [protocols/adb.md](protocols/adb.md) |
 | `smb` | TCP | [protocols/smb.md](protocols/smb.md) |
