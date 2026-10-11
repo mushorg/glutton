@@ -82,9 +82,11 @@ func (v Variant) String() string {
 
 // Reply returns the responses to send for req, received from src, in order.
 // A nil slice means no reply. The top Via of each response gets received/rport
-// filled from src as a real proxy or UA would; src may be nil.
-func (r *Responder) Reply(req gosip.Request, src net.Addr, v Variant) []gosip.Response {
-	return annotate(req, src, r.reply(req, v)...)
+// filled from src as a real proxy or UA would; src may be nil. local is the
+// address req arrived at, used in Contact and SDP when the Request-URI host
+// is not an IPv4 address; it may be nil.
+func (r *Responder) Reply(req gosip.Request, src, local net.Addr, v Variant) []gosip.Response {
+	return annotate(req, src, r.reply(req, local, v)...)
 }
 
 // Challenge returns a 401 digest challenge to req, Via annotated for src
@@ -102,9 +104,9 @@ func (r *Responder) challenge(req gosip.Request) gosip.Response {
 
 // Answer returns the 100 Trying, 180 Ringing and 200 OK (with SDP) for an
 // INVITE, Via annotated for src like Reply. The UDP handler sends the 200
-// after a ringing delay instead of in the same burst.
-func (r *Responder) Answer(req gosip.Request, src net.Addr) (trying, ringing, ok gosip.Response) {
-	resps := annotate(req, src, r.invite(req)...)
+// after a ringing delay instead of in the same burst. local is as for Reply.
+func (r *Responder) Answer(req gosip.Request, src, local net.Addr) (trying, ringing, ok gosip.Response) {
+	resps := annotate(req, src, r.invite(req, local)...)
 	return resps[0], resps[1], resps[2]
 }
 
@@ -184,7 +186,7 @@ func sourceVia(req gosip.Request, src net.Addr) ([]gosip.Header, bool) {
 // (SUBSCRIBE, MESSAGE, ...) get a 401 digest challenge when unauthenticated
 // and 403 Forbidden once they carry credentials. v changes the REGISTER and
 // INVITE outcomes (see Variant).
-func (r *Responder) reply(req gosip.Request, v Variant) []gosip.Response {
+func (r *Responder) reply(req gosip.Request, local net.Addr, v Variant) []gosip.Response {
 	switch req.Method() {
 	case gosip.ACK:
 		return nil
@@ -203,7 +205,7 @@ func (r *Responder) reply(req gosip.Request, v Variant) []gosip.Response {
 		if v == Auth && Credentials(req) == "" {
 			return []gosip.Response{r.challenge(req)}
 		}
-		resps := r.invite(req)
+		resps := r.invite(req, local)
 		if v == Busy {
 			// 100 and 180 as usual, then busy instead of the answer
 			tag := ""
@@ -278,8 +280,8 @@ func requestedExpires(req gosip.Request) int {
 
 // invite answers the call. 100 Trying carries no To tag; 180 and 200 share
 // one so they belong to the same dialog.
-func (r *Responder) invite(req gosip.Request) []gosip.Response {
-	host, port, user := localTarget(req)
+func (r *Responder) invite(req gosip.Request, local net.Addr) []gosip.Response {
+	host, port, user := localTarget(req, local)
 	contact := "<sip:" + host + ":" + port + ">"
 	if user != "" {
 		contact = "<sip:" + user + "@" + host + ":" + port + ">"
@@ -306,9 +308,15 @@ func (r *Responder) invite(req gosip.Request) []gosip.Response {
 }
 
 // localTarget returns the host, port and user the caller addressed in the
-// Request-URI; that is the honeypot's address as the scanner sees it.
-func localTarget(req gosip.Request) (host, port, user string) {
+// Request-URI; that is the honeypot's address as the scanner sees it. When
+// the Request-URI host is a name, the host is local's IPv4 address (where
+// the request arrived), so the SDP points media somewhere real; 0.0.0.0
+// only when neither is known.
+func localTarget(req gosip.Request, local net.Addr) (host, port, user string) {
 	host, port = "0.0.0.0", "5060"
+	if ip := addrIPv4(local); ip != nil {
+		host = ip.String()
+	}
 	uri := req.Recipient()
 	if uri == nil {
 		return host, port, ""
@@ -323,6 +331,21 @@ func localTarget(req gosip.Request) (host, port, user string) {
 		user = u.String()
 	}
 	return host, port, user
+}
+
+// addrIPv4 returns the IPv4 address of a, or nil.
+func addrIPv4(a net.Addr) net.IP {
+	var ip net.IP
+	switch a := a.(type) {
+	case *net.UDPAddr:
+		ip = a.IP
+	case *net.TCPAddr:
+		ip = a.IP
+	}
+	if ip = ip.To4(); ip == nil || ip.IsUnspecified() {
+		return nil
+	}
+	return ip
 }
 
 func tokenValue(token string) uint64 {
@@ -562,8 +585,9 @@ const ackTimeoutReason = `SIP ;cause=408 ;text="Request Timeout"`
 // answer to invite) was never ACKed, as pjsip does after 64*T1. It goes to
 // the caller's Contact, with From/To swapped from the caller's view, a new
 // CSeq and Via branch, and the Via sent-by the caller addressed the
-// honeypot at. It returns nil when invite or ok lacks dialog headers.
-func (r *Responder) AckTimeoutBye(invite gosip.Request, ok gosip.Response) gosip.Request {
+// honeypot at (or local, as for Reply). It returns nil when invite or ok
+// lacks dialog headers.
+func (r *Responder) AckTimeoutBye(invite gosip.Request, ok gosip.Response, local net.Addr) gosip.Request {
 	from, hasFrom := invite.From()
 	to, hasTo := ok.To()
 	callID, hasCallID := invite.CallID()
@@ -579,7 +603,7 @@ func (r *Responder) AckTimeoutBye(invite gosip.Request, ok gosip.Response) gosip
 		}
 	}
 
-	host, portStr, _ := localTarget(invite)
+	host, portStr, _ := localTarget(invite, local)
 	portNum, _ := strconv.Atoi(portStr)
 	port := gosip.Port(portNum)
 	params := gosip.NewParams()

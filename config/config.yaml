@@ -67,6 +67,7 @@ openvpn:
 
 sip:
   reject_invites: 2   # new INVITE calls per source IP visit (see recall) answered 404 before calls ring; 0 disables.
+  record_media: true  # UDP: record the RTP a caller sends to an answered call's SDP port (WAV files in payloads/rtp, DTMF in decoded).
 
 smtp:
   hostname: mail.localdomain   # server name in the 220 greeting and HELO/EHLO replies.

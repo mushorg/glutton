@@ -76,7 +76,7 @@ Array-of-frames `decoded` entries share these JSON names when the handler fills 
 
 - `http`: `dest_port` and `src_port` on reads, because a session can span connections and ports while the top-level `dstPort`/`srcPort` belong to the first connection.
 - `rdp`: `ntlm_domain`, `ntlm_user`, `ntlm_workstation` and `ntlm_version` on the `NTLMAuthenticate` frame; `nla_accepted` when a listed NLA password matched, then `ntlm_user` and `nla_password` from the decrypted authInfo; `client_data` (client name, build, screen, keyboard, channels) on `MCSConnectInitial`; `client_info` (domain, username, `password`) on `ClientInfo`. Most probes never do NLA: the Confirm prefers TLS, so the password arrives in `client_info`.
-- `sip`: `from`, `to`, `call_id`, `username`, and `variant`/`visit` on writes.
+- `sip`: `from`, `to`, `call_id`, `username`, and `variant`/`visit` on writes. UDP calls end with one `command` `rtp` frame per caller media stream: `dtmf` digits, `packets`/`lost`, `duration_ms`, and `payload_hash` of the WAV recording.
 - `ssh`, `telnet`, `jabber`, `smtp`, `opcua`, `mqtt`, `dicom`, `pop3`, `ftp`, `http`, `rtsp`, `socks`, `hiflying`, `mssql`, `firebird`, `postgres`, `smb`: `username` (or `user`) and `password` as the client sent them. Passwords are guessing attempts, not confidential data, so they are recorded in plaintext. `smb` also sets `lm_response`/`ntlm_response` (hex) for basic Session Setup challenge responses.
 - `dtls`, `jabber`: `server_name`.
 - `smb`, `tcp`: `shellcode` on a read, listing shellcode/PE heuristics matched in the captured payload; `smb` also sets `xor_key` and `decoded_hash` when a DoublePulsar payload was de-obfuscated, and `variant`/`visit` on emulated DoublePulsar replies.

@@ -435,13 +435,16 @@ func stubSIPDialogs(t *testing.T) *fakeSIPTimers {
 	timers := &fakeSIPTimers{}
 	origTable, origAfter, origIdle := sipDialogs, sipAfterFunc, sipIdle
 	origLimit, origRing := sipRejectLimit, sipRingDelay
+	origMedia := sipMedia
 	sipDialogs = newSIPDialogTable(maxSIPDialogs)
+	sipMedia = &sipMediaTable{bindings: map[string]*sipDialog{}}
 	sipAfterFunc = timers.afterFunc
 	sipIdle = time.Minute
 	sipRejectLimit = 0
 	sipRingDelay = func() time.Duration { return sipRing }
 	t.Cleanup(func() {
 		sipDialogs, sipAfterFunc, sipIdle = origTable, origAfter, origIdle
+		sipMedia = origMedia
 		sipRejectLimit, sipRingDelay = origLimit, origRing
 	})
 	return timers

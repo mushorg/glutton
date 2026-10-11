@@ -174,6 +174,8 @@ type sipDialog struct {
 
 	visit sipVisit // response variant of the source's visit
 
+	rec *sipRecording // caller media, once a 2xx with SDP was sent
+
 	// INVITE server transaction
 	reject       bool // answer the first INVITE with 404
 	inviteSeq    uint32
@@ -276,7 +278,7 @@ func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
 	}
 
 	d.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
-	for _, resp := range sipResponder.Reply(req, d.src, d.visit.variant) {
+	for _, resp := range sipResponder.Reply(req, d.src, d.dst, d.visit.variant) {
 		if err := d.writeLocked([]byte(resp.String()), resp); err != nil {
 			return connection.EndWriteError, err
 		}
@@ -306,7 +308,7 @@ func (d *sipDialog) inviteLocked(seq uint32, req sip.Request) (string, error) {
 		return d.sendFinalLocked(sipResponder.Challenge(req, d.src), connection.EndTimeout)
 	}
 
-	trying, ringing, ok := sipResponder.Answer(req, d.src)
+	trying, ringing, ok := sipResponder.Answer(req, d.src, d.dst)
 	if err := d.writeLocked([]byte(trying.String()), trying); err != nil {
 		return connection.EndWriteError, err
 	}
@@ -384,6 +386,7 @@ func (d *sipDialog) sendFinalLocked(final sip.Response, unacked string) (string,
 	if err := d.writeLocked(data, final); err != nil {
 		return connection.EndWriteError, err
 	}
+	d.bindMediaLocked(final)
 	d.stopResendLocked()
 	d.last = data
 	d.final = final
@@ -454,7 +457,7 @@ func (d *sipDialog) resendFinal() {
 	if d.waited >= 64*sipT1 {
 		endReason = d.finalEnd
 		if d.final.IsSuccess() {
-			if bye := sipResponder.AckTimeoutBye(d.invite, d.final); bye != nil {
+			if bye := sipResponder.AckTimeoutBye(d.invite, d.final, d.dst); bye != nil {
 				if err := d.writeLocked([]byte(bye.String()), bye); err != nil {
 					endReason = connection.EndWriteError
 				}
@@ -495,7 +498,12 @@ func (d *sipDialog) finish(endReason string) {
 	events := d.events
 	md := d.md
 	md.EndReason = endReason
+	rec := d.rec
 	d.mu.Unlock()
+
+	if rec != nil {
+		events = append(events, d.mediaFrames(rec, helpers.FirstOrEmpty[parsedSIP](events).CallID)...)
+	}
 
 	d.table.remove(d.key, d)
 	noteSIPVisit(d.src.IP, d.visit, events)

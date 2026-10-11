@@ -29,6 +29,10 @@ type parsedUDP struct {
 }
 
 func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, log interfaces.Logger, h interfaces.Honeypot) error {
+	// RTP from a caller to the media port of a call the sip handler answered
+	if handleSIPMedia(srcAddr, dstAddr, data) {
+		return nil
+	}
 	if sipproto.LooksLikeSIP(data) {
 		return HandleSIP(ctx, srcAddr, dstAddr, data, md, log, h)
 	}

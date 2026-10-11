@@ -33,7 +33,7 @@ func testResponder() *Responder {
 }
 
 func TestReplyInviteAnswered(t *testing.T) {
-	resps := testResponder().Reply(parseRequest(t, pplsipInvite), nil, Answer)
+	resps := testResponder().Reply(parseRequest(t, pplsipInvite), nil, nil, Answer)
 	require.Len(t, resps, 3)
 	require.Equal(t, gosip.StatusCode(100), resps[0].StatusCode())
 	to, _ := resps[0].To()
@@ -73,8 +73,8 @@ func TestReplyInviteAnswered(t *testing.T) {
 func TestAnswerMatchesReply(t *testing.T) {
 	src := &net.UDPAddr{IP: net.ParseIP("51.75.106.116"), Port: 65145}
 	req := parseRequest(t, pplsipInvite)
-	trying, ringing, ok := testResponder().Answer(req, src)
-	resps := testResponder().Reply(req, src, Answer)
+	trying, ringing, ok := testResponder().Answer(req, src, nil)
+	resps := testResponder().Reply(req, src, nil, Answer)
 	require.Equal(t, []string{resps[0].String(), resps[1].String(), resps[2].String()},
 		[]string{trying.String(), ringing.String(), ok.String()})
 	require.Contains(t, ok.String(), ";received=51.75.106.116\r\n")
@@ -119,7 +119,7 @@ func TestReplyRegisterAccepted(t *testing.T) {
 			"CSeq: 1 REGISTER\r\n"+
 			"Contact: <sip:100@185.243.5.243:49618>"+extra+
 			"Content-Length: 0\r\n\r\n"))
-		resps := testResponder().Reply(req, nil, Answer)
+		resps := testResponder().Reply(req, nil, nil, Answer)
 		require.Len(t, resps, 1)
 		require.Equal(t, gosip.StatusCode(200), resps[0].StatusCode())
 		return resps[0]
@@ -149,7 +149,7 @@ func TestReplyAuthenticatedRejected(t *testing.T) {
 	} {
 		req := parseRequest(t, withAuth(message, header))
 		require.Equal(t, "1000", Credentials(req))
-		resps := testResponder().Reply(req, nil, Answer)
+		resps := testResponder().Reply(req, nil, nil, Answer)
 		require.Len(t, resps, 1)
 		require.Equal(t, gosip.StatusCode(403), resps[0].StatusCode())
 		require.Equal(t, "Forbidden", resps[0].Reason())
@@ -160,7 +160,7 @@ func TestReplyAuthenticatedRejected(t *testing.T) {
 func TestReplyRegisterWithCredentialsAccepted(t *testing.T) {
 	register := []byte(strings.ReplaceAll(string(pplsipInvite), "INVITE", "REGISTER"))
 	req := parseRequest(t, withAuth(register, `Authorization: Digest username="1000",realm="asterisk",nonce="x",uri="sip:1.2.3.4",response="00"`))
-	resps := testResponder().Reply(req, nil, Answer)
+	resps := testResponder().Reply(req, nil, nil, Answer)
 	require.Len(t, resps, 1)
 	require.Equal(t, gosip.StatusCode(200), resps[0].StatusCode())
 }
@@ -173,7 +173,7 @@ func TestReplyOptions(t *testing.T) {
 		"Call-ID: 12345\r\n"+
 		"CSeq: 1 OPTIONS\r\n"+
 		"Content-Length: 0\r\n\r\n"))
-	resps := testResponder().Reply(req, nil, Answer)
+	resps := testResponder().Reply(req, nil, nil, Answer)
 	require.Len(t, resps, 1)
 	out := resps[0].String()
 	require.True(t, strings.HasPrefix(out, "SIP/2.0 200 OK\r\n"), out)
@@ -186,7 +186,7 @@ func TestReplyOptions(t *testing.T) {
 func TestReplyKeepsExistingToTag(t *testing.T) {
 	req := parseRequest(t, []byte(strings.Replace(string(pplsipInvite),
 		"To: <sip:14500972598112101@1.2.3.4>\r\n", "To: <sip:14500972598112101@1.2.3.4>;tag=peer\r\n", 1)))
-	out := testResponder().Reply(req, nil, Answer)[0].String()
+	out := testResponder().Reply(req, nil, nil, Answer)[0].String()
 	require.Contains(t, out, "To: <sip:14500972598112101@1.2.3.4>;tag=peer\r\n")
 	// the request itself is not mutated
 	to, _ := req.To()
@@ -211,7 +211,7 @@ func TestReplyMethods(t *testing.T) {
 	}
 	for method, want := range cases {
 		data := strings.ReplaceAll(string(pplsipInvite), "INVITE", method)
-		resps := testResponder().Reply(parseRequest(t, []byte(data)), nil, Answer)
+		resps := testResponder().Reply(parseRequest(t, []byte(data)), nil, nil, Answer)
 		if want == 0 {
 			require.Empty(t, resps, method)
 			continue
@@ -232,7 +232,7 @@ func TestDescribe(t *testing.T) {
 		UserAgent: "pplsip",
 	}, info)
 
-	resp := testResponder().Reply(parseRequest(t, pplsipInvite), nil, Answer)[2]
+	resp := testResponder().Reply(parseRequest(t, pplsipInvite), nil, nil, Answer)[2]
 	info = Describe(resp)
 	require.Equal(t, 200, info.Status)
 	require.Equal(t, "Asterisk PBX 18.20.0", info.UserAgent)
@@ -280,7 +280,7 @@ func TestReplyViaReceivedAndRport(t *testing.T) {
 	}
 	for _, c := range cases {
 		req := request(c.via)
-		out := testResponder().Reply(req, c.src, Answer)[0].String()
+		out := testResponder().Reply(req, c.src, nil, Answer)[0].String()
 		require.Contains(t, out, "\r\n"+c.want+"From:", c.name)
 		// the request is not mutated
 		require.NotContains(t, req.String(), "received=", c.name)
@@ -347,9 +347,9 @@ func TestNormalizeHeaders(t *testing.T) {
 func TestAckTimeoutBye(t *testing.T) {
 	r := testResponder()
 	invite := parseRequest(t, pplsipInvite)
-	ok := r.Reply(invite, nil, Answer)[2]
+	ok := r.Reply(invite, nil, nil, Answer)[2]
 
-	bye := r.AckTimeoutBye(invite, ok)
+	bye := r.AckTimeoutBye(invite, ok, nil)
 	require.NotNil(t, bye)
 	// goes to the caller's Contact; From/To swap sides and keep both tags;
 	// Reason matches pjsip's ACK-timeout BYE
@@ -375,7 +375,7 @@ func TestAckTimeoutByeFallsBackToFrom(t *testing.T) {
 	r := testResponder()
 	invite := parseRequest(t, []byte(strings.Replace(string(pplsipInvite),
 		"Contact: <sip:14500163172166221:5060@212.129.10.158:65145>\r\n", "", 1)))
-	bye := r.AckTimeoutBye(invite, r.Reply(invite, nil, Answer)[2])
+	bye := r.AckTimeoutBye(invite, r.Reply(invite, nil, nil, Answer)[2], nil)
 	require.NotNil(t, bye)
 	require.Equal(t, "sip:14500163172166221:5060@1.2.3.4", bye.Recipient().String())
 }
@@ -400,7 +400,7 @@ func TestReplyVariants(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			resps := testResponder().Reply(parseRequest(t, c.data), nil, c.variant)
+			resps := testResponder().Reply(parseRequest(t, c.data), nil, nil, c.variant)
 			var got []int
 			for _, r := range resps {
 				got = append(got, int(r.StatusCode()))
@@ -415,7 +415,7 @@ func TestReplyVariants(t *testing.T) {
 
 func TestReplyBusySharesRingingTag(t *testing.T) {
 	r := &Responder{Token: sequentialTokens()}
-	resps := r.Reply(parseRequest(t, pplsipInvite), nil, Busy)
+	resps := r.Reply(parseRequest(t, pplsipInvite), nil, nil, Busy)
 	ringingTo, _ := resps[1].To()
 	busyTo, _ := resps[2].To()
 	require.Equal(t, mustParam(t, ringingTo.Params, "tag"), mustParam(t, busyTo.Params, "tag"))
@@ -441,4 +441,25 @@ func sequentialTokens() func() string {
 		n++
 		return strings.Repeat(strconv.Itoa(n%10), 16)
 	}
+}
+
+func TestInviteToNameUsesLocalAddress(t *testing.T) {
+	data := strings.Replace(string(pplsipInvite), "INVITE sip:14500972598112101@1.2.3.4 SIP/2.0", "INVITE sip:14500972598112101@pbx.example.com SIP/2.0", 1)
+	req := parseRequest(t, []byte(data))
+	local := &net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 5060}
+
+	ok := testResponder().Reply(req, nil, local, Answer)[2].String()
+	require.Contains(t, ok, "Contact: <sip:14500972598112101@192.0.2.10:5060>\r\n")
+	require.Contains(t, ok, "c=IN IP4 192.0.2.10\r\n")
+
+	// without a local address the old fallback stays
+	ok = testResponder().Reply(req, nil, nil, Answer)[2].String()
+	require.Contains(t, ok, "c=IN IP4 0.0.0.0\r\n")
+
+	// an IPv4 Request-URI host still wins over the local address
+	ok = testResponder().Reply(parseRequest(t, pplsipInvite), nil, local, Answer)[2].String()
+	require.Contains(t, ok, "c=IN IP4 1.2.3.4\r\n")
+
+	bye := testResponder().AckTimeoutBye(req, testResponder().Reply(req, nil, local, Answer)[2], local)
+	require.Contains(t, bye.String(), "Via: SIP/2.0/UDP 192.0.2.10:5060;")
 }

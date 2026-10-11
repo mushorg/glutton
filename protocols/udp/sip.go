@@ -35,6 +35,15 @@ type parsedSIP struct {
 	Truncated bool   `json:"truncated,omitempty"`
 	Variant   string `json:"variant,omitempty"` // response variant on writes
 	Visit     int    `json:"visit,omitempty"`   // source's visit number on writes
+
+	// command "rtp": one summary frame per caller media stream (SSRC)
+	SSRC        string `json:"ssrc,omitempty"`         // hex
+	Codec       string `json:"codec,omitempty"`        // audio encoding name, e.g. PCMU
+	Packets     int    `json:"packets,omitempty"`      // RTP packets received
+	Lost        int    `json:"lost,omitempty"`         // gaps in the sequence numbers
+	DurationMs  int    `json:"duration_ms,omitempty"`  // recorded audio length
+	DTMF        string `json:"dtmf,omitempty"`         // RFC 4733 digits, in order
+	PayloadHash string `json:"payload_hash,omitempty"` // SHA-256 of the stored WAV
 }
 
 func sipDecoded(direction string, msg sip.Message, payload []byte) parsedSIP {
@@ -217,7 +226,7 @@ func handleSIPDatagram(srcAddr, dstAddr *net.UDPAddr, msg sip.Message, frame par
 	}
 	logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
 
-	for _, resp := range sipResponder.Reply(req, srcAddr, visit.variant) {
+	for _, resp := range sipResponder.Reply(req, srcAddr, dstAddr, visit.variant) {
 		respBytes := []byte(resp.String())
 		events = append(events, visit.tag(sipDecoded("write", resp, respBytes)))
 		if err := h.ReplyUDP(srcAddr, dstAddr, respBytes); err != nil {

@@ -191,7 +191,7 @@ func handleSIP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 		logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
 		server.begin(logger)
-		for _, resp := range server.responder.Reply(req, conn.RemoteAddr(), server.variant) {
+		for _, resp := range server.responder.Reply(req, conn.RemoteAddr(), conn.LocalAddr(), server.variant) {
 			if err := server.write(resp); err != nil {
 				logger.Error("Failed to write SIP reply", slog.String("protocol", "sip"), producer.ErrAttr(err))
 				endReason = connection.EndWriteError
