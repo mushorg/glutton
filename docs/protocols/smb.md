@@ -28,6 +28,7 @@ fields are described in [Logging and producers](../logging.md#decoded-data).
 | `shellcode` | read | Heuristic indicators (`pe-dos-stub`, `fstenv-getpc`, `msf-x64-prologue`, …) matched in the reassembled payload; absent when nothing matched. |
 | `xor_key` | Trans2 Session Setup reads | Recovered DoublePulsar XOR key (hex), set when the obfuscated payload was successfully de-obfuscated. |
 | `decoded_hash` | Trans2 Session Setup reads | SHA-256 of the de-obfuscated DoublePulsar payload, also stored under `payloads/smb/`. |
+| `variant` / `visit` | DoublePulsar replies | `clean` or `infected` and the source's visit number, on emulated ping/exec/kill replies only. |
 | `payload` | all | Raw wire bytes, length prefix included. |
 | `truncated` | all | A capture cap dropped trailing bytes. |
 
@@ -63,11 +64,27 @@ NT_TRANSACT read frame. Echo copies the request data back.
 **DoublePulsar (Trans2 Session Setup).** The DoublePulsar implant protocol
 smuggles its payload through `SMB_COM_TRANSACTION2` with the `TRANS2_SESSION_SETUP`
 subcommand, obfuscated with a repeating 4-byte XOR key and (for larger payloads)
-split across `TRANSACTION2_SECONDARY` fragments. The request data is reassembled
-the same way as NT_TRANSACT (regardless of the honeypot's reply, so the payload is
-captured even though the ping handshake is not emulated) and stored under
-`payloads/smb/`. The honeypot never completed the ping, so the key is unknown; it
-is recovered by trying every 16-bit signature seed and keeping the one whose
+split across `TRANSACTION2_SECONDARY` fragments. The command is the sum of the
+four bytes of the request's Timeout field: ping `0x23`, exec `0xc8`, kill `0x77`
+(only exec is confirmed against a published capture). The request data is
+reassembled the same way as NT_TRANSACT, whatever the honeypot replies, and stored
+under `payloads/smb/`.
+
+The reply depends on the recall variant of the source (`recall.enabled` must be
+on; with it off every visit is `clean`). A first visit is `clean`: Session Setup
+gets `STATUS_NOT_IMPLEMENTED`. Variants rotate `clean`, `clean`, `infected`, so
+about one in three returning visits (3, 6, 9, ...) presents as an infected host:
+
+- ping: `STATUS_SUCCESS` with Multiplex ID = request MID + `0x10` and a random
+  8-byte signature in the SMB header. The operator derives the XOR key from that
+  signature, so the honeypot knows it too.
+- exec: acknowledged the same way (on the final `TRANSACTION2_SECONDARY` for a
+  fragmented payload). The payload is decrypted with the known key; no brute force.
+- kill/uninstall: acknowledged, and the known key is forgotten.
+
+The emulated reply frames carry `variant` and `visit`. Without a ping (clean visit
+or exec first) the key is unknown: the key the operator embedded in the exec
+parameters is tried, then every 16-bit signature seed, keeping the one whose
 plaintext scores highest in the shellcode heuristics. On success the read frame
 gets `xor_key`, the de-obfuscated payload is stored and its hash set as
 `decoded_hash`, and `shellcode` reflects the decoded bytes.

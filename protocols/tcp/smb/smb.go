@@ -1078,3 +1078,38 @@ func ParseNegotiateProtocolRequest(buffer *bytes.Buffer, header SMBHeader) (Nego
 	err = binary.Read(buffer, binary.LittleEndian, &smb.Data.DialectString)
 	return smb, err
 }
+
+// dpMIDIncrement is what the implant adds to the request's Multiplex ID to
+// signal that it handled a command.
+const dpMIDIncrement = 0x10
+
+func dpResponse(header SMBHeader, sig [8]byte) (SMBHeader, []byte, error) {
+	h := replyHeader(header)
+	h.Command = header.Command
+	h.SecurityFeatures = sig
+	mid := binary.LittleEndian.Uint16(header.MID[:]) + dpMIDIncrement
+	binary.LittleEndian.PutUint16(h.MID[:], mid)
+	hb, err := headerBytes(h)
+	if err != nil {
+		return h, nil, err
+	}
+	// WordCount=0, ByteCount=0: detection only reads the header.
+	return h, append(hb, 0x00, 0x00, 0x00), nil
+}
+
+// MakeDoublePulsarPingResponse answers a DoublePulsar ping as an infected host:
+// STATUS_SUCCESS, MID = request MID + 0x10 and sig in the SecurityFeatures field,
+// from which the operator derives the XOR key.
+func MakeDoublePulsarPingResponse(header SMBHeader, sig [8]byte) (SMBHeader, []byte, error) {
+	return dpResponse(header, sig)
+}
+
+// MakeDoublePulsarExecResponse acknowledges a DoublePulsar exec command.
+func MakeDoublePulsarExecResponse(header SMBHeader) (SMBHeader, []byte, error) {
+	return dpResponse(header, [8]byte{})
+}
+
+// MakeDoublePulsarKillResponse acknowledges a DoublePulsar kill/uninstall.
+func MakeDoublePulsarKillResponse(header SMBHeader) (SMBHeader, []byte, error) {
+	return dpResponse(header, [8]byte{})
+}

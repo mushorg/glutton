@@ -15,6 +15,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/mushorg/glutton/protocols/recall"
 	"github.com/mushorg/glutton/protocols/tcp/smb"
 )
 
@@ -53,6 +54,8 @@ type parsedSMB struct {
 	DecodedHash    string        `json:"decoded_hash,omitempty"` // content hash of the de-obfuscated payload
 	Payload        []byte        `json:"payload,omitempty"`
 	Truncated      bool          `json:"truncated,omitempty"`
+	Variant        string        `json:"variant,omitempty"` // DoublePulsar reply variant, on emulated replies only
+	Visit          int           `json:"visit,omitempty"`   // source's visit number, on emulated replies only
 }
 
 // txKind distinguishes how a reassembled transaction payload should be handled
@@ -65,6 +68,10 @@ const (
 )
 
 var smbReadRand = rand.Read
+
+// smbRecall remembers each source's last visit; tests swap it for a store with
+// a fake clock.
+var smbRecall = recall.Shared
 
 type smbServer struct {
 	events       []parsedSMB
@@ -81,6 +88,87 @@ type smbServer struct {
 	handles      map[uint16]*smbHandle
 	challenge    [8]byte
 	challengeSet bool
+
+	// Recall: the variant is picked once per connection.
+	srcIP   net.IP
+	visit   int // 0 until begin
+	variant smb.Variant
+	store   *recall.Store
+
+	// DoublePulsar emulation state.
+	dpKey      uint32 // XOR key derived from the signature we sent in the ping reply
+	dpKeySet   bool
+	dpArchX64  bool
+	dpOps      []string // opcodes seen, for the recall summary
+	txOpcode   byte     // opcode of the open DoublePulsar transaction
+	txParamKey uint32   // key the operator embedded in the exec parameters
+	txParamSet bool
+}
+
+// begin picks the response variant once per connection: a source returning
+// after recall.visit_gap gets the next smb.Variants entry.
+func (ss *smbServer) begin(logger interfaces.Logger) {
+	if ss.visit > 0 {
+		return
+	}
+	ss.store = smbRecall
+	v := ss.store.Begin("smb", ss.srcIP, len(smb.Variants))
+	ss.visit, ss.variant = v.Number, smb.Variants[v.Variant]
+	if v.Started && v.Number > 1 {
+		logger.Info("returning SMB source",
+			slog.String("protocol", "smb"),
+			slog.String("src_ip", ss.srcIP.String()),
+			slog.Int("visit", v.Number),
+			slog.String("variant", ss.variant.String()),
+			slog.String("previous_variant", v.Previous.Variant),
+			slog.Any("previous_commands", v.Previous.Commands),
+		)
+	}
+}
+
+// note stores what the source did on this connection.
+func (ss *smbServer) note() {
+	if ss.visit == 0 {
+		return
+	}
+	ss.store.Note("smb", ss.srcIP, func(sum *recall.Summary) {
+		sum.Variant = ss.variant.String()
+		sum.Events++
+		for _, e := range ss.events {
+			if e.Direction != "read" {
+				continue
+			}
+			sum.AddCommand(e.Command)
+			sum.AddPath(e.Path)
+		}
+		for _, op := range ss.dpOps {
+			sum.AddCommand(op)
+		}
+	})
+}
+
+// writeDP sends a DoublePulsar emulation reply and stamps its frame with the
+// variant and visit.
+func (ss *smbServer) writeDP(header smb.SMBHeader, data []byte) error {
+	if err := ss.write(header, data); err != nil {
+		return err
+	}
+	ev := &ss.events[len(ss.events)-1]
+	ev.Variant = ss.variant.String()
+	ev.Visit = ss.visit
+	return nil
+}
+
+func dpOpName(op byte) string {
+	switch op {
+	case smb.DPOpPing:
+		return "doublepulsar_ping"
+	case smb.DPOpExec:
+		return "doublepulsar_exec"
+	case smb.DPOpKill:
+		return "doublepulsar_kill"
+	}
+	return ""
 }
 
 // smbHandle is an open NT Create AndX file or named pipe.
@@ -192,6 +280,8 @@ func (ss *smbServer) nextFID() uint16 {
 func (ss *smbServer) flushTx(logger interfaces.Logger) {
 	buf := ss.txBuf
 	kind := ss.txKind
+	paramKey, paramSet := ss.txParamKey, ss.txParamSet
+	ss.txOpcode, ss.txParamKey, ss.txParamSet = 0, 0, false
 	ss.txBuf = nil
 	ss.txKind = txNtTransact
 	ss.txOpen = false
@@ -214,9 +304,30 @@ func (ss *smbServer) flushTx(logger interfaces.Logger) {
 	if kind != txDoublePulsar {
 		return
 	}
-	// The honeypot never completed the DoublePulsar ping handshake, so the XOR
-	// key the attacker used is unknown; recover it from the captured bytes.
-	key, plain, ok := recoverDoublePulsarXOR(buf)
+	var (
+		key   uint32
+		plain []byte
+		ok    bool
+	)
+	if ss.dpKeySet {
+		// We chose the signature in the ping reply, so the key is known.
+		key, plain, ok = ss.dpKey, smb.XORApply(buf, ss.dpKey), true
+	} else {
+		// No ping handshake: try the key the operator embedded in the exec
+		// parameters, then fall back to the brute force.
+		if paramSet {
+			probe := buf
+			if len(probe) > dpProbeLen {
+				probe = probe[:dpProbeLen]
+			}
+			if helpers.DetectShellcode(smb.XORApply(probe, paramKey)).Score >= dpMinScore {
+				key, plain, ok = paramKey, smb.XORApply(buf, paramKey), true
+			}
+		}
+		if !ok {
+			key, plain, ok = recoverDoublePulsarXOR(buf)
+		}
+	}
 	if !ok {
 		return
 	}
@@ -277,8 +388,12 @@ func recoverDoublePulsarXOR(buf []byte) (key uint32, plain []byte, ok bool) {
 // payload. The data arrives XOR-obfuscated, in the initial request and (for
 // larger payloads) across TRANSACTION2_SECONDARY fragments. It is stored and
 // decoded by flushTx once the final fragment lands, or at connection end.
-func (ss *smbServer) beginDoublePulsar(total uint32, readIdx int, pdu []byte, truncated bool, logger interfaces.Logger) {
+func (ss *smbServer) beginDoublePulsar(total uint32, op byte, readIdx int, pdu []byte, truncated bool, logger interfaces.Logger) {
 	ss.flushTx(logger) // flush any prior transaction first
+	ss.txOpcode = op
+	if p := smb.Trans2Parameters(pdu); len(p) >= 4 {
+		ss.txParamKey, ss.txParamSet = binary.LittleEndian.Uint32(p[len(p)-4:]), true
+	}
 	ss.txTotal = total
 	ss.txEvent = readIdx
 	ss.txKind = txDoublePulsar
@@ -481,11 +596,14 @@ func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		conn:     conn,
 		tidIsIPC: map[uint16]bool{},
 		handles:  map[uint16]*smbHandle{},
+		srcIP:    remoteIP(conn),
 	}
+	server.begin(logger)
 	endReason := connection.EndHandlerClose
 	defer func() {
 		md.EndReason = endReason
 		server.flushTx(logger)
+		server.note()
 		if err := h.ProduceTCP("smb", conn, md, helpers.FirstOrEmpty[parsedSMB](server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "smb"), producer.ErrAttr(err))
 		}
@@ -635,7 +753,32 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 		if setupOK && setup == smb.Trans2SessionSetup {
 			// DoublePulsar smuggles its (XOR-obfuscated) payload here, split
 			// across TRANS2 SESSION_SETUP + TRANSACTION2_SECONDARY fragments.
-			ss.beginDoublePulsar(totalDataCount, readIdx, pdu, frame.truncated, logger)
+			// Capture is independent of the variant; only the reply differs.
+			op := smb.DoublePulsarOpcode(smb.Trans2Timeout(body))
+			if name := dpOpName(op); name != "" {
+				ss.dpOps = append(ss.dpOps, name)
+			}
+			if totalDataCount > 0 {
+				ss.beginDoublePulsar(totalDataCount, op, readIdx, pdu, frame.truncated, logger)
+			}
+			if ss.variant == smb.Infected {
+				switch {
+				case op == smb.DPOpPing:
+					var sig [8]byte
+					_, _ = smbReadRand(sig[:])
+					s := binary.LittleEndian.Uint64(sig[:])
+					ss.dpKey, ss.dpKeySet, ss.dpArchX64 = smb.DoublePulsarXORKey64(s), true, smb.DoublePulsarArchX64(s)
+					responseHeader, resp, err = smb.MakeDoublePulsarPingResponse(header, sig)
+					return ss.finishDP(responseHeader, resp, err)
+				case op == smb.DPOpExec && !ss.txOpen:
+					responseHeader, resp, err = smb.MakeDoublePulsarExecResponse(header)
+					return ss.finishDP(responseHeader, resp, err)
+				case op == smb.DPOpKill:
+					ss.dpKeySet = false
+					responseHeader, resp, err = smb.MakeDoublePulsarKillResponse(header)
+					return ss.finishDP(responseHeader, resp, err)
+				}
+			}
 		}
 		responseHeader, resp, err = smb.MakeComTransaction2Reply(header, setup, setupOK)
 	case smb.CmdTransaction:
@@ -662,7 +805,12 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 			return nil // middle fragment: no reply
 		}
 		ss.txOpen = false
+		dpExec := ss.txKind == txDoublePulsar && ss.txOpcode == smb.DPOpExec && ss.variant == smb.Infected
 		ss.flushTx(logger)
+		if dpExec {
+			responseHeader, resp, err = smb.MakeDoublePulsarExecResponse(header)
+			return ss.finishDP(responseHeader, resp, err)
+		}
 		responseHeader, resp, err = smb.MakeTransactionCompleteResponse(header)
 	case smb.CmdWriteAndX:
 		fid := smb.WriteAndXFID(body)
@@ -703,6 +851,14 @@ func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Lo
 		return err
 	}
 	return ss.write(responseHeader, resp)
+}
+
+// finishDP writes a DoublePulsar emulation reply.
+func (ss *smbServer) finishDP(header smb.SMBHeader, resp []byte, err error) error {
+	if err != nil {
+		return err
+	}
+	return ss.writeDP(header, resp)
 }
 
 func (ss *smbServer) handleSMB2(frame smbFrame, pdu []byte) error {

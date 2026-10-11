@@ -49,3 +49,42 @@ func TestTrans2DataShortBuffers(t *testing.T) {
 	require.Zero(t, Trans2TotalDataCount([]byte{0x0f}))
 	require.Nil(t, Trans2Data(make([]byte, 10)))
 }
+
+func TestDoublePulsarOpcode(t *testing.T) {
+	require.Equal(t, byte(DPOpExec), DoublePulsarOpcode(0x61056200))
+	require.Equal(t, byte(DPOpPing), DoublePulsarOpcode(0x00000023))
+	require.Equal(t, byte(DPOpKill), DoublePulsarOpcode(0x00000077))
+}
+
+func TestTrans2Timeout(t *testing.T) {
+	body := make([]byte, 30)
+	binary.LittleEndian.PutUint32(body[13:], 0x61056200)
+	require.Equal(t, uint32(0x61056200), Trans2Timeout(body))
+	require.Zero(t, Trans2Timeout(body[:10]))
+}
+
+func TestDoublePulsarXORKey64Vector(t *testing.T) {
+	const sig = 0x018d2d0a6f
+	require.Equal(t, uint32(0x75503953), DoublePulsarXORKey64(sig))
+	require.True(t, DoublePulsarArchX64(sig))
+	require.False(t, DoublePulsarArchX64(0x2d0a6f))
+	require.Equal(t, DoublePulsarXORKey(0x1234), DoublePulsarXORKey64(0x1234))
+}
+
+func TestVariantString(t *testing.T) {
+	require.Equal(t, "clean", Clean.String())
+	require.Equal(t, "infected", Infected.String())
+	require.Equal(t, Clean, Variants[0])
+}
+
+func TestMakeDoublePulsarPingResponse(t *testing.T) {
+	req := SMBHeader{Command: CmdTransaction2}
+	binary.LittleEndian.PutUint16(req.MID[:], 0x41)
+	sig := [8]byte{1, 2, 3, 4, 5, 6, 7, 8}
+	h, data, err := MakeDoublePulsarPingResponse(req, sig)
+	require.NoError(t, err)
+	require.Equal(t, uint16(0x51), binary.LittleEndian.Uint16(h.MID[:]))
+	require.Equal(t, sig[:], data[14:22])
+	require.Equal(t, []byte{0x51, 0x00}, data[30:32])
+	require.Zero(t, NTStatus(h))
+}

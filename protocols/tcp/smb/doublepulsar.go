@@ -54,3 +54,51 @@ func Trans2Data(pdu []byte) []byte {
 	off := uint32(binary.LittleEndian.Uint16(body[25:27]))
 	return sliceRange(pdu, off, count)
 }
+
+// DoublePulsar commands, carried in the TRANS2 SESSION_SETUP Timeout field.
+// TODO: only exec (0xc8) is confirmed against a published capture; confirm ping
+// and kill against a real capture before relying on them.
+const (
+	DPOpPing = 0x23
+	DPOpExec = 0xc8
+	DPOpKill = 0x77
+)
+
+// Trans2Timeout returns the Timeout field of an SMB_COM_TRANSACTION2 request
+// body positioned after the 32-byte SMB header.
+func Trans2Timeout(body []byte) uint32 {
+	// WordCount(1) + 6 words + MaxSetupCount(1) + Reserved(1) + Flags(2) = 13.
+	if len(body) < 17 {
+		return 0
+	}
+	return binary.LittleEndian.Uint32(body[13:17])
+}
+
+// DoublePulsarOpcode derives the command from the Timeout field: the sum of its
+// four bytes, truncated to a byte.
+func DoublePulsarOpcode(timeout uint32) byte {
+	return byte(timeout) + byte(timeout>>8) + byte(timeout>>16) + byte(timeout>>24)
+}
+
+// DoublePulsarXORKey64 derives the XOR key from the full 64-bit signature the
+// implant returns in the SMB header's SecurityFeatures field.
+func DoublePulsarXORKey64(s uint64) uint32 {
+	x := 2*s ^ (((s&0xff00 | (s << 16)) << 8) | (((s >> 16) | s&0xff0000) >> 8))
+	return uint32(x & 0xffffffff)
+}
+
+// DoublePulsarArchX64 reports whether the signature advertises an x64 implant.
+func DoublePulsarArchX64(s uint64) bool { return s>>32 != 0 }
+
+// Trans2Parameters returns the parameter bytes carried in an initial
+// SMB_COM_TRANSACTION2 request. pdu starts at the SMB header.
+func Trans2Parameters(pdu []byte) []byte {
+	const hdr = 32
+	if len(pdu) < hdr+23 {
+		return nil
+	}
+	body := pdu[hdr:]
+	count := uint32(binary.LittleEndian.Uint16(body[19:21]))
+	off := uint32(binary.LittleEndian.Uint16(body[21:23]))
+	return sliceRange(pdu, off, count)
+}
