@@ -420,6 +420,7 @@ func TestHandleTCPSilentReplies(t *testing.T) {
 		{"mglndd elsewhere", 9999, []byte("MGLNDD_1.2.3.4_9999\n"), "mglndd"},
 		{"non-ber on ldap", 389, []byte("GET / HTTP/1.0\r\n\r\n"), ""},
 		{"no magic on bitcoin", 8333, []byte("\x16\x00junk\r\n"), ""},
+		{"no fox hello on niagara", 1911, []byte("GET / HTTP/1.0\r\n\r\n"), ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client, hp, done := startCatchAll(t, tc.port)
@@ -460,6 +461,35 @@ func TestHandleTCPLDAPRootDSE(t *testing.T) {
 	require.Equal(t, []parsedTCP{
 		{Direction: "read", Command: "ldap-rootdse", Payload: search, PayloadHash: helpers.SHA256Hex(search)},
 		{Direction: "write", Status: "ldap-rootdse", Payload: reply, PayloadHash: helpers.SHA256Hex(reply)},
+	}, events)
+}
+
+func TestHandleTCPNiagaraFoxHello(t *testing.T) {
+	client, hp, done := startCatchAll(t, 1911)
+
+	// Fox hello from Ochi event 626c9411-15ee-4235-98de-e8d3c5f3c931
+	hello := []byte("fox a 1 -1 fox hello\n{\nfox.version=s:1.0\nid=i:1\nhostName=s:xpvm-0omdc01xmy\nhostAddress=s:192.168.1.125\napp.name=s:Workbench\napp.version=s:3.7.44\nvm.name=s:Java HotSpot(TM) Server VM\nvm.version=s:20.4-b02\nos.name=s:Windows XP\nos.version=s:5.1\nlang=s:en\ntimeZone=s:America/Los_Angeles;-28800000;3600000;02:00:00.000,wall,march,8,on or after,sunday,undefined;02:00:00.000,wall,november,1,on or after,sunday,undefined\nhostId=s:Win-99CB-D49D-5442-07BB\nvmUuid=s:8b530bc8-76c5-4139-a2ea-0fabd394d305\nbrandId=s:vykon\n};;\n")
+	_, err := client.Write(hello)
+	require.NoError(t, err)
+	want, ok := banners.ForPayload(hello)
+	require.True(t, ok)
+	reply := readAll(t, client, len(want.Data))
+	require.Equal(t, want.Data, reply)
+	require.True(t, bytes.HasPrefix(reply, []byte("fox a 0 -1 fox hello\n{\n")))
+
+	// anything after the hello that is not another hello ends the session
+	next := []byte("fox a 2 -1 fox close\n{\n};;\n")
+	_, err = client.Write(next)
+	require.NoError(t, err)
+	rest, err := io.ReadAll(client)
+	require.NoError(t, err)
+	require.Empty(t, rest)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Command: "niagara-fox-hello", Payload: hello, PayloadHash: helpers.SHA256Hex(hello)},
+		{Direction: "write", Status: "niagara-fox-hello", Payload: reply, PayloadHash: helpers.SHA256Hex(reply)},
+		{Direction: "read", Payload: next, PayloadHash: helpers.SHA256Hex(next)},
 	}, events)
 }
 

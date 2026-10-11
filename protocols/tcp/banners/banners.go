@@ -234,6 +234,10 @@ func ForPort(port uint16) (Response, bool) {
 	case 8333:
 		// bitcoind disconnects a peer whose first bytes are not its network magic
 		return Response{Name: "bitcoin", Silent: true}, true
+	case 1911:
+		// a Niagara station drops a connection that does not open with a Fox
+		// hello; the hello itself is matched in ForPayload
+		return Response{Name: "niagara-fox", Silent: true}, true
 	}
 	return Response{}, false
 }
@@ -256,6 +260,9 @@ func ForPayload(data []byte) (Response, bool) {
 	}
 	if resp, ok := bitcoinReply(data); ok {
 		return resp, true
+	}
+	if isFoxHello(data) {
+		return Response{Name: "niagara-fox-hello", Data: foxHello(foxIdentity)}, true
 	}
 	if order, ok := isX11Setup(data); ok {
 		return Response{Name: "x11-denied", Data: x11Failed(order, x11Reason)}, true

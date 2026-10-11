@@ -35,6 +35,7 @@ Writes set `status` to the response name or `random`.
 | X11 connection setup | `x11-denied` | Setup Failed reply "No protocol specified" in the client's byte order |
 | LDAP root DSE search (empty base, scope baseObject) | `ldap-rootdse` | OpenLDAP-style SearchResultEntry plus SearchResultDone, echoing the messageID |
 | Bitcoin mainnet P2P message (magic `f9 be b4 d9`, NUL-padded printable command) | `bitcoin-<command>` (`bitcoin` for an unlisted command) | `version` gets a Bitcoin Core 28.1 `version` (protocol 70016, current timestamp, start height grown from the 2024 halving, zeroed addresses) plus `verack`; a `ping` gets a `pong` with its nonce; other messages get no reply and the connection stays open |
+| Niagara Fox hello (`fox a <n> -1 fox hello` header line) | `niagara-fox-hello` | Niagara AX 3.8 JACE station hello (`fox a 0 -1 fox hello`, QNX 6.5.0, a 192.168.1.x LAN address, `hostId`/`vmUuid`/`station.name` drawn once per run, empty BOG `sys.info`) |
 | `MGLNDD_<ip>_<port>` scanner probe | `mglndd` | None |
 
 ### Port responses
@@ -46,13 +47,14 @@ Writes set `status` to the response name or `random`.
 | 139 | `netbios-session` | |
 | 389 | `ldap` | Sends nothing, as an LDAP server does with input it cannot parse |
 | 1433 | `mssql-prelogin` | Only on sensors without the `mssql` rule, and only for the first message; the next one (a LOGIN7) ends the session instead of getting the PRELOGIN reply again. A TDS PRELOGIN on any port goes to the [`mssql`](mssql.md) handler |
+| 1911 | `niagara-fox` | Sends nothing and hangs up on bytes that are not a Fox hello (including Fox messages after the hello), as a Niagara station does before a session is open |
 | 4444 | `cmd-shell` | See [Server-first banners](#server-first-banners) |
 | 4899 | `radmin` | |
 | 8009 | `ajp-404` | |
 | 8126 | `statsd-stats` | Etsy statsd management console `stats` block ending in `END\n\n`, with uptime and `last_*` deltas from the clock |
 | 8333 | `bitcoin` | Sends nothing and hangs up, as bitcoind does with bytes that are not its network magic |
 
-Silent responses (`mglndd`, `ldap`, `bitcoin` on 8333) leave only the `read` frame, with no `write`. A Bitcoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message. Clients that send nothing get no reply.
+Silent responses (`mglndd`, `ldap`, `bitcoin` on 8333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message. Clients that send nothing get no reply.
 
 ## TLS ClientHello
 
