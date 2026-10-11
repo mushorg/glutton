@@ -10,8 +10,8 @@ import (
 	"encoding/binary"
 	"strings"
 	"time"
-	"unicode/utf16"
 
+	"github.com/mushorg/glutton/protocols/helpers/ntlm"
 	"github.com/spf13/viper"
 	"golang.org/x/crypto/md4"
 )
@@ -57,7 +57,7 @@ type NLASession struct {
 }
 
 const (
-	ntlmFlagKeyExch = 0x40000000
+	ntlmFlagKeyExch = ntlm.FlagKeyExch
 
 	nlaClientBind = "CredSSP Client-To-Server Binding Hash\x00"
 	nlaServerBind = "CredSSP Server-To-Client Binding Hash\x00"
@@ -74,7 +74,7 @@ const (
 // message is not NTLMv2, or there is nothing to seal against.
 func AcceptNLA(in NLAInput) (*NLAResult, bool) {
 	p := in.Parsed
-	if len(p.NtChallengeResponse) < 16 || ntlmVersion(p.NTResponseLen) != "NTLMv2" {
+	if len(p.NtChallengeResponse) < 16 || ntlm.VersionFromNTLen(p.NTResponseLen) != "NTLMv2" {
 		return nil, false
 	}
 	if len(in.Password) == 0 || len(in.ServerChallenge) != 8 || len(in.SubjectPublicKey) == 0 || len(p.PubKeyAuth) == 0 {
@@ -324,23 +324,12 @@ func parseTSPasswordCreds(data []byte) (domain, user string, ok bool) {
 		tag, val, inner = derNext(inner)
 		switch tag {
 		case 0xa0:
-			domain = utf16LEString(derValue(val, 0x04))
+			domain = ntlm.DecodeUTF16LE(derValue(val, 0x04))
 		case 0xa1:
-			user = utf16LEString(derValue(val, 0x04))
+			user = ntlm.DecodeUTF16LE(derValue(val, 0x04))
 		}
 	}
 	return domain, user, user != "" || domain != ""
-}
-
-func utf16LEString(b []byte) string {
-	if len(b) < 2 || len(b)%2 != 0 {
-		return ""
-	}
-	u16 := make([]uint16, len(b)/2)
-	for i := range u16 {
-		u16[i] = binary.LittleEndian.Uint16(b[2*i:])
-	}
-	return string(utf16.Decode(u16))
 }
 
 // BuildClientAuthenticate builds a Type 3 TSRequest for tests: a known

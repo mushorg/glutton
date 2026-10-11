@@ -94,9 +94,3 @@ func TestSPNEGOTokensContainNTLMOID(t *testing.T) {
 	require.Equal(t, byte(0xa1), accept[0])
 	require.Contains(t, string(accept), "\x0a\x01\x00")
 }
-
-func TestBERLen(t *testing.T) {
-	require.Equal(t, []byte{0x7f}, berLen(0x7f))
-	require.Equal(t, []byte{0x81, 0x80}, berLen(0x80))
-	require.Equal(t, []byte{0x82, 0x01, 0x00}, berLen(256))
-}
