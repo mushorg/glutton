@@ -37,6 +37,7 @@ Writes set `status` to the response name or `random`.
 | LDAP root DSE search (empty base, scope baseObject) | `ldap-rootdse` | OpenLDAP-style SearchResultEntry plus SearchResultDone, echoing the messageID |
 | Bitcoin mainnet P2P message (magic `f9 be b4 d9`, NUL-padded printable command) | `bitcoin-<command>` (`bitcoin` for an unlisted command) | `version` gets a Bitcoin Core 28.1 `version` (protocol 70016, current timestamp, start height grown from the 2024 halving, zeroed addresses) plus `verack`; a `ping` gets a `pong` with its nonce; other messages get no reply and the connection stays open |
 | Niagara Fox hello (`fox a <n> -1 fox hello` header line) | `niagara-fox-hello` | Niagara AX 3.8 JACE station hello (`fox a 0 -1 fox hello`, QNX 6.5.0, a 192.168.1.x LAN address, `hostId`/`vmUuid`/`station.name` drawn once per run, empty BOG `sys.info`) |
+| TeamViewer `CMD_PING` (`17 24 10`, LE u16 length, body; Shodan sends `17 24 10 04 00 00 00 00 00`) | `teamviewer-pingok` | `CMD_PINGOK` `17 24 11 04 00 00 00 00 00` |
 | `MGLNDD_<ip>_<port>` scanner probe | `mglndd` | None |
 
 ### Port responses
@@ -51,6 +52,7 @@ Writes set `status` to the response name or `random`.
 | 1911 | `niagara-fox` | Sends nothing and hangs up on bytes that are not a Fox hello (including Fox messages after the hello), as a Niagara station does before a session is open |
 | 4444 | `cmd-shell` | See [Server-first banners](#server-first-banners) |
 | 4899 | `radmin` | |
+| 5938 | `teamviewer-identify` | See [Server-first banners](#server-first-banners) |
 | 8009 | `ajp-404` | |
 | 8126 | `statsd-stats` | Etsy statsd management console `stats` block ending in `END\n\n`, with uptime and `last_*` deltas from the clock |
 | 8333 | `bitcoin` | Sends nothing and hangs up, as bitcoind does with bytes that are not its network magic |
@@ -91,6 +93,7 @@ Parsing uses `helpers.ParseClientHello`, a lenient parser that reassembles a hel
 - **4444 (`cmd-shell`, a Windows Server 2003 `cmd.exe` prompt):** waits 2s for the client first.
   - A silent client gets the prompt as `decoded[0]` (a `write`).
   - A client that speaks first is routed by its bytes as on any catch-all port (HTTP to `http`), and otherwise gets the prompt as the reply.
+- **5938 (`teamviewer-identify`, a TeamViewer `CMD_IDENTIFY` that nmap `-sV` reports as `TeamViewer`):** waits 2s for the client first, like 4444. Bytes 5–8 are random per connection. A `CMD_PING` (Shodan) is answered with `teamviewer-pingok` whether or not the greeting was sent. Other client bytes get `CMD_IDENTIFY` once, and the next message ends the session.
 
 After a greeting, the client's messages get random bytes unless a payload signature matches (no shell is emulated).
 

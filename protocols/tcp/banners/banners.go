@@ -239,6 +239,10 @@ func ForPort(port uint16) (Response, bool) {
 		// a Niagara station drops a connection that does not open with a Fox
 		// hello; the hello itself is matched in ForPayload
 		return Response{Name: "niagara-fox", Silent: true}, true
+	case 5938:
+		// TeamViewer greets a silent client (nmap -sV); CMD_PING is matched
+		// in ForPayload
+		return Response{Name: "teamviewer-identify", Data: tvIdentify(), GreetWhenIdle: true, Once: true}, true
 	}
 	return Response{}, false
 }
@@ -278,6 +282,9 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 		}
 		// the listener hangs up after refusing a connect
 		return Response{Name: "tns-refuse", Data: tnsRefuse(tnsRefuseData), Close: true}, true
+	},
+	func(data []byte) (Response, bool) {
+		return Response{Name: "teamviewer-pingok", Data: tvPingOK}, isTVPing(data)
 	},
 	func(data []byte) (Response, bool) {
 		order, ok := isX11Setup(data)

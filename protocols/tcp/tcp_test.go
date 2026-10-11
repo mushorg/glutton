@@ -846,6 +846,37 @@ func TestHandleTCPIdlePortClientFirst(t *testing.T) {
 	require.Equal(t, "cmd-shell", events[1].Status)
 }
 
+func TestHandleTCPTeamViewer(t *testing.T) {
+	ping := []byte{0x17, 0x24, 0x10, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00}
+	pingOK := []byte{0x17, 0x24, 0x11, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00}
+
+	// Shodan pings straight away (Ochi event be79fd0e-21f8-4c3e-97f0-93d7b483e819)
+	client, hp, done := startCatchAll(t, 5938)
+	_, err := client.Write(ping)
+	require.NoError(t, err)
+	require.Equal(t, pingOK, readAll(t, client, len(pingOK)))
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 2)
+	require.Equal(t, "teamviewer-pingok", events[0].Command)
+	require.Equal(t, ping, events[0].Payload)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "teamviewer-pingok", Payload: pingOK, PayloadHash: helpers.SHA256Hex(pingOK)}, events[1])
+
+	// nmap -sV stays silent and gets CMD_IDENTIFY, then a ping is still answered
+	client, hp, done = startCatchAllWith(t, 5938, HandleTCPSilent)
+	identify := readAll(t, client, 37)
+	require.Equal(t, []byte{0x17, 0x24, 0x0a, 0x20, 0x00}, identify[:5])
+	_, err = client.Write(ping)
+	require.NoError(t, err)
+	require.Equal(t, pingOK, readAll(t, client, len(pingOK)))
+	events = finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 3)
+	require.Equal(t, "teamviewer-identify", events[0].Status)
+	require.Equal(t, "teamviewer-pingok", events[2].Status)
+
+	require.True(t, GreetsWhenIdle(5938))
+	require.False(t, HasServerBanner(5938))
+}
+
 func TestHandleTCPSilentWithoutIdleBanner(t *testing.T) {
 	client, hp, done := startCatchAllWith(t, 9999, HandleTCPSilent)
 	events := finishCatchAll(t, client, hp, done)
