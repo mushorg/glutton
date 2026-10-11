@@ -66,7 +66,9 @@ func TestReadRequestOchiOptions(t *testing.T) {
 	require.Equal(t, Version, req.Version)
 	require.Equal(t, "1", req.Header("cseq"))
 	require.Equal(t, "/", req.Path())
-	require.Empty(t, req.URIUsername())
+	user, pass := req.URICredentials()
+	require.Empty(t, user)
+	require.Empty(t, pass)
 }
 
 func TestReadRequestBodyAndPipelining(t *testing.T) {
@@ -131,16 +133,18 @@ func TestReadRequestSkipsHeaderWithoutColon(t *testing.T) {
 	require.Equal(t, "7", req.Header("CSeq"))
 }
 
-func TestURIUsername(t *testing.T) {
+func TestURICredentials(t *testing.T) {
 	req := Request{URI: "rtsp://admin:12345@1.2.3.4:554/Streaming/Channels/101"}
-	require.Equal(t, "admin", req.URIUsername())
+	user, pass := req.URICredentials()
+	require.Equal(t, "admin", user)
+	require.Equal(t, "12345", pass)
 	require.Equal(t, "/Streaming/Channels/101", req.Path())
 }
 
 func TestParseAuthorization(t *testing.T) {
 	// admin:12345
 	basic := ParseAuthorization("Basic YWRtaW46MTIzNDU=")
-	require.Equal(t, Auth{Scheme: "basic", Username: "admin"}, basic)
+	require.Equal(t, Auth{Scheme: "basic", Username: "admin", Password: "12345"}, basic)
 
 	digest := ParseAuthorization(`Digest username="admin", realm="Login to 7K02D8APAZ1C3F9", nonce="0011", uri="rtsp://1.2.3.4:554/cam/realmonitor?channel=1,subtype=0", response="6629fae49393a05397450978507c4ef1"`)
 	require.Equal(t, Auth{

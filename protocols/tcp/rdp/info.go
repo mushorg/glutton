@@ -5,12 +5,12 @@ import (
 )
 
 // ClientInfo is what the client sent in its Client Info PDU (TS_INFO_PACKET,
-// MS-RDPBCGR 2.2.1.11.1.1). The password itself is never kept: only its
-// length in characters.
+// MS-RDPBCGR 2.2.1.11.1.1). Password is the plaintext guess the client sent
+// (decoded like the other strings); it is empty when the packet was encrypted.
 type ClientInfo struct {
 	Domain         string `json:"domain,omitempty"`
 	Username       string `json:"username,omitempty"`
-	PasswordLen    int    `json:"password_len,omitempty"`
+	Password       string `json:"password,omitempty"`
 	AlternateShell string `json:"alternate_shell,omitempty"`
 	WorkingDir     string `json:"working_dir,omitempty"`
 	ClientAddress  string `json:"client_address,omitempty"`
@@ -71,13 +71,8 @@ func ParseClientInfo(payload []byte) (ci ClientInfo, ok bool) {
 		ci.Username = str(v)
 	}
 	if more {
-		_, more = field(cb[2])
-		if more {
-			ci.PasswordLen = cb[2]
-			if unicode {
-				ci.PasswordLen /= 2
-			}
-		}
+		v, more = field(cb[2])
+		ci.Password = str(v)
 	}
 	if more {
 		v, more = field(cb[3])

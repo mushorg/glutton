@@ -145,14 +145,14 @@ func TestParseClientInfo(t *testing.T) {
 	require.Equal(t, ClientInfo{
 		Domain:        "CORP",
 		Username:      "administrator",
-		PasswordLen:   11,
+		Password:      "Winter2024!",
 		ClientAddress: "10.0.0.5",
 		ClientDir:     `C:\Windows\System32\mstscax.dll`,
 		Autologon:     true,
 	}, ci)
 	js, err := json.Marshal(ci)
 	require.NoError(t, err)
-	require.NotContains(t, string(js), "Winter2024!")
+	require.Contains(t, string(js), `"password":"Winter2024!"`)
 }
 
 func TestParseClientInfoANSI(t *testing.T) {
@@ -167,7 +167,7 @@ func TestParseClientInfoANSI(t *testing.T) {
 	b = append(b, 0, 0)                  // shell, dir
 	ci, ok := ParseClientInfo(b)
 	require.True(t, ok)
-	require.Equal(t, ClientInfo{Username: "root", PasswordLen: 3}, ci)
+	require.Equal(t, ClientInfo{Username: "root", Password: "abc"}, ci)
 }
 
 func TestParseClientInfoEdgeCases(t *testing.T) {
@@ -185,7 +185,7 @@ func TestParseClientInfoEdgeCases(t *testing.T) {
 	ci, ok = ParseClientInfo(full[:4+18+2+12])
 	require.True(t, ok)
 	require.Equal(t, "guest", ci.Username)
-	require.Zero(t, ci.PasswordLen)
+	require.Empty(t, ci.Password)
 }
 
 func TestParseCredSSPNTLMVersion(t *testing.T) {

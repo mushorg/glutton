@@ -12,37 +12,35 @@ func TestParse(t *testing.T) {
 		command string
 		args    string
 		hasArgs bool
-		masked  string
+		user    string
+		pass    string
 	}{
-		"discovery":        {"HF-A11ASSISTHREAD", "DISCOVER", "", false, ""},
-		"discovery crlf":   {"HF-A11ASSISTHREAD\r\n", "DISCOVER", "", false, ""},
-		"enter at":         {"+ok", "ENTER_AT", "", false, ""},
-		"query":            {"AT+VER\r", "AT+VER", "", false, ""},
-		"lower case":       {"at+wsssid\r\n", "AT+WSSSID", "", false, ""},
-		"set":              {"AT+UPURL=http://example.invalid/fw.bin\r", "AT+UPURL", "http://example.invalid/fw.bin", true, ""},
-		"set wskey":        {"AT+WSKEY=WPA2PSK,AES,hunter22\r", "AT+WSKEY", "WPA2PSK,AES,***", true, "AT+WSKEY=WPA2PSK,AES,***\r"},
-		"set aswd":         {"AT+ASWD=secret\r", "AT+ASWD", "***", true, "AT+ASWD=***\r"},
-		"set webu":         {"AT+WEBU=admin,pass\r", "AT+WEBU", "admin,***", true, "AT+WEBU=admin,***\r"},
-		"wskey no key":     {"AT+WSKEY=OPEN,NONE\r", "AT+WSKEY", "OPEN,NONE", true, ""},
-		"only first line":  {"AT+VER\rAT+Z\r", "AT+VER", "", false, ""},
-		"empty":            {"", "UNKNOWN", "", false, ""},
-		"bare prefix":      {"AT+", "UNKNOWN", "", false, ""},
-		"bad verb":         {"AT+V ER\r", "UNKNOWN", "", false, ""},
-		"other password":   {"WIFIKIT-214028-READ", "UNKNOWN", "", false, ""},
-		"modem at":         {"AT\r", "UNKNOWN", "", false, ""},
-		"long verb":        {"AT+ABCDEFGHIJKLMNOPQ\r", "UNKNOWN", "", false, ""},
-		"discovery prefix": {"HF-A11ASSISTHREADX", "UNKNOWN", "", false, ""},
+		"discovery":        {"HF-A11ASSISTHREAD", "DISCOVER", "", false, "", ""},
+		"discovery crlf":   {"HF-A11ASSISTHREAD\r\n", "DISCOVER", "", false, "", ""},
+		"enter at":         {"+ok", "ENTER_AT", "", false, "", ""},
+		"query":            {"AT+VER\r", "AT+VER", "", false, "", ""},
+		"lower case":       {"at+wsssid\r\n", "AT+WSSSID", "", false, "", ""},
+		"set":              {"AT+UPURL=http://example.invalid/fw.bin\r", "AT+UPURL", "http://example.invalid/fw.bin", true, "", ""},
+		"set wskey":        {"AT+WSKEY=WPA2PSK,AES,hunter22\r", "AT+WSKEY", "WPA2PSK,AES,hunter22", true, "", "hunter22"},
+		"set aswd":         {"AT+ASWD=secret\r", "AT+ASWD", "secret", true, "", "secret"},
+		"set webu":         {"AT+WEBU=admin,pass\r", "AT+WEBU", "admin,pass", true, "admin", "pass"},
+		"wskey no key":     {"AT+WSKEY=OPEN,NONE\r", "AT+WSKEY", "OPEN,NONE", true, "", ""},
+		"only first line":  {"AT+VER\rAT+Z\r", "AT+VER", "", false, "", ""},
+		"empty":            {"", "UNKNOWN", "", false, "", ""},
+		"bare prefix":      {"AT+", "UNKNOWN", "", false, "", ""},
+		"bad verb":         {"AT+V ER\r", "UNKNOWN", "", false, "", ""},
+		"other password":   {"WIFIKIT-214028-READ", "UNKNOWN", "", false, "", ""},
+		"modem at":         {"AT\r", "UNKNOWN", "", false, "", ""},
+		"long verb":        {"AT+ABCDEFGHIJKLMNOPQ\r", "UNKNOWN", "", false, "", ""},
+		"discovery prefix": {"HF-A11ASSISTHREADX", "UNKNOWN", "", false, "", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := Parse([]byte(tc.in))
 			require.Equal(t, tc.command, r.Command())
 			require.Equal(t, tc.args, r.Args)
 			require.Equal(t, tc.hasArgs, r.HasArgs)
-			if tc.masked == "" {
-				require.Nil(t, r.Masked)
-			} else {
-				require.Equal(t, tc.masked, string(r.Masked))
-			}
+			require.Equal(t, tc.user, r.Username)
+			require.Equal(t, tc.pass, r.Password)
 		})
 	}
 }

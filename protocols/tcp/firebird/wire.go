@@ -81,8 +81,8 @@ type Protocol struct {
 	Weight  uint32
 }
 
-// Connect is an op_connect (P_CNCT). The user identification block is
-// reduced to its non-secret strings; CNCT_passwd is never kept.
+// Connect is an op_connect (P_CNCT) with the strings of its user
+// identification block, CNCT_passwd included.
 type Connect struct {
 	Operation  uint32
 	Version    uint32
@@ -90,6 +90,7 @@ type Connect struct {
 	File       string
 	Protocols  []Protocol
 	OSUser     string // CNCT_user
+	Password   string // CNCT_passwd
 	Host       string // CNCT_host
 	Login      string // CNCT_login (Firebird 3+)
 	Plugin     string // CNCT_plugin_name (Firebird 3+)
@@ -233,13 +234,14 @@ func readConnect(x *xdr) (Connect, error) {
 // User identification tags (CNCT_*).
 const (
 	cnctUser       = 1
+	cnctPasswd     = 2
 	cnctHost       = 4
 	cnctPluginName = 8
 	cnctLogin      = 9
 )
 
-// parseUserID keeps the non-secret strings of the user identification block
-// (tag, length byte, data).
+// parseUserID keeps the strings of the user identification block (tag,
+// length byte, data).
 func (c *Connect) parseUserID(b []byte) {
 	for len(b) >= 2 {
 		tag, n := b[0], int(b[1])
@@ -250,6 +252,8 @@ func (c *Connect) parseUserID(b []byte) {
 		switch tag {
 		case cnctUser:
 			c.OSUser = val
+		case cnctPasswd:
+			c.Password = val
 		case cnctHost:
 			c.Host = val
 		case cnctPluginName:

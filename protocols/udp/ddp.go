@@ -27,15 +27,15 @@ const (
 var ddpNow = time.Now
 
 type parsedDDP struct {
-	Direction             string `json:"direction,omitempty"`
-	Command               string `json:"command,omitempty"`
-	Version               string `json:"version,omitempty"`
-	ClientType            string `json:"client_type,omitempty"`
-	UserCredentialPresent bool   `json:"user_credential_present,omitempty"`
-	HostType              string `json:"host_type,omitempty"`
-	Status                string `json:"status,omitempty"`
-	Payload               []byte `json:"payload,omitempty"`
-	Truncated             bool   `json:"truncated,omitempty"`
+	Direction      string `json:"direction,omitempty"`
+	Command        string `json:"command,omitempty"`
+	Version        string `json:"version,omitempty"`
+	ClientType     string `json:"client_type,omitempty"`
+	UserCredential string `json:"user_credential,omitempty"`
+	HostType       string `json:"host_type,omitempty"`
+	Status         string `json:"status,omitempty"`
+	Payload        []byte `json:"payload,omitempty"`
+	Truncated      bool   `json:"truncated,omitempty"`
 }
 
 type ddpLimiter struct {
@@ -68,8 +68,7 @@ func (l *ddpLimiter) allow(ip string, now time.Time) bool {
 
 // HandleDDP parses a PlayStation Device Discovery Protocol datagram. SRCH gets
 // a "620 Server Standby" reply from a stable per-sensor console identity;
-// WAKEUP and LAUNCH are recorded only. The user-credential value is never
-// stored, only whether one was sent.
+// WAKEUP and LAUNCH are recorded only, including the user-credential value.
 func HandleDDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	payload := make([]byte, min(len(data), maxDDPPayload))
 	copy(payload, data[:len(payload)])
@@ -98,7 +97,7 @@ func HandleDDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	frame.Command = req.Method
 	frame.Version = req.Version()
 	frame.ClientType = req.Headers[ddp.HeaderClientType]
-	_, frame.UserCredentialPresent = req.Headers[ddp.HeaderUserCredential]
+	frame.UserCredential = req.Headers[ddp.HeaderUserCredential]
 	events = append(events, frame)
 
 	logger.Info("DDP request received",

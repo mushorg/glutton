@@ -142,6 +142,13 @@ func (m Message) Body() []byte {
 	return m.Raw[5:]
 }
 
+// Password returns the string of a PasswordMessage as sent (cleartext, or
+// "md5" and the hex hash under md5 auth), up to its NUL terminator.
+func (m Message) Password() string {
+	pw, _, _ := bytes.Cut(m.Body(), []byte{0})
+	return string(pw)
+}
+
 // ReadMessage reads one typed message. On error Raw holds the bytes read so
 // far.
 func ReadMessage(r *bufio.Reader, maxLen int) (Message, error) {

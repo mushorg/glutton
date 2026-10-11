@@ -59,10 +59,11 @@ func TestAcceptNLARoundTrip(t *testing.T) {
 
 	info := client.ClientAuthInfo("WORKGROUP", "administrator", "Password1")
 	got := ParseCredSSP(info)
-	domain, user, ok := out.Session.OpenAuthInfo(got.AuthInfo)
+	domain, user, password, ok := out.Session.OpenAuthInfo(got.AuthInfo)
 	require.True(t, ok)
 	require.Equal(t, "WORKGROUP", domain)
 	require.Equal(t, "administrator", user)
+	require.Equal(t, "Password1", password)
 }
 
 func TestAcceptNLAWrongPassword(t *testing.T) {

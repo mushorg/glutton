@@ -126,11 +126,11 @@ func newNLASession(exported []byte, keyExch bool) (*NLASession, bool) {
 }
 
 // OpenAuthInfo decrypts a client authInfo OCTET STRING and returns the
-// domain and username from TSPasswordCreds. The password is discarded.
-func (s *NLASession) OpenAuthInfo(authInfo []byte) (domain, user string, ok bool) {
+// domain, username and plaintext password from TSPasswordCreds.
+func (s *NLASession) OpenAuthInfo(authInfo []byte) (domain, user, password string, ok bool) {
 	plain, ok := s.openClient(authInfo)
 	if !ok {
-		return "", "", false
+		return "", "", "", false
 	}
 	return parseTSPasswordCreds(plain)
 }
@@ -303,7 +303,7 @@ func MatchAccount(parsed ParsedCredSSP, serverChallenge, subjectPublicKey []byte
 	return nil, "", false
 }
 
-func parseTSPasswordCreds(data []byte) (domain, user string, ok bool) {
+func parseTSPasswordCreds(data []byte) (domain, user, password string, ok bool) {
 	inner := derValue(data, 0x30)
 	var creds []byte
 	for len(inner) > 0 {
@@ -315,7 +315,7 @@ func parseTSPasswordCreds(data []byte) (domain, user string, ok bool) {
 		}
 	}
 	if len(creds) == 0 {
-		return "", "", false
+		return "", "", "", false
 	}
 	inner = derValue(creds, 0x30)
 	for len(inner) > 0 {
@@ -327,9 +327,11 @@ func parseTSPasswordCreds(data []byte) (domain, user string, ok bool) {
 			domain = ntlm.DecodeUTF16LE(derValue(val, 0x04))
 		case 0xa1:
 			user = ntlm.DecodeUTF16LE(derValue(val, 0x04))
+		case 0xa2:
+			password = ntlm.DecodeUTF16LE(derValue(val, 0x04))
 		}
 	}
-	return domain, user, user != "" || domain != ""
+	return domain, user, password, user != "" || domain != "" || password != ""
 }
 
 // BuildClientAuthenticate builds a Type 3 TSRequest for tests: a known

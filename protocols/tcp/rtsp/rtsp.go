@@ -79,15 +79,16 @@ func (r Request) Path() string {
 	return u.Path
 }
 
-// URIUsername returns the user name embedded in the request URI
-// (rtsp://admin:pass@host/...), which some brute-forcers use instead of an
-// Authorization header.
-func (r Request) URIUsername() string {
+// URICredentials returns the user name and password embedded in the request
+// URI (rtsp://admin:pass@host/...), which some brute-forcers use instead of
+// an Authorization header.
+func (r Request) URICredentials() (username, password string) {
 	u, err := url.Parse(r.URI)
 	if err != nil || u.User == nil {
-		return ""
+		return "", ""
 	}
-	return u.User.Username()
+	password, _ = u.User.Password()
+	return u.User.Username(), password
 }
 
 // MayStart reports whether snip (the first bytes of a stream) could begin an
@@ -218,11 +219,11 @@ func ReadRequest(r *bufio.Reader, maxBody int) (req Request, raw []byte, truncat
 	return req, buf.Bytes(), truncated, nil
 }
 
-// Auth is a parsed Authorization header. The Basic password is deliberately
-// not kept.
+// Auth is a parsed Authorization header.
 type Auth struct {
 	Scheme   string // "basic", "digest", or the lower-cased unknown scheme
 	Username string
+	Password string // basic only; digest carries no plaintext
 	Realm    string // digest only
 	URI      string // digest only
 	Response string // digest response hash
@@ -239,7 +240,7 @@ func ParseAuthorization(value string) Auth {
 		if err != nil {
 			return auth
 		}
-		auth.Username, _, _ = strings.Cut(string(decoded), ":")
+		auth.Username, auth.Password, _ = strings.Cut(string(decoded), ":")
 	case "digest":
 		params := digestParams(rest)
 		auth.Username = params["username"]

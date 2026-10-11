@@ -151,16 +151,16 @@ func DecodeLogin(line string) (string, bool) {
 }
 
 // DecodePlain decodes an AUTH PLAIN response (RFC 4616,
-// authzid NUL authcid NUL passwd) and returns the authentication identity.
-// The password is not returned.
-func DecodePlain(line string) (string, bool) {
+// authzid NUL authcid NUL passwd) and returns the authentication identity
+// and password.
+func DecodePlain(line string) (string, string, bool) {
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(line))
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	parts := bytes.SplitN(raw, []byte{0}, 3)
 	if len(parts) != 3 {
-		return "", false
+		return "", "", false
 	}
-	return string(parts[1]), true
+	return string(parts[1]), string(parts[2]), true
 }

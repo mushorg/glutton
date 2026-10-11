@@ -63,13 +63,14 @@ func TestReply(t *testing.T) {
 }
 
 func TestDecodeAuth(t *testing.T) {
-	user, ok := DecodePlain("AGFkbWluAGh1bnRlcjI=") // "\x00admin\x00hunter2"
+	user, pass, ok := DecodePlain("AGFkbWluAGh1bnRlcjI=") // "\x00admin\x00hunter2"
 	require.True(t, ok)
 	require.Equal(t, "admin", user)
+	require.Equal(t, "hunter2", pass)
 
-	_, ok = DecodePlain("YWRtaW4=") // "admin", no NULs
+	_, _, ok = DecodePlain("YWRtaW4=") // "admin", no NULs
 	require.False(t, ok)
-	_, ok = DecodePlain("!!!")
+	_, _, ok = DecodePlain("!!!")
 	require.False(t, ok)
 
 	user, ok = DecodeLogin("YWRtaW4=\r\n")

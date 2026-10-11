@@ -67,26 +67,27 @@ func TestRespondIndex(t *testing.T) {
 	require.Contains(t, string(head), "Content-Length: "+resp.Header.Get("Content-Length"))
 }
 
-func TestLoginUsername(t *testing.T) {
+func TestLoginCredentials(t *testing.T) {
 	tests := []struct {
-		name, method, path, body, user string
-		ok                             bool
+		name, method, path, body, user, pass string
+		ok                                   bool
 	}{
-		{"realm field", "POST", ticketPath, "username=root&password=x&realm=pam", "root@pam", true},
-		{"realm in user", "POST", ticketPath, "username=root%40pam&password=x", "root@pam", true},
-		{"realm in both", "POST", ticketPath, "username=admin%40pve&password=x&realm=pam", "admin@pve", true},
-		{"no username", "POST", ticketPath, "password=x", "", false},
-		{"wrong path", "POST", "/api2/json/version", "username=root", "", false},
-		{"GET", "GET", ticketPath, "username=root", "", false},
-		{"bad form", "POST", ticketPath, "username=%zz", "", false},
-		{"capped", "POST", ticketPath, "username=" + strings.Repeat("a", 300), strings.Repeat("a", maxUsername), true},
+		{"realm field", "POST", ticketPath, "username=root&password=x&realm=pam", "root@pam", "x", true},
+		{"realm in user", "POST", ticketPath, "username=root%40pam&password=p%26ss", "root@pam", "p&ss", true},
+		{"realm in both", "POST", ticketPath, "username=admin%40pve&password=x&realm=pam", "admin@pve", "x", true},
+		{"no password", "POST", ticketPath, "username=root", "root", "", true},
+		{"no username", "POST", ticketPath, "password=x", "", "", false},
+		{"wrong path", "POST", "/api2/json/version", "username=root", "", "", false},
+		{"GET", "GET", ticketPath, "username=root", "", "", false},
+		{"bad form", "POST", ticketPath, "username=%zz", "", "", false},
+		{"capped", "POST", ticketPath, "username=" + strings.Repeat("a", 300) + "&password=" + strings.Repeat("b", 300), strings.Repeat("a", maxUsername), strings.Repeat("b", maxUsername), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			user, ok := LoginUsername(tt.method, tt.path, []byte(tt.body))
+			user, pass, ok := LoginCredentials(tt.method, tt.path, []byte(tt.body))
 			require.Equal(t, tt.ok, ok)
 			require.Equal(t, tt.user, user)
-			require.NotContains(t, user, "x&")
+			require.Equal(t, tt.pass, pass)
 		})
 	}
 }

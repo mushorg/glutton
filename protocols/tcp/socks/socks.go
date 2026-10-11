@@ -94,11 +94,11 @@ type Greeting struct {
 	Raw     []byte
 }
 
-// Auth is an RFC 1929 username/password message. The password is not kept;
-// Raw has the password bytes masked with '*'.
+// Auth is an RFC 1929 username/password message. Raw holds the wire bytes.
 type Auth struct {
-	User string
-	Raw  []byte
+	User     string
+	Password string
+	Raw      []byte
 }
 
 // recorder keeps every byte read so frames carry the wire bytes.
@@ -185,8 +185,7 @@ func ReadGreeting(r *bufio.Reader) (Greeting, error) {
 	return Greeting{Methods: methods, Raw: rc.raw}, nil
 }
 
-// ReadAuth reads an RFC 1929 username/password request. The password is
-// discarded and masked in Raw.
+// ReadAuth reads an RFC 1929 username/password request.
 func ReadAuth(r *bufio.Reader) (Auth, error) {
 	rc := &recorder{r: r}
 	ver, err := rc.full(1)
@@ -210,11 +209,8 @@ func ReadAuth(r *bufio.Reader) (Auth, error) {
 		auth.Raw = rc.raw
 		return auth, err
 	}
-	start := len(rc.raw)
-	_, err = rc.full(int(plen[0]))
-	for i := start; i < len(rc.raw); i++ {
-		rc.raw[i] = '*'
-	}
+	pass, err := rc.full(int(plen[0]))
+	auth.Password = string(pass)
 	auth.Raw = rc.raw
 	return auth, err
 }

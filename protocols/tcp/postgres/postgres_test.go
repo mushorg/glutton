@@ -84,6 +84,7 @@ func TestReadMessage(t *testing.T) {
 	require.Equal(t, Message{Raw: pw, Type: 'p'}, m)
 	require.Equal(t, "PasswordMessage", MessageName(m.Type))
 	require.Len(t, m.Body(), 36)
+	require.Equal(t, "md5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", m.Password())
 
 	_, err = ReadMessage(reader([]byte{'Q', 0, 1, 0, 0}), MaxStartupLen)
 	require.ErrorIs(t, err, ErrTooLong)

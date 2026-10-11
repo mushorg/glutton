@@ -57,3 +57,80 @@ func TestTrans2SetupName(t *testing.T) {
 	require.Equal(t, "TRANS2_SESSION_SETUP", Trans2SetupName(Trans2SessionSetup))
 	require.Equal(t, "TRANS2_FIND_FIRST2", Trans2SetupName(Trans2FindFirst2))
 }
+
+// basicSessionSetupBody builds a WordCount 13 Session Setup AndX body with
+// Unicode strings (pad byte inserted for alignment after the passwords).
+func basicSessionSetupBody(oem, uni []byte, strs ...string) []byte {
+	b := []byte{0x0d, 0xff, 0x00, 0x00, 0x00, 0xff, 0xff, 0x02, 0x00, 0x01, 0x00, 0, 0, 0, 0}
+	b = binary.LittleEndian.AppendUint16(b, uint16(len(oem)))
+	b = binary.LittleEndian.AppendUint16(b, uint16(len(uni)))
+	b = append(b, 0, 0, 0, 0, 0, 0, 0, 0)
+	var data []byte
+	data = append(data, oem...)
+	data = append(data, uni...)
+	if (32+27+len(data))%2 != 0 {
+		data = append(data, 0)
+	}
+	for _, s := range strs {
+		for _, r := range s {
+			data = binary.LittleEndian.AppendUint16(data, uint16(r))
+		}
+		data = append(data, 0, 0)
+	}
+	b = binary.LittleEndian.AppendUint16(b, uint16(len(data)))
+	return append(b, data...)
+}
+
+func utf16le(s string) []byte {
+	var out []byte
+	for _, r := range s {
+		out = binary.LittleEndian.AppendUint16(out, uint16(r))
+	}
+	return out
+}
+
+func TestSessionSetupIdentityPasswords(t *testing.T) {
+	header := SMBHeader{Flags2: [2]byte{0x01, 0x80}} // Unicode
+	lm := make([]byte, 24)
+	for i := range lm {
+		lm[i] = byte(i)
+	}
+	ntlmv2 := append(make([]byte, 16), 0x01, 0x01, 0x00, 0x00, 0, 0, 0, 0, 0xaa, 0xbb)
+
+	for _, tc := range []struct {
+		name     string
+		oem, uni []byte
+		want     SessionSetupFields
+	}{
+		{
+			name: "unicode plaintext",
+			uni:  utf16le("Winter2024!"),
+			want: SessionSetupFields{Account: "administrator", Password: "Winter2024!", NativeOS: "Unix", NativeLanMan: "Samba"},
+		},
+		{
+			name: "oem plaintext",
+			oem:  []byte("hunter2\x00"),
+			want: SessionSetupFields{Account: "administrator", Password: "hunter2", NativeOS: "Unix", NativeLanMan: "Samba"},
+		},
+		{
+			name: "lm and ntlm responses",
+			oem:  lm,
+			uni:  lm,
+			want: SessionSetupFields{Account: "administrator", LMResponse: hex.EncodeToString(lm), NTLMResponse: hex.EncodeToString(lm), NativeOS: "Unix", NativeLanMan: "Samba"},
+		},
+		{
+			name: "ntlmv2 response only",
+			uni:  ntlmv2,
+			want: SessionSetupFields{Account: "administrator", NTLMResponse: hex.EncodeToString(ntlmv2), NativeOS: "Unix", NativeLanMan: "Samba"},
+		},
+		{
+			name: "null session",
+			want: SessionSetupFields{Account: "administrator", NativeOS: "Unix", NativeLanMan: "Samba"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := basicSessionSetupBody(tc.oem, tc.uni, "administrator", "WORKGROUP", "Unix", "Samba")
+			require.Equal(t, tc.want, SessionSetupIdentity(header, body))
+		})
+	}
+}

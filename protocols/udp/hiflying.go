@@ -34,6 +34,8 @@ type parsedHiFlying struct {
 	Direction string `json:"direction,omitempty"`
 	Command   string `json:"command,omitempty"`
 	Path      string `json:"path,omitempty"`
+	Username  string `json:"username,omitempty"`
+	Password  string `json:"password,omitempty"`
 	Status    string `json:"status,omitempty"`
 	Payload   []byte `json:"payload,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
@@ -153,13 +155,12 @@ func HandleHiFlying(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []b
 	}()
 
 	req := hiflying.Parse(payload)
-	if req.Masked != nil {
-		payload = req.Masked
-	}
 	events = append(events, parsedHiFlying{
 		Direction: "read",
 		Command:   req.Command(),
 		Path:      req.Args,
+		Username:  req.Username,
+		Password:  req.Password,
 		Payload:   payload,
 		Truncated: len(data) > maxHiFlyingPayload,
 	})

@@ -25,7 +25,6 @@ const (
 	enterAT    = "+ok"
 	atPrefix   = "AT+"
 	maxVerbLen = 16
-	maskedArg  = "***"
 
 	// StatusDiscoverReply, StatusOK and StatusErr are the decoded `status` of writes.
 	StatusDiscoverReply = "DISCOVER_REPLY"
@@ -44,15 +43,15 @@ const (
 )
 
 // Request is a parsed datagram. Verb is the upper-cased command without the
-// "AT+" prefix (e.g. "WSKEY"), Args the text after '=' with any key or
-// password replaced by "***". Masked is the datagram with the same
-// replacement, or nil when nothing was masked.
+// "AT+" prefix (e.g. "WSKEY"), Args the text after '='. Username and
+// Password are the credentials a set command carries (see credentials).
 type Request struct {
-	Kind    Kind
-	Verb    string
-	Args    string
-	HasArgs bool
-	Masked  []byte
+	Kind     Kind
+	Verb     string
+	Args     string
+	HasArgs  bool
+	Username string
+	Password string
 }
 
 // Command returns the decoded `command`: DISCOVER, ENTER_AT, AT+<VERB> or UNKNOWN.
@@ -105,10 +104,8 @@ func Parse(b []byte) Request {
 		return Request{}
 	}
 	r := Request{Kind: KindAT, Verb: strings.ToUpper(verb), Args: args, HasArgs: hasArgs}
-	if masked, ok := maskArgs(r.Verb, args); hasArgs && ok {
-		r.Args = masked
-		start := len(atPrefix) + len(verb) + 1
-		r.Masked = append(append(append([]byte{}, b[:start]...), masked...), b[len(line):]...)
+	if hasArgs {
+		r.Username, r.Password = credentials(r.Verb, args)
 	}
 	return r
 }
@@ -125,30 +122,21 @@ func isVerb(s string) bool {
 	return true
 }
 
-// maskArgs hides keys and passwords a client sets: the key field of
-// WSKEY/WAKEY ("auth,encry,key"), the ASWD assist password and the WEBU
-// password ("user,password").
-func maskArgs(verb, args string) (string, bool) {
-	maskField := func(n int) (string, bool) {
-		f := strings.SplitN(args, ",", n+1)
-		if len(f) <= n || f[n] == "" {
-			return args, false
-		}
-		f[n] = maskedArg
-		return strings.Join(f, ","), true
-	}
+// credentials extracts the keys and passwords a client sets: the key field
+// of WSKEY/WAKEY ("auth,encry,key"), the ASWD assist password and the WEBU
+// user and password ("user,password").
+func credentials(verb, args string) (username, password string) {
 	switch verb {
 	case "WSKEY", "WAKEY":
-		return maskField(2)
-	case "WEBU":
-		return maskField(1)
-	case "ASWD":
-		if args == "" {
-			return args, false
+		if f := strings.SplitN(args, ",", 3); len(f) == 3 {
+			password = f[2]
 		}
-		return maskedArg, true
+	case "WEBU":
+		username, password, _ = strings.Cut(args, ",")
+	case "ASWD":
+		password = args
 	}
-	return args, false
+	return username, password
 }
 
 // Module is the stable identity a sensor presents.

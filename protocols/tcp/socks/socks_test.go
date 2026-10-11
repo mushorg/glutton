@@ -80,8 +80,8 @@ func TestReadGreetingAuthRequest(t *testing.T) {
 	auth, err := ReadAuth(reader([]byte("\x01\x05admin\x06s3cret")))
 	require.NoError(t, err)
 	require.Equal(t, "admin", auth.User)
-	require.Equal(t, []byte("\x01\x05admin\x06******"), auth.Raw)
-	require.NotContains(t, string(auth.Raw), "s3cret")
+	require.Equal(t, "s3cret", auth.Password)
+	require.Equal(t, []byte("\x01\x05admin\x06s3cret"), auth.Raw)
 
 	_, err = ReadAuth(reader([]byte("\x05\x01\x00")))
 	require.ErrorIs(t, err, ErrBadAuthVer)

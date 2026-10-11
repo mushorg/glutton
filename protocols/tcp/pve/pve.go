@@ -152,19 +152,23 @@ func randomSerial() *big.Int {
 	return serial
 }
 
-// LoginUsername returns the username of a ticket (login) request. The
-// password is never returned.
-func LoginUsername(method, path string, body []byte) (string, bool) {
+// LoginCredentials returns the username and password of a ticket (login)
+// request. Both are capped at maxUsername bytes.
+func LoginCredentials(method, path string, body []byte) (string, string, bool) {
 	if method != http.MethodPost || path != ticketPath {
-		return "", false
+		return "", "", false
 	}
 	form, err := url.ParseQuery(string(body))
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	user := form.Get("username")
 	if user == "" {
-		return "", false
+		return "", "", false
+	}
+	pass := form.Get("password")
+	if len(pass) > maxUsername {
+		pass = pass[:maxUsername]
 	}
 	if realm := form.Get("realm"); realm != "" && !strings.Contains(user, "@") {
 		user += "@" + realm
@@ -172,7 +176,7 @@ func LoginUsername(method, path string, body []byte) (string, bool) {
 	if len(user) > maxUsername {
 		user = user[:maxUsername]
 	}
-	return user, true
+	return user, pass, true
 }
 
 // Respond builds the pveproxy reply for a request. now sets Date/Expires.

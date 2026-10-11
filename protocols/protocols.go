@@ -24,6 +24,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/mssql"
 	"github.com/mushorg/glutton/protocols/tcp/postgres"
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
+	"github.com/mushorg/glutton/protocols/tcp/redis"
 	"github.com/mushorg/glutton/protocols/tcp/rtsp"
 	"github.com/mushorg/glutton/protocols/tcp/socks"
 	"github.com/mushorg/glutton/protocols/udp"
@@ -131,6 +132,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"mssql":      bindTCP(tcp.HandleMSSQL, log, h),
 		"firebird":   bindTCP(tcp.HandleFirebird, log, h),
 		"postgres":   bindTCP(tcp.HandlePostgres, log, h),
+		"redis":      bindTCP(tcp.HandleRedis, log, h),
 		"minecraft":  bindTCP(tcp.HandleMinecraft, log, h),
 		"socks":      bindTCP(tcp.HandleSOCKS, log, h),
 		"http":       bindTCP(tcp.HandleHTTP, log, h),
@@ -329,6 +331,14 @@ var catchAllMatchers = []catchAllMatcher{
 		peek:   fixedPeek(postgres.PeekLen, postgres.MayStart),
 		match:  postgres.LooksLikeStartup,
 		handle: asBuffered(tcp.HandlePostgres),
+	},
+	{
+		// Redis scanners and worms (redis-cli, nmap, cron/SSH-key writers)
+		// probe moved servers; require the "*N\r\n$" multibulk framing
+		name:   "redis",
+		peek:   fixedPeek(redis.PeekLen, func(snip []byte) bool { return snip[0] == '*' }),
+		match:  redis.LooksLikeRESP,
+		handle: asBuffered(tcp.HandleRedis),
 	},
 	{
 		// ADB scanners also probe devices that moved adbd off 5555; the
