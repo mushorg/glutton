@@ -150,14 +150,22 @@ func (t *ConnTable) Register(srcIP, srcPort string, dstPort uint16, dstHost stri
 		return md, nil
 	}
 
-	md := Metadata{
+	md := NewMetadata(dstPort, dstHost, rule)
+	t.table[ck] = md
+	return md, nil
+}
+
+// NewMetadata returns metadata for a flow that starts now. UDP datagrams use
+// it directly instead of Register: the table is keyed on source address only,
+// so a cached entry would hand a later datagram (or a later TCP connection
+// from the same source port) the start time and rule of an earlier one.
+func NewMetadata(dstPort uint16, dstHost string, rule *rules.Rule) Metadata {
+	return Metadata{
 		Added:      time.Now(),
 		TargetPort: dstPort,
 		TargetIP:   dstHost,
 		Rule:       rule,
 	}
-	t.table[ck] = md
-	return md, nil
 }
 
 func (t *ConnTable) FlushOlderThan(s time.Duration) {

@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 	"unicode/utf16"
@@ -246,10 +245,9 @@ func (g *Glutton) udpListen(wg *sync.WaitGroup) {
 		if rule == nil {
 			rule = &rules.Rule{Target: "udp"}
 		}
-		md, err := g.connTable.Register(srcAddr.IP.String(), strconv.Itoa(int(srcAddr.AddrPort().Port())), dstAddr.AddrPort().Port(), dstAddr.IP.String(), rule)
-		if err != nil {
-			g.Logger.Error("Failed to register UDP packet", producer.ErrAttr(err))
-		}
+		// every datagram gets its own metadata, so startedAt/durationMs of
+		// its event start here (a SIP dialog keeps its INVITE's)
+		md := connection.NewMetadata(dstAddr.AddrPort().Port(), dstAddr.IP.String(), rule)
 
 		var handlerName string
 		switch rule.Type {

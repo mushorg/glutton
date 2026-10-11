@@ -73,6 +73,21 @@ func TestRegister(t *testing.T) {
 	require.Equal(t, m1, m2)
 }
 
+func TestNewMetadataIgnoresTable(t *testing.T) {
+	table := New(context.Background())
+	old, err := table.Register("127.0.0.1", "1234", 5060, "192.0.2.1", &rules.Rule{Target: "sip"})
+	require.NoError(t, err)
+
+	// a later datagram from the same source port gets fresh metadata, and
+	// the registered flow is left alone
+	md := NewMetadata(53, "192.0.2.2", &rules.Rule{Target: "udp"})
+	require.False(t, md.Added.Before(old.Added))
+	require.Equal(t, "udp", md.Rule.Target)
+	require.Equal(t, uint16(53), md.TargetPort)
+	require.Equal(t, "192.0.2.2", md.TargetIP)
+	require.Equal(t, old, table.Get(localhost1234Key))
+}
+
 func TestRegisterConn(t *testing.T) {
 	conn, ck := testTCPConn(t)
 	table := New(context.Background())

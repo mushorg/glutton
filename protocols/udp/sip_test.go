@@ -21,6 +21,7 @@ type producedUDP struct {
 	payload   []byte
 	decoded   interface{}
 	endReason string
+	added     time.Time
 }
 
 type recordingHoneypot struct {
@@ -36,7 +37,7 @@ func (h *recordingHoneypot) ProduceTCP(string, net.Conn, connection.Metadata, []
 func (h *recordingHoneypot) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md connection.Metadata, payload []byte, decoded interface{}) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.produced = append(h.produced, producedUDP{handler: handler, payload: append([]byte(nil), payload...), decoded: decoded, endReason: md.EndReason})
+	h.produced = append(h.produced, producedUDP{handler: handler, payload: append([]byte(nil), payload...), decoded: decoded, endReason: md.EndReason, added: md.Added})
 	return nil
 }
 
@@ -536,6 +537,25 @@ func TestHandleSIPDialogInviteAckBye(t *testing.T) {
 	sendSIP(t, h, pplsipSrc, bye)
 	require.Len(t, h.produced, 2)
 	require.Len(t, summarizeSIP(t, h.produced[1].decoded), 2)
+}
+
+func TestHandleSIPDialogKeepsInviteStart(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+	invited := time.Date(2026, 10, 11, 17, 59, 47, 0, time.UTC)
+	later := invited.Add(40 * time.Second)
+
+	require.NoError(t, HandleSIP(context.Background(), pplsipSrc, pplsipDst, pplsipInviteRead1, connection.Metadata{Added: invited}, testLogger{}, h))
+	timers.fire(t, sipRing)
+	for _, data := range [][]byte{pplsipInDialog("ACK", 1, pplsipCallID), pplsipInDialog("BYE", 2, pplsipCallID)} {
+		require.NoError(t, HandleSIP(context.Background(), pplsipSrc, pplsipDst, data, connection.Metadata{Added: later}, testLogger{}, h))
+	}
+
+	// the event's startedAt/durationMs span the call from its INVITE
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndClientClose, h.produced[0].endReason)
+	require.Equal(t, invited, h.produced[0].added)
 }
 
 func TestHandleSIPDialogIdleTimeoutResendsOK(t *testing.T) {

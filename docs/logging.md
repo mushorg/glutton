@@ -20,7 +20,7 @@ Producer events follow the `producer.Event` schema:
 | JSON field | Type | Meaning |
 | --- | --- | --- |
 | `timestamp` | string (RFC 3339) | UTC time the event was produced. |
-| `startedAt` | string (RFC 3339) | Connection (or datagram) start from the connection table (`md.Added`). Go does not omit a zero `time.Time`, so an unknown start is `0001-01-01T00:00:00Z`, not absent. |
+| `startedAt` | string (RFC 3339) | Start of what the event covers (`md.Added`): the TCP connection's accept time from the connection table, or the UDP datagram's receive time (for a SIP dialog, its INVITE). Sensors up to v1.0.1+b9e1a04 reused the first datagram seen from the same UDP source address and port, so UDP `startedAt` could be minutes early. Go does not omit a zero `time.Time`, so an unknown start is `0001-01-01T00:00:00Z`, not absent. |
 | `durationMs` | number, optional | Milliseconds from `startedAt` to produce time. Omitted when 0. |
 | `transport` | string | `tcp` or `udp`. |
 | `srcHost` | string | Source IP. |
