@@ -22,6 +22,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/mctp"
 	"github.com/mushorg/glutton/protocols/tcp/minecraft"
 	"github.com/mushorg/glutton/protocols/tcp/mssql"
+	"github.com/mushorg/glutton/protocols/tcp/postgres"
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
 	"github.com/mushorg/glutton/protocols/tcp/rtsp"
 	"github.com/mushorg/glutton/protocols/tcp/socks"
@@ -129,6 +130,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"mongodb":    bindTCP(tcp.HandleMongoDB, log, h),
 		"mssql":      bindTCP(tcp.HandleMSSQL, log, h),
 		"firebird":   bindTCP(tcp.HandleFirebird, log, h),
+		"postgres":   bindTCP(tcp.HandlePostgres, log, h),
 		"minecraft":  bindTCP(tcp.HandleMinecraft, log, h),
 		"socks":      bindTCP(tcp.HandleSOCKS, log, h),
 		"http":       bindTCP(tcp.HandleHTTP, log, h),
@@ -319,6 +321,14 @@ var catchAllMatchers = []catchAllMatcher{
 		}),
 		match:  firebird.LooksLikeConnect,
 		handle: asBuffered(tcp.HandleFirebird),
+	},
+	{
+		// PostgreSQL scanners send an SSLRequest or StartupMessage to moved
+		// servers; gate on a plausible length, the request code decides
+		name:   "postgres",
+		peek:   fixedPeek(postgres.PeekLen, postgres.MayStart),
+		match:  postgres.LooksLikeStartup,
+		handle: asBuffered(tcp.HandlePostgres),
 	},
 	{
 		// ADB scanners also probe devices that moved adbd off 5555; the

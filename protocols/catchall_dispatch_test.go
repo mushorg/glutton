@@ -15,6 +15,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/banners"
 	"github.com/mushorg/glutton/protocols/tcp/firebird"
 	"github.com/mushorg/glutton/protocols/tcp/mssql"
+	"github.com/mushorg/glutton/protocols/tcp/postgres"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
@@ -353,6 +354,34 @@ func TestCatchAllConnectLookalikeStaysTCP(t *testing.T) {
 
 	// opcode 1 but an operation that is not an attach
 	_, err := client.Write([]byte{0, 0, 0, 1, 0, 0, 0, 0x42, 0, 0, 0, 2, 0, 0, 0, 0x24})
+	require.NoError(t, err)
+	reply := make([]byte, 4096)
+	n, err := client.Read(reply)
+	require.NoError(t, err)
+	require.NotZero(t, n)
+
+	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllRoutesOffPortPostgres(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 15432)
+
+	// SSLRequest from Ochi event 940f5806-34a2-476f-979c-5f1d945cdc8f
+	_, err := client.Write([]byte{0x00, 0x00, 0x00, 0x08, 0x04, 0xd2, 0x16, 0x2f})
+	require.NoError(t, err)
+	reply := make([]byte, 1)
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
+	require.Equal(t, postgres.NotSupported, reply)
+
+	require.Equal(t, "postgres", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllStartupLookalikeStaysTCP(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 9999)
+
+	// a plausible length but neither a request code nor protocol 3
+	_, err := client.Write([]byte{0, 0, 0, 0x10, 0x00, 0x02, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0})
 	require.NoError(t, err)
 	reply := make([]byte, 4096)
 	n, err := client.Read(reply)

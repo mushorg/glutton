@@ -57,6 +57,9 @@ rules:
   - match: tcp dst port 3050
     type: conn_handler
     target: firebird
+  - match: tcp dst port 5432
+    type: conn_handler
+    target: postgres
   - match: tcp dst port 502
     type: conn_handler
     target: modbus

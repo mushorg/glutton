@@ -69,6 +69,7 @@ func (l *recordingLogger) hasAttr(key, value string) bool {
 
 type producedTCP struct {
 	protocol  string
+	payload   []byte
 	decoded   interface{}
 	endReason string
 	tls       *connection.TLSInfo
@@ -83,7 +84,7 @@ func newFakeHoneypot() *fakeHoneypot {
 }
 
 func (h *fakeHoneypot) ProduceTCP(protocol string, conn net.Conn, md connection.Metadata, payload []byte, decoded interface{}) error {
-	h.produced <- producedTCP{protocol: protocol, decoded: decoded, endReason: md.EndReason, tls: md.TLS}
+	h.produced <- producedTCP{protocol: protocol, payload: payload, decoded: decoded, endReason: md.EndReason, tls: md.TLS}
 	return nil
 }
 
