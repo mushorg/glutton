@@ -61,6 +61,10 @@ Ticket reads set `username` from the form `username` field, with `@realm` append
 
 The default rule terminates TLS on tcp/8006 (`tls: auto`) with a node certificate signed by a per-sensor `PVE Cluster Manager CA`, so the event carries a `tls` object.
 
+#### Rapid7 Nexpose / InsightVM console
+
+The default rule also terminates TLS on tcp/3780 (`tls: auto`, default self-signed certificate), the port of the Nexpose / InsightVM Security Console. There is no dedicated persona: requests get the generic responses. A client that sends only blank lines gets no reply, the way an HTTPS server waits for a request line.
+
 #### Citrix ADC / NetScaler Gateway (CVE-2019-19781)
 
 Package: `protocols/tcp/citrix`. Reads on the exploit chain set `citrix` to `{stage, nsc_user, template, truncated}`.
