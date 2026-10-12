@@ -11,6 +11,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/mushorg/glutton/protocols/recall"
 	"github.com/mushorg/glutton/protocols/tcp/minecraft"
 )
 
@@ -30,6 +31,8 @@ type parsedMinecraft struct {
 	Port            uint16 `json:"port,omitempty"`
 	NextState       int32  `json:"next_state,omitempty"`
 	Username        string `json:"username,omitempty"`
+	Variant         string `json:"variant,omitempty"` // persona, on the status_response write
+	Visit           int    `json:"visit,omitempty"`   // source's visit number, on the status_response write
 	Payload         []byte `json:"payload,omitempty"`
 	Truncated       bool   `json:"truncated,omitempty"`
 }
@@ -37,6 +40,63 @@ type parsedMinecraft struct {
 type minecraftServer struct {
 	events []parsedMinecraft
 	conn   net.Conn
+
+	// Recall: the persona is picked once per connection.
+	srcIP   net.IP
+	visit   int // 0 until begin
+	persona minecraft.Persona
+	store   *recall.Store
+}
+
+// minecraftRecall remembers each source's last visit; tests swap it for a
+// store with a fake clock.
+var minecraftRecall = recall.Shared
+
+// begin picks the persona once per connection: a source returning after
+// recall.visit_gap gets the next minecraft.Personas entry.
+func (s *minecraftServer) begin(logger interfaces.Logger) {
+	if s.visit > 0 {
+		return
+	}
+	s.store = minecraftRecall
+	v := s.store.Begin("minecraft", s.srcIP, len(minecraft.Personas))
+	s.visit, s.persona = v.Number, minecraft.Personas[v.Variant]
+	if v.Started && v.Number > 1 {
+		logger.Info("returning Minecraft source",
+			slog.String("protocol", "minecraft"),
+			slog.String("src_ip", s.srcIP.String()),
+			slog.Int("visit", v.Number),
+			slog.String("variant", s.persona.Name),
+			slog.String("previous_variant", v.Previous.Variant),
+			slog.Any("previous_commands", v.Previous.Commands),
+		)
+	}
+}
+
+// note stores what the source did on this connection.
+func (s *minecraftServer) note() {
+	if s.visit == 0 {
+		return
+	}
+	s.store.Note("minecraft", s.srcIP, func(sum *recall.Summary) {
+		sum.Variant = s.persona.Name
+		sum.Events++
+		for _, e := range s.events {
+			if e.Direction != "read" {
+				continue
+			}
+			sum.AddCommand(e.Command)
+			sum.AddPath(e.Path)
+			sum.AddUsername(e.Username)
+		}
+	})
+}
+
+// tagLast stamps the last write frame with the visit's persona.
+func (s *minecraftServer) tagLast() {
+	ev := &s.events[len(s.events)-1]
+	ev.Variant = s.persona.Name
+	ev.Visit = s.visit
 }
 
 func (s *minecraftServer) write(data []byte, status string) error {
@@ -82,8 +142,9 @@ func loginStartFrame(pkt minecraft.Packet) parsedMinecraft {
 
 // HandleMinecraft answers Minecraft Java server-list pings and records login attempts.
 func HandleMinecraft(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
-	server := &minecraftServer{events: []parsedMinecraft{}, conn: conn}
+	server := &minecraftServer{events: []parsedMinecraft{}, conn: conn, srcIP: remoteIP(conn), persona: minecraft.Personas[0]}
 	defer func() {
+		server.note()
 		if err := h.ProduceTCP("minecraft", conn, md, helpers.FirstOrEmpty[parsedMinecraft](server.events).Payload, server.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "minecraft"), producer.ErrAttr(err))
 		}
@@ -135,6 +196,7 @@ func HandleMinecraft(ctx context.Context, conn net.Conn, md connection.Metadata,
 			frame.Port = hs.Port
 			frame.NextState = hs.NextState
 			server.events = append(server.events, frame)
+			server.begin(logger)
 			// Vanilla rejects transfers and version mismatches right after
 			// the Handshake, before Login Start.
 			var reason string
@@ -163,9 +225,10 @@ func HandleMinecraft(ctx context.Context, conn net.Conn, md connection.Metadata,
 				return nil
 			}
 			statusSent = true
-			if err := server.write(minecraft.BuildStatusResponse(), "status_response"); err != nil {
+			if err := server.write(minecraft.BuildStatusResponse(server.persona), "status_response"); err != nil {
 				return err
 			}
+			server.tagLast()
 
 		case state == minecraft.StateStatus && pkt.ID == minecraft.IDPing:
 			frame.Command = "ping"

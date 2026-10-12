@@ -6,9 +6,11 @@ package minecraft
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -270,15 +272,35 @@ func stringBody(s string) []byte {
 }
 
 // BuildStatusResponse builds the Status Response (0x00) of a vanilla 1.21.4
-// dedicated server with default server.properties in offline mode: plain
-// string MOTD, nobody online, no favicon, and no enforcesSecureChat (vanilla
-// omits it when false, and it is false without online mode). Field order and
-// compact encoding follow vanilla's codec. Like vanilla, the client's protocol
-// is not echoed.
-func BuildStatusResponse() []byte {
-	js := fmt.Sprintf(`{"description":"A Minecraft Server","players":{"max":20,"online":0},"version":{"name":%q,"protocol":%d}}`,
-		DefaultVersionName, DefaultProtocol)
-	return BuildPacket(IDStatusResp, stringBody(js))
+// dedicated server with p's server.properties in offline mode: plain string
+// MOTD, no favicon, and no enforcesSecureChat (vanilla omits it when false,
+// and it is false without online mode). Field order and compact encoding
+// follow vanilla's codec; sample is omitted when empty, as vanilla does. Like
+// vanilla, the client's protocol is not echoed.
+func BuildStatusResponse(p Persona) []byte {
+	var b strings.Builder
+	b.WriteString(`{"description":`)
+	writeJSONString(&b, p.MOTD)
+	fmt.Fprintf(&b, `,"players":{"max":%d,"online":%d`, p.Max, len(p.Players))
+	if len(p.Players) > 0 {
+		b.WriteString(`,"sample":[`)
+		for i, name := range p.Players {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			fmt.Fprintf(&b, `{"id":"%s","name":`, OfflineUUID(name))
+			writeJSONString(&b, name)
+			b.WriteByte('}')
+		}
+		b.WriteByte(']')
+	}
+	fmt.Fprintf(&b, `},"version":{"name":%q,"protocol":%d}}`, DefaultVersionName, DefaultProtocol)
+	return BuildPacket(IDStatusResp, stringBody(b.String()))
+}
+
+func writeJSONString(b *strings.Builder, s string) {
+	js, _ := json.Marshal(s) // a string always marshals
+	b.Write(js)
 }
 
 // BuildPong builds the Pong (0x01) echoing the 8 ping bytes.

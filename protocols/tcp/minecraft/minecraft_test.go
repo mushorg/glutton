@@ -60,12 +60,32 @@ func TestParseHandshakeStringOverrun(t *testing.T) {
 }
 
 func TestBuildStatusResponse(t *testing.T) {
-	pkt, err := ReadPacket(bytes.NewReader(BuildStatusResponse()))
-	require.NoError(t, err)
-	require.Equal(t, int32(IDStatusResp), pkt.ID)
-	js, err := readString(bytes.NewReader(pkt.Body))
-	require.NoError(t, err)
-	require.Equal(t, `{"description":"A Minecraft Server","players":{"max":20,"online":0},"version":{"name":"1.21.4","protocol":769}}`, js)
+	for _, tc := range []struct {
+		persona Persona
+		want    string
+	}{
+		{Personas[0], `{"description":"A Minecraft Server","players":{"max":20,"online":0},"version":{"name":"1.21.4","protocol":769}}`},
+		{Personas[1], `{"description":"Friends SMP","players":{"max":10,"online":2,"sample":[{"id":"96925955-fcfb-3fab-bb35-84f574daee23","name":"kuba_mc"},{"id":"1e09a6fd-185d-314e-b314-0af906030a6d","name":"Nyxie"}]},"version":{"name":"1.21.4","protocol":769}}`},
+		{Personas[2], `{"description":"survival server - whitelist only","players":{"max":20,"online":1,"sample":[{"id":"afb8f65c-3401-34be-9910-fa49d0b7122a","name":"dragonslayer07"}]},"version":{"name":"1.21.4","protocol":769}}`},
+	} {
+		pkt, err := ReadPacket(bytes.NewReader(BuildStatusResponse(tc.persona)))
+		require.NoError(t, err)
+		require.Equal(t, int32(IDStatusResp), pkt.ID)
+		js, err := readString(bytes.NewReader(pkt.Body))
+		require.NoError(t, err)
+		require.Equal(t, tc.want, js, tc.persona.Name)
+	}
+}
+
+// The first persona is the unchanged default server; variant 0 must not drift.
+func TestBuildStatusResponseDefaultBytes(t *testing.T) {
+	want := append([]byte{0x71, 0x00, 0x6f}, `{"description":"A Minecraft Server","players":{"max":20,"online":0},"version":{"name":"1.21.4","protocol":769}}`...)
+	require.Equal(t, want, BuildStatusResponse(Personas[0]))
+}
+
+func TestOfflineUUID(t *testing.T) {
+	// The well-known offline-mode UUID of Notch.
+	require.Equal(t, "b50ad385-829d-3141-a216-7e7d7539ba7f", OfflineUUID("Notch"))
 }
 
 func TestVersionReason(t *testing.T) {
