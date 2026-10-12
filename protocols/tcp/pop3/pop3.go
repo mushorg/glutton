@@ -3,8 +3,10 @@ package pop3
 
 import "strings"
 
-// Greeting is the +OK line sent once the TLS handshake completes.
-const Greeting = "+OK Dovecot ready.\r\n"
+// Greeting is the +OK line a server-first POP3 session opens with: on
+// connect for plaintext tcp/110, after the TLS handshake for POP3S. The
+// catch-all banner for port 110 reuses it so both share one persona.
+const Greeting = "+OK Dovecot (Ubuntu) ready.\r\n"
 
 // Command is one parsed client command line.
 type Command struct {

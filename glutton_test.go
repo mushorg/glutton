@@ -1,6 +1,7 @@
 package glutton
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"testing"
@@ -165,4 +166,23 @@ func TestGuardConnFailsWritesOverBudget(t *testing.T) {
 	n, err = conn.Write([]byte{1})
 	require.ErrorIs(t, err, guard.ErrLimited)
 	require.Zero(t, n)
+}
+
+func TestDefaultRulesRoutePOP3(t *testing.T) {
+	rs, err := rules.Init(bytes.NewReader(defaultRules))
+	require.NoError(t, err)
+	src := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 50000}
+	for _, tc := range []struct {
+		port int
+		tls  rules.TLSMode
+	}{
+		{110, rules.TLSOff},
+		{995, rules.TLSOn},
+	} {
+		match, err := rs.Match("tcp", src, &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: tc.port})
+		require.NoError(t, err)
+		require.NotNil(t, match, "port %d", tc.port)
+		require.Equal(t, "pop3", match.Target, "port %d", tc.port)
+		require.Equal(t, tc.tls, match.TLS, "port %d", tc.port)
+	}
 }

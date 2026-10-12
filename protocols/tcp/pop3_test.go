@@ -3,11 +3,13 @@ package tcp
 import (
 	"bufio"
 	"context"
+	"io"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/tcp/pop3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,7 +61,7 @@ func TestHandlePOP3Session(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	expect("+OK Dovecot ready.\r\n")
+	expect(pop3.Greeting)
 	send("USER bob\r\n")
 	expect("+OK\r\n")
 	send("PASS hunter2\r\n")
@@ -70,7 +72,7 @@ func TestHandlePOP3Session(t *testing.T) {
 	expect("+OK Logging out.\r\n")
 
 	require.Equal(t, []parsedPOP3{
-		{Direction: "write", Status: "+OK", Payload: []byte("+OK Dovecot ready.\r\n")},
+		{Direction: "write", Status: "+OK", Payload: []byte(pop3.Greeting)},
 		{Direction: "read", Command: "USER", Username: "bob", Payload: []byte("USER bob\r\n")},
 		{Direction: "write", Status: "+OK", Payload: []byte("+OK\r\n")},
 		{Direction: "read", Command: "PASS", Password: "hunter2", Payload: []byte("PASS hunter2\r\n")},
@@ -113,4 +115,33 @@ func TestHandlePOP3LongLineTruncated(t *testing.T) {
 	require.Len(t, events, 2)
 	require.True(t, events[1].Truncated)
 	require.Len(t, events[1].Payload, pop3MaxLine)
+}
+
+// TestHandlePOP3Capa replays the plaintext tcp/110 fingerprint from Ochi event
+// fc4e9f1c-6d98-43f2-8cac-6e7fe9f5f064: greeting, CAPA, then the client hangs
+// up. The catch-all used to answer CAPA with random bytes.
+func TestHandlePOP3Capa(t *testing.T) {
+	client, serverConn := net.Pipe()
+	hp := newFakeHoneypot()
+	done := runPOP3(serverConn, hp)
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	r := bufio.NewReader(client)
+	line, err := r.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "+OK Dovecot (Ubuntu) ready.\r\n", line)
+	_, err = client.Write([]byte("CAPA\r\n"))
+	require.NoError(t, err)
+	capa := "+OK\r\nCAPA\r\nTOP\r\nUSER\r\nUIDL\r\nRESP-CODES\r\nPIPELINING\r\n.\r\n"
+	got := make([]byte, len(capa))
+	_, err = io.ReadFull(r, got)
+	require.NoError(t, err)
+	require.Equal(t, capa, string(got))
+	require.NoError(t, client.Close())
+
+	require.Equal(t, []parsedPOP3{
+		{Direction: "write", Status: "+OK", Payload: []byte("+OK Dovecot (Ubuntu) ready.\r\n")},
+		{Direction: "read", Command: "CAPA", Payload: []byte("CAPA\r\n")},
+		{Direction: "write", Status: "+OK", Payload: []byte(capa)},
+	}, requirePOP3Event(t, done, hp))
 }

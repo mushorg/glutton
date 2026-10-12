@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/protocols/helpers"
+	"github.com/mushorg/glutton/protocols/tcp/pop3"
 	"github.com/mushorg/glutton/protocols/tcp/ssh"
 )
 
@@ -55,7 +56,7 @@ func mustHex(s string) []byte {
 
 var (
 	sshBanner  = []byte(ssh.ServerVersion + "\r\n")
-	pop3Banner = []byte("+OK Dovecot (Ubuntu) ready.\r\n")
+	pop3Banner = []byte(pop3.Greeting)
 	rfbBanner  = []byte("RFB 003.008\n")
 
 	// cmd.exe prompt of a Windows Server 2003 bind shell, matching the IIS 6.0
