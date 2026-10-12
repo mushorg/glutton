@@ -80,6 +80,7 @@ Source: `config/config.yaml`. Keys you'll most often touch:
 | `pve.domain` | *(random, e.g. `lan`)* | Proxmox VE persona: DNS domain of the node certificate CN. When unset one of a few common LAN domains is picked once per process. |
 | `rdp.domain_name`                                                    | `WORKGROUP`              | TCP RDP: the NetBIOS domain/workgroup name used in the NTLM Challenge TargetInfo. |
 | `rdp.credentials`                                                    | `[]`                     | TCP RDP: optional NLA passwords (`{username, password}`; username is ignored). Needed only for clients that offer CredSSP and not TLS — those cannot complete NLA without a password the sensor knows. A typical TLS\|CredSSP probe is answered with TLS, so any password arrives in Client Info and this list is unused. Empty (the default) is fine. Use weak placeholders only. |
+| `rdp.guess_passwords`                                                | `[]`                     | TCP RDP: extra passwords tried against each CredSSP NTLMv2 Authenticate, after `rdp.credentials`. A match completes NLA and the session continues into MCS / Client Info. At most 64 entries are tried. A password on neither list still gets `STATUS_LOGON_FAILURE`: CredSSP's confirmation is sealed with a key derived from the password, so an unknown guess cannot be accepted. Use weak placeholders only. |
 | `dnp3.address`                                                       | `10`                     | TCP DNP3: the outstation link address the handler answers as. `REQUEST_LINK_STATUS` gets `LINK_STATUS`; `RESET_LINK_STATES`, `TEST_LINK_STATES` and `CONFIRMED_USER_DATA` get `ACK`. Frames for any other address (including broadcast) get no reply. Link layer only: no application-layer responses. |
 | `spicy.enabled`                                                      | `true`                   | Initializes Spicy/HILTI and enables Spicy-backed paths (HTTP parsing, TCP-payload protocol detection). Set `false` if you build without Spicy or want the Spicy-free dispatch path. |
 
@@ -88,6 +89,9 @@ rdp:
   credentials:
     - username: administrator
       password: Password1
+  guess_passwords:
+    - Password1
+    - "123456"
 ```
 
 ### Ignored ports

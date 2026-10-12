@@ -8,6 +8,8 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/binary"
+	"encoding/hex"
+	"fmt"
 	"strings"
 	"time"
 
@@ -23,11 +25,27 @@ type Account struct {
 }
 
 // Accounts returns the configured NLA accept-list. Empty (the default) means
-// every Authenticate gets STATUS_LOGON_FAILURE, as before this feature.
+// every Authenticate gets STATUS_LOGON_FAILURE, unless rdp.guess_passwords
+// supplies a password that verifies the Type 3.
 func Accounts() []Account {
 	var acc []Account
 	_ = viper.UnmarshalKey("rdp.credentials", &acc)
 	return acc
+}
+
+// maxGuessPasswords bounds HMAC work per Authenticate. Entries past the cap
+// are ignored.
+const maxGuessPasswords = 64
+
+// GuessPasswords returns rdp.guess_passwords, truncated to maxGuessPasswords.
+// These are tried after rdp.credentials. Empty (the default) adds nothing.
+func GuessPasswords() []string {
+	var guesses []string
+	_ = viper.UnmarshalKey("rdp.guess_passwords", &guesses)
+	if len(guesses) > maxGuessPasswords {
+		guesses = guesses[:maxGuessPasswords]
+	}
+	return guesses
 }
 
 // NLAInput is the Type 3 plus the values AcceptNLA needs to prove and seal.
@@ -278,25 +296,60 @@ func bitStringFromSPKI(spki []byte) []byte {
 	return append([]byte(nil), val...)
 }
 
-// MatchAccount tries each configured password against the Type 3 (any
-// username). The NTLM proof is bound to the password the client used, so a
-// listed password that is not that one cannot match.
+// NetNTLMv2 builds a hashcat mode 5600 string
+// (user::domain:serverChallenge:NTProofStr:blob) from a Type 3 NTLMv2
+// response. It returns "" when the challenge is not 8 bytes or the response
+// is not NTLMv2.
+func NetNTLMv2(user, domain string, serverChallenge, ntChallengeResponse []byte) string {
+	if len(serverChallenge) != 8 || ntlm.VersionFromNTLen(len(ntChallengeResponse)) != "NTLMv2" {
+		return ""
+	}
+	return fmt.Sprintf("%s::%s:%s:%s:%s",
+		user,
+		domain,
+		hex.EncodeToString(serverChallenge),
+		hex.EncodeToString(ntChallengeResponse[:16]),
+		hex.EncodeToString(ntChallengeResponse[16:]),
+	)
+}
+
+// MatchAccount tries each password from rdp.credentials, then
+// rdp.guess_passwords (capped), against the Type 3 (any username). The NTLM
+// proof is bound to the password the client used, so a listed password that
+// is not that one cannot match. An unknown password cannot be accepted:
+// the CredSSP confirmation is sealed with a key derived from it.
 func MatchAccount(parsed ParsedCredSSP, serverChallenge, subjectPublicKey []byte) (*NLAResult, string, bool) {
-	for _, acc := range Accounts() {
-		if acc.Password == "" {
-			continue
+	seen := make(map[string]struct{})
+	try := func(password, fallbackUser string) (*NLAResult, string, bool) {
+		if password == "" {
+			return nil, "", false
 		}
+		if _, dup := seen[password]; dup {
+			return nil, "", false
+		}
+		seen[password] = struct{}{}
 		out, ok := AcceptNLA(NLAInput{
 			Parsed:           parsed,
-			Password:         acc.Password,
+			Password:         password,
 			ServerChallenge:  serverChallenge,
 			SubjectPublicKey: subjectPublicKey,
 		})
-		if ok {
-			user := parsed.Username
-			if user == "" {
-				user = acc.Username
-			}
+		if !ok {
+			return nil, "", false
+		}
+		user := parsed.Username
+		if user == "" {
+			user = fallbackUser
+		}
+		return out, user, true
+	}
+	for _, acc := range Accounts() {
+		if out, user, ok := try(acc.Password, acc.Username); ok {
+			return out, user, true
+		}
+	}
+	for _, password := range GuessPasswords() {
+		if out, user, ok := try(password, ""); ok {
 			return out, user, true
 		}
 	}

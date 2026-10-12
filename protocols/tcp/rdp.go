@@ -29,11 +29,13 @@ type parsedRDP struct {
 	NTLMUser        string `json:"ntlm_user,omitempty"`
 	NTLMWorkstation string `json:"ntlm_workstation,omitempty"`
 	NTLMVersion     string `json:"ntlm_version,omitempty"`
-	// NTLMServerChallenge is the hex Type 2 challenge we sent; with the NT
-	// response in Payload it is all that is needed to crack the exchange.
+	// NTLMServerChallenge is the hex Type 2 challenge we sent.
 	NTLMServerChallenge string `json:"ntlm_server_challenge,omitempty"`
 	NTResponseLen       int    `json:"nt_response_len,omitempty"`
-	NLAAccepted         bool   `json:"nla_accepted,omitempty"`
+	// NetNTLMv2 is a hashcat -m 5600 string for an NTLMv2 Authenticate
+	// (user::domain:challenge:proof:blob). Empty for NTLMv1 and anonymous.
+	NetNTLMv2   string `json:"netntlmv2,omitempty"`
+	NLAAccepted bool   `json:"nla_accepted,omitempty"`
 	// NLAPassword is the plaintext password from the decrypted CredSSP
 	// TSPasswordCreds (only reachable after NLA was accepted).
 	NLAPassword string          `json:"nla_password,omitempty"`
@@ -376,6 +378,7 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 				fr.NTLMVersion = parsed.NTLMVersion
 				fr.NTResponseLen = parsed.NTResponseLen
 				fr.NTLMServerChallenge = hex.EncodeToString(serverChallenge)
+				fr.NetNTLMv2 = rdp.NetNTLMv2(parsed.Username, parsed.Domain, serverChallenge, parsed.NtChallengeResponse)
 				logger.Debug("rdp CredSSP NTLM Authenticate",
 					slog.String("protocol", "rdp"),
 					slog.String("domain", parsed.Domain),

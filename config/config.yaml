@@ -82,5 +82,8 @@ icap:
 dnp3:
   address: 10        # outstation link address; REQUEST_LINK_STATUS and TEST_LINK sent to it are answered, other addresses get silence.
 
+rdp:
+  guess_passwords: []   # extra NLA passwords tried after rdp.credentials (at most 64). A match completes CredSSP; any other password gets STATUS_LOGON_FAILURE.
+
 spicy:
   enabled: true

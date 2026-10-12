@@ -90,7 +90,9 @@ func RequestedMask(pdu ConnectionRequestPDU) uint32 {
 // (MS-RDPBCGR 2.2.1.2.1 allows exactly one): TLS if offered, else CredSSP,
 // else standard RDP security. TLS is preferred so Client Info (and any
 // password) arrives in the tunnel; CredSSP can only complete for a password
-// the sensor knows (see rdp.credentials).
+// the sensor knows (see rdp.credentials and rdp.guess_passwords). An unknown
+// password cannot be accepted: the confirmation is sealed with a key derived
+// from it.
 func SelectProtocol(requested uint32) uint32 {
 	switch {
 	case requested&ProtocolSSL != 0:

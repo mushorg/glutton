@@ -2,6 +2,8 @@ package rdp
 
 import (
 	"crypto/x509"
+	"encoding/hex"
+	"fmt"
 	"testing"
 
 	"github.com/mushorg/glutton/protocols/helpers"
@@ -133,4 +135,85 @@ func TestMatchAccountAcceptList(t *testing.T) {
 func TestAccountsEmptyDefault(t *testing.T) {
 	viper.Set("rdp.credentials", nil)
 	require.Empty(t, Accounts())
+}
+
+func TestMatchAccountGuessPasswords(t *testing.T) {
+	viper.Set("rdp.credentials", nil)
+	viper.Set("rdp.guess_passwords", []string{"nope", "Password1"})
+	t.Cleanup(func() {
+		viper.Set("rdp.credentials", nil)
+		viper.Set("rdp.guess_passwords", nil)
+	})
+
+	pub := testSubjectPublicKey(t)
+	challenge, nonce, err := BuildTSRequestChallengeNonce(NTLMChallengeOptions{Computer: "WIN-TEST", Domain: "WORKGROUP", Now: fixedNow})
+	require.NoError(t, err)
+	req, _, err := BuildClientAuthenticate(challenge, "administrator", "WORKGROUP", "Password1", pub)
+	require.NoError(t, err)
+	parsed := ParseCredSSP(req)
+
+	out, user, ok := MatchAccount(parsed, nonce, pub)
+	require.True(t, ok)
+	require.Equal(t, "administrator", user)
+	require.NotNil(t, out)
+
+	reqWrong, _, err := BuildClientAuthenticate(challenge, "administrator", "WORKGROUP", "other", pub)
+	require.NoError(t, err)
+	_, _, ok = MatchAccount(ParseCredSSP(reqWrong), nonce, pub)
+	require.False(t, ok)
+}
+
+func TestGuessPasswordsCap(t *testing.T) {
+	passwords := make([]string, maxGuessPasswords+1)
+	for i := range passwords {
+		passwords[i] = fmt.Sprintf("pw-%d", i)
+	}
+	passwords[maxGuessPasswords] = "Password1"
+	viper.Set("rdp.credentials", nil)
+	viper.Set("rdp.guess_passwords", passwords)
+	t.Cleanup(func() {
+		viper.Set("rdp.credentials", nil)
+		viper.Set("rdp.guess_passwords", nil)
+	})
+
+	require.Len(t, GuessPasswords(), maxGuessPasswords)
+	require.NotContains(t, GuessPasswords(), "Password1")
+
+	pub := testSubjectPublicKey(t)
+	challenge, nonce, err := BuildTSRequestChallengeNonce(NTLMChallengeOptions{Computer: "WIN-TEST", Domain: "WORKGROUP", Now: fixedNow})
+	require.NoError(t, err)
+	req, _, err := BuildClientAuthenticate(challenge, "administrator", "WORKGROUP", "Password1", pub)
+	require.NoError(t, err)
+	parsed := ParseCredSSP(req)
+
+	_, _, ok := MatchAccount(parsed, nonce, pub)
+	require.False(t, ok, "the password past the cap is not tried")
+
+	passwords[maxGuessPasswords-1] = "Password1"
+	passwords[maxGuessPasswords] = "unused"
+	viper.Set("rdp.guess_passwords", passwords)
+	_, user, ok := MatchAccount(parsed, nonce, pub)
+	require.True(t, ok, "the last entry inside the cap is tried")
+	require.Equal(t, "administrator", user)
+}
+
+func TestNetNTLMv2(t *testing.T) {
+	pub := testSubjectPublicKey(t)
+	challenge, nonce, err := BuildTSRequestChallengeNonce(NTLMChallengeOptions{Computer: "WIN-TEST", Domain: "WORKGROUP", Now: fixedNow})
+	require.NoError(t, err)
+	req, _, err := BuildClientAuthenticate(challenge, "administrator", "WORKGROUP", "Password1", pub)
+	require.NoError(t, err)
+	parsed := ParseCredSSP(req)
+
+	got := NetNTLMv2(parsed.Username, parsed.Domain, nonce, parsed.NtChallengeResponse)
+	want := fmt.Sprintf("administrator::WORKGROUP:%s:%s:%s",
+		hex.EncodeToString(nonce),
+		hex.EncodeToString(parsed.NtChallengeResponse[:16]),
+		hex.EncodeToString(parsed.NtChallengeResponse[16:]),
+	)
+	require.Equal(t, want, got)
+
+	require.Empty(t, NetNTLMv2(parsed.Username, parsed.Domain, nonce[:7], parsed.NtChallengeResponse))
+	require.Empty(t, NetNTLMv2(parsed.Username, parsed.Domain, nonce, parsed.NtChallengeResponse[:24]), "NTLMv1 length")
+	require.Empty(t, NetNTLMv2(parsed.Username, parsed.Domain, nonce, nil))
 }
