@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"io"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/mushorg/glutton/protocols/recall"
 )
 
 // busyboxBanner is the BusyBox ash greeting Mirai checks for after applet probes.
@@ -31,19 +33,18 @@ const maxTelnetSample = 10 << 20
 // Mirai botnet  - https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
 // Hajime botnet - https://security.rapiditynetworks.com/publications/2016-10-16/hajime.pdf
 var miraiCom = map[string][]string{
-	"ps":                                 {"1 pts/21   00:00:00 init"},
-	"cat /proc/mounts":                   {"rootfs / rootfs rw 0 0\r\n/dev/root / ext2 rw,relatime,errors=continue 0 0\r\nproc /proc proc rw,relatime 0 0\r\nsysfs /sys sysfs rw,relatime 0 0\r\nudev /dev tmpfs rw,relatime 0 0\r\ndevpts /dev/pts devpts rw,relatime,mode=600,ptmxmode=000 0 0\r\n/dev/mtdblock1 /home/hik jffs2 rw,relatime 0 0\r\ntmpfs /run tmpfs rw,nosuid,noexec,relatime,size=3231524k,mode=755 0 0\r\n"},
-	"(cat .s || cp /bin/echo .s)":        {"cat: .s: No such file or directory"},
-	"nc":                                 {"nc: command not found"},
-	"wget":                               {"wget: missing URL"},
-	"(dd bs=52 count=1 if=.s || cat .s)": {"\x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00\x01\x00\x00\x00\xbc\x14\x01\x00\x34\x00\x00\x00"},
-	"sh":                                 {"$"},
-	"sh || shell":                        {"$"},
-	"enable\x00":                         {"-bash: enable: command not found"},
-	"linuxshell\x00":                     {"-bash: linuxshell: command not found"},
-	"system\x00":                         {"-bash: system: command not found"},
-	"shell\x00":                          {"-bash: shell: command not found"},
-	"sh\x00":                             {"$"},
+	"ps":                          {"1 pts/21   00:00:00 init"},
+	"cat /proc/mounts":            {"rootfs / rootfs rw 0 0\r\n/dev/root / ext2 rw,relatime,errors=continue 0 0\r\nproc /proc proc rw,relatime 0 0\r\nsysfs /sys sysfs rw,relatime 0 0\r\nudev /dev tmpfs rw,relatime 0 0\r\ndevpts /dev/pts devpts rw,relatime,mode=600,ptmxmode=000 0 0\r\n/dev/mtdblock1 /home/hik jffs2 rw,relatime 0 0\r\ntmpfs /run tmpfs rw,nosuid,noexec,relatime,size=3231524k,mode=755 0 0\r\n"},
+	"(cat .s || cp /bin/echo .s)": {"cat: .s: No such file or directory"},
+	"nc":                          {"nc: command not found"},
+	"wget":                        {"wget: missing URL"},
+	"sh":                          {"$"},
+	"sh || shell":                 {"$"},
+	"enable\x00":                  {"-bash: enable: command not found"},
+	"linuxshell\x00":              {"-bash: linuxshell: command not found"},
+	"system\x00":                  {"-bash: system: command not found"},
+	"shell\x00":                   {"-bash: shell: command not found"},
+	"sh\x00":                      {"$"},
 	//	"fgrep XDVR /mnt/mtd/dep2.sh\x00":		   {"cd /mnt/mtd && ./XDVRStart.hisi ./td3500 &"},
 	"busybox": {busyboxBanner},
 	"echo -ne '\\x48\\x6f\\x6c\\x6c\\x61\\x46\\x6f\\x72\\x41\\x6c\\x6c\\x61\\x68\\x0a'\r\n": {"\x48\x6f\x6c\x6c\x61\x46\x6f\x72\x41\x6c\x6c\x61\x68\x0arn"},
@@ -54,7 +55,6 @@ var miraiCom = map[string][]string{
 	"echo -e \\x6b\\x61\\x6d\\x69/run > /run/.nippon": {""},
 	"cat /run/.nippon":              {"kami/run"},
 	"rm /run/.nippon":               {""},
-	"cat /bin/sh":                   {"\x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x28\x00\x01\x00\x00\x00\x98\x30\x00\x00\x34\x00\x00\x00"},
 	"/bin/busybox ps":               {"1 pts/21   00:00:00 init"},
 	"/bin/busybox cat /proc/mounts": {"tmpfs /run tmpfs rw,nosuid,noexec,relatime,size=3231524k,mode=755 0 0"},
 	"/bin/busybox echo -e \\x6b\\x61\\x6d\\x69/dev > /dev/.nippon": {""},
@@ -64,8 +64,192 @@ var miraiCom = map[string][]string{
 	"/bin/busybox cat /run/.nippon":                                {"kami/run"},
 	"/bin/busybox rm /run/.nippon":                                 {""},
 	"/bin/busybox cat /bin/sh":                                     {""},
-	"/bin/busybox cat /bin/echo":                                   {"/bin/busybox cat /bin/echo\r\n\x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00\x01\x00\x00\x00\x6c\xb9\x00\x00\x34\x00\x00\x00"},
 	"rm /dev/.human":                                               {"rm: can't remove '/.t': No such file or directory\r\nrm: can't remove '/.sh': No such file or directory\r\nrm: can't remove '/.human': No such file or directory\r\ncd /dev"},
+}
+
+// telnetELFReplies are commands that print the fake BusyBox binary (/bin/sh,
+// /bin/echo, its copy .s, /proc/self/exe): Mirai reads the ELF header and
+// picks a loader by e_machine. Values are text printed before the header.
+var telnetELFReplies = map[string]string{
+	"(dd bs=52 count=1 if=.s || cat .s)": "",
+	"cat /bin/sh":                        "",
+	"cat /proc/self/exe":                 "",
+	"cat /bin/busybox":                   "",
+	"/bin/busybox cat /bin/echo":         "/bin/busybox cat /bin/echo\r\n",
+}
+
+// telnetArch is the CPU the fake device claims in its ELF headers.
+type telnetArch struct {
+	name    string
+	data    byte // EI_DATA: 1 little-endian, 2 big-endian
+	machine uint16
+	entry   uint32
+	flags   uint32
+}
+
+// telnetArches is the rotation order for returning sources; arm (the
+// original persona) comes first.
+var telnetArches = []telnetArch{
+	{name: "arm", data: 1, machine: 0x28, entry: 0xb96c, flags: 0x05000200},      // EABI5 soft-float
+	{name: "mips", data: 2, machine: 0x08, entry: 0x400190, flags: 0x00001007},   // o32, noreorder, pic, cpic
+	{name: "mipsel", data: 1, machine: 0x08, entry: 0x400190, flags: 0x00001007}, // o32, noreorder, pic, cpic
+}
+
+// elfHeader returns the 52-byte ELF32 header of the fake BusyBox static executable.
+func (a telnetArch) elfHeader() string {
+	var order binary.ByteOrder = binary.LittleEndian
+	if a.data == 2 {
+		order = binary.BigEndian
+	}
+	h := make([]byte, 52)
+	copy(h, "\x7fELF\x01")
+	h[5] = a.data
+	h[6] = 1                   // EI_VERSION
+	order.PutUint16(h[16:], 2) // e_type EXEC
+	order.PutUint16(h[18:], a.machine)
+	order.PutUint32(h[20:], 1) // e_version
+	order.PutUint32(h[24:], a.entry)
+	order.PutUint32(h[28:], 52)      // e_phoff
+	order.PutUint32(h[32:], 0xc1f2c) // e_shoff
+	order.PutUint32(h[36:], a.flags)
+	order.PutUint16(h[40:], 52) // e_ehsize
+	order.PutUint16(h[42:], 32) // e_phentsize
+	order.PutUint16(h[44:], 5)  // e_phnum
+	order.PutUint16(h[46:], 40) // e_shentsize
+	order.PutUint16(h[48:], 27) // e_shnum
+	order.PutUint16(h[50:], 26) // e_shstrndx
+	return string(h)
+}
+
+// telnetReplies is miraiCom keyed by normalized command, so NUL- and
+// CRLF-terminated variants of the same command share one entry.
+var telnetReplies = func() map[string][]string {
+	m := make(map[string][]string, len(miraiCom))
+	for k, v := range miraiCom {
+		m[normalizeTelnetCommand(k)] = v
+	}
+	return m
+}()
+
+// busyboxApplets are applets the fake BusyBox has; any other `/bin/busybox X`
+// is answered with "X: applet not found" (Mirai's BusyBox liveness check).
+var busyboxApplets = map[string]bool{
+	"ash": true, "busybox": true, "cat": true, "cd": true, "chmod": true, "cp": true,
+	"dd": true, "echo": true, "ftpget": true, "grep": true, "head": true, "kill": true,
+	"killall": true, "ln": true, "ls": true, "mkdir": true, "mount": true, "mv": true,
+	"ping": true, "ps": true, "rm": true, "sh": true, "sleep": true, "tail": true,
+	"tftp": true, "touch": true, "uname": true, "wget": true,
+}
+
+var busyboxAppletRe = regexp.MustCompile(`/bin/busybox\s+([A-Za-z0-9_]+)(.*)`)
+
+// normalizeTelnetCommand trims whitespace and NUL terminators from a shell command.
+func normalizeTelnetCommand(cmd string) string {
+	return strings.TrimFunc(cmd, func(r rune) bool {
+		return r == 0 || r == ' ' || r == '\t' || r == '\r' || r == '\n'
+	})
+}
+
+// telnetLookup finds a canned reply for a normalized command, falling back to
+// the same command without a `/bin/busybox ` prefix. elf is true when the
+// reply is an ELF header of arch.
+func telnetLookup(cmd string, arch telnetArch) (resp []string, elf, ok bool) {
+	for _, c := range []string{cmd, ""} {
+		if c == "" {
+			rest, found := strings.CutPrefix(cmd, "/bin/busybox ")
+			if !found {
+				break
+			}
+			c = normalizeTelnetCommand(rest)
+		}
+		if resp, ok := telnetReplies[c]; ok {
+			return resp, false, true
+		}
+		if prefix, ok := telnetELFReplies[c]; ok {
+			return []string{prefix + arch.elfHeader()}, true, true
+		}
+	}
+	return nil, false, false
+}
+
+// telnetAppletReply emulates BusyBox for commands without a canned reply:
+// unknown applets are "not found", cat of an unknown file is a missing file.
+func telnetAppletReply(cmd string) []string {
+	var applet, args string
+	if m := busyboxAppletRe.FindStringSubmatch(cmd); m != nil {
+		applet, args = m[1], m[2]
+		if !busyboxApplets[applet] {
+			return []string{applet + ": applet not found\r\n", busyboxBanner}
+		}
+	} else {
+		applet, args, _ = strings.Cut(cmd, " ")
+	}
+	if applet != "cat" {
+		return nil
+	}
+	if idx := strings.IndexAny(args, "|<>&"); idx >= 0 {
+		args = args[:idx]
+	}
+	var out strings.Builder
+	for _, f := range strings.Fields(args) {
+		if strings.HasPrefix(f, "-") {
+			continue
+		}
+		out.WriteString("cat: ")
+		out.WriteString(f)
+		out.WriteString(": No such file or directory\r\n")
+	}
+	if out.Len() == 0 {
+		return nil
+	}
+	return []string{out.String()}
+}
+
+// telnetResponse is what the shell writes for one command.
+type telnetResponse struct {
+	out        []string
+	skipPrompt bool // sh printed its own prompt
+	variant    bool // out depends on the visit's architecture
+}
+
+// telnetReply returns the frames to write for one `;`-separated shell command.
+// For `a || b` the first alternative with a canned reply wins.
+func telnetReply(cmd string, arch telnetArch) (telnetResponse, error) {
+	line := normalizeTelnetCommand(cmd)
+	if line == "" {
+		return telnetResponse{}, nil
+	}
+	candidates := []string{line}
+	alts := []string{line}
+	if strings.Contains(line, "||") {
+		alts = alts[:0]
+		for _, alt := range strings.Split(line, "||") {
+			if alt = normalizeTelnetCommand(alt); alt != "" {
+				alts = append(alts, alt)
+			}
+		}
+		candidates = append(candidates, alts...)
+	}
+	for _, c := range candidates {
+		resp, elf, ok := telnetLookup(c, arch)
+		if !ok || len(resp) == 0 {
+			continue
+		}
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(resp))))
+		if err != nil {
+			return telnetResponse{}, err
+		}
+		reply := resp[n.Int64()]
+		// sh emits a real shell prompt (dollar + space, no CRLF); do not append "> ".
+		if reply == "$" {
+			return telnetResponse{out: []string{"$ "}, skipPrompt: true}, nil
+		}
+		return telnetResponse{out: []string{reply + "\r\n"}, variant: elf}, nil
+	}
+	if len(alts) == 0 {
+		return telnetResponse{}, nil
+	}
+	return telnetResponse{out: telnetAppletReply(alts[0])}, nil
 }
 
 type parsedTelnet struct {
@@ -74,6 +258,8 @@ type parsedTelnet struct {
 	Path        string `json:"path,omitempty"` // wget/curl URL when present
 	Message     string `json:"message,omitempty"`
 	PayloadHash string `json:"payload_hash,omitempty"`
+	Variant     string `json:"variant,omitempty"` // architecture variant, on writes that depend on it
+	Visit       int    `json:"visit,omitempty"`   // source's visit number, on writes that depend on it
 }
 
 type telnetServer struct {
@@ -85,6 +271,12 @@ type telnetServer struct {
 	sampleWG sync.WaitGroup
 	sampleMu sync.Mutex
 	samples  map[int]string // event index -> sample hash
+
+	// Recall: the architecture is picked once per connection.
+	srcIP net.IP
+	visit int // 0 until begin
+	arch  telnetArch
+	store *recall.Store
 }
 
 func newTelnetServer(conn net.Conn) *telnetServer {
@@ -94,7 +286,65 @@ func newTelnetServer(conn net.Conn) *telnetServer {
 		reader:  bufio.NewReader(conn),
 		client:  &http.Client{Timeout: 5 * time.Second},
 		samples: map[int]string{},
+		srcIP:   remoteIP(conn),
+		arch:    telnetArches[0],
 	}
+}
+
+// telnetRecall remembers each source's last visit; tests swap it for a store
+// with a fake clock.
+var telnetRecall = recall.Shared
+
+// begin picks the architecture once per connection: a source returning after
+// recall.visit_gap gets the next telnetArches entry.
+func (s *telnetServer) begin(logger interfaces.Logger) {
+	if s.visit > 0 {
+		return
+	}
+	s.store = telnetRecall
+	v := s.store.Begin("telnet", s.srcIP, len(telnetArches))
+	s.visit, s.arch = v.Number, telnetArches[v.Variant]
+	if v.Started && v.Number > 1 {
+		logger.Info("returning telnet source",
+			slog.String("protocol", "telnet"),
+			slog.String("src_ip", s.srcIP.String()),
+			slog.Int("visit", v.Number),
+			slog.String("variant", s.arch.name),
+			slog.String("previous_variant", v.Previous.Variant),
+			slog.Any("previous_commands", v.Previous.Commands),
+		)
+	}
+}
+
+// note stores what the source did on this connection.
+func (s *telnetServer) note() {
+	if s.visit == 0 {
+		return
+	}
+	s.store.Note("telnet", s.srcIP, func(sum *recall.Summary) {
+		sum.Variant = s.arch.name
+		sum.Events++
+		for _, e := range s.events {
+			if e.Direction != "read" {
+				continue
+			}
+			switch e.Command {
+			case "username":
+				sum.AddUsername(telnetCredential(e.Message))
+			case "password":
+			default:
+				sum.AddCommand(e.Command)
+				sum.AddPath(e.Path)
+			}
+		}
+	})
+}
+
+// tagLast stamps the last write frame with the visit's variant.
+func (s *telnetServer) tagLast() {
+	ev := &s.events[len(s.events)-1]
+	ev.Variant = s.arch.name
+	ev.Visit = s.visit
 }
 
 func telnetShellCommand(msg string) string {
@@ -103,7 +353,8 @@ func telnetShellCommand(msg string) string {
 	if line == "" {
 		return ""
 	}
-	if idx := strings.IndexAny(line, " \t"); idx >= 0 {
+	// Cut at whitespace or a shell operator so `ping; sh` records `ping`.
+	if idx := strings.IndexAny(line, " \t;|&"); idx > 0 {
 		return line[:idx]
 	}
 	return line
@@ -328,8 +579,10 @@ func HandleTelnet(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 
 func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	endReason := connection.EndHandlerClose
+	s.begin(logger)
 	defer func() {
 		s.applySampleHashes()
+		s.note()
 		md.EndReason = endReason
 		if err := h.ProduceTCP("telnet", s.conn, md, []byte(helpers.FirstOrEmpty(s.events).Message), s.events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "telnet"), producer.ErrAttr(err))
@@ -454,33 +707,17 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 				continue
 			}
 
-			if resp := miraiCom[strings.TrimSpace(cmd)]; len(resp) > 0 {
-				n, err := rand.Int(rand.Reader, big.NewInt(int64(len(resp))))
-				if err != nil {
+			resp, err := telnetReply(cmd, s.arch)
+			if err != nil {
+				return err
+			}
+			skipPrompt = skipPrompt || resp.skipPrompt
+			for _, reply := range resp.out {
+				if err := s.write(reply); err != nil {
 					return err
 				}
-				reply := resp[n.Int64()]
-				out := reply + "\r\n"
-				// sh emits a real shell prompt (dollar + space, no CRLF); do not append "> ".
-				if reply == "$" {
-					out = "$ "
-					skipPrompt = true
-				}
-				if err := s.write(out); err != nil {
-					return err
-				}
-			} else {
-				// /bin/busybox YDKBI
-				re := regexp.MustCompile(`\/bin\/busybox (?P<applet>[A-Za-z]+)`)
-				match := re.FindStringSubmatch(cmd)
-				if len(match) > 1 {
-					if err := s.write(match[1] + ": applet not found\r\n"); err != nil {
-						return err
-					}
-
-					if err := s.write(busyboxBanner); err != nil {
-						return err
-					}
+				if resp.variant {
+					s.tagLast()
 				}
 			}
 		}
