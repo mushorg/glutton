@@ -159,6 +159,27 @@ func TestCountPerVisit(t *testing.T) {
 	require.Equal(t, 1, s.Count("sip", ip, "invite"))
 }
 
+func TestCounterReadsWithoutCounting(t *testing.T) {
+	c := newClock()
+	s := testStore(c, Config{Enabled: true, Gap: time.Minute})
+	require.Equal(t, 0, s.Counter("sip", ip, "unacked"), "no visit yet")
+
+	s.Begin("sip", ip, 2)
+	require.Equal(t, 0, s.Counter("sip", ip, "unacked"))
+	s.Count("sip", ip, "unacked")
+	require.Equal(t, 1, s.Counter("sip", ip, "unacked"))
+	require.Equal(t, 1, s.Counter("sip", ip, "unacked"), "reading does not count")
+
+	c.advance(time.Minute)
+	s.Begin("sip", ip, 2)
+	require.Equal(t, 0, s.Counter("sip", ip, "unacked"), "a new visit starts from zero")
+
+	disabled := testStore(c, Config{Enabled: false})
+	disabled.Begin("sip", ip, 2)
+	disabled.Count("sip", ip, "unacked")
+	require.Equal(t, 0, disabled.Counter("sip", ip, "unacked"))
+}
+
 func TestCountDisabled(t *testing.T) {
 	s := testStore(newClock(), Config{Enabled: false})
 	s.Begin("sip", ip, 2)

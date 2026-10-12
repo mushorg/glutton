@@ -57,6 +57,11 @@ type Variant int
 const (
 	// Answer accepts REGISTER and answers INVITE with 200 and SDP.
 	Answer Variant = iota
+	// Progress behaves like Answer but sends 183 Session Progress with the
+	// SDP answer (early media) instead of 180 Ringing before the 200. Dial
+	// testers that treat early media as a connected call, and ignore a plain
+	// 200, may start sending audio or DTMF on it.
+	Progress
 	// Auth challenges REGISTER and INVITE with 401 until they carry
 	// credentials, then behaves like Answer.
 	Auth
@@ -66,18 +71,38 @@ const (
 
 // Variants is the rotation order for returning sources; Answer comes first,
 // so a first visit sees the baseline.
-var Variants = []Variant{Answer, Auth, Busy}
+var Variants = []Variant{Answer, Progress, Auth, Busy}
 
 func (v Variant) String() string {
 	switch v {
 	case Answer:
 		return "answer"
+	case Progress:
+		return "progress"
 	case Auth:
 		return "auth"
 	case Busy:
 		return "busy"
 	}
 	return "variant" + strconv.Itoa(int(v))
+}
+
+// Escalate returns the variant steps places after v in Variants, skipping
+// Answer: the UDP handler moves a source on when it ignores the final
+// response it got, without waiting for its next visit. steps <= 0 returns v.
+func Escalate(v Variant, steps int) Variant {
+	if steps <= 0 || len(Variants) < 2 {
+		return v
+	}
+	// position among the non-Answer variants; Answer sits just before the first
+	pos := -1
+	for i, cand := range Variants[1:] {
+		if cand == v {
+			pos = i
+		}
+	}
+	n := len(Variants) - 1
+	return Variants[1+((pos+steps)%n+n)%n]
 }
 
 // Reply returns the responses to send for req, received from src, in order.
@@ -102,11 +127,13 @@ func (r *Responder) challenge(req gosip.Request) gosip.Response {
 	)
 }
 
-// Answer returns the 100 Trying, 180 Ringing and 200 OK (with SDP) for an
-// INVITE, Via annotated for src like Reply. The UDP handler sends the 200
-// after a ringing delay instead of in the same burst. local is as for Reply.
-func (r *Responder) Answer(req gosip.Request, src, local net.Addr) (trying, ringing, ok gosip.Response) {
-	resps := annotate(req, src, r.invite(req, local)...)
+// Answer returns the 100 Trying, the provisional (180 Ringing, or 183
+// Session Progress with SDP in the Progress variant) and the 200 OK (with
+// SDP) for an INVITE, Via annotated for src like Reply. The UDP handler
+// sends the 200 after a ringing delay instead of in the same burst. local is
+// as for Reply.
+func (r *Responder) Answer(req gosip.Request, src, local net.Addr, v Variant) (trying, ringing, ok gosip.Response) {
+	resps := annotate(req, src, r.invite(req, local, v == Progress)...)
 	return resps[0], resps[1], resps[2]
 }
 
@@ -205,7 +232,7 @@ func (r *Responder) reply(req gosip.Request, local net.Addr, v Variant) []gosip.
 		if v == Auth && Credentials(req) == "" {
 			return []gosip.Response{r.challenge(req)}
 		}
-		resps := r.invite(req, local)
+		resps := r.invite(req, local, v == Progress)
 		if v == Busy {
 			// 100 and 180 as usual, then busy instead of the answer
 			tag := ""
@@ -278,9 +305,11 @@ func requestedExpires(req gosip.Request) int {
 	return n
 }
 
-// invite answers the call. 100 Trying carries no To tag; 180 and 200 share
-// one so they belong to the same dialog.
-func (r *Responder) invite(req gosip.Request, local net.Addr) []gosip.Response {
+// invite answers the call. 100 Trying carries no To tag; the provisional and
+// 200 share one so they belong to the same dialog. With early set the
+// provisional is 183 Session Progress carrying the same SDP answer as the
+// 200, as Asterisk sends when the dialplan calls Progress().
+func (r *Responder) invite(req gosip.Request, local net.Addr, early bool) []gosip.Response {
 	host, port, user := localTarget(req, local)
 	contact := "<sip:" + host + ":" + port + ">"
 	if user != "" {
@@ -298,24 +327,41 @@ func (r *Responder) invite(req gosip.Request, local net.Addr) []gosip.Response {
 		&contentType,
 	)
 	ok.SetBody(answer, true)
+	provisional := r.response(req, 180, "Ringing", tag,
+		&gosip.GenericHeader{HeaderName: "Contact", Contents: contact},
+	)
+	if early {
+		provisional = r.response(req, 183, "Session Progress", tag,
+			&gosip.GenericHeader{HeaderName: "Contact", Contents: contact},
+			&gosip.GenericHeader{HeaderName: "Allow", Contents: allowList},
+			&gosip.GenericHeader{HeaderName: "Supported", Contents: supported},
+			&contentType,
+		)
+		provisional.SetBody(answer, true)
+	}
 	return []gosip.Response{
 		r.response(req, 100, "Trying", ""),
-		r.response(req, 180, "Ringing", tag,
-			&gosip.GenericHeader{HeaderName: "Contact", Contents: contact},
-		),
+		provisional,
 		ok,
 	}
 }
 
-// localTarget returns the host, port and user the caller addressed in the
-// Request-URI; that is the honeypot's address as the scanner sees it. When
-// the Request-URI host is a name, the host is local's IPv4 address (where
-// the request arrived), so the SDP points media somewhere real; 0.0.0.0
-// only when neither is known.
+// localTarget returns the host, port and user of the honeypot as the caller
+// addressed it. host is the Request-URI's IPv4 host; when that is a name it
+// is local's IPv4 address (where the request arrived), so the SDP points
+// media somewhere real, and 0.0.0.0 only when neither is known. port is the
+// port the request arrived on, as a UAS advertises its own transport port in
+// Contact and Via whatever the Request-URI says; a scanner on a high port
+// that is told 5060 sends its ACK elsewhere. Without a local port it is the
+// Request-URI port, else 5060. user is the Request-URI user.
 func localTarget(req gosip.Request, local net.Addr) (host, port, user string) {
 	host, port = "0.0.0.0", "5060"
 	if ip := addrIPv4(local); ip != nil {
 		host = ip.String()
+	}
+	localPort := addrPort(local)
+	if localPort > 0 {
+		port = strconv.Itoa(localPort)
 	}
 	uri := req.Recipient()
 	if uri == nil {
@@ -324,13 +370,28 @@ func localTarget(req gosip.Request, local net.Addr) (host, port, user string) {
 	if ip := net.ParseIP(uri.Host()); ip != nil && ip.To4() != nil {
 		host = ip.String()
 	}
-	if p := uri.Port(); p != nil {
+	if p := uri.Port(); p != nil && localPort == 0 {
 		port = strconv.Itoa(int(*p))
 	}
 	if u := uri.User(); u != nil {
 		user = u.String()
 	}
 	return host, port, user
+}
+
+// addrPort returns the port of a, or 0.
+func addrPort(a net.Addr) int {
+	switch a := a.(type) {
+	case *net.UDPAddr:
+		if a != nil {
+			return a.Port
+		}
+	case *net.TCPAddr:
+		if a != nil {
+			return a.Port
+		}
+	}
+	return 0
 }
 
 // addrIPv4 returns the IPv4 address of a, or nil.

@@ -79,11 +79,15 @@ type sipVisit struct {
 }
 
 // beginSIPVisit marks activity from ip and returns its visit. A source that
-// returns after recall.visit_gap gets the next sipproto.Variants entry.
+// returns after recall.visit_gap gets the next sipproto.Variants entry, and
+// within a visit each final response the source left unACKed moves it one
+// further (see sipproto.Escalate).
 func beginSIPVisit(ip net.IP, logger interfaces.Logger) sipVisit {
 	store := sipRecall
 	v := store.Begin("sip", ip, len(sipproto.Variants))
 	visit := sipVisit{number: v.Number, variant: sipproto.Variants[v.Variant], store: store}
+	// a source that ignored a final response in this visit gets the next one
+	visit.variant = sipproto.Escalate(visit.variant, store.Counter("sip", ip, sipUnackedCounter))
 	if v.Started && v.Number > 1 {
 		logger.Info("returning SIP source",
 			slog.String("protocol", "sip"),

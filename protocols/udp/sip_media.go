@@ -125,13 +125,14 @@ func (r *sipRecording) release() {
 }
 
 // bindMediaLocked starts (or, after a re-INVITE, moves) the recording when
-// the dialog sends a 2xx with SDP: RTP from the caller's signaling IP, or
-// the c= address of its offer, to our m=audio port is routed to the dialog.
-func (d *sipDialog) bindMediaLocked(final sip.Response) {
-	if !sipRecordMedia() || !final.IsSuccess() || d.invite == nil {
+// the dialog sends a 2xx or a 183 Session Progress (early media) with SDP:
+// RTP from the caller's signaling IP, or the c= address of its offer, to our
+// m=audio port is routed to the dialog.
+func (d *sipDialog) bindMediaLocked(res sip.Response) {
+	if !sipRecordMedia() || !(res.IsSuccess() || res.StatusCode() == 183) || d.invite == nil {
 		return
 	}
-	answer, ok := rtp.ParseSDPAudio(final.Body())
+	answer, ok := rtp.ParseSDPAudio(res.Body())
 	if !ok {
 		return
 	}

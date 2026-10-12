@@ -865,15 +865,15 @@ func TestHandleSIPInviteRejected(t *testing.T) {
 	advance(59 * time.Minute)
 	sendSIP(t, h, pplsipSrc, inviteWithCallID("call-5"))
 	require.True(t, strings.HasPrefix(string(h.replies[len(h.replies)-1]), "SIP/2.0 180 Ringing\r\n"))
-	// only the first visit rejects: visit 2 (auth) challenges right away
+	// only the first visit rejects: visit 2 (progress) rings with early media
 	advance(time.Hour)
 	sendSIP(t, h, pplsipSrc, inviteWithCallID("call-6"))
-	require.True(t, strings.HasPrefix(string(h.replies[len(h.replies)-1]), "SIP/2.0 401 Unauthorized\r\n"))
+	require.True(t, strings.HasPrefix(string(h.replies[len(h.replies)-1]), "SIP/2.0 183 Session Progress\r\n"))
 }
 
 // A scanner that sends one INVITE per visit gets the 404 on its first visit
-// only; later visits reach their variant (auth 401, busy 180 then 486,
-// answer 180 then 200).
+// only; later visits reach their variant (progress 183 then 200, auth 401,
+// busy 180 then 486, answer 180 then 200).
 func TestHandleSIPInviteRejectFirstVisitOnly(t *testing.T) {
 	stubSIPResponder(t)
 	timers := stubSIPDialogs(t)
@@ -892,30 +892,42 @@ func TestHandleSIPInviteRejectFirstVisitOnly(t *testing.T) {
 	require.Equal(t, []string{"answer/1", "answer/1"}, writeVariants(t, h.produced[0].decoded)[:2])
 	require.Equal(t, []string{"100", "404"}, statuses(summarizeSIP(t, h.produced[0].decoded))[:2])
 
-	// visit 2 (auth): challenged, not rejected
+	// visit 2 (progress): early media, then 200, not rejected
 	advance(time.Hour)
 	sendSIP(t, h, pplsipSrc, inviteWithCallID("visit-2"))
-	require.True(t, strings.HasPrefix(last(), "SIP/2.0 401 Unauthorized\r\n"))
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 183 Session Progress\r\n"))
+	timers.fire(t, sipRing)
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 200 OK\r\n"))
 	for _, d := range []time.Duration{sipT1, 2 * sipT1, 4 * sipT1, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2} {
 		timers.fire(t, d)
 	}
 	require.Len(t, h.produced, 2)
-	require.Equal(t, "auth/2", writeVariants(t, h.produced[1].decoded)[0])
+	require.Equal(t, "progress/2", writeVariants(t, h.produced[1].decoded)[0])
 
-	// visit 3 (busy): rings, then 486
+	// visit 3 (auth): challenged; the unACKed 200 of visit 2 does not carry over
 	advance(time.Hour)
 	sendSIP(t, h, pplsipSrc, inviteWithCallID("visit-3"))
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 401 Unauthorized\r\n"))
+	for _, d := range []time.Duration{sipT1, 2 * sipT1, 4 * sipT1, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2} {
+		timers.fire(t, d)
+	}
+	require.Len(t, h.produced, 3)
+	require.Equal(t, "auth/3", writeVariants(t, h.produced[2].decoded)[0])
+
+	// visit 4 (busy): rings, then 486
+	advance(time.Hour)
+	sendSIP(t, h, pplsipSrc, inviteWithCallID("visit-4"))
 	require.True(t, strings.HasPrefix(last(), "SIP/2.0 180 Ringing\r\n"))
 	timers.fire(t, sipRing)
 	require.True(t, strings.HasPrefix(last(), "SIP/2.0 486 Busy Here\r\n"))
 	for _, d := range []time.Duration{sipT1, 2 * sipT1, 4 * sipT1, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2} {
 		timers.fire(t, d)
 	}
-	require.Len(t, h.produced, 3)
+	require.Len(t, h.produced, 4)
 
-	// visit 4 (answer): rings, then 200 with SDP
+	// visit 5 (answer): rings, then 200 with SDP
 	advance(time.Hour)
-	sendSIP(t, h, pplsipSrc, inviteWithCallID("visit-4"))
+	sendSIP(t, h, pplsipSrc, inviteWithCallID("visit-5"))
 	require.True(t, strings.HasPrefix(last(), "SIP/2.0 180 Ringing\r\n"))
 	timers.fire(t, sipRing)
 	require.True(t, strings.HasPrefix(last(), "SIP/2.0 200 OK\r\n"))
@@ -1155,16 +1167,30 @@ func TestHandleSIPReturningSourceRotatesVariants(t *testing.T) {
 	sendSIP(t, h, pplsipSrc, voipRegisterRead1)
 	require.Equal(t, []string{"answer/1"}, writeVariants(t, h.produced[1].decoded))
 
-	// visit 2: auth challenges REGISTER and INVITE until credentials arrive
+	// visit 2: progress accepts REGISTER and answers INVITE with early media
 	advance(time.Hour)
 	sendSIP(t, h, pplsipSrc, voipRegisterRead1)
-	require.Equal(t, []string{"401"}, statuses(summarizeSIP(t, h.produced[2].decoded)))
-	require.Equal(t, []string{"auth/2"}, writeVariants(t, h.produced[2].decoded))
+	require.Equal(t, []string{"200"}, statuses(summarizeSIP(t, h.produced[2].decoded)))
+	require.Equal(t, []string{"progress/2"}, writeVariants(t, h.produced[2].decoded))
+	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
+	timers.fire(t, sipRing)
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("ACK", 1, pplsipCallID))
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("BYE", 2, pplsipCallID))
+	require.Len(t, h.produced, 4)
+	require.Equal(t, connection.EndClientClose, h.produced[3].endReason)
+	require.Equal(t, []string{"100", "183", "200", "200"}, statuses(summarizeSIP(t, h.produced[3].decoded)))
+	require.Equal(t, []string{"progress/2", "progress/2", "progress/2", "progress/2"}, writeVariants(t, h.produced[3].decoded))
+
+	// visit 3: auth challenges REGISTER and INVITE until credentials arrive
+	advance(time.Hour)
+	sendSIP(t, h, pplsipSrc, voipRegisterRead1)
+	require.Equal(t, []string{"401"}, statuses(summarizeSIP(t, h.produced[4].decoded)))
+	require.Equal(t, []string{"auth/3"}, writeVariants(t, h.produced[4].decoded))
 
 	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
 	require.True(t, strings.HasPrefix(string(h.replies[len(h.replies)-1]), "SIP/2.0 401 Unauthorized\r\n"))
 	sendSIP(t, h, pplsipSrc, failedAck)
-	require.Len(t, h.produced, 3, "the ACK to a 401 keeps the dialog open for the authenticated retry")
+	require.Len(t, h.produced, 5, "the ACK to a 401 keeps the dialog open for the authenticated retry")
 
 	authed := strings.Replace(string(pplsipInviteRead1), "CSeq: 1 INVITE\r\n",
 		"CSeq: 2 INVITE\r\nAuthorization: Digest username=\"1000\",realm=\"asterisk\",nonce=\"feedface\",uri=\"sip:14500972598112101@1.2.3.4\",response=\"00\"\r\n", 1)
@@ -1172,30 +1198,30 @@ func TestHandleSIPReturningSourceRotatesVariants(t *testing.T) {
 	timers.fire(t, sipRing)
 	sendSIP(t, h, pplsipSrc, pplsipInDialog("ACK", 2, pplsipCallID))
 	sendSIP(t, h, pplsipSrc, pplsipInDialog("BYE", 3, pplsipCallID))
-	require.Len(t, h.produced, 4)
-	require.Equal(t, connection.EndClientClose, h.produced[3].endReason)
-	frames := summarizeSIP(t, h.produced[3].decoded)
+	require.Len(t, h.produced, 6)
+	require.Equal(t, connection.EndClientClose, h.produced[5].endReason)
+	frames := summarizeSIP(t, h.produced[5].decoded)
 	require.Equal(t, []string{"401", "100", "180", "200", "200"}, statuses(frames))
-	require.Equal(t, []string{"auth/2", "auth/2", "auth/2", "auth/2", "auth/2"}, writeVariants(t, h.produced[3].decoded))
-	events := h.produced[3].decoded.([]parsedSIP)
+	require.Equal(t, []string{"auth/3", "auth/3", "auth/3", "auth/3", "auth/3"}, writeVariants(t, h.produced[5].decoded))
+	events := h.produced[5].decoded.([]parsedSIP)
 	require.Equal(t, "INVITE", events[3].Command)
 	require.Equal(t, "1000", events[3].Username)
 
-	// visit 3: busy rings, then 486; its ACK ends the call
+	// visit 4: busy rings, then 486; its ACK ends the call
 	advance(time.Hour)
 	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
 	timers.fire(t, sipRing)
 	sendSIP(t, h, pplsipSrc, failedAck)
-	require.Len(t, h.produced, 5)
-	require.Equal(t, connection.EndClientClose, h.produced[4].endReason)
-	require.Equal(t, []string{"100", "180", "486"}, statuses(summarizeSIP(t, h.produced[4].decoded)))
-	require.Equal(t, []string{"busy/3", "busy/3", "busy/3"}, writeVariants(t, h.produced[4].decoded))
+	require.Len(t, h.produced, 7)
+	require.Equal(t, connection.EndClientClose, h.produced[6].endReason)
+	require.Equal(t, []string{"100", "180", "486"}, statuses(summarizeSIP(t, h.produced[6].decoded)))
+	require.Equal(t, []string{"busy/4", "busy/4", "busy/4"}, writeVariants(t, h.produced[6].decoded))
 	require.Empty(t, timers.pending())
 
-	// the memory holds what visit 3 did; visit 4 wraps around to answer
+	// the memory holds what visit 4 did; visit 5 wraps around to answer
 	advance(time.Hour)
 	v := sipRecall.Begin("sip", pplsipSrc.IP, len(sipproto.Variants))
-	require.Equal(t, 4, v.Number)
+	require.Equal(t, 5, v.Number)
 	require.Equal(t, 0, v.Variant)
 	require.Equal(t, recall.Summary{
 		Variant:   "busy",
@@ -1214,14 +1240,96 @@ func TestHandleSIPReturningSourceAuthUnackedTimesOut(t *testing.T) {
 
 	sendSIP(t, h, pplsipSrc, voipRegisterRead1)
 	advance(time.Hour)
+	sendSIP(t, h, pplsipSrc, voipRegisterRead1)
+	advance(time.Hour)
 	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
 	// the 401 is resent at T1 backoff until 64*T1 passes without an ACK
 	for _, d := range []time.Duration{sipT1, 2 * sipT1, 4 * sipT1, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2} {
 		timers.fire(t, d)
 	}
-	require.Len(t, h.produced, 2)
-	require.Equal(t, connection.EndTimeout, h.produced[1].endReason)
-	for _, s := range statuses(summarizeSIP(t, h.produced[1].decoded)) {
+	require.Len(t, h.produced, 3)
+	require.Equal(t, connection.EndTimeout, h.produced[2].endReason)
+	for _, s := range statuses(summarizeSIP(t, h.produced[2].decoded)) {
 		require.Equal(t, "401", s)
 	}
+}
+
+// Ochi event 5865dde3-7a28-471c-b912-cd9645270e3e: a dial tester INVITEs a
+// high port, never ACKs the 200 and only sends its next INVITE. Each ignored
+// final moves the source to the next variant within the visit, and every
+// reply advertises the port the INVITE arrived on.
+func TestHandleSIPUnackedFinalEscalatesWithinVisit(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	sipRejectLimit = 1
+	h := &recordingHoneypot{}
+	dst := &net.UDPAddr{IP: pplsipDst.IP, Port: 65476}
+	invite := func(callID string) {
+		t.Helper()
+		require.NoError(t, HandleSIP(context.Background(), pplsipSrc, dst, inviteWithCallID(callID), connection.Metadata{}, testLogger{}, h))
+	}
+	ignore := func() {
+		t.Helper()
+		for _, d := range []time.Duration{sipT1, 2 * sipT1, 4 * sipT1, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2} {
+			timers.fire(t, d)
+		}
+	}
+	last := func() string { return string(h.replies[len(h.replies)-1]) }
+
+	// the deliberate 404 is ignored too, but does not escalate
+	invite("call-1")
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 404 Not Found\r\n"))
+	ignore()
+
+	// answer: 180 and 200 name the arrival port, so does the BYE after no ACK
+	invite("call-2")
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 180 Ringing\r\n"))
+	require.Contains(t, last(), "Contact: <sip:14500972598112101@1.2.3.4:65476>\r\n")
+	timers.fire(t, sipRing)
+	require.Contains(t, last(), "Contact: <sip:14500972598112101@1.2.3.4:65476>\r\n")
+	ignore()
+	require.True(t, strings.HasPrefix(last(), "BYE "))
+	require.Contains(t, last(), "Via: SIP/2.0/UDP 1.2.3.4:65476;rport;")
+	require.Len(t, h.produced, 2)
+	require.Equal(t, "answer/1", writeVariants(t, h.produced[1].decoded)[0])
+
+	// progress: early media, then the 200 is ignored again
+	invite("call-3")
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 183 Session Progress\r\n"))
+	timers.fire(t, sipRing)
+	ignore()
+	require.Len(t, h.produced, 3)
+	require.Equal(t, []string{"100", "183", "200"}, statuses(summarizeSIP(t, h.produced[2].decoded))[:3])
+	require.Equal(t, "progress/1", writeVariants(t, h.produced[2].decoded)[0])
+
+	// auth: the challenge goes unanswered
+	invite("call-4")
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 401 Unauthorized\r\n"))
+	ignore()
+	require.Equal(t, "auth/1", writeVariants(t, h.produced[3].decoded)[0])
+
+	// busy, then the rotation wraps to progress, skipping answer
+	invite("call-5")
+	timers.fire(t, sipRing)
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 486 Busy Here\r\n"))
+	ignore()
+	require.Equal(t, "busy/1", writeVariants(t, h.produced[4].decoded)[0])
+	invite("call-6")
+	require.True(t, strings.HasPrefix(last(), "SIP/2.0 183 Session Progress\r\n"))
+}
+
+// A caller that ACKs keeps its variant: only ignored finals escalate.
+func TestHandleSIPAckedAnswerDoesNotEscalate(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+
+	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
+	timers.fire(t, sipRing)
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("ACK", 1, pplsipCallID))
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("BYE", 2, pplsipCallID))
+	require.Len(t, h.produced, 1)
+
+	sendSIP(t, h, pplsipSrc, inviteWithCallID("call-2"))
+	require.True(t, strings.HasPrefix(string(h.replies[len(h.replies)-1]), "SIP/2.0 180 Ringing\r\n"))
 }

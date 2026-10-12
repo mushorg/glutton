@@ -42,6 +42,12 @@ const (
 	// recall store, so it starts over once the source is forgotten
 	// (recall.ttl or eviction).
 	defaultSIPRejectInvites = 2
+	// sipUnackedCounter counts, per visit in the recall store, the answered
+	// INVITEs whose final response (200, 183+200, 401, 486) the source never
+	// ACKed. Dial testers that only read the status code stall there; the
+	// next call in the same visit gets the next variant instead of the same
+	// outcome until recall.visit_gap passes.
+	sipUnackedCounter = "unacked"
 )
 
 // sipTimer is the part of *time.Timer the dialog uses.
@@ -296,8 +302,10 @@ func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
 }
 
 // inviteLocked answers a new INVITE: 100 Trying, then 404 when the dialog
-// was picked for rejection, else 180 Ringing and the final response after
-// sipRingDelay (200 OK, or 486 Busy Here in the busy variant). In the auth
+// was picked for rejection, else 180 Ringing (183 Session Progress with SDP
+// in the progress variant, which already starts the media recording) and the
+// final response after sipRingDelay (200 OK, or 486 Busy Here in the busy
+// variant). In the auth
 // variant an INVITE without credentials gets a 401 challenge instead.
 func (d *sipDialog) inviteLocked(seq uint32, req sip.Request) (string, error) {
 	d.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
@@ -312,7 +320,7 @@ func (d *sipDialog) inviteLocked(seq uint32, req sip.Request) (string, error) {
 		return d.sendFinalLocked(sipResponder.Challenge(req, d.src), connection.EndTimeout)
 	}
 
-	trying, ringing, ok := sipResponder.Answer(req, d.src, d.dst)
+	trying, ringing, ok := sipResponder.Answer(req, d.src, d.dst, d.visit.variant)
 	if err := d.writeLocked([]byte(trying.String()), trying); err != nil {
 		return connection.EndWriteError, err
 	}
@@ -326,6 +334,7 @@ func (d *sipDialog) inviteLocked(seq uint32, req sip.Request) (string, error) {
 	if err := d.writeLocked(ringingBytes, ringing); err != nil {
 		return connection.EndWriteError, err
 	}
+	d.bindMediaLocked(ringing)
 	d.last = ringingBytes
 	d.pendingFinal = ok
 	if d.visit.variant == sipproto.Busy {
@@ -403,6 +412,27 @@ func (d *sipDialog) sendFinalLocked(final sip.Response, unacked string) (string,
 	return "", nil
 }
 
+// noteUnackedLocked counts an ignored final response towards escalating
+// the source's variant. The deliberate 404 rejections and the 487 after the
+// caller's own CANCEL do not count.
+func (d *sipDialog) noteUnackedLocked() {
+	if d.visit.number == 0 || d.visit.store == nil {
+		return
+	}
+	if code := d.final.StatusCode(); code == 404 || code == 487 {
+		return
+	}
+	n := d.visit.store.Count("sip", d.src.IP, sipUnackedCounter)
+	d.logger.Info("SIP final response not ACKed",
+		slog.String("protocol", "sip"),
+		slog.String("src_ip", d.src.IP.String()),
+		slog.Int("status", int(d.final.StatusCode())),
+		slog.String("variant", d.visit.variant.String()),
+		slog.String("next_variant", sipproto.Escalate(d.visit.variant, 1).String()),
+		slog.Int("unacked", n),
+	)
+}
+
 func isAuthChallenge(res sip.Response) bool {
 	code := res.StatusCode()
 	return code == 401 || code == 407
@@ -460,6 +490,7 @@ func (d *sipDialog) resendFinal() {
 	endReason := ""
 	if d.waited >= 64*sipT1 {
 		endReason = d.finalEnd
+		d.noteUnackedLocked()
 		if d.final.IsSuccess() {
 			if bye := sipResponder.AckTimeoutBye(d.invite, d.final, d.dst); bye != nil {
 				if err := d.writeLocked([]byte(bye.String()), bye); err != nil {

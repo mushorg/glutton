@@ -203,16 +203,24 @@ func TestHandleSIPTCPReturningSourceGetsNextVariant(t *testing.T) {
 	require.Equal(t, 1, events[1].Visit)
 	require.Empty(t, events[0].Variant, "reads carry no variant")
 
+	// visit 2 (progress) accepts REGISTER like answer
+	advance(time.Hour)
+	reply, produced = register()
+	require.True(t, strings.HasPrefix(reply, "SIP/2.0 200 OK\r\n"), reply)
+	events = produced.decoded.([]parsedSIP)
+	require.Equal(t, "progress", events[1].Variant)
+	require.Equal(t, 2, events[1].Visit)
+
 	advance(time.Hour)
 	reply, produced = register()
 	require.True(t, strings.HasPrefix(reply, "SIP/2.0 401 Unauthorized\r\n"), reply)
 	events = produced.decoded.([]parsedSIP)
 	require.Equal(t, "auth", events[1].Variant)
-	require.Equal(t, 2, events[1].Visit)
+	require.Equal(t, 3, events[1].Visit)
 
 	advance(time.Hour)
 	v := sipRecall.Begin("sip", net.ParseIP("185.243.5.243"), len(sipproto.Variants))
-	require.Equal(t, 3, v.Number)
+	require.Equal(t, 4, v.Number)
 	require.Equal(t, "auth", v.Previous.Variant)
 	require.Equal(t, []string{"REGISTER"}, v.Previous.Commands)
 	require.Equal(t, "VOIP", v.Previous.UserAgent)

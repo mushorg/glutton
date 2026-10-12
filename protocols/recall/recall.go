@@ -226,6 +226,22 @@ func (s *Store) Count(proto string, ip net.IP, name string) int {
 	return e.counts[name]
 }
 
+// Counter returns the counter name in the current visit of ip on proto
+// without changing it; 0 when unset, the store is disabled or the source has
+// no visit.
+func (s *Store) Counter(proto string, ip net.IP, name string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.cfg.Enabled || ip == nil {
+		return 0
+	}
+	el, ok := s.idx[key(proto, ip)]
+	if !ok {
+		return 0
+	}
+	return el.Value.(*entry).counts[name]
+}
+
 // Len returns the number of remembered sources.
 func (s *Store) Len() int {
 	s.mu.Lock()

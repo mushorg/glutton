@@ -73,7 +73,7 @@ func TestReplyInviteAnswered(t *testing.T) {
 func TestAnswerMatchesReply(t *testing.T) {
 	src := &net.UDPAddr{IP: net.ParseIP("51.75.106.116"), Port: 65145}
 	req := parseRequest(t, pplsipInvite)
-	trying, ringing, ok := testResponder().Answer(req, src, nil)
+	trying, ringing, ok := testResponder().Answer(req, src, nil, Answer)
 	resps := testResponder().Reply(req, src, nil, Answer)
 	require.Equal(t, []string{resps[0].String(), resps[1].String(), resps[2].String()},
 		[]string{trying.String(), ringing.String(), ok.String()})
@@ -397,6 +397,8 @@ func TestReplyVariants(t *testing.T) {
 		{"auth invite with credentials", Auth, withAuth(pplsipInvite, authHeader), []int{100, 180, 200}},
 		{"busy register", Busy, register, []int{200}},
 		{"busy invite", Busy, pplsipInvite, []int{100, 180, 486}},
+		{"progress register", Progress, register, []int{200}},
+		{"progress invite", Progress, pplsipInvite, []int{100, 183, 200}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -431,8 +433,50 @@ func TestChallenge(t *testing.T) {
 }
 
 func TestVariantString(t *testing.T) {
-	require.Equal(t, []string{"answer", "auth", "busy"}, []string{Answer.String(), Auth.String(), Busy.String()})
+	require.Equal(t, []string{"answer", "progress", "auth", "busy"}, []string{Answer.String(), Progress.String(), Auth.String(), Busy.String()})
 	require.Equal(t, Answer, Variants[0])
+}
+
+func TestEscalate(t *testing.T) {
+	require.Equal(t, Answer, Escalate(Answer, 0))
+	require.Equal(t, Progress, Escalate(Answer, 1))
+	require.Equal(t, Auth, Escalate(Answer, 2))
+	require.Equal(t, Busy, Escalate(Answer, 3))
+	// Answer is skipped when wrapping around
+	require.Equal(t, Progress, Escalate(Answer, 4))
+	require.Equal(t, Progress, Escalate(Busy, 1))
+	require.Equal(t, Auth, Escalate(Progress, 1))
+	require.Equal(t, Auth, Escalate(Auth, -1), "negative steps keep the variant")
+}
+
+func TestAnswerProgressSendsEarlyMedia(t *testing.T) {
+	r := &Responder{Token: sequentialTokens()}
+	_, progress, ok := r.Answer(parseRequest(t, pplsipInvite), nil, nil, Progress)
+	require.Equal(t, gosip.StatusCode(183), progress.StatusCode())
+	require.Equal(t, "Session Progress", progress.Reason())
+	progressTo, _ := progress.To()
+	okTo, _ := ok.To()
+	require.Equal(t, mustParam(t, progressTo.Params, "tag"), mustParam(t, okTo.Params, "tag"))
+	require.Equal(t, ok.Body(), progress.Body(), "183 carries the SDP answer the 200 confirms")
+	require.Contains(t, progress.String(), "Content-Type: application/sdp\r\n")
+	require.Contains(t, progress.String(), "Contact: <sip:14500972598112101@1.2.3.4:5060>\r\n")
+}
+
+func TestInviteAdvertisesArrivalPort(t *testing.T) {
+	// the INVITE reached a high port and its Request-URI names none
+	req := parseRequest(t, pplsipInvite)
+	local := &net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 65476}
+	ok := testResponder().Reply(req, nil, local, Answer)[2].String()
+	require.Contains(t, ok, "Contact: <sip:14500972598112101@1.2.3.4:65476>\r\n")
+	bye := testResponder().AckTimeoutBye(req, testResponder().Reply(req, nil, local, Answer)[2], local)
+	require.Contains(t, bye.String(), "Via: SIP/2.0/UDP 1.2.3.4:65476;")
+
+	// the arrival port wins over a Request-URI port, which is only the fallback
+	withPort := []byte(strings.Replace(string(pplsipInvite), "INVITE sip:14500972598112101@1.2.3.4 SIP", "INVITE sip:14500972598112101@1.2.3.4:5080 SIP", 1))
+	ok = testResponder().Reply(parseRequest(t, withPort), nil, local, Answer)[2].String()
+	require.Contains(t, ok, "Contact: <sip:14500972598112101@1.2.3.4:65476>\r\n")
+	ok = testResponder().Reply(parseRequest(t, withPort), nil, nil, Answer)[2].String()
+	require.Contains(t, ok, "Contact: <sip:14500972598112101@1.2.3.4:5080>\r\n")
 }
 
 func sequentialTokens() func() string {

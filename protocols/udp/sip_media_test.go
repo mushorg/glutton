@@ -252,3 +252,37 @@ func TestHandleSIPRejectedCallBindsNoMedia(t *testing.T) {
 	require.True(t, strings.HasPrefix(string(h.replies[len(h.replies)-1]), "SIP/2.0 404 Not Found\r\n"))
 	require.Empty(t, sipMedia.bindings)
 }
+
+// In the progress variant the 183 carries the SDP answer, so media the
+// caller sends before the 200 (early media) is recorded too.
+func TestHandleSIPProgressRecordsEarlyMedia(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	stored := stubSIPRecordings(t)
+	advance := stubSIPRecall(t)
+	h := &recordingHoneypot{}
+	sendSIP(t, h, pplsipSrc, voipRegisterRead1)
+	advance(time.Hour) // visit 2 is progress
+
+	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
+	progress := string(h.replies[len(h.replies)-1])
+	require.True(t, strings.HasPrefix(progress, "SIP/2.0 183 Session Progress\r\n"))
+	_, body, _ := strings.Cut(progress, "\r\n\r\n")
+	m, found := rtp.ParseSDPAudio(body)
+	require.True(t, found)
+
+	media := &net.UDPAddr{IP: pplsipSrc.IP, Port: 25282}
+	sendUDP(t, h, media, m.Port, rtpPacket(rtp.PCMU, 1, 0, 0x55, []byte(strings.Repeat("e", 160))))
+	timers.fire(t, sipRing)
+	require.True(t, strings.HasPrefix(string(h.replies[len(h.replies)-1]), "SIP/2.0 200 OK\r\n"))
+	sendUDP(t, h, media, m.Port, rtpPacket(rtp.PCMU, 2, 160, 0x55, []byte(strings.Repeat("f", 160))))
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("ACK", 1, pplsipCallID))
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("BYE", 2, pplsipCallID))
+
+	require.Len(t, h.produced, 2)
+	events := h.produced[1].decoded.([]parsedSIP)
+	require.Equal(t, []string{"read INVITE", "write ", "write ", "write ", "read ACK", "read BYE", "write ", "read rtp"}, frameCommands(events))
+	require.Equal(t, 2, events[len(events)-1].Packets)
+	require.Len(t, *stored, 1)
+	require.Equal(t, strings.Repeat("e", 160)+strings.Repeat("f", 160), string((*stored)[0][58:]))
+}
