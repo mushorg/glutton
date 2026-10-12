@@ -58,8 +58,9 @@ Writes set `status` to the response name or `random`.
 | 8009 | `ajp-404` | |
 | 8126 | `statsd-stats` | Etsy statsd management console `stats` block ending in `END\n\n`, with uptime and `last_*` deltas from the clock |
 | 8333 | `bitcoin` | Sends nothing and hangs up, as bitcoind does with bytes that are not its network magic |
+| 21379 | `opc-tunneller` | MatrikonOPC Tunneller default port. Sends nothing but keeps the connection open, so the client hello and its follow-up frames are recorded; the real server's reply framing is not public |
 
-Silent responses (`mglndd`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message. Clients that send nothing get no reply.
+Silent responses (`mglndd`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 21379 (`opc-tunneller`). Clients that send nothing get no reply.
 
 ## TLS ClientHello
 

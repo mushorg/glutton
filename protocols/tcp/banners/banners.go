@@ -243,6 +243,11 @@ func ForPort(port uint16) (Response, bool) {
 		// a Niagara station drops a connection that does not open with a Fox
 		// hello; the hello itself is matched in ForPayload
 		return Response{Name: "niagara-fox", Silent: true}, true
+	case 21379:
+		// MatrikonOPC Tunneller default port. The server-side component's
+		// reply framing is not public, so record the hello and its follow-ups
+		// without answering rather than sending random bytes.
+		return Response{Name: "opc-tunneller", NoReply: true}, true
 	case 5938:
 		// TeamViewer greets a silent client (nmap -sV); CMD_PING is matched
 		// in ForPayload
