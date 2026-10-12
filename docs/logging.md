@@ -131,6 +131,7 @@ Example shape:
 | `rtps` | UDP | [protocols/rtps.md](protocols/rtps.md) |
 | `wsdiscovery` | UDP | [protocols/wsdiscovery.md](protocols/wsdiscovery.md) |
 | `knx` | UDP | [protocols/knx.md](protocols/knx.md) |
+| `itp` | UDP | [protocols/itp.md](protocols/itp.md) |
 | `rip` | UDP | [protocols/rip.md](protocols/rip.md) |
 | `hiflying` | UDP | [protocols/hiflying.md](protocols/hiflying.md) |
 | `dtls` | UDP | [protocols/dtls.md](protocols/dtls.md) |
