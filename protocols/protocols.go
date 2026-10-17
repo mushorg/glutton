@@ -19,6 +19,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp"
 	"github.com/mushorg/glutton/protocols/tcp/adb"
 	"github.com/mushorg/glutton/protocols/tcp/firebird"
+	"github.com/mushorg/glutton/protocols/tcp/hl7"
 	"github.com/mushorg/glutton/protocols/tcp/mctp"
 	"github.com/mushorg/glutton/protocols/tcp/minecraft"
 	"github.com/mushorg/glutton/protocols/tcp/mssql"
@@ -41,6 +42,9 @@ const rtspLinePeek = 256
 
 // rdpPeekLen covers the TPKT header, X.224 LI and TPDU type of an RDP CR.
 const rdpPeekLen = 6
+
+// hl7PeekLen covers an MLLP start block plus "MSH", or a bare "MSH|".
+const hl7PeekLen = 4
 
 // mssqlPeekLen covers the TDS header and the first PRELOGIN option token.
 const mssqlPeekLen = mssql.HeaderLen + 1
@@ -158,6 +162,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"icap":       bindTCP(tcp.HandleICAP, log, h),
 		"mctp":       mctpOrTCP(log, h),
 		"rtsp":       rtspOrTCP(log, h),
+		"hl7":        hl7OrTCP(log, h),
 		"proxy_tcp":  bindTCP(tcp.HandleProxyTCP, log, h),
 		"tcp":        catchAllTCP(log, h),
 	}
@@ -387,6 +392,14 @@ var catchAllMatchers = []catchAllMatcher{
 		handle: asBuffered(tcp.HandleRTSP),
 	},
 	{
+		// HL7 senders and scanners also find interface engines off 2575
+		// (Mirth's 6661); require the start block plus MSH, or "MSH|"
+		name:   "hl7",
+		peek:   fixedPeek(hl7PeekLen, func(snip []byte) bool { return snip[0] == hl7.StartBlock || snip[0] == 'M' }),
+		match:  hl7.LooksLikeHL7,
+		handle: asBuffered(tcp.HandleHL7),
+	},
+	{
 		// HTTP on any port goes to the HTTP handler, with or without Spicy;
 		// an RTSP request line (OPTIONS ... RTSP/1.0) is not HTTP
 		name: "http",
@@ -509,6 +522,32 @@ func rtspOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		}
 		if line, _ := bufConn.peekLine(rtspLinePeek); rtsp.LooksLikeRTSP(line) {
 			return tcp.HandleRTSP(ctx, bufConn, md, log, h)
+		}
+		return catchAll(ctx, bufConn, md)
+	}
+}
+
+// hl7OrTCP serves the HL7 port (tcp/2575): HL7 v2 messages, framed or
+// bare, go to the HL7 handler; anything else (HTTP/FHIR probes, banner
+// grabs) goes through the catch-all dispatch so it is still answered and stored.
+func hl7OrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
+	catchAll := catchAllTCP(log, h)
+	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			log.Debug("failed to set connection timeout", producer.ErrAttr(err))
+			return conn.Close()
+		}
+		bufConn := newBufferedConn(conn)
+		// wait (up to the connection timeout) for the client to speak first
+		if _, err := bufConn.peek(1); err != nil {
+			log.Debug("failed to peek connection", producer.ErrAttr(err))
+			return conn.Close()
+		}
+		if err := bufConn.SetReadDeadline(time.Now().Add(mctpPeekTimeout)); err != nil {
+			log.Debug("failed to set peek deadline", producer.ErrAttr(err))
+		}
+		if snip, err := bufConn.peek(hl7PeekLen); err == nil && hl7.LooksLikeHL7(snip) {
+			return tcp.HandleHL7(ctx, bufConn, md, log, h)
 		}
 		return catchAll(ctx, bufConn, md)
 	}

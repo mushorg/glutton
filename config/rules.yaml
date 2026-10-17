@@ -107,6 +107,9 @@ rules:
   - match: tcp dst port 104 or port 11112
     type: conn_handler
     target: dicom
+  - match: tcp dst port 2575
+    type: conn_handler
+    target: hl7
   - match: tcp dst port 25565
     type: conn_handler
     target: minecraft
