@@ -49,6 +49,7 @@ func TestMapUDPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "kerberos", "expected Kerberos UDP handler")
 	require.Contains(t, m, "coap", "expected CoAP UDP handler")
 	require.Contains(t, m, "a2s", "expected A2S UDP handler")
+	require.Contains(t, m, "steam", "expected Steam Remote Play UDP handler")
 	require.Contains(t, m, "ddp", "expected DDP UDP handler")
 	require.Contains(t, m, "rtps", "expected RTPS UDP handler")
 	require.Contains(t, m, "knx", "expected KNX UDP handler")

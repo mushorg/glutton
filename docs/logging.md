@@ -128,6 +128,7 @@ Example shape:
 | `ike` | UDP | [protocols/ike.md](protocols/ike.md) |
 | `coap` | UDP | [protocols/coap.md](protocols/coap.md) |
 | `a2s` | UDP | [protocols/a2s.md](protocols/a2s.md) |
+| `steam` | UDP | [protocols/steam.md](protocols/steam.md) |
 | `ddp` | UDP | [protocols/ddp.md](protocols/ddp.md) |
 | `rtps` | UDP | [protocols/rtps.md](protocols/rtps.md) |
 | `wsdiscovery` | UDP | [protocols/wsdiscovery.md](protocols/wsdiscovery.md) |

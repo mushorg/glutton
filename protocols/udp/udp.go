@@ -17,6 +17,7 @@ import (
 	"github.com/mushorg/glutton/protocols/udp/knx"
 	"github.com/mushorg/glutton/protocols/udp/rip"
 	"github.com/mushorg/glutton/protocols/udp/rtps"
+	"github.com/mushorg/glutton/protocols/udp/steam"
 	"github.com/mushorg/glutton/protocols/udp/wsd"
 )
 
@@ -51,6 +52,9 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	}
 	if a2s.LooksLikeA2S(data) {
 		return HandleA2S(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
+	if steam.LooksLikeSteam(data) {
+		return HandleSteam(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
 	if ddp.LooksLikeDDP(data) {
 		return HandleDDP(ctx, srcAddr, dstAddr, data, md, log, h)
