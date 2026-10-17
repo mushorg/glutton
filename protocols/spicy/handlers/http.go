@@ -203,7 +203,7 @@ func (s *httpServer) buildResponse(ctx context.Context, method, uriRaw, path str
 	if resp := dockerAPIVersionResponse(path, log); resp != nil {
 		return resp
 	}
-	if resp := tcp.LFIResponse(queryFromURI(uriRaw)); resp != nil {
+	if resp := tcp.LFIResponse(path, queryFromURI(uriRaw)); resp != nil {
 		return resp
 	}
 	return httpPlainOK()

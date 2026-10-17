@@ -16,11 +16,24 @@ var lfiBasenames = map[string]string{
 	"win.ini":       "resources/lfi/win.ini",
 }
 
-// LFIResponse returns a canned HTTP 200 for GET queries that look like a
-// local-file-include of a known file. The request path is ignored; only the
-// raw query is inspected. Returns nil when there is no match.
-func LFIResponse(rawQuery string) []byte {
-	target := extractLFITarget(rawQuery)
+// LFIResponse returns a canned HTTP 200 for requests that look like a
+// local-file-include of a known file. Checks rawQuery (e.g.
+// file=../../etc/passwd) and path (e.g. /..%2F..%2Fetc%2Fpasswd). Returns
+// nil when there is no match.
+func LFIResponse(path, rawQuery string) []byte {
+	for _, candidate := range []string{rawQuery, path} {
+		if candidate == "" {
+			continue
+		}
+		if resp := lfiResponseFor(candidate); resp != nil {
+			return resp
+		}
+	}
+	return nil
+}
+
+func lfiResponseFor(candidate string) []byte {
+	target := extractLFITarget(candidate)
 	if target == "" {
 		return nil
 	}
@@ -42,22 +55,22 @@ func LFIResponse(rawQuery string) []byte {
 	)), data...)
 }
 
-// extractLFITarget returns the included file path from a raw query string, or
-// empty if the query does not look like an LFI.
-func extractLFITarget(rawQuery string) string {
-	if rawQuery == "" {
+// extractLFITarget returns the included file path from a raw query string or
+// request path, or empty if the input does not look like an LFI.
+func extractLFITarget(s string) string {
+	if s == "" {
 		return ""
 	}
-	decoded, err := url.QueryUnescape(rawQuery)
+	decoded, err := url.QueryUnescape(s)
 	if err != nil {
-		decoded = rawQuery
+		decoded = s
 	}
-	if !looksLikeLFI(rawQuery) && !looksLikeLFI(decoded) {
+	if !looksLikeLFI(s) && !looksLikeLFI(decoded) {
 		return ""
 	}
 
 	// Prefer the decoded form for path extraction after traversal markers.
-	for _, candidate := range []string{decoded, rawQuery} {
+	for _, candidate := range []string{decoded, s} {
 		if target := targetAfterTraversal(candidate); target != "" {
 			return target
 		}

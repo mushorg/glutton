@@ -103,6 +103,12 @@ Each lookup is `{location, raw, resolved}`:
 
 Caps: 16 lookups per request, 512 B per expression, 16 KiB scanned per field or body; `truncated` is set when any applies. The Spicy `http` handler does not set `log4shell`.
 
+#### Local file include (LFI)
+
+`protocols/tcp/lfi.go`. A GET whose **query** or **path** looks like a traversal to a known file (`passwd`, `hosts`, `win.ini`, `amportal.conf`) gets `200` `text/plain` with a canned body from `resources/lfi/`. Examples: `?file=../../etc/passwd`, `/..%2F..%2Fetc%2Fpasswd`. Citrix `/vpn/../vpns/` staging still wins when it matches first. Unknown basenames keep the generic empty `200`.
+
+> **Change (2026-10-17):** before this date, only the query string was inspected, so path-only traversals (e.g. Ochi event 02d72548-cfa1-429d-9959-c76e7564ce67) got an empty body.
+
 ## `http` (Spicy)
 
 **`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `payload`
@@ -113,4 +119,5 @@ Keep-alive HTTP parsed with Spicy. `command`, `query`, `parameters`, and `status
 - **No header-derived fields.** `host` (the sensor address), `user_agent`, and other request headers are not decoded; `payload` still holds the raw wire request/response.
 - **Selenium Grid 4:** same paths, replies, and `browser`/`binary`/`args` fields as the [Go handler](#selenium-grid-4).
 - **Citrix CVE-2019-19781:** same replies and `citrix` frames as the [Go handler](#citrix-adc--netscaler-gateway-cve-2019-19781), except `nsc_user` is never set (headers are not exposed).
+- **LFI:** same path- and query-based canned replies as the [Go handler](#local-file-include-lfi).
 - **Proxmox VE:** not emulated.

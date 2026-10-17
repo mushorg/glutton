@@ -247,7 +247,12 @@ func TestHandleHTTPParameters(t *testing.T) {
 	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
 	_, err := client.Write(httpTestRequest("GET", "/search?q=lfi&file=../../etc/passwd", "", nil))
 	require.NoError(t, err)
-	_, _, _ = readHTTPResponse(t, client)
+	status, headers, body := readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "text/plain", headers.Get("Content-Type"))
+	passwd, err := Res.ReadFile("resources/lfi/passwd")
+	require.NoError(t, err)
+	require.Equal(t, passwd, body)
 
 	require.NoError(t, client.Close())
 	select {
@@ -269,6 +274,55 @@ func TestHandleHTTPParameters(t *testing.T) {
 		"q":    {"lfi"},
 		"file": {"../../etc/passwd"},
 	}, events[0].Parameters)
+}
+
+// Ochi event 02d72548-cfa1-429d-9959-c76e7564ce67: path-only LFI for /etc/passwd.
+var lfiPathTraversalRead = []byte("GET /..%2F..%2F..%2F..%2F..%2F..%2Fetc%2Fpasswd HTTP/1.1\r\nHost: 1.2.3.4:8233\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:146.0) Gecko/20100101 Firefox/146.0\r\nAccept: */*\r\nConnection: close\r\n\r\n")
+
+func TestHandleHTTPPathLFI(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write(lfiPathTraversalRead)
+	require.NoError(t, err)
+	status, headers, body := readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "text/plain", headers.Get("Content-Type"))
+	passwd, err := Res.ReadFile("resources/lfi/passwd")
+	require.NoError(t, err)
+	require.Equal(t, passwd, body)
+	require.NotZero(t, headers.Get("Content-Length"))
+
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "http", produced.protocol)
+	events, ok := produced.decoded.([]parsedHTTP)
+	require.True(t, ok)
+	require.Len(t, events, 2)
+	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, "GET", events[0].Command)
+	require.Equal(t, "/..%2F..%2F..%2F..%2F..%2F..%2Fetc%2Fpasswd", events[0].Path)
+	require.Equal(t, lfiPathTraversalRead, events[0].Payload)
+	require.Equal(t, "write", events[1].Direction)
+	require.Equal(t, "200", events[1].Status)
+	require.Contains(t, string(events[1].Payload), "Content-Type: text/plain")
+	require.Contains(t, string(events[1].Payload), string(passwd))
 }
 
 func TestHandleHTTPBasicAuth(t *testing.T) {

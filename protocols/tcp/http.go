@@ -303,7 +303,11 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 		return s.write(httpOKJSON(data))
 	}
 
-	if resp := LFIResponse(req.URL.RawQuery); resp != nil {
+	pathForLFI := req.URL.EscapedPath()
+	if pathForLFI == "" {
+		pathForLFI = req.URL.Path
+	}
+	if resp := LFIResponse(pathForLFI, req.URL.RawQuery); resp != nil {
 		return s.write(resp)
 	}
 
