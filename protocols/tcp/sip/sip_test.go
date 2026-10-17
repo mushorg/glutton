@@ -224,12 +224,14 @@ func TestReplyMethods(t *testing.T) {
 func TestDescribe(t *testing.T) {
 	info := Describe(parseRequest(t, pplsipInvite))
 	require.Equal(t, Info{
-		Method:    "INVITE",
-		URI:       "sip:14500972598112101@1.2.3.4",
-		From:      "sip:14500163172166221:5060@1.2.3.4",
-		To:        "sip:14500972598112101@1.2.3.4",
-		CallID:    "1492163839-465544234-336545636",
-		UserAgent: "pplsip",
+		Method:       "INVITE",
+		URI:          "sip:14500972598112101@1.2.3.4",
+		From:         "sip:14500163172166221:5060@1.2.3.4",
+		To:           "sip:14500972598112101@1.2.3.4",
+		CallID:       "1492163839-465544234-336545636",
+		UserAgent:    "pplsip",
+		CalledNumber: "14500972598112101",
+		Tool:         "pplsip",
 	}, info)
 
 	resp := testResponder().Reply(parseRequest(t, pplsipInvite), nil, nil, Answer)[2]
@@ -242,6 +244,64 @@ func TestDescribe(t *testing.T) {
 func TestCredentialsIgnoresNonDigest(t *testing.T) {
 	req := parseRequest(t, withAuth(pplsipInvite, `Authorization: Basic dXNlcjpwYXNz`))
 	require.Empty(t, Credentials(req))
+}
+
+func TestDigestAuth(t *testing.T) {
+	// a REGISTER answering the honeypot's own challenge: its nonce is ours, so
+	// response + these fields crack the guessed password offline.
+	req := parseRequest(t, withAuth(pplsipInvite, `Authorization: Digest username="1000",realm="asterisk",nonce="abc123",uri="sip:1.2.3.4",response="deadbeef",algorithm=MD5,qop=auth,nc=00000001,cnonce="xyz"`))
+	info := Describe(req)
+	require.Equal(t, Digest{
+		Username:  "1000",
+		Realm:     "asterisk",
+		Nonce:     "abc123",
+		URI:       "sip:1.2.3.4",
+		Response:  "deadbeef",
+		Algorithm: "MD5",
+		Qop:       "auth",
+		Nc:        "00000001",
+		CNonce:    "xyz",
+	}, info.Digest)
+	require.Equal(t, "1000", info.Username)
+}
+
+func TestDigestAuthAbsent(t *testing.T) {
+	require.Equal(t, Digest{}, Describe(parseRequest(t, pplsipInvite)).Digest)
+}
+
+func TestTool(t *testing.T) {
+	// a toll-fraud INVITE whose only varying part is the User-Agent
+	withUA := func(ua string) gosip.Request {
+		data := strings.Replace(string(pplsipInvite), "User-Agent: pplsip\r\n", "User-Agent: "+ua+"\r\n", 1)
+		return parseRequest(t, []byte(data))
+	}
+	cases := []struct{ ua, tool string }{
+		{"friendly-scanner", "sipvicious"},
+		{"sipvicious", "sipvicious"},
+		{"sipcli/v1.8", "sipcli"},
+		{"sipsak 0.9.7", "sipsak"},
+		{"pplsip", "pplsip"},
+		{"VaxSIPUserAgent/3.1", "vaxsipuseragent"},
+		{"sundayddr", "sundayddr"},
+		{"Asterisk PBX 18.20.0", ""},
+		{"Zoiper rev.12345", ""},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.tool, Tool(withUA(c.ua)), "User-Agent %q", c.ua)
+	}
+}
+
+func TestToolFromToHost(t *testing.T) {
+	// SIPVicious with a changed User-Agent still defaults From/To to 1.1.1.1
+	data := "OPTIONS sip:100@1.2.3.4 SIP/2.0\r\n" +
+		"Via: SIP/2.0/UDP 1.2.3.4:5060;branch=z9hG4bK1\r\n" +
+		"From: \"1000\"<sip:1000@1.1.1.1>;tag=a\r\n" +
+		"To: \"1000\"<sip:1000@1.1.1.1>\r\n" +
+		"Call-ID: c1\r\n" +
+		"CSeq: 1 OPTIONS\r\n" +
+		"User-Agent: PBX\r\n" +
+		"Content-Length: 0\r\n\r\n"
+	require.Equal(t, "sipvicious", Tool(parseRequest(t, []byte(data))))
 }
 
 func TestReplyViaReceivedAndRport(t *testing.T) {
@@ -349,7 +409,7 @@ func TestAckTimeoutBye(t *testing.T) {
 	invite := parseRequest(t, pplsipInvite)
 	ok := r.Reply(invite, nil, nil, Answer)[2]
 
-	bye := r.AckTimeoutBye(invite, ok, nil)
+	bye := r.AckTimeoutBye(invite, ok, nil, "UDP")
 	require.NotNil(t, bye)
 	// goes to the caller's Contact; From/To swap sides and keep both tags;
 	// Reason matches pjsip's ACK-timeout BYE
@@ -375,7 +435,7 @@ func TestAckTimeoutByeFallsBackToFrom(t *testing.T) {
 	r := testResponder()
 	invite := parseRequest(t, []byte(strings.Replace(string(pplsipInvite),
 		"Contact: <sip:14500163172166221:5060@212.129.10.158:65145>\r\n", "", 1)))
-	bye := r.AckTimeoutBye(invite, r.Reply(invite, nil, nil, Answer)[2], nil)
+	bye := r.AckTimeoutBye(invite, r.Reply(invite, nil, nil, Answer)[2], nil, "UDP")
 	require.NotNil(t, bye)
 	require.Equal(t, "sip:14500163172166221:5060@1.2.3.4", bye.Recipient().String())
 }
@@ -468,7 +528,7 @@ func TestInviteAdvertisesArrivalPort(t *testing.T) {
 	local := &net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 65476}
 	ok := testResponder().Reply(req, nil, local, Answer)[2].String()
 	require.Contains(t, ok, "Contact: <sip:14500972598112101@1.2.3.4:65476>\r\n")
-	bye := testResponder().AckTimeoutBye(req, testResponder().Reply(req, nil, local, Answer)[2], local)
+	bye := testResponder().AckTimeoutBye(req, testResponder().Reply(req, nil, local, Answer)[2], local, "UDP")
 	require.Contains(t, bye.String(), "Via: SIP/2.0/UDP 1.2.3.4:65476;")
 
 	// the arrival port wins over a Request-URI port, which is only the fallback
@@ -504,6 +564,38 @@ func TestInviteToNameUsesLocalAddress(t *testing.T) {
 	ok = testResponder().Reply(parseRequest(t, pplsipInvite), nil, local, Answer)[2].String()
 	require.Contains(t, ok, "c=IN IP4 1.2.3.4\r\n")
 
-	bye := testResponder().AckTimeoutBye(req, testResponder().Reply(req, nil, local, Answer)[2], local)
+	bye := testResponder().AckTimeoutBye(req, testResponder().Reply(req, nil, local, Answer)[2], local, "UDP")
 	require.Contains(t, bye.String(), "Via: SIP/2.0/UDP 192.0.2.10:5060;")
+}
+
+func TestCalledNumber(t *testing.T) {
+	withURI := func(requestURI, to string) gosip.Request {
+		s := strings.Replace(string(pplsipInvite), "INVITE sip:14500972598112101@1.2.3.4 SIP/2.0", "INVITE "+requestURI+" SIP/2.0", 1)
+		s = strings.Replace(s, "To: <sip:14500972598112101@1.2.3.4>", "To: "+to, 1)
+		return parseRequest(t, []byte(s))
+	}
+	for _, tc := range []struct {
+		name, uri, to, want string
+	}{
+		{"pplsip", "sip:14500972598112101@1.2.3.4", "<sip:14500972598112101@1.2.3.4>", "14500972598112101"},
+		{"plus and separators", "sip:+44(20)7946-0000@1.2.3.4", "<sip:x@1.2.3.4>", "+442079460000"},
+		{"international prefix", "sip:00972598112101@1.2.3.4", "<sip:x@1.2.3.4>", "00972598112101"},
+		{"extension", "sip:100@1.2.3.4", "<sip:100@1.2.3.4>", "100"},
+		{"star code", "sip:*97@1.2.3.4", "<sip:*97@1.2.3.4>", "*97"},
+		{"name", "sip:asterisk@1.2.3.4", "<sip:asterisk@1.2.3.4>", ""},
+		{"user params", "sip:4930123;phone-context=example.com@1.2.3.4", "<sip:x@1.2.3.4>", "4930123"},
+		{"To fallback", "sip:1.2.3.4", "<sip:0049301234@1.2.3.4>", "0049301234"},
+		{"bare plus", "sip:+@1.2.3.4", "<sip:x@1.2.3.4>", ""},
+		{"plus inside", "sip:12+34@1.2.3.4", "<sip:x@1.2.3.4>", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, CalledNumber(withURI(tc.uri, tc.to)))
+		})
+	}
+}
+
+func TestCalledNumberSkipsRegister(t *testing.T) {
+	req := parseRequest(t, []byte("REGISTER sip:1.2.3.4 SIP/2.0\r\nVia: SIP/2.0/UDP 5.6.7.8:5060;branch=z9hG4bK1\r\nFrom: <sip:100@1.2.3.4>;tag=a\r\nTo: <sip:100@1.2.3.4>\r\nCall-ID: c1\r\nCSeq: 1 REGISTER\r\nContent-Length: 0\r\n\r\n"))
+	require.Empty(t, CalledNumber(req))
+	require.Empty(t, Describe(req).CalledNumber)
 }

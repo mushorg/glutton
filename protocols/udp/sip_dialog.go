@@ -32,22 +32,6 @@ const (
 	// active dialog is produced with endReason evicted. Worst case memory is
 	// about maxSIPDialogs * maxSIPDialogFrames * maxSIPPayload (32 MiB).
 	maxSIPDialogs = 256
-	// defaultSIPRejectInvites is how many new INVITE dialogs in a source's
-	// first visit get 404 before calls are answered (config key
-	// sip.reject_invites). Toll-fraud tools stop at the first prefix that
-	// rings, so a few failures make them reveal more of their dial-prefix
-	// list. Only the first visit rejects: a scanner that sends one INVITE per
-	// visit would otherwise get 404 every time and never see a call ring, be
-	// challenged or be busied by the later variants. The count lives in the
-	// recall store, so it starts over once the source is forgotten
-	// (recall.ttl or eviction).
-	defaultSIPRejectInvites = 2
-	// sipUnackedCounter counts, per visit in the recall store, the answered
-	// INVITEs whose final response (200, 183+200, 401, 486) the source never
-	// ACKed. Dial testers that only read the status code stall there; the
-	// next call in the same visit gets the next variant instead of the same
-	// outcome until recall.visit_gap passes.
-	sipUnackedCounter = "unacked"
 )
 
 // sipTimer is the part of *time.Timer the dialog uses.
@@ -81,32 +65,6 @@ func sipIdleDuration() time.Duration {
 // instant answer is a honeypot tell. Tests swap it for a fixed value.
 var sipRingDelay = func() time.Duration {
 	return 2*time.Second + rand.N(4*time.Second)
-}
-
-// sipRejectLimit overrides sip.reject_invites in tests when >= 0.
-var sipRejectLimit = -1
-
-func sipRejectInvites() int {
-	if sipRejectLimit >= 0 {
-		return sipRejectLimit
-	}
-	if viper.IsSet("sip.reject_invites") {
-		return viper.GetInt("sip.reject_invites")
-	}
-	return defaultSIPRejectInvites
-}
-
-// sipRejectInvite counts a new INVITE dialog in the source's first visit and
-// reports whether it is among the first sip.reject_invites of that visit.
-// Later visits and sources without a visit (recall disabled) are never
-// rejected.
-func sipRejectInvite(ip net.IP, v sipVisit) bool {
-	limit := sipRejectInvites()
-	if limit <= 0 || v.store == nil || v.number != 1 {
-		return false
-	}
-	n := v.store.Count("sip", ip, "invite")
-	return n > 0 && n <= limit
 }
 
 func sipDialogKey(src *net.UDPAddr, callID string) string {
@@ -182,7 +140,7 @@ type sipDialog struct {
 	idle     sipTimer
 	stopCtx  func() bool
 
-	visit sipVisit // response variant of the source's visit
+	visit sipproto.Visit // response variant of the source's visit
 
 	rec *sipRecording // caller media, once a 2xx with SDP was sent
 
@@ -288,7 +246,7 @@ func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
 	}
 
 	d.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
-	for _, resp := range sipResponder.Reply(req, d.src, d.dst, d.visit.variant) {
+	for _, resp := range sipResponder.Reply(req, d.src, d.dst, d.visit.Variant) {
 		if err := d.writeLocked([]byte(resp.String()), resp); err != nil {
 			return connection.EndWriteError, err
 		}
@@ -315,12 +273,12 @@ func (d *sipDialog) inviteLocked(seq uint32, req sip.Request) (string, error) {
 	d.invite, d.inviteSeq, d.final, d.acked = req, seq, nil, false
 
 	reject := first && d.reject
-	if !reject && d.visit.variant == sipproto.Auth && sipproto.Credentials(req) == "" {
+	if !reject && d.visit.Variant == sipproto.Auth && sipproto.Credentials(req) == "" {
 		// Asterisk challenges without a 100 Trying
 		return d.sendFinalLocked(sipResponder.Challenge(req, d.src), connection.EndTimeout)
 	}
 
-	trying, ringing, ok := sipResponder.Answer(req, d.src, d.dst, d.visit.variant)
+	trying, ringing, ok := sipResponder.Answer(req, d.src, d.dst, d.visit.Variant)
 	if err := d.writeLocked([]byte(trying.String()), trying); err != nil {
 		return connection.EndWriteError, err
 	}
@@ -337,7 +295,7 @@ func (d *sipDialog) inviteLocked(seq uint32, req sip.Request) (string, error) {
 	d.bindMediaLocked(ringing)
 	d.last = ringingBytes
 	d.pendingFinal = ok
-	if d.visit.variant == sipproto.Busy {
+	if d.visit.Variant == sipproto.Busy {
 		d.pendingFinal = sipResponder.Final(req, d.src, 486, "Busy Here", d.tag)
 	}
 	d.ringGen++
@@ -412,27 +370,6 @@ func (d *sipDialog) sendFinalLocked(final sip.Response, unacked string) (string,
 	return "", nil
 }
 
-// noteUnackedLocked counts an ignored final response towards escalating
-// the source's variant. The deliberate 404 rejections and the 487 after the
-// caller's own CANCEL do not count.
-func (d *sipDialog) noteUnackedLocked() {
-	if d.visit.number == 0 || d.visit.store == nil {
-		return
-	}
-	if code := d.final.StatusCode(); code == 404 || code == 487 {
-		return
-	}
-	n := d.visit.store.Count("sip", d.src.IP, sipUnackedCounter)
-	d.logger.Info("SIP final response not ACKed",
-		slog.String("protocol", "sip"),
-		slog.String("src_ip", d.src.IP.String()),
-		slog.Int("status", int(d.final.StatusCode())),
-		slog.String("variant", d.visit.variant.String()),
-		slog.String("next_variant", sipproto.Escalate(d.visit.variant, 1).String()),
-		slog.Int("unacked", n),
-	)
-}
-
 func isAuthChallenge(res sip.Response) bool {
 	code := res.StatusCode()
 	return code == 401 || code == 407
@@ -453,7 +390,7 @@ func (d *sipDialog) writeLocked(data []byte, msg sip.Message) error {
 	if msg == nil {
 		msg, _ = parseSIP(data, true)
 	}
-	d.events = append(d.events, d.visit.tag(sipDecoded("write", msg, data)))
+	d.events = append(d.events, sipTag(d.visit, sipDecoded("write", msg, data)))
 	if err := d.h.ReplyUDP(d.src, d.dst, data); err != nil {
 		d.logger.Error("Failed to send SIP reply", slog.String("protocol", "sip"), producer.ErrAttr(err))
 		return err
@@ -490,9 +427,9 @@ func (d *sipDialog) resendFinal() {
 	endReason := ""
 	if d.waited >= 64*sipT1 {
 		endReason = d.finalEnd
-		d.noteUnackedLocked()
+		_ = d.visit.NoteUnacked(d.src.IP, int(d.final.StatusCode()), d.logger)
 		if d.final.IsSuccess() {
-			if bye := sipResponder.AckTimeoutBye(d.invite, d.final, d.dst); bye != nil {
+			if bye := sipResponder.AckTimeoutBye(d.invite, d.final, d.dst, "UDP"); bye != nil {
 				if err := d.writeLocked([]byte(bye.String()), bye); err != nil {
 					endReason = connection.EndWriteError
 				}

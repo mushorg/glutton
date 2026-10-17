@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	sipproto "github.com/mushorg/glutton/protocols/tcp/sip"
 	"github.com/mushorg/glutton/protocols/udp/rtp"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
@@ -245,7 +246,7 @@ func TestHandleSIPRejectedCallBindsNoMedia(t *testing.T) {
 	stubSIPResponder(t)
 	stubSIPDialogs(t)
 	stubSIPRecordings(t)
-	sipRejectLimit = 2
+	sipproto.RejectLimit = 2
 	stubSIPRecall(t)
 	h := &recordingHoneypot{}
 	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)

@@ -268,6 +268,9 @@ func TestHandleSIPInviteAnswered(t *testing.T) {
 			CallID:    "1492163839-465544234-336545636",
 			UserAgent: "pplsip",
 			Payload:   pplsipInviteRead1,
+
+			CalledNumber: "14500972598112101",
+			Tool:         "pplsip",
 		},
 		write("100", trying),
 		write("180", ringing),
@@ -300,10 +303,15 @@ func TestHandleSIPRegisterWithCredentialsAccepted(t *testing.T) {
 	require.Len(t, events, 2)
 	require.Equal(t, "100", events[0].Username)
 	require.Equal(t, "200", events[1].Status)
-	// only the username is lifted into decoded; the digest response stays in the raw payload
+	// the honeypot issued the nonce, so the digest response and its parameters
+	// are recorded to crack the guessed password offline
+	require.Equal(t, "asterisk", events[0].Realm)
+	require.Equal(t, "feedface", events[0].Nonce)
+	require.Equal(t, "sip:1.2.3.4:5060", events[0].DigestURI)
+	require.Equal(t, "d41d8cd98f00b204e9800998ecf8427e", events[0].DigestResponse)
 	decoded, err := json.Marshal(events)
 	require.NoError(t, err)
-	require.NotContains(t, string(decoded), "d41d8cd98f00b204e9800998ecf8427e")
+	require.Contains(t, string(decoded), "d41d8cd98f00b204e9800998ecf8427e")
 }
 
 func TestHandleSIPAckNoReply(t *testing.T) {
@@ -434,18 +442,18 @@ func stubSIPDialogs(t *testing.T) *fakeSIPTimers {
 	t.Helper()
 	timers := &fakeSIPTimers{}
 	origTable, origAfter, origIdle := sipDialogs, sipAfterFunc, sipIdle
-	origLimit, origRing := sipRejectLimit, sipRingDelay
+	origLimit, origRing := sipproto.RejectLimit, sipRingDelay
 	origMedia := sipMedia
 	sipDialogs = newSIPDialogTable(maxSIPDialogs)
 	sipMedia = &sipMediaTable{bindings: map[string]*sipDialog{}}
 	sipAfterFunc = timers.afterFunc
 	sipIdle = time.Minute
-	sipRejectLimit = 0
+	sipproto.RejectLimit = 0
 	sipRingDelay = func() time.Duration { return sipRing }
 	t.Cleanup(func() {
 		sipDialogs, sipAfterFunc, sipIdle = origTable, origAfter, origIdle
 		sipMedia = origMedia
-		sipRejectLimit, sipRingDelay = origLimit, origRing
+		sipproto.RejectLimit, sipRingDelay = origLimit, origRing
 	})
 	return timers
 }
@@ -794,7 +802,7 @@ func TestHandleSIPDialogCancelAfterAnswer(t *testing.T) {
 func TestHandleSIPInviteRejected(t *testing.T) {
 	stubSIPResponder(t)
 	timers := stubSIPDialogs(t)
-	sipRejectLimit = 2
+	sipproto.RejectLimit = 2
 	advance := stubSIPRecall(t)
 	h := &recordingHoneypot{}
 	other := &net.UDPAddr{IP: net.ParseIP("192.0.2.7"), Port: 65145}
@@ -834,6 +842,9 @@ func TestHandleSIPInviteRejected(t *testing.T) {
 			CallID:    pplsipCallID,
 			UserAgent: "pplsip",
 			Payload:   pplsipInviteRead1,
+
+			CalledNumber: "14500972598112101",
+			Tool:         "pplsip",
 		},
 		{Direction: "write", Variant: "answer", Visit: 1, Status: "100", From: "sip:14500163172166221:5060@1.2.3.4", To: "sip:14500972598112101@1.2.3.4", CallID: pplsipCallID, UserAgent: "Asterisk PBX 18.20.0", Payload: []byte(r[0])},
 		{Direction: "write", Variant: "answer", Visit: 1, Status: "404", From: "sip:14500163172166221:5060@1.2.3.4", To: "sip:14500972598112101@1.2.3.4", CallID: pplsipCallID, UserAgent: "Asterisk PBX 18.20.0", Payload: []byte(want404)},
@@ -847,6 +858,9 @@ func TestHandleSIPInviteRejected(t *testing.T) {
 			CallID:    pplsipCallID,
 			UserAgent: "pplsip",
 			Payload:   ack,
+
+			CalledNumber: "14500972598112101",
+			Tool:         "pplsip",
 		},
 	}, h.produced[0].decoded)
 
@@ -877,7 +891,7 @@ func TestHandleSIPInviteRejected(t *testing.T) {
 func TestHandleSIPInviteRejectFirstVisitOnly(t *testing.T) {
 	stubSIPResponder(t)
 	timers := stubSIPDialogs(t)
-	sipRejectLimit = 2
+	sipproto.RejectLimit = 2
 	advance := stubSIPRecall(t)
 	h := &recordingHoneypot{}
 	last := func() string { return string(h.replies[len(h.replies)-1]) }
@@ -937,7 +951,7 @@ func TestHandleSIPInviteRejectFirstVisitOnly(t *testing.T) {
 func TestHandleSIPInviteRejectNeedsRecall(t *testing.T) {
 	stubSIPResponder(t)
 	stubSIPDialogs(t)
-	sipRejectLimit = 2
+	sipproto.RejectLimit = 2
 	sipRecall = recall.New(recall.Config{Enabled: false})
 	h := &recordingHoneypot{}
 
@@ -948,7 +962,7 @@ func TestHandleSIPInviteRejectNeedsRecall(t *testing.T) {
 func TestHandleSIPInviteRejectedUnacked(t *testing.T) {
 	stubSIPResponder(t)
 	timers := stubSIPDialogs(t)
-	sipRejectLimit = 1
+	sipproto.RejectLimit = 1
 	h := &recordingHoneypot{}
 
 	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
@@ -1261,7 +1275,7 @@ func TestHandleSIPReturningSourceAuthUnackedTimesOut(t *testing.T) {
 func TestHandleSIPUnackedFinalEscalatesWithinVisit(t *testing.T) {
 	stubSIPResponder(t)
 	timers := stubSIPDialogs(t)
-	sipRejectLimit = 1
+	sipproto.RejectLimit = 1
 	h := &recordingHoneypot{}
 	dst := &net.UDPAddr{IP: pplsipDst.IP, Port: 65476}
 	invite := func(callID string) {

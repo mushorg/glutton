@@ -31,10 +31,24 @@ type parsedSIP struct {
 	CallID    string `json:"call_id,omitempty"`
 	UserAgent string `json:"user_agent,omitempty"` // User-Agent (reads) or Server (writes)
 	Username  string `json:"username,omitempty"`   // digest Authorization username
-	Payload   []byte `json:"payload,omitempty"`
-	Truncated bool   `json:"truncated,omitempty"`
-	Variant   string `json:"variant,omitempty"` // response variant on writes
-	Visit     int    `json:"visit,omitempty"`   // source's visit number on writes
+	// CalledNumber is the dialed number of a request (Request-URI user, else To user)
+	CalledNumber string `json:"called_number,omitempty"`
+	// Tool is the fingerprinted scanner/dialer behind a read frame
+	Tool string `json:"tool,omitempty"`
+	// Digest auth a read frame carried; the honeypot issued the nonce, so
+	// these crack the guessed password offline (hashcat -m 11400).
+	Realm          string `json:"realm,omitempty"`
+	Nonce          string `json:"nonce,omitempty"`
+	DigestURI      string `json:"digest_uri,omitempty"`
+	DigestResponse string `json:"digest_response,omitempty"`
+	Algorithm      string `json:"algorithm,omitempty"`
+	Qop            string `json:"qop,omitempty"`
+	Nc             string `json:"nc,omitempty"`
+	CNonce         string `json:"cnonce,omitempty"`
+	Payload        []byte `json:"payload,omitempty"`
+	Truncated      bool   `json:"truncated,omitempty"`
+	Variant        string `json:"variant,omitempty"` // response variant on writes
+	Visit          int    `json:"visit,omitempty"`   // source's visit number on writes
 
 	// command "rtp": one summary frame per caller media stream (SSRC)
 	SSRC        string `json:"ssrc,omitempty"`         // hex
@@ -62,6 +76,16 @@ func sipDecoded(direction string, msg sip.Message, payload []byte) parsedSIP {
 	frame.CallID = info.CallID
 	frame.UserAgent = info.UserAgent
 	frame.Username = info.Username
+	frame.CalledNumber = info.CalledNumber
+	frame.Tool = info.Tool
+	frame.Realm = info.Digest.Realm
+	frame.Nonce = info.Digest.Nonce
+	frame.DigestURI = info.Digest.URI
+	frame.DigestResponse = info.Digest.Response
+	frame.Algorithm = info.Digest.Algorithm
+	frame.Qop = info.Digest.Qop
+	frame.Nc = info.Digest.Nc
+	frame.CNonce = info.Digest.CNonce
 	return frame
 }
 
@@ -69,67 +93,30 @@ func sipDecoded(direction string, msg sip.Message, payload []byte) parsedSIP {
 // with a fake clock.
 var sipRecall = recall.Shared
 
-// sipVisit is the response variant picked for a source's current visit.
-// A zero number means no visit (unparsable datagram). store is the store the
-// visit began in, so a dialog finishing later notes it there.
-type sipVisit struct {
-	number  int
-	variant sipproto.Variant
-	store   *recall.Store
+// beginSIPVisit marks activity from ip in sipRecall and returns its visit
+// (see sipproto.BeginVisit).
+func beginSIPVisit(ip net.IP, logger interfaces.Logger) sipproto.Visit {
+	return sipproto.BeginVisit(sipRecall, ip, logger)
 }
 
-// beginSIPVisit marks activity from ip and returns its visit. A source that
-// returns after recall.visit_gap gets the next sipproto.Variants entry, and
-// within a visit each final response the source left unACKed moves it one
-// further (see sipproto.Escalate).
-func beginSIPVisit(ip net.IP, logger interfaces.Logger) sipVisit {
-	store := sipRecall
-	v := store.Begin("sip", ip, len(sipproto.Variants))
-	visit := sipVisit{number: v.Number, variant: sipproto.Variants[v.Variant], store: store}
-	// a source that ignored a final response in this visit gets the next one
-	visit.variant = sipproto.Escalate(visit.variant, store.Counter("sip", ip, sipUnackedCounter))
-	if v.Started && v.Number > 1 {
-		logger.Info("returning SIP source",
-			slog.String("protocol", "sip"),
-			slog.String("src_ip", ip.String()),
-			slog.Int("visit", v.Number),
-			slog.String("variant", visit.variant.String()),
-			slog.String("previous_variant", v.Previous.Variant),
-			slog.Any("previous_commands", v.Previous.Commands),
-		)
-	}
-	return visit
-}
-
-// tag records the visit on a write frame.
-func (v sipVisit) tag(frame parsedSIP) parsedSIP {
-	if v.number > 0 {
-		frame.Variant = v.variant.String()
-		frame.Visit = v.number
+// sipTag records the visit on a write frame.
+func sipTag(v sipproto.Visit, frame parsedSIP) parsedSIP {
+	if v.Number > 0 {
+		frame.Variant = v.Variant.String()
+		frame.Visit = v.Number
 	}
 	return frame
 }
 
 // noteSIPVisit stores what the source did in this event.
-func noteSIPVisit(ip net.IP, v sipVisit, events []parsedSIP) {
-	if v.number == 0 {
-		return
-	}
-	v.store.Note("sip", ip, func(s *recall.Summary) {
-		s.Variant = v.variant.String()
-		s.Events++
-		for _, e := range events {
-			if e.Direction != "read" {
-				continue
-			}
-			s.AddCommand(e.Command)
-			s.AddPath(e.Path)
-			s.AddUsername(e.Username)
-			if e.UserAgent != "" {
-				s.UserAgent = e.UserAgent
-			}
+func noteSIPVisit(ip net.IP, v sipproto.Visit, events []parsedSIP) {
+	reads := make([]sipproto.VisitRead, 0, len(events))
+	for _, e := range events {
+		if e.Direction == "read" {
+			reads = append(reads, sipproto.VisitRead{Command: e.Command, Path: e.Path, Username: e.Username, UserAgent: e.UserAgent})
 		}
-	})
+	}
+	v.Note(ip, reads)
 }
 
 // sipResponder builds the UDP SIP replies; tests swap it for deterministic tags and nonces.
@@ -155,7 +142,7 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	truncated := len(data) > maxSIPPayload
 
 	if len(payload) == 0 {
-		return handleSIPDatagram(srcAddr, dstAddr, nil, parsedSIP{}, nil, sipVisit{}, md, logger, h)
+		return handleSIPDatagram(srcAddr, dstAddr, nil, parsedSIP{}, nil, sipproto.Visit{}, md, logger, h)
 	}
 
 	logger.Info("SIP UDP packet received",
@@ -170,11 +157,11 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	frame.Truncated = truncated
 	if err != nil {
 		logger.Debug("Failed to parse SIP message", slog.String("protocol", "sip"), producer.ErrAttr(err))
-		return handleSIPDatagram(srcAddr, dstAddr, nil, frame, err, sipVisit{}, md, logger, h)
+		return handleSIPDatagram(srcAddr, dstAddr, nil, frame, err, sipproto.Visit{}, md, logger, h)
 	}
 
 	// datagrams joining a dialog keep the visit the dialog started with
-	var visit sipVisit
+	var visit sipproto.Visit
 	if frame.CallID != "" {
 		key := sipDialogKey(srcAddr, frame.CallID)
 		d := sipDialogs.get(key)
@@ -183,7 +170,7 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 			var evicted *sipDialog
 			d, evicted = sipDialogs.open(key, func() *sipDialog {
 				d := newSIPDialog(ctx, key, sipDialogs, srcAddr, dstAddr, md, logger, h)
-				d.reject = sipRejectInvite(srcAddr.IP, visit)
+				d.reject = visit.RejectInvite(srcAddr.IP)
 				d.visit = visit
 				return d
 			})
@@ -197,7 +184,7 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 			}
 		}
 	}
-	if visit.number == 0 {
+	if visit.Number == 0 {
 		visit = beginSIPVisit(srcAddr.IP, logger)
 	}
 	return handleSIPDatagram(srcAddr, dstAddr, msg, frame, nil, visit, md, logger, h)
@@ -206,7 +193,7 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 // handleSIPDatagram answers a datagram outside any dialog and produces it as
 // one event. parseErr is the parse failure for an unparsable datagram; visit
 // picks the response variant.
-func handleSIPDatagram(srcAddr, dstAddr *net.UDPAddr, msg sip.Message, frame parsedSIP, parseErr error, visit sipVisit, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+func handleSIPDatagram(srcAddr, dstAddr *net.UDPAddr, msg sip.Message, frame parsedSIP, parseErr error, visit sipproto.Visit, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	events := []parsedSIP{}
 	if frame.Payload != nil {
 		events = append(events, frame)
@@ -230,9 +217,9 @@ func handleSIPDatagram(srcAddr, dstAddr *net.UDPAddr, msg sip.Message, frame par
 	}
 	logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
 
-	for _, resp := range sipResponder.Reply(req, srcAddr, dstAddr, visit.variant) {
+	for _, resp := range sipResponder.Reply(req, srcAddr, dstAddr, visit.Variant) {
 		respBytes := []byte(resp.String())
-		events = append(events, visit.tag(sipDecoded("write", resp, respBytes)))
+		events = append(events, sipTag(visit, sipDecoded("write", resp, respBytes)))
 		if err := h.ReplyUDP(srcAddr, dstAddr, respBytes); err != nil {
 			logger.Error("Failed to send SIP reply", slog.String("protocol", "sip"), producer.ErrAttr(err))
 			endReason = connection.EndWriteError

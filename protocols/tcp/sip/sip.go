@@ -1,6 +1,7 @@
 // Package sip builds the honeypot's SIP replies and extracts the request
 // fields recorded in decoded frames. It is shared by the TCP and UDP SIP
-// handlers and does no I/O.
+// handlers. Its only I/O is framing messages off a reader the TCP handler
+// supplies (ReadStreamMessage).
 package sip
 
 import (
@@ -502,17 +503,109 @@ func (r *Responder) response(req gosip.Request, code gosip.StatusCode, reason, t
 
 // Credentials returns the username from an Authorization or
 // Proxy-Authorization header, or "" when the request is unauthenticated.
-// Only the username is returned; the digest response is never extracted.
 func Credentials(req gosip.Request) string {
+	d, _ := digestAuth(req)
+	return d.Username
+}
+
+// Digest holds the digest-auth fields a request carries in its Authorization
+// (or Proxy-Authorization) header. The honeypot issued the nonce in its own
+// 401 challenge, so Response is the keyed hash of the password the scanner is
+// guessing: with Username, Realm, Nonce, URI, Qop, Nc and CNonce it lets that
+// password be recovered offline (e.g. hashcat -m 11400). None of this is a
+// secret of ours; Response is the attacker's guess, not a credential we hold.
+type Digest struct {
+	Username  string
+	Realm     string
+	Nonce     string
+	URI       string
+	Response  string
+	Algorithm string
+	Qop       string
+	Nc        string
+	CNonce    string
+}
+
+// digestAuth parses the first digest Authorization or Proxy-Authorization
+// header of req and reports whether one carrying a username or response was
+// found. Other schemes (Basic, ...) are ignored.
+func digestAuth(req gosip.Request) (Digest, bool) {
 	for _, name := range []string{"Authorization", "Proxy-Authorization"} {
 		for _, h := range req.GetHeaders(name) {
 			if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(h.Value())), "digest") {
 				continue
 			}
-			if user := gosip.AuthFromValue(h.Value()).Username(); user != "" {
-				return user
+			a := gosip.AuthFromValue(h.Value())
+			d := Digest{
+				Username:  a.Username(),
+				Realm:     a.Realm(),
+				Nonce:     a.Nonce(),
+				URI:       a.Uri(),
+				Response:  a.Response(),
+				Algorithm: a.Algorithm(),
+				Qop:       a.Qop(),
+				Nc:        a.Nc(),
+				CNonce:    a.CNonce(),
+			}
+			if d.Username != "" || d.Response != "" {
+				return d, true
 			}
 		}
+	}
+	return Digest{}, false
+}
+
+// sipTools maps a lowercased User-Agent substring to the tool family name
+// recorded as the fingerprint. SIPVicious ships both as the classic
+// "friendly-scanner" and, since the rewrite, as "sipvicious".
+var sipTools = []struct{ match, name string }{
+	{"friendly-scanner", "sipvicious"},
+	{"sipvicious", "sipvicious"},
+	{"sipcli", "sipcli"},
+	{"sipsak", "sipsak"},
+	{"pplsip", "pplsip"},
+	{"vaxsipuseragent", "vaxsipuseragent"},
+	{"sundayddr", "sundayddr"},
+	{"sipptk", "sipptk"},
+	{"sip-scan", "sipscan"},
+	{"sipscan", "sipscan"},
+	{"sivus", "sivus"},
+	{"warvox", "warvox"},
+	{"iwar", "iwar"},
+	{"smap", "smap"},
+}
+
+// Tool classifies the SIP tool behind req from its User-Agent and, failing
+// that, a header habit, returning "" when nothing matches. The name is the
+// tool family (SIPVicious, sipcli, sipsak, pplsip, VaxSIPUserAgent, ...). It
+// is a triage hint, not proof: a scanner can forge any User-Agent.
+func Tool(req gosip.Request) string {
+	ua := ""
+	if hs := req.GetHeaders("User-Agent"); len(hs) > 0 {
+		ua = strings.ToLower(hs[0].Value())
+	}
+	for _, t := range sipTools {
+		if strings.Contains(ua, t.match) {
+			return t.name
+		}
+	}
+	// SIPVicious defaults the From and To domain to 1.1.1.1 unless its caller
+	// sets one, a tell that survives a changed User-Agent.
+	if fromToHost(req) == "1.1.1.1" {
+		return "sipvicious"
+	}
+	return ""
+}
+
+// fromToHost returns the URI host shared by the From and To headers, or "".
+func fromToHost(req gosip.Request) string {
+	from, okFrom := req.From()
+	to, okTo := req.To()
+	if !okFrom || !okTo || from.Address == nil || to.Address == nil {
+		return ""
+	}
+	if h := from.Address.Host(); h != "" && h == to.Address.Host() {
+		return h
 	}
 	return ""
 }
@@ -527,6 +620,54 @@ type Info struct {
 	CallID    string
 	UserAgent string
 	Username  string
+	// CalledNumber is the dialed number of a request (see CalledNumber).
+	CalledNumber string
+	// Tool is the fingerprinted client tool of a request (see Tool).
+	Tool string
+	// Digest is the digest-auth credentials a request carried (see Digest).
+	Digest Digest
+}
+
+// CalledNumber returns the number req dials: the Request-URI user, else the
+// To user, with URI parameters and visual separators ("-.() ") removed and a
+// leading "+" kept. It is "" for REGISTER (whose To is the binding being
+// registered, not a call target) and for users that are not made of digits,
+// "*" and "#" (names like "asterisk" or "admin").
+func CalledNumber(req gosip.Request) string {
+	if req.Method() == gosip.REGISTER {
+		return ""
+	}
+	user := ""
+	if uri := req.Recipient(); uri != nil && uri.User() != nil {
+		user = uri.User().String()
+	}
+	if user == "" {
+		if to, ok := req.To(); ok && to.Address != nil && to.Address.User() != nil {
+			user = to.Address.User().String()
+		}
+	}
+	return normalizeNumber(user)
+}
+
+// normalizeNumber reduces a URI user part to a dialed number, or "".
+func normalizeNumber(user string) string {
+	user, _, _ = strings.Cut(user, ";")
+	var b strings.Builder
+	for i, c := range user {
+		switch {
+		case c >= '0' && c <= '9', c == '*', c == '#':
+			b.WriteRune(c)
+		case c == '+' && i == 0:
+			b.WriteRune(c)
+		case strings.ContainsRune("-.() ", c):
+		default:
+			return ""
+		}
+	}
+	if n := b.String(); strings.TrimPrefix(n, "+") != "" {
+		return n
+	}
+	return ""
 }
 
 // Describe extracts Info from a parsed request or response.
@@ -538,7 +679,10 @@ func Describe(msg gosip.Message) Info {
 		if uri := m.Recipient(); uri != nil {
 			info.URI = uri.String()
 		}
-		info.Username = Credentials(m)
+		info.Digest, _ = digestAuth(m)
+		info.Username = info.Digest.Username
+		info.CalledNumber = CalledNumber(m)
+		info.Tool = Tool(m)
 	case gosip.Response:
 		info.Status = int(m.StatusCode())
 	default:
@@ -646,9 +790,9 @@ const ackTimeoutReason = `SIP ;cause=408 ;text="Request Timeout"`
 // answer to invite) was never ACKed, as pjsip does after 64*T1. It goes to
 // the caller's Contact, with From/To swapped from the caller's view, a new
 // CSeq and Via branch, and the Via sent-by the caller addressed the
-// honeypot at (or local, as for Reply). It returns nil when invite or ok
-// lacks dialog headers.
-func (r *Responder) AckTimeoutBye(invite gosip.Request, ok gosip.Response, local net.Addr) gosip.Request {
+// honeypot at (or local, as for Reply) over transport ("UDP", "TCP" or
+// "TLS"). It returns nil when invite or ok lacks dialog headers.
+func (r *Responder) AckTimeoutBye(invite gosip.Request, ok gosip.Response, local net.Addr, transport string) gosip.Request {
 	from, hasFrom := invite.From()
 	to, hasTo := ok.To()
 	callID, hasCallID := invite.CallID()
@@ -673,7 +817,7 @@ func (r *Responder) AckTimeoutBye(invite gosip.Request, ok gosip.Response, local
 	via := gosip.ViaHeader{&gosip.ViaHop{
 		ProtocolName:    "SIP",
 		ProtocolVersion: "2.0",
-		Transport:       "UDP",
+		Transport:       transport,
 		Host:            host,
 		Port:            &port,
 		Params:          params,

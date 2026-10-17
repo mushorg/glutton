@@ -108,6 +108,9 @@ func TestHandleUDPPeeksSIP(t *testing.T) {
 		CallID:    "991852993801236740384404",
 		UserAgent: "friendly-scanner",
 		Payload:   sipviciousInviteRead1,
+
+		CalledNumber: "100",
+		Tool:         "sipvicious",
 	}, events[0])
 	for i, status := range []string{"100", "180", "200"} {
 		require.Equal(t, "write", events[i+1].Direction)

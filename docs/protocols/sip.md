@@ -1,9 +1,229 @@
 # `sip` decoded data
 
-Transport: TCP/UDP. Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
+Transport: UDP, TCP and TLS (implicit TLS on TCP/5061; see
+[TCP and TLS](#tcp-and-tls)). Shared encodings and frame fields are described in
+[Logging and producers](../logging.md#decoded-data).
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `status`, `from`, `to`, `call_id`, `user_agent`, `username`, `payload`, `truncated`, `variant`, `visit`; UDP media summary frames add `ssrc`, `codec`, `packets`, `lost`, `duration_ms`, `dtmf`, `payload_hash`
+`decoded` is an array of per-direction frames. On UDP one event covers a call
+dialog (see [UDP dialogs](#udp-dialogs)); on TCP and TLS one event covers a
+connection.
 
-`command` is the SIP method and `path` the Request-URI on reads. Writes set `status`: `200` for OPTIONS, REGISTER (with or without credentials) and BYE; `100`, `180`, then `200` with an SDP answer for INVITE, so toll-fraud scanners go on to dial and the number shows up in `path` (on UDP the `200` follows the `180` after a 2–6 s ringing delay, and the first `sip.reject_invites` (default 2) new INVITE calls in the first visit of a source IP (see returning sources below) get `100` then `404 Not Found` instead, so the scanner tries its next dial prefix; later visits are never rejected, so a scanner that sends one INVITE per visit still reaches the early-media, challenged or busy outcomes); the `180`, `183` and `200` `Contact`, and the `Via` of the honeypot's own BYE, name the port the INVITE arrived on (the Request-URI port, then 5060, only when that is unknown), so a call to a high port is not told to ACK on 5060; `401` challenge then `403` after credentials for SUBSCRIBE/MESSAGE/NOTIFY/PUBLISH/REFER/UPDATE/INFO; `481` CANCEL/PRACK (on UDP, a CANCEL while the INVITE is still ringing gets `200` and the INVITE `487 Request Terminated`); `501` unknown. The top `Via` of each response gets `received=<source IP>` when the client asked for `rport` or its sent-by host differs from the packet source, and a valueless `rport` is filled with the source port (RFC 3261 §18.2.1, RFC 3581). `user_agent` is the client User-Agent on reads and the honeypot Server header on writes. `username` is the digest Authorization username; the digest response is not copied into `decoded`. UDP sets `truncated` when a datagram exceeded 4096 bytes. UDP groups a call into one event: an INVITE opens a dialog keyed by source IP and `call_id`, and later datagrams with that key (ACK, BYE, CANCEL, retransmits, re-INVITEs) append their frames to it. A retransmitted INVITE gets the latest response again (the 180 while ringing, then the final response), and the final response (200, 404 or 487) is resent at RFC 3261 T1 backoff (0.5 s doubling to 4 s) until an ACK arrives; each resend is a `write` frame. The ACK to a 404 or 487 produces the dialog with `endReason` `client_close`; an unACKed 404 ends with `timeout` and an unACKed 487 with `client_close` after 64*T1, without a BYE. If no ACK to the 200 arrives within 64*T1 (32 s), the honeypot hangs up like Asterisk/pjsip with a `write` frame whose `command` is `BYE` (`Reason: SIP ;cause=408 ;text="Request Timeout"`, sent to the caller's source address) and produces the dialog with `endReason` `timeout`. Otherwise the dialog is produced with `endReason` `client_close` once a BYE or CANCEL is answered, `timeout` after `conn_timeout` (at least 32 s) without a datagram, `max_frames` at 32 frames, `evicted` when 256 dialogs are open, and `handler_close` on shutdown. Datagrams outside a dialog (OPTIONS, REGISTER, a stray ACK/BYE) are still one event each with `handler_close`. Header lines ending in a bare LF are accepted (replies are always CRLF), and a UDP datagram that was not truncated may omit the empty line after the headers; `payload` keeps the raw bytes. A message that still does not parse is one `read` frame with no `command` and `endReason` `read_error`. Generic UDP peeks the SIP start line (CRLF or LF) and reroutes here from any port. Returning sources: write frames carry `variant` (the response variant) and `visit` (the source IP's visit number, 1 for a first visit). A visit is all SIP traffic (TCP and UDP) from one source IP with no gap longer than `recall.visit_gap` (default 30 min); each new visit moves to the next variant, so the same scanner sees a different outcome when it comes back. `answer` (visit 1, 5, ...) is the behavior described above. `progress` answers INVITE with `100`, then `183 Session Progress` carrying the SDP answer (early media, same To tag and `Contact` as the `200`) instead of `180`, then the `200`; on UDP the caller's RTP to that SDP port is recorded from the `183` on. Within a visit, every UDP INVITE final response (`200`, `401`, `486`) that the caller never ACKs (64*T1) moves the source one variant further for the rest of the visit, skipping `answer` (`answer` → `progress` → `auth` → `busy` → `progress` ...), so a dial tester that only reads the status code sees a different outcome on its next call instead of the same ignored `200` until `recall.visit_gap` passes; the rejected `404`s and the `487` after a CANCEL do not count, and the count starts over with each visit. `auth` challenges REGISTER and INVITE without credentials with `401` (`WWW-Authenticate` digest, no `100` first) and handles them like `answer` once they carry an `Authorization` header; on UDP the ACK to the `401` keeps the dialog open, so the authenticated re-INVITE (same `call_id`, higher CSeq) lands in the same event. `busy` accepts REGISTER and rings INVITE (`100`, `180`), then sends `486 Busy Here` instead of the `200`; on UDP its ACK produces the dialog with `client_close`. `sip.reject_invites` 404s apply only in a source's first visit (variant `answer`); later visits go straight to their variant, and the count starts over only once the source is forgotten (`recall.ttl` or eviction). A dialog keeps the variant of the visit it started in.
+## Fields
 
-**Call media (UDP, `sip.record_media`, default on).** When a dialog sends a `200 OK`, the port in its SDP answer (an even port in 10000–19998; the answer's `c=` is the Request-URI IPv4 host, or the address the INVITE arrived at when the Request-URI names a host) is bound to the call for the caller's signaling IP and the `c=` address of its offer. RTP from those addresses to that port joins the dialog instead of producing `udp` events, and each packet re-arms the dialog's idle timeout (up to 12000 packets), so a call stays open while the caller talks. Nothing is sent back. When the dialog is produced, each RTP stream (SSRC, up to 4) adds one `read` frame at the end with `command` `rtp`, `call_id`, `ssrc` (hex), `codec` (the answered encoding name, e.g. `PCMU`, or `pt<N>`), `packets`, `lost` (gaps in the sequence numbers), `duration_ms` (recorded audio), `dtmf` (RFC 4733 telephone-event digits `0-9*#A-D` in order, one per event), `payload_hash` and `truncated`. PCMU/PCMA audio is placed by RTP timestamp (lost packets and silence suppression become silence) and stored as an 8 kHz mono µ-law/A-law WAV file under `payloads/rtp/<payload_hash>`; other codecs (the honeypot never answers with them) are counted but not recorded. `truncated` is set when the call's 120 s audio cap, the 64 MiB cap across open calls, or the 64-digit cap dropped data, and on the last stream's frame when more than 4 SSRCs were sent. RTP that arrives after the dialog was produced, from other addresses, or to other ports goes to the `udp` catch-all as before.
+| Field | Set on | Meaning |
+| --- | --- | --- |
+| `direction` | all | `read` (from attacker) or `write` (from honeypot). |
+| `command` | all | SIP method on reads (and on the honeypot's own `BYE`); `rtp` on media summary frames. |
+| `path` | reads | Request-URI. Toll-fraud scanners' dialed numbers show up here. |
+| `status` | writes | Response code (`100`, `180`, `200`, `401`, …). |
+| `from` / `to` | messages | `From` / `To` headers. |
+| `call_id` | messages, media | `Call-ID`; also on media summary frames. |
+| `user_agent` | messages | Client `User-Agent` on reads, the honeypot `Server` header on writes. |
+| `username` | reads | Digest `Authorization` username. |
+| `realm` / `nonce` / `digest_uri` / `digest_response` / `algorithm` / `qop` / `nc` / `cnonce` | reads | Digest `Authorization` (or `Proxy-Authorization`) fields (see [Digest credentials](#digest-credentials)). |
+| `tool` | reads | Fingerprinted scanner/dialer behind the request (see [Tool fingerprint](#tool-fingerprint)). |
+| `called_number` | non-REGISTER requests | Normalized dialed number (see below). |
+| `variant` / `visit` | writes | Response variant and the source IP's visit number (see [Returning sources](#returning-sources)). |
+| `payload` | messages | Raw bytes as received or sent. |
+| `truncated` | all | UDP: the datagram exceeded 4096 bytes. TCP: the message body exceeded 4096 bytes. Media: see [Call media](#call-media-udp). |
+| `ssrc` | media | RTP SSRC (hex). |
+| `codec` | media | Answered encoding name (e.g. `PCMU`), or `pt<N>`. |
+| `packets` / `lost` | media | Packets received / gaps in the sequence numbers. |
+| `duration_ms` | media | Recorded audio length. |
+| `dtmf` | media | RFC 4733 telephone-event digits `0-9*#A-D` in order, one per event. |
+| `payload_hash` | media | Hash of the stored WAV file. |
+
+**`called_number`** is the Request-URI user (else the `To` user) with URI
+parameters and the separators `-.() ` removed and a leading `+` kept. It is set
+only when the rest is digits, `*` and `#`. For example,
+`sip:+44 (20) 7946-0000@host` gives `+442079460000`, and `sip:asterisk@host`
+gives none.
+
+## Digest credentials
+
+When the `auth` variant challenges a REGISTER or INVITE, the client re-sends it
+with a digest `Authorization` (or `Proxy-Authorization`) header computed from a
+nonce the honeypot issued. Because the nonce is ours, the recorded `response`
+together with `username`, `realm`, `nonce`, `digest_uri`, `qop`, `nc` and
+`cnonce` is enough to recover the password the scanner is guessing by running a
+wordlist against it offline (e.g. hashcat `-m 11400`). The password itself is
+never sent on the wire; `digest_response` is the attacker's keyed hash of their
+guess, not a credential of ours. Only digest credentials are parsed; other
+schemes (Basic, …) are left in `payload` only.
+
+## Tool fingerprint
+
+`tool` names the scanning or war-dialing tool behind a request, matched first on
+the `User-Agent` (SIPVicious — both the classic `friendly-scanner` and the
+rewrite — `sipcli`, `sipsak`, `pplsip`, `VaxSIPUserAgent`, `sundayddr` and
+others) and, failing that, on a header habit (SIPVicious defaults its `From`/`To`
+domain to `1.1.1.1`, a tell that survives a changed `User-Agent`). It is a
+triage hint, not proof: a scanner can forge any `User-Agent`.
+
+## Responses
+
+This is the default (`answer` variant) behavior. Other variants change it; see
+[Returning sources](#returning-sources).
+
+| Request | Reply |
+| --- | --- |
+| OPTIONS, REGISTER (with or without credentials), BYE | `200` |
+| INVITE | `100`, `180`, then after a 2–6 s ringing delay `200` with an SDP answer |
+| SUBSCRIBE, MESSAGE, NOTIFY, PUBLISH, REFER, UPDATE, INFO | `401` challenge, then `403` after credentials |
+| CANCEL, PRACK | `481` |
+| CANCEL while the INVITE is still ringing | `200`, and the INVITE gets `487 Request Terminated` |
+| anything else | `501` |
+
+Answering INVITE makes toll-fraud scanners go on to dial, so their numbers show
+up in `path`.
+
+**Rejected first INVITEs.** The first `sip.reject_invites` (default 2) new INVITE
+calls in a source IP's first visit get `100` then `404 Not Found` instead, so the
+scanner tries its next dial prefix. Later visits are never rejected, so a scanner
+that sends one INVITE per visit still reaches the early-media, challenged or busy
+outcomes. The count starts over only once the source is forgotten (`recall.ttl`
+or eviction).
+
+**Contact and Via port.** The `Contact` of the `180`, `183` and `200`, and the
+`Via` of the honeypot's own BYE, name the port the INVITE arrived on (falling
+back to the Request-URI port, then 5060, only when that is unknown). A call to a
+high port is therefore not told to ACK on 5060.
+
+**NAT.** The top `Via` of each response gets `received=<source IP>` when the
+client asked for `rport` or its sent-by host differs from the packet source. A
+valueless `rport` is filled with the source port (RFC 3261 §18.2.1, RFC 3581).
+
+## UDP dialogs
+
+An INVITE opens a dialog keyed by source IP and `call_id`. Later datagrams with
+that key (ACK, BYE, CANCEL, retransmits, re-INVITEs) append their frames to it,
+so a call is one event.
+
+- A retransmitted INVITE gets the latest response again: the `180` while
+  ringing, then the final response.
+- The final response (`200`, `404` or `487`) is resent at RFC 3261 T1 backoff
+  (0.5 s doubling to 4 s) until an ACK arrives. Each resend is a `write` frame.
+- The ACK to a `404` or `487` produces the dialog with `client_close`. After
+  64*T1, an unACKed `404` ends with `timeout` and an unACKed `487` with
+  `client_close`, without a BYE.
+- If no ACK to the `200` arrives within 64*T1 (32 s), the honeypot hangs up like
+  Asterisk/pjsip. It sends a `write` frame whose `command` is `BYE`
+  (`Reason: SIP ;cause=408 ;text="Request Timeout"`, sent to the caller's source
+  address) and produces the dialog with `timeout`.
+
+Datagrams outside a dialog (OPTIONS, REGISTER, a stray ACK/BYE) are still one
+event each, with `handler_close`.
+
+**`endReason` values:**
+
+| `endReason` | When |
+| --- | --- |
+| `client_close` | A BYE or CANCEL was answered, or a `404`/`487` was ACKed (or a `487` timed out). |
+| `timeout` | No datagram for `conn_timeout` (at least 32 s), an unACKed `200` or `404`. |
+| `max_frames` | The dialog reached 32 frames. |
+| `evicted` | 256 dialogs are open. |
+| `handler_close` | Shutdown, and single datagrams outside a dialog. |
+| `read_error` | The message did not parse. |
+
+## Parsing
+
+Header lines ending in a bare LF are accepted (replies are always CRLF). A UDP
+datagram that was not truncated may omit the empty line after the headers.
+`payload` keeps the raw bytes either way. A message that still does not parse is
+one `read` frame with no `command` and `endReason` `read_error`.
+
+Generic UDP peeks the SIP start line (CRLF or LF) and reroutes it here from any
+port.
+
+## Returning sources
+
+Write frames carry `variant` (the response variant) and `visit` (the source IP's
+visit number, 1 for a first visit). A visit is all SIP traffic (TCP and UDP) from
+one source IP with no gap longer than `recall.visit_gap` (default 30 min). Each
+new visit moves to the next variant, so the same scanner sees a different
+outcome when it comes back. A dialog keeps the variant of the visit it started
+in.
+
+| Variant | Visits | Behavior |
+| --- | --- | --- |
+| `answer` | 1, 5, … | As described in [Responses](#responses), including the `sip.reject_invites` `404`s. |
+| `progress` | 2, 6, … | INVITE gets `100`, then `183 Session Progress` carrying the SDP answer (early media; same To tag and `Contact` as the `200`) instead of `180`, then the `200`. On UDP the caller's RTP to that SDP port is recorded from the `183` on. |
+| `auth` | 3, 7, … | REGISTER and INVITE without credentials get `401` (`WWW-Authenticate` digest, no `100` first). With an `Authorization` header they are handled like `answer`. On UDP the ACK to the `401` keeps the dialog open, so the authenticated re-INVITE (same `call_id`, higher CSeq) lands in the same event. |
+| `busy` | 4, 8, … | REGISTER is accepted. INVITE rings (`100`, `180`), then gets `486 Busy Here` instead of the `200`. On UDP its ACK produces the dialog with `client_close`. |
+
+Later visits go straight to their variant; the `sip.reject_invites` `404`s apply
+only in the first visit.
+
+**Escalation within a visit.** Every INVITE final response (`200`, `401`, `486`)
+that the caller never ACKs (64*T1) moves the source one variant further for the
+rest of the visit, skipping `answer`:
+`answer` → `progress` → `auth` → `busy` → `progress` …. A dial tester that only
+reads the status code then sees a different outcome on its next call, instead of
+the same ignored `200` until `recall.visit_gap` passes. The rejected `404`s and
+the `487` after a CANCEL do not count, and the count starts over with each visit.
+
+## Call media (UDP)
+
+Enabled by `sip.record_media` (default on).
+
+**Binding.** When a dialog sends a `200 OK`, the port in its SDP answer (an even
+port in 10000–19998) is bound to the call for the caller's signaling IP and the
+`c=` address of its offer. The answer's `c=` is the Request-URI IPv4 host, or the
+address the INVITE arrived at when the Request-URI names a host. RTP from those
+addresses to that port joins the dialog instead of producing `udp` events. Each
+packet re-arms the dialog's idle timeout (up to 12000 packets), so a call stays
+open while the caller talks. Nothing is sent back.
+
+**Summary frames.** When the dialog is produced, each RTP stream (SSRC, up to 4)
+adds one `read` frame at the end with `command` `rtp`, `call_id`, `ssrc`,
+`codec`, `packets`, `lost`, `duration_ms`, `dtmf`, `payload_hash` and
+`truncated` (see [Fields](#fields)).
+
+**Audio.** PCMU/PCMA audio is placed by RTP timestamp (lost packets and silence
+suppression become silence) and stored as an 8 kHz mono µ-law/A-law WAV file
+under `payloads/rtp/<payload_hash>`. Other codecs (the honeypot never answers
+with them) are counted but not recorded.
+
+**`truncated`** is set when one of these caps dropped data:
+
+- the call's 120 s audio cap;
+- the 64 MiB cap across open calls;
+- the 64-digit DTMF cap;
+- more than 4 SSRCs were sent (on the last stream's frame).
+
+RTP that arrives after the dialog was produced, from other addresses, or to other
+ports goes to the `udp` catch-all as before.
+
+## TCP and TLS
+
+TCP/5060 and TLS/5061 (`tls: true`, so the handler sees plaintext and the event
+carries `tls`) produce one event per connection, with `endReason` from the
+connection (`client_close`, `timeout`, `read_error` and so on).
+
+**Framing.** Messages are framed by `Content-Length` (RFC 3261 §18.3; compact
+`l:` accepted, a missing header means no body). A message split across segments
+is one `read` frame, and several pipelined messages are answered in order.
+
+- A `Content-Length` that is not a number or exceeds 65536, or headers longer
+  than 8 KiB without an empty line, end the connection with `read_error` after a
+  `read` frame of what arrived.
+- A framed message that does not parse is a `read` frame without `command`, and
+  the connection continues.
+- CRLF keepalive pings (`\r\n\r\n`, RFC 5626 §4.4.1) get a `\r\n` pong and
+  produce no frames.
+
+**Calls** behave as on UDP: the variant, the 2–6 s ringing delay, the
+first-visit `sip.reject_invites` `404`s, CANCEL → `200` + `487`, the latest
+response replayed to a retransmitted INVITE (same CSeq), and an `auth`
+re-INVITE answered on the same connection. The differences:
+
+- A reliable transport does not resend final responses.
+- If the ACK does not arrive within 64*T1 (32 s), the unACKed final counts
+  towards the variant escalation (the next call on the same connection already
+  gets the next variant). An unACKed `200` is hung up with a `BYE` `write` frame
+  whose `Via` names `TCP` or `TLS`; the connection stays open.
+- Up to 16 calls per connection are tracked; later INVITEs get `100`, `180` and
+  `200` at once.
+
+**Limits.** A connection ends with `max_frames` at 64 frames. Caller RTP of a TCP
+or TLS call is not recorded; it goes to the `udp` catch-all.
