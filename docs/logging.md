@@ -135,6 +135,7 @@ Example shape:
 | `knx` | UDP | [protocols/knx.md](protocols/knx.md) |
 | `itp` | UDP | [protocols/itp.md](protocols/itp.md) |
 | `rip` | UDP | [protocols/rip.md](protocols/rip.md) |
+| `tftp` | UDP | [protocols/tftp.md](protocols/tftp.md) |
 | `hiflying` | UDP | [protocols/hiflying.md](protocols/hiflying.md) |
 | `dtls` | UDP | [protocols/dtls.md](protocols/dtls.md) |
 | `mqtt` | TCP | [protocols/mqtt.md](protocols/mqtt.md) |

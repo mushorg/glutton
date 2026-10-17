@@ -18,6 +18,7 @@ import (
 	"github.com/mushorg/glutton/protocols/udp/rip"
 	"github.com/mushorg/glutton/protocols/udp/rtps"
 	"github.com/mushorg/glutton/protocols/udp/steam"
+	"github.com/mushorg/glutton/protocols/udp/tftp"
 	"github.com/mushorg/glutton/protocols/udp/wsd"
 )
 
@@ -76,6 +77,9 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	}
 	if rip.LooksLikeRIP(data) {
 		return HandleRIP(ctx, srcAddr, dstAddr, data, md, log, h)
+	}
+	if tftp.LooksLikeTFTP(data) {
+		return HandleTFTP(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
 
 	truncated := len(data) > maxUDPPayload

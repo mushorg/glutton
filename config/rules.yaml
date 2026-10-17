@@ -168,6 +168,9 @@ rules:
   - match: udp dst port 36000
     type: conn_handler
     target: itp
+  - match: udp dst port 69
+    type: conn_handler
+    target: tftp
   - match: udp dst port 520
     type: conn_handler
     target: rip
