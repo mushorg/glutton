@@ -6,7 +6,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 
 ## `http` (Go)
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `session_id`, `dest_port`, `src_port`, `payload`
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `log4shell`, `session_id`, `dest_port`, `src_port`, `payload`
 
 ### Frame fields
 
@@ -18,7 +18,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 | `dest_port`, `src_port` | reads | Ports of the connection the frame arrived on (see [Sessions](#sessions)). |
 | `status` | writes | Response status, e.g. `200`. |
 | `username`, `password` | reads | `Authorization: Basic` credentials, or the Proxmox VE ticket login form (see [Emulated applications](#emulated-applications)). |
-| `browser`, `binary`, `args`, `citrix`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
+| `browser`, `binary`, `args`, `citrix`, `log4shell`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
 
 ### Sessions
 
@@ -90,6 +90,18 @@ On `template_write`:
 - `truncated` is set when either is cut.
 
 > **Change (2026-10-10):** before this date, every `/vpn/*` request got the `smb.conf` reply (with a wrong `Content-Length`), and the `newbm.pl` POST got no reply.
+
+#### Log4Shell (CVE-2021-44228)
+
+Package: `protocols/tcp/log4shell`. Parse-only: a read whose request line, headers or body contains a JNDI lookup sets `log4shell` to `{lookups, truncated}`. The reply is whatever the request would get anyway; Glutton never resolves or dials the lookup host.
+
+Each lookup is `{location, raw, resolved}`:
+
+- `location` is `path`, `query`, `body` or `header:<Name>` (User-Agent, X-Api-Version, ...).
+- `raw` is the `${...}` expression as sent, after URL-decoding.
+- `resolved` is the expression with `lower:`, `upper:` and `name:-default` lookups evaluated (`${${lower:j}ndi:...}`, `${${::-j}${::-n}di:...}`); it is omitted when identical to `raw`.
+
+Caps: 16 lookups per request, 512 B per expression, 16 KiB scanned per field or body; `truncated` is set when any applies. The Spicy `http` handler does not set `log4shell`.
 
 ## `http` (Spicy)
 

