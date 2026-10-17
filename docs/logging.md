@@ -142,7 +142,7 @@ Example shape:
 | `memcache` | TCP | [protocols/memcache.md](protocols/memcache.md) |
 | `modbus` | TCP | [protocols/modbus.md](protocols/modbus.md) |
 | `dnp3` | TCP | [protocols/dnp3.md](protocols/dnp3.md) |
-| `enip` | TCP | [protocols/enip.md](protocols/enip.md) |
+| `enip` | TCP, UDP | [protocols/enip.md](protocols/enip.md) |
 | `opcua` | TCP | [protocols/opcua.md](protocols/opcua.md) |
 | `mctp` | TCP | [protocols/mctp.md](protocols/mctp.md) |
 | `rtsp` | TCP | [protocols/rtsp.md](protocols/rtsp.md) |

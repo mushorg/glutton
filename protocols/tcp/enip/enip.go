@@ -9,10 +9,12 @@
 package enip
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 )
 
 // HeaderSize is the size of the encapsulation header.
@@ -49,6 +51,39 @@ const (
 const ProtocolVersion = 1
 
 var ErrShort = errors.New("enip: short header")
+
+// Serial is the identity serial number shared by the TCP and UDP handlers,
+// random per sensor process so sensors do not share a fingerprint. Tests
+// replace it.
+var Serial = sync.OnceValue(RandomUint32)
+
+// RandomUint32 returns a non-zero random value.
+func RandomUint32() uint32 {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return 0x00c0ffee
+	}
+	if v := binary.LittleEndian.Uint32(b[:]); v != 0 {
+		return v
+	}
+	return 1
+}
+
+// LooksLikeListRequest reports whether data is a complete encapsulation
+// message for one of the list commands (ListIdentity, ListServices,
+// ListInterfaces) whose Length matches the datagram. Used to reroute from the
+// generic udp handler, so it is deliberately strict.
+func LooksLikeListRequest(data []byte) bool {
+	hdr, err := ParseHeader(data)
+	if err != nil || int(hdr.Length) != len(data)-HeaderSize {
+		return false
+	}
+	switch hdr.Command {
+	case CmdListIdentity, CmdListServices, CmdListInterfaces:
+		return hdr.Status == 0
+	}
+	return false
+}
 
 // Header is the encapsulation header.
 type Header struct {

@@ -165,6 +165,9 @@ rules:
   - match: udp dst port 3671
     type: conn_handler
     target: knx
+  - match: udp dst port 44818
+    type: conn_handler
+    target: enip
   - match: udp dst port 36000
     type: conn_handler
     target: itp

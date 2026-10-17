@@ -12,6 +12,7 @@ import (
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/recall"
+	"github.com/mushorg/glutton/protocols/tcp/enip"
 	sipproto "github.com/mushorg/glutton/protocols/tcp/sip"
 	"github.com/mushorg/glutton/protocols/udp/a2s"
 	"github.com/mushorg/glutton/protocols/udp/ddp"
@@ -63,6 +64,7 @@ var udpMatchers = []udpMatcher{
 	{"hiflying", looksLikeHiFlying, HandleHiFlying},
 	{"rip", payloadMatch(rip.LooksLikeRIP), HandleRIP},
 	{"tftp", payloadMatch(tftp.LooksLikeTFTP), HandleTFTP},
+	{"enip", payloadMatch(enip.LooksLikeListRequest), HandleENIP},
 }
 
 // pickDispatch chooses among n matching protocols; it is replaced in tests

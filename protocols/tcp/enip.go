@@ -2,15 +2,12 @@ package tcp
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"strconv"
-	"sync"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
@@ -34,23 +31,12 @@ const (
 var scrubbedSensorIP = net.IPv4(1, 2, 3, 4)
 
 var (
-	// enipSerial is the identity serial number, random per sensor process so
-	// sensors do not share a fingerprint. Tests replace it.
-	enipSerial = sync.OnceValue(randomUint32)
+	// enipSerial is the identity serial number, shared with the UDP handler.
+	// Tests replace it.
+	enipSerial = func() uint32 { return enip.Serial() }
 	// enipSessionHandle assigns RegisterSession handles. Tests replace it.
-	enipSessionHandle = randomUint32
+	enipSessionHandle = enip.RandomUint32
 )
-
-func randomUint32() uint32 {
-	var b [4]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return 0x00c0ffee
-	}
-	if v := binary.LittleEndian.Uint32(b[:]); v != 0 {
-		return v
-	}
-	return 1
-}
 
 // parsedENIP is one encapsulation message of the session.
 type parsedENIP struct {

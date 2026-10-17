@@ -105,3 +105,19 @@ func TestNames(t *testing.T) {
 	require.Equal(t, "invalid_command", StatusName(StatusInvalidCommand))
 	require.Equal(t, "0x0099", StatusName(0x99))
 }
+
+func TestLooksLikeListRequest(t *testing.T) {
+	require.True(t, LooksLikeListRequest(censysListIdentity))
+	require.True(t, LooksLikeListRequest(Header{Command: CmdListServices}.Marshal(nil)))
+	require.True(t, LooksLikeListRequest(Header{Command: CmdListInterfaces}.Marshal(nil)))
+
+	require.False(t, LooksLikeListRequest(nil))
+	require.False(t, LooksLikeListRequest(censysListIdentity[:23]), "short header")
+	require.False(t, LooksLikeListRequest(Header{Command: CmdRegisterSession}.Marshal([]byte{1, 0, 0, 0})), "session command")
+	require.False(t, LooksLikeListRequest(Header{Command: CmdNOP}.Marshal(nil)), "NOP")
+	require.False(t, LooksLikeListRequest(Header{Command: CmdListIdentity, Status: 1}.Marshal(nil)), "request with status set")
+	require.False(t, LooksLikeListRequest(append(append([]byte(nil), censysListIdentity...), 0)), "trailing byte")
+	bad := append([]byte(nil), censysListIdentity...)
+	bad[2] = 4
+	require.False(t, LooksLikeListRequest(bad), "length beyond datagram")
+}
