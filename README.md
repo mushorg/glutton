@@ -80,6 +80,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | CoAP                        | UDP IoT GET/POST/PUT/DELETE probes       |
 | iSCSI                       | block-storage target probes              |
 | BitTorrent                  | peer handshake traffic                   |
+| BitTorrent DHT              | BEP 5 `find_node`/`get_peers` on udp/6881 |
 | Memcache                    | key-value cache commands                 |
 | Jabber/XMPP                 | instant messaging stream                 |
 | ADB                         | Android Debug Bridge connect, shell, push |

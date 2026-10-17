@@ -189,6 +189,9 @@ rules:
   - match: udp dst port 69
     type: conn_handler
     target: tftp
+  - match: udp dst port 6881
+    type: conn_handler
+    target: dht
   - match: udp dst port 161
     type: conn_handler
     target: snmp
