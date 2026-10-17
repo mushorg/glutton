@@ -240,6 +240,9 @@ func ForPort(port uint16) (Response, bool) {
 	case 8333:
 		// bitcoind disconnects a peer whose first bytes are not its network magic
 		return Response{Name: "bitcoin", Silent: true}, true
+	case 9333:
+		// litecoind drops a peer whose first bytes are not its network magic
+		return Response{Name: "litecoin", Silent: true}, true
 	case 1911:
 		// a Niagara station drops a connection that does not open with a Fox
 		// hello; the hello itself is matched in ForPayload
@@ -280,6 +283,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 		return Response{Name: "ldap-rootdse", Data: ldapRootDSEReply(msgID)}, true
 	},
 	bitcoinReply,
+	litecoinReply,
 	func(data []byte) (Response, bool) {
 		if !isFoxHello(data) {
 			return Response{}, false

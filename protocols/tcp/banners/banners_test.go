@@ -54,6 +54,10 @@ func TestForPort(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "bitcoin", Silent: true}, resp)
 
+	resp, ok = ForPort(9333)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "litecoin", Silent: true}, resp)
+
 	resp, ok = ForPort(1911)
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "niagara-fox", Silent: true}, resp)

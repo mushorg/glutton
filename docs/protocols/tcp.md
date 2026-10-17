@@ -36,6 +36,7 @@ Writes set `status` to the response name or `random`.
 | X11 connection setup | `x11-denied` | Setup Failed reply "No protocol specified" in the client's byte order |
 | LDAP root DSE search (empty base, scope baseObject) | `ldap-rootdse` | OpenLDAP-style SearchResultEntry plus SearchResultDone, echoing the messageID |
 | Bitcoin mainnet P2P message (magic `f9 be b4 d9`, NUL-padded printable command) | `bitcoin-<command>` (`bitcoin` for an unlisted command) | `version` gets a Bitcoin Core 28.1 `version` (protocol 70016, current timestamp, start height grown from the 2024 halving, zeroed addresses) plus `verack`; a `ping` gets a `pong` with its nonce; other messages get no reply and the connection stays open |
+| Litecoin mainnet P2P message (magic `fb c0 b6 db`, same framing as Bitcoin) | `litecoin-<command>` (`litecoin` for an unlisted command) | `version` gets a Litecoin Core 0.21.4 `version` (protocol 70015, MWEB service bit, current timestamp, start height grown from the August 2023 halving at 2.5 minutes per block, zeroed addresses) plus `verack`; a `ping` gets a `pong` with its nonce; other messages get no reply and the connection stays open |
 | Niagara Fox hello (`fox a <n> -1 fox hello` header line) | `niagara-fox-hello` | Niagara AX 3.8 JACE station hello (`fox a 0 -1 fox hello`, QNX 6.5.0, a 192.168.1.x LAN address, `hostId`/`vmUuid`/`station.name` drawn once per run, empty BOG `sys.info`) |
 | TeamViewer `CMD_PING` (`17 24 10`, LE u16 length, body; Shodan sends `17 24 10 04 00 00 00 00 00`) | `teamviewer-pingok` | `CMD_PINGOK` `17 24 11 04 00 00 00 00 00` |
 | TACACS+ AUTHEN START (`c0`/`c1` `01 01`, flags, session_id, u32 body length equal to the bytes after the header; Shodan sends the header alone) | `tacacs-authen-error` | tac_plus F4.0.4 AUTHEN REPLY: client's version and session_id, seq 2, flags 0, status ERROR ("Invalid AUTHEN/START packet (too short)" or "(check keys)") encrypted with a random per-process key, then the connection closes |
@@ -60,9 +61,10 @@ Writes set `status` to the response name or `random`.
 | 8009 | `ajp-404` | |
 | 8126 | `statsd-stats` | Etsy statsd management console `stats` block ending in `END\n\n`, with uptime and `last_*` deltas from the clock |
 | 8333 | `bitcoin` | Sends nothing and hangs up, as bitcoind does with bytes that are not its network magic |
+| 9333 | `litecoin` | Sends nothing and hangs up, as litecoind does with bytes that are not its network magic |
 | 21379 | `opc-tunneller` | MatrikonOPC Tunneller default port. Sends nothing but keeps the connection open, so the client hello and its follow-up frames are recorded; the real server's reply framing is not public |
 
-Silent responses (`mglndd`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 21379 (`opc-tunneller`). Clients that send nothing get no reply.
+Silent responses (`mglndd`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin or Litecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 21379 (`opc-tunneller`). Clients that send nothing get no reply.
 
 ## TLS ClientHello
 

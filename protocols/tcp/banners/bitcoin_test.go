@@ -30,10 +30,15 @@ func stubBitcoin(t *testing.T, at time.Time, nonce uint64) {
 // checksum of each.
 func splitBitcoin(t *testing.T, data []byte) []btcMessage {
 	t.Helper()
+	return splitNetwork(t, bitcoinNet, data)
+}
+
+func splitNetwork(t *testing.T, n btcNetwork, data []byte) []btcMessage {
+	t.Helper()
 	var msgs []btcMessage
 	for len(data) > 0 {
 		require.GreaterOrEqual(t, len(data), btcHeaderLen)
-		require.Equal(t, btcMainnet, data[:4])
+		require.Equal(t, n.magic, data[:4])
 		command, ok := btcCommand(data[4:16])
 		require.True(t, ok)
 		length := int(binary.LittleEndian.Uint32(data[16:20]))
@@ -76,7 +81,7 @@ func TestBitcoinVersionReply(t *testing.T) {
 	require.Equal(t, []byte{0x5d, 0xf6, 0xe0, 0xe2}, resp.Data[len(resp.Data)-4:])
 
 	v := msgs[0].payload
-	require.Len(t, v, 4+8+8+26+26+8+1+len(btcUserAgent)+4+1)
+	require.Len(t, v, 4+8+8+26+26+8+1+len(bitcoinNet.userAgent)+4+1)
 	le := binary.LittleEndian
 	require.Equal(t, uint32(70016), le.Uint32(v[0:4]))
 	require.Equal(t, uint64(0x409), le.Uint64(v[4:12]))
@@ -85,7 +90,7 @@ func TestBitcoinVersionReply(t *testing.T) {
 	require.Equal(t, uint64(0x409), le.Uint64(v[46:54]))
 	require.Equal(t, make([]byte, 18), v[54:72])
 	require.Equal(t, uint64(0x0102030405060708), le.Uint64(v[72:80]))
-	require.Equal(t, byte(len(btcUserAgent)), v[80])
+	require.Equal(t, byte(len(bitcoinNet.userAgent)), v[80])
 	require.Equal(t, "/Satoshi:28.1.0/", string(v[81:97]))
 	require.Equal(t, uint32(840000+(at.Unix()-1713571767)/600), le.Uint32(v[97:101]))
 	require.Equal(t, byte(1), v[101])
@@ -93,35 +98,35 @@ func TestBitcoinVersionReply(t *testing.T) {
 
 func TestBitcoinStartHeightNotBeforeAnchor(t *testing.T) {
 	stubBitcoin(t, time.Unix(0, 0), 1)
-	v := btcVersion()
-	require.Equal(t, uint32(btcAnchorHeight), binary.LittleEndian.Uint32(v[97:101]))
+	v := btcVersion(bitcoinNet)
+	require.Equal(t, uint32(bitcoinNet.anchorHeight), binary.LittleEndian.Uint32(v[97:101]))
 }
 
 func TestBitcoinFollowUps(t *testing.T) {
 	stubBitcoin(t, time.Unix(1760000000, 0), 1)
 	nonce := []byte{1, 2, 3, 4, 5, 6, 7, 8}
 
-	resp, ok := ForPayload(btcFrame("ping", nonce))
+	resp, ok := ForPayload(btcFrame(bitcoinNet, "ping", nonce))
 	require.True(t, ok)
-	require.Equal(t, Response{Name: "bitcoin-ping", Data: btcFrame("pong", nonce)}, resp)
+	require.Equal(t, Response{Name: "bitcoin-ping", Data: btcFrame(bitcoinNet, "pong", nonce)}, resp)
 
 	// verack and getaddr in one segment: nothing to answer, keep the connection
-	resp, ok = ForPayload(append(btcFrame("verack", nil), btcFrame("getaddr", nil)...))
+	resp, ok = ForPayload(append(btcFrame(bitcoinNet, "verack", nil), btcFrame(bitcoinNet, "getaddr", nil)...))
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "bitcoin-verack", NoReply: true}, resp)
 
 	// unknown command, valid header
-	resp, ok = ForPayload(btcFrame("foo", nil))
+	resp, ok = ForPayload(btcFrame(bitcoinNet, "foo", nil))
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "bitcoin", NoReply: true}, resp)
 
 	// pre-BIP31 ping without a nonce gets no pong
-	resp, ok = ForPayload(btcFrame("ping", nil))
+	resp, ok = ForPayload(btcFrame(bitcoinNet, "ping", nil))
 	require.True(t, ok)
 	require.True(t, resp.NoReply)
 
 	// version then ping in one segment answers both in order
-	resp, ok = ForPayload(append(btcFrame("version", make([]byte, 85)), btcFrame("ping", nonce)...))
+	resp, ok = ForPayload(append(btcFrame(bitcoinNet, "version", make([]byte, 85)), btcFrame(bitcoinNet, "ping", nonce)...))
 	require.True(t, ok)
 	msgs := splitBitcoin(t, resp.Data)
 	require.Len(t, msgs, 3)
