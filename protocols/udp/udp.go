@@ -3,6 +3,7 @@ package udp
 import (
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 
 	"github.com/mushorg/glutton/connection"
@@ -31,55 +32,64 @@ type parsedUDP struct {
 	Truncated   bool   `json:"truncated,omitempty"`
 }
 
+// udpMatcher detects one protocol the catch-all hands to a dedicated handler.
+type udpMatcher struct {
+	name   string
+	match  func(srcAddr *net.UDPAddr, data []byte) bool
+	handle func(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, log interfaces.Logger, h interfaces.Honeypot) error
+}
+
+func payloadMatch(fn func([]byte) bool) func(*net.UDPAddr, []byte) bool {
+	return func(_ *net.UDPAddr, data []byte) bool { return fn(data) }
+}
+
+// udpMatchers are all evaluated on each datagram; when several match,
+// pickDispatch chooses the handler.
+var udpMatchers = []udpMatcher{
+	{"sip", payloadMatch(sipproto.LooksLikeSIP), HandleSIP},
+	{"raknet", payloadMatch(looksLikeRakNet), HandleRakNet},
+	{"kerberos", payloadMatch(looksLikeKerberos), HandleKerberos},
+	{"coap", payloadMatch(looksLikeCoAP), HandleCoAP},
+	{"ike", payloadMatch(ike.LooksLikeIKE), HandleIKE},
+	{"a2s", payloadMatch(a2s.LooksLikeA2S), HandleA2S},
+	{"steam", payloadMatch(steam.LooksLikeSteam), HandleSteam},
+	{"ddp", payloadMatch(ddp.LooksLikeDDP), HandleDDP},
+	{"knx", payloadMatch(knx.LooksLikeKNX), HandleKNX},
+	{"dtls", payloadMatch(dtls.LooksLikeDTLS), HandleDTLS},
+	{"rtps", payloadMatch(rtps.LooksLikeRTPS), HandleRTPS},
+	{"wsdiscovery", payloadMatch(wsd.LooksLikeWSD), HandleWSDiscovery},
+	{"hiflying", looksLikeHiFlying, HandleHiFlying},
+	{"rip", payloadMatch(rip.LooksLikeRIP), HandleRIP},
+	{"tftp", payloadMatch(tftp.LooksLikeTFTP), HandleTFTP},
+}
+
+// pickDispatch chooses among n matching protocols; it is replaced in tests
+// for a deterministic choice.
+var pickDispatch = func(n int) int { return rand.IntN(n) }
+
 func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, log interfaces.Logger, h interfaces.Honeypot) error {
 	// RTP from a caller to the media port of a call the sip handler answered
 	if handleSIPMedia(srcAddr, dstAddr, data) {
 		return nil
 	}
-	if sipproto.LooksLikeSIP(data) {
-		return HandleSIP(ctx, srcAddr, dstAddr, data, md, log, h)
+	var candidates []udpMatcher
+	for _, m := range udpMatchers {
+		if m.match(srcAddr, data) {
+			candidates = append(candidates, m)
+		}
 	}
-	if looksLikeRakNet(data) {
-		return HandleRakNet(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	if looksLikeKerberos(data) {
-		return HandleKerberos(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	if looksLikeCoAP(data) {
-		return HandleCoAP(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	if ike.LooksLikeIKE(data) {
-		return HandleIKE(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	if a2s.LooksLikeA2S(data) {
-		return HandleA2S(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	if steam.LooksLikeSteam(data) {
-		return HandleSteam(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	if ddp.LooksLikeDDP(data) {
-		return HandleDDP(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	if knx.LooksLikeKNX(data) {
-		return HandleKNX(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	if dtls.LooksLikeDTLS(data) {
-		return HandleDTLS(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	if rtps.LooksLikeRTPS(data) {
-		return HandleRTPS(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	if wsd.LooksLikeWSD(data) {
-		return HandleWSDiscovery(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	if looksLikeHiFlying(srcAddr, data) {
-		return HandleHiFlying(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	if rip.LooksLikeRIP(data) {
-		return HandleRIP(ctx, srcAddr, dstAddr, data, md, log, h)
-	}
-	if tftp.LooksLikeTFTP(data) {
-		return HandleTFTP(ctx, srcAddr, dstAddr, data, md, log, h)
+	if len(candidates) > 0 {
+		m := candidates[0]
+		if len(candidates) > 1 {
+			names := make([]string, len(candidates))
+			for i, c := range candidates {
+				names[i] = c.name
+			}
+			m = candidates[pickDispatch(len(candidates))]
+			log.Debug("several protocols match the datagram",
+				slog.String("protocol", "udp"), slog.Any("candidates", names), slog.String("picked", m.name))
+		}
+		return m.handle(ctx, srcAddr, dstAddr, data, md, log, h)
 	}
 
 	truncated := len(data) > maxUDPPayload

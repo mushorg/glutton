@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/stretchr/testify/require"
 )
 
@@ -145,4 +146,30 @@ func TestHandleUDPDoesNotPeekHTTPAsSIP(t *testing.T) {
 	require.Len(t, h.produced, 1)
 	require.Equal(t, "udp", h.produced[0].handler)
 	require.Empty(t, h.replies)
+}
+
+func TestHandleUDPPicksAmongMatches(t *testing.T) {
+	origMatchers, origPick := udpMatchers, pickDispatch
+	t.Cleanup(func() { udpMatchers, pickDispatch = origMatchers, origPick })
+
+	var called []string
+	mk := func(name string, ok bool) udpMatcher {
+		return udpMatcher{
+			name:  name,
+			match: func(*net.UDPAddr, []byte) bool { return ok },
+			handle: func(context.Context, *net.UDPAddr, *net.UDPAddr, []byte, connection.Metadata, interfaces.Logger, interfaces.Honeypot) error {
+				called = append(called, name)
+				return nil
+			},
+		}
+	}
+	udpMatchers = []udpMatcher{mk("a", true), mk("b", false), mk("c", true)}
+	pickDispatch = func(n int) int {
+		require.Equal(t, 2, n)
+		return 1
+	}
+	src := &net.UDPAddr{IP: net.ParseIP("192.0.2.1"), Port: 1}
+	dst := &net.UDPAddr{IP: net.ParseIP("192.0.2.2"), Port: 2}
+	require.NoError(t, HandleUDP(context.Background(), src, dst, []byte("x"), connection.Metadata{}, testLogger{}, &recordingHoneypot{}))
+	require.Equal(t, []string{"c"}, called)
 }
