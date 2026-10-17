@@ -171,6 +171,9 @@ rules:
   - match: udp dst port 44818
     type: conn_handler
     target: enip
+  - match: udp dst port 427
+    type: conn_handler
+    target: slp
   - match: udp dst port 36000
     type: conn_handler
     target: itp
