@@ -18,6 +18,47 @@ func testStore(c *clock, cfg Config) *Store { return NewWithClock(cfg, c.now) }
 
 var ip = net.ParseIP("192.0.2.10")
 
+func TestChooseSticksWithinVisit(t *testing.T) {
+	c := newClock()
+	s := testStore(c, Config{Enabled: true, Gap: time.Minute})
+	opts := []string{"a", "b", "c"}
+	picks := 0
+	pick := func(n int) int { picks++; return n - 1 }
+
+	require.Equal(t, 2, s.Choose("dispatch/udp/53", ip, opts, pick))
+	// a different pick function would answer differently; the remembered one wins
+	require.Equal(t, 2, s.Choose("dispatch/udp/53", ip, opts, func(int) int { return 0 }))
+	require.Equal(t, 1, picks)
+
+	// another port and another source are remembered separately
+	require.Equal(t, 0, s.Choose("dispatch/udp/54", ip, opts, func(int) int { return 0 }))
+	require.Equal(t, 1, s.Choose("dispatch/udp/53", net.ParseIP("192.0.2.11"), opts, func(int) int { return 1 }))
+
+	// a remembered option that is no longer offered is picked anew
+	require.Equal(t, 1, s.Choose("dispatch/udp/53", ip, []string{"a", "c"}, func(int) int { return 1 }))
+	require.Equal(t, 0, s.Choose("dispatch/udp/53", ip, []string{"c", "a"}, func(int) int { return 0 }))
+}
+
+func TestChooseNewVisitPicksAgain(t *testing.T) {
+	c := newClock()
+	s := testStore(c, Config{Enabled: true, Gap: time.Minute})
+	opts := []string{"a", "b"}
+	require.Equal(t, 0, s.Choose("dispatch/tcp/80", ip, opts, func(int) int { return 0 }))
+	c.advance(2 * time.Minute)
+	require.Equal(t, 1, s.Choose("dispatch/tcp/80", ip, opts, func(int) int { return 1 }))
+}
+
+func TestChooseDisabledAndNilIP(t *testing.T) {
+	opts := []string{"a", "b"}
+	s := testStore(newClock(), Config{})
+	require.Equal(t, 0, s.Choose("dispatch/tcp/80", ip, opts, func(int) int { return 0 }))
+	require.Equal(t, 1, s.Choose("dispatch/tcp/80", ip, opts, func(int) int { return 1 }))
+
+	s = testStore(newClock(), Config{Enabled: true})
+	require.Equal(t, 0, s.Choose("dispatch/tcp/80", nil, opts, func(int) int { return 0 }))
+	require.Equal(t, 1, s.Choose("dispatch/tcp/80", nil, opts, func(int) int { return 1 }))
+}
+
 func TestBeginSameVisitWithinGap(t *testing.T) {
 	c := newClock()
 	s := testStore(c, Config{Enabled: true, Gap: time.Minute})

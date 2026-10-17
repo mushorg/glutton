@@ -9,6 +9,7 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/mushorg/glutton/protocols/recall"
 	"github.com/stretchr/testify/require"
 )
 
@@ -149,8 +150,9 @@ func TestHandleUDPDoesNotPeekHTTPAsSIP(t *testing.T) {
 }
 
 func TestHandleUDPPicksAmongMatches(t *testing.T) {
-	origMatchers, origPick := udpMatchers, pickDispatch
-	t.Cleanup(func() { udpMatchers, pickDispatch = origMatchers, origPick })
+	origMatchers, origPick, origRecall := udpMatchers, pickDispatch, dispatchRecall
+	t.Cleanup(func() { udpMatchers, pickDispatch, dispatchRecall = origMatchers, origPick, origRecall })
+	dispatchRecall = recall.New(recall.DefaultConfig())
 
 	var called []string
 	mk := func(name string, ok bool) udpMatcher {
@@ -172,4 +174,9 @@ func TestHandleUDPPicksAmongMatches(t *testing.T) {
 	dst := &net.UDPAddr{IP: net.ParseIP("192.0.2.2"), Port: 2}
 	require.NoError(t, HandleUDP(context.Background(), src, dst, []byte("x"), connection.Metadata{}, testLogger{}, &recordingHoneypot{}))
 	require.Equal(t, []string{"c"}, called)
+
+	// the same source on the same port gets the remembered handler, without a new pick
+	pickDispatch = func(int) int { t.Fatal("pick must not run for a remembered source"); return 0 }
+	require.NoError(t, HandleUDP(context.Background(), src, dst, []byte("x"), connection.Metadata{}, testLogger{}, &recordingHoneypot{}))
+	require.Equal(t, []string{"c", "c"}, called)
 }

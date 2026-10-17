@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/mushorg/glutton/protocols/recall"
 	"github.com/mushorg/glutton/protocols/spicy"
 	spicyHandlers "github.com/mushorg/glutton/protocols/spicy/handlers"
 	"github.com/mushorg/glutton/protocols/tcp"
@@ -249,7 +251,7 @@ func catchAllTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 				for i, c := range candidates {
 					names[i] = c.name
 				}
-				m = candidates[pickDispatch(len(candidates))]
+				m = candidates[dispatchRecall.Choose(fmt.Sprintf("dispatch/tcp/%d", md.TargetPort), srcIP(conn), names, pickDispatch)]
 				log.Debug("several protocols match the first client bytes",
 					slog.String("protocol", "tcp"), slog.Any("candidates", names), slog.String("picked", m.name))
 			}
@@ -428,6 +430,19 @@ var catchAllMatchers = []catchAllMatcher{
 // pickDispatch chooses among n matching protocols; it is replaced in tests
 // for a deterministic choice.
 var pickDispatch = func(n int) int { return rand.IntN(n) }
+
+// dispatchRecall remembers which protocol was picked per source IP and
+// destination port, so a returning source meets the same handler; tests swap
+// it.
+var dispatchRecall = recall.Shared
+
+// srcIP returns the remote IP of conn, or nil when it has none.
+func srcIP(conn net.Conn) net.IP {
+	if a, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+		return a.IP
+	}
+	return nil
+}
 
 // looksLikeHTTPMethodStart reports whether b could begin an HTTP request
 // line, so dispatch peeks far enough to see the whole method.

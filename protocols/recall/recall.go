@@ -248,3 +248,25 @@ func (s *Store) Len() int {
 	defer s.mu.Unlock()
 	return s.lru.Len()
 }
+
+// Choose picks one of options for ip on proto and remembers it for the
+// current visit: a source that comes back within Gap gets the same option
+// again while it is still offered. Otherwise pick(len(options)) decides and
+// the result is remembered. It returns the index into options. With the
+// store disabled every call picks anew.
+func (s *Store) Choose(proto string, ip net.IP, options []string, pick func(n int) int) int {
+	s.Begin(proto, ip, 0)
+	idx := -1
+	s.Note(proto, ip, func(sum *Summary) {
+		if i := slices.Index(options, sum.Variant); i >= 0 {
+			idx = i
+			return
+		}
+		idx = pick(len(options))
+		sum.Variant = options[idx]
+	})
+	if idx < 0 {
+		idx = pick(len(options))
+	}
+	return idx
+}
