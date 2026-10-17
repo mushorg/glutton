@@ -25,6 +25,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/mctp"
 	"github.com/mushorg/glutton/protocols/tcp/minecraft"
 	"github.com/mushorg/glutton/protocols/tcp/mssql"
+	"github.com/mushorg/glutton/protocols/tcp/nvms9000"
 	"github.com/mushorg/glutton/protocols/tcp/postgres"
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
 	"github.com/mushorg/glutton/protocols/tcp/redis"
@@ -174,6 +175,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"dicom":      bindTCP(tcp.HandleDICOM, log, h),
 		"icap":       bindTCP(tcp.HandleICAP, log, h),
 		"mctp":       mctpOrTCP(log, h),
+		"nvms9000":   nvmsOrTCP(log, h),
 		"rtsp":       rtspOrTCP(log, h),
 		"hl7":        hl7OrTCP(log, h),
 		"proxy_tcp":  bindTCP(tcp.HandleProxyTCP, log, h),
@@ -378,6 +380,14 @@ var catchAllMatchers = []catchAllMatcher{
 		peek:   fixedPeek(4, adb.LooksLikeADB),
 		match:  func(b []byte) bool { return adb.LooksLikeADB(b[:min(len(b), 4)]) },
 		handle: asBuffered(tcp.HandleADB),
+	},
+	{
+		// NVMS-9000 DVR scanners probe moved management ports (tcp/6036
+		// elsewhere); the magic and a plausible length fit in the snip
+		name:   "nvms9000",
+		peek:   fixedPeek(nvms9000.PeekLen, func(snip []byte) bool { return bytes.HasPrefix(snip, nvms9000.Magic) }),
+		match:  nvms9000.LooksLikeNVMS,
+		handle: asBuffered(tcp.HandleNVMS9000),
 	},
 	{
 		// SPICE scanners send the link message to QEMU/KVM consoles on any
@@ -643,6 +653,31 @@ func adbOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		}
 		if snip, err := bufConn.peek(adbPeekLen); err == nil && adb.LooksLikeADB(snip) {
 			return tcp.HandleADB(ctx, bufConn, md, log, h)
+		}
+		return tcp.HandleTCPWith(ctx, bufConn, md, log, h, tcp.Options{AfterTLS: httpAfterTLS(log, h)})
+	}
+}
+
+// nvmsOrTCP serves the NVMS-9000 DVR port (tcp/6036): NVMS-9000 frames go to
+// that handler; anything else falls back to the generic TCP handler so it is
+// still stored.
+func nvmsOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
+	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			log.Debug("failed to set connection timeout", producer.ErrAttr(err))
+			return conn.Close()
+		}
+		bufConn := newBufferedConn(conn)
+		// wait (up to the connection timeout) for the client to speak first
+		if _, err := bufConn.peek(1); err != nil {
+			log.Debug("failed to peek connection", producer.ErrAttr(err))
+			return conn.Close()
+		}
+		if err := bufConn.SetReadDeadline(time.Now().Add(mctpPeekTimeout)); err != nil {
+			log.Debug("failed to set peek deadline", producer.ErrAttr(err))
+		}
+		if snip, err := bufConn.peek(nvms9000.PeekLen); err == nil && nvms9000.LooksLikeNVMS(snip) {
+			return tcp.HandleNVMS9000(ctx, bufConn, md, log, h)
 		}
 		return tcp.HandleTCPWith(ctx, bufConn, md, log, h, tcp.Options{AfterTLS: httpAfterTLS(log, h)})
 	}

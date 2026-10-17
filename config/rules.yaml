@@ -113,6 +113,9 @@ rules:
   - match: tcp dst port 104 or port 11112
     type: conn_handler
     target: dicom
+  - match: tcp dst port 6036
+    type: conn_handler
+    target: nvms9000
   - match: tcp dst port 2575
     type: conn_handler
     target: hl7
