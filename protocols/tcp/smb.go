@@ -453,7 +453,8 @@ func smbPDU(frame smbFrame) []byte {
 
 // feedPipe buffers DCERPC data written to a named pipe, and when a full
 // fragment has arrived accepts a bind or faults a request. It never emulates an
-// RPC service: binds are acknowledged and requests are logged then faulted, so
+// RPC service: binds are acknowledged and requests are logged then faulted
+// (srvsvc NetrShareEnum alone is answered from a fake share table), so
 // the honeypot captures which interface and operation were called (and the
 // request stub) without acting as a working backend. readIdx is the WRITE_ANDX
 // read frame to annotate.
@@ -492,7 +493,7 @@ func (ss *smbServer) feedPipe(hn *smbHandle, data []byte, readIdx int, logger in
 		}
 		hn.rpcOut = smb.BuildBindAck(hdr.CallID, `\PIPE`+hn.name, ctxs)
 	case smb.PTypeRequest:
-		opnum, _, stub, ok := smb.ParseRequest(pdu)
+		opnum, ctxID, stub, ok := smb.ParseRequest(pdu)
 		if !ok {
 			return
 		}
@@ -510,6 +511,13 @@ func (ss *smbServer) feedPipe(hn *smbHandle, data []byte, readIdx int, logger in
 			}
 		}
 		hn.rpcOut = smb.BuildFault(hdr.CallID)
+		if hn.iface == smb.SrvsvcUUID && opnum == smb.SrvsvcOpNetrShareEnum {
+			if level, ok := smb.ParseNetShareEnumLevel(stub); ok {
+				if resp, ok := smb.BuildNetShareEnumResponse(hdr.CallID, ctxID, level, smb.Shares); ok {
+					hn.rpcOut = resp
+				}
+			}
+		}
 	}
 }
 

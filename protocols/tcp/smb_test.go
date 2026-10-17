@@ -849,6 +849,39 @@ func TestHandleSMBPipeDCERPCBindAndRequest(t *testing.T) {
 	require.Equal(t, [][]byte{stub}, stored, "only the request stub was stored")
 }
 
+func TestHandleSMBPipeSrvsvcNetShareEnum(t *testing.T) {
+	orig := smbStore
+	smbStore = func(data []byte, folder string) (string, error) { return helpers.SHA256Hex(data), nil }
+	t.Cleanup(func() { smbStore = orig })
+
+	client, hp, done := startHandleSMB(t)
+	uid, tid := smbHandshakeIPC(t, client)
+
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdNtCreateAndX, tid, uid, 4)), ntCreateAndXBody(`\srvsvc`)...))
+	fid := binary.LittleEndian.Uint16(readSMBFrame(t, client)[38:40])
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdWriteAndX, tid, uid, 5)), writeAndXBody(fid, dcerpcBind(0x11))...))
+	readSMBFrame(t, client)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdReadAndX, tid, uid, 6)), readAndXBody(fid)...))
+	readSMBFrame(t, client)
+
+	// NetrShareEnum, null server name, level 1.
+	stub := []byte{0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 4, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 8, 0, 2, 0, 0, 0, 0, 0}
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdWriteAndX, tid, uid, 7)), writeAndXBody(fid, dcerpcRequest(0x11, smb.SrvsvcOpNetrShareEnum, stub))...))
+	readSMBFrame(t, client)
+	writeSMBFrame(t, client, append(smbHeaderBytes(t, smbReqHeader(smb.CmdReadAndX, tid, uid, 8)), readAndXBody(fid)...))
+	resp := readSMBFrame(t, client)
+	require.True(t, bytes.Contains(resp, []byte{0x05, 0x00, 0x02}), "DCERPC response, not a fault")
+	for _, s := range smb.Shares {
+		var enc []byte
+		for _, r := range s.Name {
+			enc = append(enc, byte(r), 0)
+		}
+		require.True(t, bytes.Contains(resp, enc), s.Name)
+	}
+
+	finishHandleSMB(t, client, done, hp)
+}
+
 func TestHandleSMBFileUploadCaptured(t *testing.T) {
 	var stored []byte
 	orig := smbStore

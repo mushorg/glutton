@@ -48,7 +48,7 @@ nmap's `nmap-share-test` probe share is answered with `STATUS_BAD_NETWORK_NAME`.
 
 **NT Create AndX.** `path` is the requested filename. A handle opened on an `IPC$` tree is a named pipe; on any other share it is a disk file.
 
-**Named pipes (DCERPC).** Data written to a pipe is parsed as MS-RPCE. A bind is acknowledged (`dcerpc` `DCERPC_BIND`, with `interface` / `interface_version`) so the client proceeds. A request is logged (`dcerpc` `DCERPC_REQUEST`, `interface`, `opnum`; its stub stored under `payloads/smb/` with the SHA-256 in `payload_hash`) and then answered with a DCERPC fault. No RPC service is emulated — the honeypot captures the call without acting as a backend.
+**Named pipes (DCERPC).** Data written to a pipe is parsed as MS-RPCE. A bind is acknowledged (`dcerpc` `DCERPC_BIND`, with `interface` / `interface_version`) so the client proceeds. A request is logged (`dcerpc` `DCERPC_REQUEST`, `interface`, `opnum`; its stub stored under `payloads/smb/` with the SHA-256 in `payload_hash`) and then answered with a DCERPC fault. The one exception is `srvsvc` `NetrShareEnum` (opnum 15, info level 0 or 1), which is answered with a fixed, fake share table (`ADMIN$`, `C$`, `DEMO`, `IPC$`, `TMP`; list in `protocols/tcp/smb/srvsvc.go`) so share-enumeration tools (`smbclient -L`, `net view`, nmap `smb-enum-shares`) continue to the next stage. Other levels and operations still fault. No real RPC service is emulated — the honeypot captures the call without acting as a backend.
 
 **File uploads.** Bytes written (`WRITE_ANDX` / `WRITE`) to a disk-file handle are buffered (up to 8 MiB) and, on `CLOSE`, stored under `payloads/smb/`; the SHA-256 is set as `payload_hash` on the NT Create read frame.
 
