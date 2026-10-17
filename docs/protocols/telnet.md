@@ -21,7 +21,7 @@ Transport: TCP. Shared encodings and frame fields are described in [Logging and 
 
 **Non-telnet input.** If the first client bytes are binary (not IAC or text), the login flow is skipped and one `read` frame is recorded with `command` `tls_client_hello` (`0x16 0x03` prefix) or `binary`. The rule uses `tls: auto`, so real TLS hellos are normally terminated before the handler.
 
-**Shell.** Each line is split on `;`. Each part is matched against canned Mirai/Hajime replies after trimming whitespace and NUL terminators, with or without a `/bin/busybox ` prefix. For `a || b`, the first alternative with a canned reply wins. Before `sh` each line ends with the prompt `> `. `sh` writes the BusyBox root prompt `~ # ` (no CRLF) and switches the session into that shell: from then on every line ends with `~ # `, and bash-style `-bash: X: command not found` replies become ash-style `sh: X: not found`. A bare `/bin/busybox` prints the BusyBox multi-call usage and applet list; a bare `ping` prints its usage line. The prompt sigil must not be the first byte: Mirai's `consume_any_prompt` never checks index 0 of its receive buffer, so the bare `$ ` that older sensors sent stalled the bot until it timed out.
+**Shell.** Each line is split on `;`. Each part is matched against canned Mirai/Hajime replies after trimming whitespace and NUL terminators, with or without a `/bin/busybox ` prefix. For `a || b`, the first alternative with a canned reply wins. Before `sh` each line ends with the prompt `> `. `sh` writes the BusyBox ash banner (`BusyBox v1.16.1 ... built-in shell (ash)`, `Enter 'help' ...`) followed by the root prompt `~ # ` (no CRLF) in one write frame, and switches the session into that shell: from then on every line ends with `~ # `, and bash-style `-bash: X: command not found` replies become ash-style `sh: X: not found`. A bare `/bin/busybox` prints the BusyBox multi-call usage and applet list; a bare `ping` prints its usage line. The prompt sigil must not be the first byte: Mirai's `consume_any_prompt` never checks index 0 of its receive buffer, so the bare `$ ` that older sensors sent stalled the bot until it timed out.
 
 **BusyBox applets.** `/bin/busybox <TOKEN>` gets `<TOKEN>: applet not found` plus the ash banner only when `<TOKEN>` is not a known applet (Mirai's BusyBox liveness check). `cat` of an unknown file gets `cat: <file>: No such file or directory`.
 
@@ -37,15 +37,15 @@ Transport: TCP. Shared encodings and frame fields are described in [Logging and 
 
 ## Returning sources
 
-The ELF header's architecture is the visit's variant. A visit is all telnet traffic from one source IP with no gap longer than `recall.visit_gap` (default 30 min). Each new visit moves to the next variant, so a returning Mirai bot downloads a different loader or binary:
+The visit's variant picks the ELF header's architecture, the post-login greeting, and how unknown commands are reported. A visit is all telnet traffic from one source IP with no gap longer than `recall.visit_gap` (default 30 min). Each new visit moves to the next variant, so a returning Mirai bot downloads a different loader or binary:
 
-| Variant | Visits | Header |
-| --- | --- | --- |
-| `arm` | 1, 4, … | little-endian, `e_machine` 0x28, EABI5 |
-| `mips` | 2, 5, … | big-endian, `e_machine` 0x08, o32 |
-| `mipsel` | 3, 6, … | little-endian, `e_machine` 0x08, o32 |
+| Variant | Visits | Header | Greeting | Unknown command (before `sh`) |
+| --- | --- | --- | --- | --- |
+| `arm` | 1, 4, … | little-endian, `e_machine` 0x28, EABI5 | `welcome` | `-bash: X: command not found` |
+| `mips` | 2, 5, … | big-endian, `e_machine` 0x08, o32 | `Welcome` | `-sh: X: command not found` |
+| `mipsel` | 3, 6, … | little-endian, `e_machine` 0x08, o32 | `Welcome!` | `sh: X: not found` |
 
-Write frames carrying an ELF header set `variant` and `visit`. Other frames do not depend on the variant.
+Write frames that depend on the variant set `variant` and `visit`: ELF headers, and (for `mips`/`mipsel`) the greeting and restyled not-found replies. `arm` is the original persona, so its greeting and errors carry no tag. Inside `sh` every variant uses the ash `sh: X: not found` form.
 
 ## Process logs
 

@@ -105,7 +105,7 @@ func TestHandleTelnetMiraiFlow(t *testing.T) {
 	expect("> ")
 
 	send("sh\x00\r\n")
-	expect(telnetShPrompt)
+	expect(telnetShReply)
 
 	send("/bin/busybox UNSTABLE\x00\r\n")
 	expect("UNSTABLE: applet not found\r\n")
@@ -153,7 +153,7 @@ func TestHandleTelnetMiraiFlow(t *testing.T) {
 		{Direction: "write", Message: "-bash: shell: command not found\r\n"},
 		{Direction: "write", Message: "> "},
 		{Direction: "read", Command: "sh", Message: "sh\x00\r\n"},
-		{Direction: "write", Message: telnetShPrompt},
+		{Direction: "write", Message: telnetShReply},
 		{Direction: "read", Command: "/bin/busybox", Message: "/bin/busybox UNSTABLE\x00\r\n"},
 		{Direction: "write", Message: "UNSTABLE: applet not found\r\n"},
 		{Direction: "write", Message: busyboxBanner},
@@ -221,7 +221,7 @@ func TestTelnetReply(t *testing.T) {
 		{"(cat .s || cp /bin/echo .s)", []string{"cat: .s: No such file or directory\r\n"}, false},
 		{"shell\r\n", []string{"-bash: shell: command not found\r\n"}, false},
 		{"enable\x00\r\n", []string{"-bash: enable: command not found\r\n"}, false},
-		{" sh\r\n", []string{telnetShPrompt}, true},
+		{" sh\r\n", []string{telnetShReply}, true},
 		{"ping", []string{busyboxPingUsage}, false},
 		{"/bin/busybox", []string{busyboxUsage}, false},
 		{"/bin/busybox ping", []string{busyboxPingUsage}, false},
@@ -302,13 +302,13 @@ func TestHandleTelnetArchProbe(t *testing.T) {
 	expect("welcome\r\n> ")
 
 	send("sh\r\n")
-	expect(telnetShPrompt)
+	expect(telnetShReply)
 	send("shell\r\n")
 	expect("sh: shell: not found\r\n")
 	expect(telnetShPrompt)
 	send("ping; sh\r\n")
 	expect(busyboxPingUsage)
-	expect(telnetShPrompt)
+	expect(telnetShReply)
 	send("/bin/busybox HISILICON\r\n")
 	expect("HISILICON: applet not found\r\n")
 	expect(busyboxBanner)
@@ -345,13 +345,13 @@ func TestHandleTelnetArchProbe(t *testing.T) {
 		{Direction: "read", Command: "password", Message: "admin\r\n"},
 		{Direction: "write", Message: "welcome\r\n> "},
 		{Direction: "read", Command: "sh", Message: "sh\r\n"},
-		{Direction: "write", Message: telnetShPrompt},
+		{Direction: "write", Message: telnetShReply},
 		{Direction: "read", Command: "shell", Message: "shell\r\n"},
 		{Direction: "write", Message: "sh: shell: not found\r\n"},
 		{Direction: "write", Message: telnetShPrompt},
 		{Direction: "read", Command: "ping", Message: "ping; sh\r\n"},
 		{Direction: "write", Message: busyboxPingUsage},
-		{Direction: "write", Message: telnetShPrompt},
+		{Direction: "write", Message: telnetShReply},
 		{Direction: "read", Command: "/bin/busybox", Message: "/bin/busybox HISILICON\r\n"},
 		{Direction: "write", Message: "HISILICON: applet not found\r\n"},
 		{Direction: "write", Message: busyboxBanner},
@@ -367,7 +367,7 @@ func TestHandleTelnetArchProbe(t *testing.T) {
 
 // startTelnetFrom runs HandleTelnet on a pipe whose remote address is remote,
 // logs in, and returns the client side.
-func startTelnetFrom(t *testing.T, remote net.Addr) (net.Conn, *bufio.Reader, *fakeHoneypot, *recordingLogger, chan error) {
+func startTelnetFrom(t *testing.T, remote net.Addr, greeting string) (net.Conn, *bufio.Reader, *fakeHoneypot, *recordingLogger, chan error) {
 	t.Helper()
 	client, serverConn := net.Pipe()
 	t.Cleanup(func() { client.Close() })
@@ -382,7 +382,7 @@ func startTelnetFrom(t *testing.T, remote net.Addr) (net.Conn, *bufio.Reader, *f
 	telnetSend(t, client, "root\r\n")
 	telnetExpect(t, client, reader, "Password: ")
 	telnetSend(t, client, "xc3511\r\n")
-	telnetExpect(t, client, reader, "welcome\r\n> ")
+	telnetExpect(t, client, reader, greeting)
 	return client, reader, hp, logger, done
 }
 
@@ -408,9 +408,18 @@ func TestHandleTelnetRecallRotatesArch(t *testing.T) {
 	telnetRecall = recall.NewWithClock(recall.Config{Enabled: true, Gap: time.Hour}, func() time.Time { return now })
 	t.Cleanup(func() { telnetRecall = orig })
 
+	// notFound is the reply to `enable` per error style.
+	notFound := map[string]string{
+		"bash": "-bash: enable: command not found\r\n",
+		"sh":   "-sh: enable: command not found\r\n",
+		"ash":  "sh: enable: not found\r\n",
+	}
+
 	remote := staticAddr{"203.0.113.7:36696"}
 	for i, arch := range []telnetArch{telnetArches[0], telnetArches[1], telnetArches[2], telnetArches[0]} {
-		client, reader, hp, logger, done := startTelnetFrom(t, remote)
+		client, reader, hp, logger, done := startTelnetFrom(t, remote, arch.greeting)
+		telnetSend(t, client, "enable\r\n")
+		telnetExpect(t, client, reader, notFound[arch.errStyle]+"> ")
 		telnetSend(t, client, "/bin/busybox cat /proc/self/exe || cat /proc/self/exe\r\n")
 		telnetExpect(t, client, reader, arch.elfHeader()+"\r\n> ")
 		require.NoError(t, client.Close())
@@ -418,22 +427,28 @@ func TestHandleTelnetRecallRotatesArch(t *testing.T) {
 
 		produced := waitProduced(t, hp)
 		events := produced.decoded.([]parsedTelnet)
-		var elf []parsedTelnet
+		var tagged []parsedTelnet
 		for _, ev := range events {
 			if ev.Variant != "" {
-				elf = append(elf, ev)
+				tagged = append(tagged, ev)
 			}
 		}
-		require.Equal(t, []parsedTelnet{
-			{Direction: "write", Message: arch.elfHeader() + "\r\n", Variant: arch.name, Visit: i + 1},
-		}, elf, "visit %d", i+1)
+		var want []parsedTelnet
+		if arch.greeting != telnetGreeting {
+			want = append(want, parsedTelnet{Direction: "write", Message: arch.greeting, Variant: arch.name, Visit: i + 1})
+		}
+		if arch.errStyle != "bash" {
+			want = append(want, parsedTelnet{Direction: "write", Message: notFound[arch.errStyle], Variant: arch.name, Visit: i + 1})
+		}
+		want = append(want, parsedTelnet{Direction: "write", Message: arch.elfHeader() + "\r\n", Variant: arch.name, Visit: i + 1})
+		require.Equal(t, want, tagged, "visit %d", i+1)
 		if i > 0 {
 			require.Contains(t, logger.infos, "returning telnet source")
 			require.True(t, logger.hasAttr("previous_variant", telnetArches[(i-1)%len(telnetArches)].name))
 		}
 
 		// A second connection within the gap stays in the same visit.
-		client, reader, hp, _, done = startTelnetFrom(t, remote)
+		client, reader, hp, _, done = startTelnetFrom(t, remote, arch.greeting)
 		telnetSend(t, client, "cat /bin/sh\r\n")
 		telnetExpect(t, client, reader, arch.elfHeader()+"\r\n> ")
 		require.NoError(t, client.Close())

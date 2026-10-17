@@ -54,6 +54,13 @@ const maxTelnetSample = 10 << 20
 // receive buffer from the end down to index 1, so a bare "$ " never matches.
 const telnetShPrompt = "~ # "
 
+// telnetShReply is what `sh` writes: the ash banner of an interactive BusyBox
+// shell followed by its prompt, so clients that wait for a banner carry on.
+const telnetShReply = busyboxBanner + telnetShPrompt
+
+// telnetGreeting is the prompt written after a successful login.
+const telnetGreeting = "welcome\r\n> "
+
 // Mirai botnet  - https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
 // Hajime botnet - https://security.rapiditynetworks.com/publications/2016-10-16/hajime.pdf
 var miraiCom = map[string][]string{
@@ -62,13 +69,13 @@ var miraiCom = map[string][]string{
 	"(cat .s || cp /bin/echo .s)": {"cat: .s: No such file or directory"},
 	"nc":                          {"nc: command not found"},
 	"wget":                        {"wget: missing URL"},
-	"sh":                          {telnetShPrompt},
-	"sh || shell":                 {telnetShPrompt},
+	"sh":                          {telnetShReply},
+	"sh || shell":                 {telnetShReply},
 	"enable\x00":                  {"-bash: enable: command not found"},
 	"linuxshell\x00":              {"-bash: linuxshell: command not found"},
 	"system\x00":                  {"-bash: system: command not found"},
 	"shell\x00":                   {"-bash: shell: command not found"},
-	"sh\x00":                      {telnetShPrompt},
+	"sh\x00":                      {telnetShReply},
 	//	"fgrep XDVR /mnt/mtd/dep2.sh\x00":		   {"cd /mnt/mtd && ./XDVRStart.hisi ./td3500 &"},
 	"busybox": {busyboxBanner},
 	"echo -ne '\\x48\\x6f\\x6c\\x6c\\x61\\x46\\x6f\\x72\\x41\\x6c\\x6c\\x61\\x68\\x0a'\r\n": {"\x48\x6f\x6c\x6c\x61\x46\x6f\x72\x41\x6c\x6c\x61\x68\x0arn"},
@@ -109,14 +116,18 @@ type telnetArch struct {
 	machine uint16
 	entry   uint32
 	flags   uint32
+	// greeting is written after login; errStyle picks how unknown commands are
+	// reported ("bash", "sh" or "ash"). arm keeps the original persona.
+	greeting string
+	errStyle string
 }
 
 // telnetArches is the rotation order for returning sources; arm (the
 // original persona) comes first.
 var telnetArches = []telnetArch{
-	{name: "arm", data: 1, machine: 0x28, entry: 0xb96c, flags: 0x05000200},      // EABI5 soft-float
-	{name: "mips", data: 2, machine: 0x08, entry: 0x400190, flags: 0x00001007},   // o32, noreorder, pic, cpic
-	{name: "mipsel", data: 1, machine: 0x08, entry: 0x400190, flags: 0x00001007}, // o32, noreorder, pic, cpic
+	{name: "arm", data: 1, machine: 0x28, entry: 0xb96c, flags: 0x05000200, greeting: telnetGreeting, errStyle: "bash"},       // EABI5 soft-float
+	{name: "mips", data: 2, machine: 0x08, entry: 0x400190, flags: 0x00001007, greeting: "Welcome\r\n> ", errStyle: "sh"},     // o32, noreorder, pic, cpic
+	{name: "mipsel", data: 1, machine: 0x08, entry: 0x400190, flags: 0x00001007, greeting: "Welcome!\r\n> ", errStyle: "ash"}, // o32, noreorder, pic, cpic
 }
 
 // elfHeader returns the 52-byte ELF32 header of the fake BusyBox static executable.
@@ -271,8 +282,8 @@ func telnetReply(cmd string, arch telnetArch) (telnetResponse, error) {
 		}
 		reply := resp[n.Int64()]
 		// sh emits a real shell prompt (no CRLF); do not append "> ".
-		if reply == telnetShPrompt {
-			return telnetResponse{out: []string{telnetShPrompt}, skipPrompt: true}, nil
+		if reply == telnetShReply {
+			return telnetResponse{out: []string{telnetShReply}, skipPrompt: true}, nil
 		}
 		return telnetResponse{out: []string{reply + "\r\n"}, variant: elf}, nil
 	}
@@ -369,6 +380,25 @@ func (s *telnetServer) note() {
 			}
 		}
 	})
+}
+
+// styleNotFound rewrites the bash-style "not found" reply to the architecture's
+// shell flavour. It reports whether the reply changed.
+func (a telnetArch) styleNotFound(reply string) (string, bool) {
+	var out string
+	switch a.errStyle {
+	case "sh":
+		rest, ok := strings.CutPrefix(reply, "-bash: ")
+		if !ok {
+			return reply, false
+		}
+		out = "-sh: " + rest
+	case "ash":
+		out = ashNotFound(reply)
+	default:
+		return reply, false
+	}
+	return out, out != reply
 }
 
 // tagLast stamps the last write frame with the visit's variant.
@@ -700,9 +730,12 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 		slog.String("username", username),
 		slog.String("password", password),
 	)
-	if err := s.write("welcome\r\n> "); err != nil {
+	if err := s.write(s.arch.greeting); err != nil {
 		endReason = connection.EndWriteError
 		return err
+	}
+	if s.arch.greeting != telnetGreeting {
+		s.tagLast()
 	}
 	s.step = "shell"
 
@@ -758,13 +791,16 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 			}
 			skipPrompt = skipPrompt || resp.skipPrompt
 			for _, reply := range resp.out {
+				restyled := false
 				if s.inSh {
 					reply = ashNotFound(reply)
+				} else {
+					reply, restyled = s.arch.styleNotFound(reply)
 				}
 				if err := s.write(reply); err != nil {
 					return err
 				}
-				if resp.variant {
+				if resp.variant || restyled {
 					s.tagLast()
 				}
 			}
