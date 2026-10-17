@@ -21,6 +21,7 @@ import (
 	"github.com/mushorg/glutton/protocols/udp/knx"
 	"github.com/mushorg/glutton/protocols/udp/rip"
 	"github.com/mushorg/glutton/protocols/udp/rtps"
+	"github.com/mushorg/glutton/protocols/udp/snmp"
 	"github.com/mushorg/glutton/protocols/udp/steam"
 	"github.com/mushorg/glutton/protocols/udp/tftp"
 	"github.com/mushorg/glutton/protocols/udp/wsd"
@@ -65,6 +66,7 @@ var udpMatchers = []udpMatcher{
 	{"rip", payloadMatch(rip.LooksLikeRIP), HandleRIP},
 	{"tftp", payloadMatch(tftp.LooksLikeTFTP), HandleTFTP},
 	{"enip", payloadMatch(enip.LooksLikeListRequest), HandleENIP},
+	{"snmp", payloadMatch(snmp.LooksLikeSNMP), HandleSNMP},
 }
 
 // pickDispatch chooses among n matching protocols; it is replaced in tests
