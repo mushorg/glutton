@@ -145,6 +145,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"ident":      bindTCP(tcp.HandleIdent, log, h),
 		"acpp":       bindTCP(tcp.HandleACPP, log, h),
 		"rpcbind":    bindTCP(tcp.HandleRPCBind, log, h),
+		"nfs":        bindTCP(tcp.HandleNFS, log, h),
 		"adb":        adbOrTCP(log, h),
 		"mongodb":    bindTCP(tcp.HandleMongoDB, log, h),
 		"mssql":      bindTCP(tcp.HandleMSSQL, log, h),

@@ -170,6 +170,7 @@ Example shape:
 | `ident` | TCP | [protocols/ident.md](protocols/ident.md) |
 | `acpp` | TCP | [protocols/acpp.md](protocols/acpp.md) |
 | `rpcbind` | TCP/UDP | [protocols/rpcbind.md](protocols/rpcbind.md) |
+| `nfs` | TCP | [protocols/nfs.md](protocols/nfs.md) |
 | `adb` | TCP | [protocols/adb.md](protocols/adb.md) |
 | `smb` | TCP | [protocols/smb.md](protocols/smb.md) |
 | `rdp` | TCP | [protocols/rdp.md](protocols/rdp.md) |

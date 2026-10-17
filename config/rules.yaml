@@ -57,6 +57,9 @@ rules:
   - match: tcp dst port 111
     type: conn_handler
     target: rpcbind
+  - match: tcp dst port 2049
+    type: conn_handler
+    target: nfs
   - match: tcp dst port 11211
     type: conn_handler
     target: memcache
