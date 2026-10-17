@@ -110,7 +110,7 @@ func TestHandleTelnetMiraiFlow(t *testing.T) {
 	send("/bin/busybox UNSTABLE\x00\r\n")
 	expect("UNSTABLE: applet not found\r\n")
 	expect(busyboxBanner)
-	expect("> ")
+	expect(telnetShPrompt)
 
 	require.NoError(t, client.Close())
 
@@ -157,7 +157,7 @@ func TestHandleTelnetMiraiFlow(t *testing.T) {
 		{Direction: "read", Command: "/bin/busybox", Message: "/bin/busybox UNSTABLE\x00\r\n"},
 		{Direction: "write", Message: "UNSTABLE: applet not found\r\n"},
 		{Direction: "write", Message: busyboxBanner},
-		{Direction: "write", Message: "> "},
+		{Direction: "write", Message: telnetShPrompt},
 	}
 	require.Equal(t, want, events)
 	require.Equal(t, connection.EndClientClose, produced.endReason)
@@ -222,7 +222,9 @@ func TestTelnetReply(t *testing.T) {
 		{"shell\r\n", []string{"-bash: shell: command not found\r\n"}, false},
 		{"enable\x00\r\n", []string{"-bash: enable: command not found\r\n"}, false},
 		{" sh\r\n", []string{telnetShPrompt}, true},
-		{"ping", nil, false},
+		{"ping", []string{busyboxPingUsage}, false},
+		{"/bin/busybox", []string{busyboxUsage}, false},
+		{"/bin/busybox ping", []string{busyboxPingUsage}, false},
 		{"\r\n", nil, false},
 	}
 	for _, tc := range cases {
@@ -302,17 +304,18 @@ func TestHandleTelnetArchProbe(t *testing.T) {
 	send("sh\r\n")
 	expect(telnetShPrompt)
 	send("shell\r\n")
-	expect("-bash: shell: command not found\r\n")
-	expect("> ")
+	expect("sh: shell: not found\r\n")
+	expect(telnetShPrompt)
 	send("ping; sh\r\n")
+	expect(busyboxPingUsage)
 	expect(telnetShPrompt)
 	send("/bin/busybox HISILICON\r\n")
 	expect("HISILICON: applet not found\r\n")
 	expect(busyboxBanner)
-	expect("> ")
+	expect(telnetShPrompt)
 	send("/bin/busybox cat /proc/self/exe || cat /proc/self/exe\r\n")
 	expect(armELFHeader + "\r\n")
-	expect("> ")
+	expect(telnetShPrompt)
 
 	require.NoError(t, client.Close())
 
@@ -344,17 +347,18 @@ func TestHandleTelnetArchProbe(t *testing.T) {
 		{Direction: "read", Command: "sh", Message: "sh\r\n"},
 		{Direction: "write", Message: telnetShPrompt},
 		{Direction: "read", Command: "shell", Message: "shell\r\n"},
-		{Direction: "write", Message: "-bash: shell: command not found\r\n"},
-		{Direction: "write", Message: "> "},
+		{Direction: "write", Message: "sh: shell: not found\r\n"},
+		{Direction: "write", Message: telnetShPrompt},
 		{Direction: "read", Command: "ping", Message: "ping; sh\r\n"},
+		{Direction: "write", Message: busyboxPingUsage},
 		{Direction: "write", Message: telnetShPrompt},
 		{Direction: "read", Command: "/bin/busybox", Message: "/bin/busybox HISILICON\r\n"},
 		{Direction: "write", Message: "HISILICON: applet not found\r\n"},
 		{Direction: "write", Message: busyboxBanner},
-		{Direction: "write", Message: "> "},
+		{Direction: "write", Message: telnetShPrompt},
 		{Direction: "read", Command: "/bin/busybox", Message: "/bin/busybox cat /proc/self/exe || cat /proc/self/exe\r\n"},
 		{Direction: "write", Message: armELFHeader + "\r\n", Variant: "arm", Visit: 1},
-		{Direction: "write", Message: "> "},
+		{Direction: "write", Message: telnetShPrompt},
 	}, events)
 	require.Equal(t, connection.EndClientClose, produced.endReason)
 	require.True(t, logger.hasAttr("username", "admin"))
@@ -605,4 +609,10 @@ func TestHandleTelnetTLSClientHello(t *testing.T) {
 	logger.mtx.Lock()
 	defer logger.mtx.Unlock()
 	require.Empty(t, logger.infos)
+}
+
+func TestAshNotFound(t *testing.T) {
+	require.Equal(t, "sh: linuxshell: not found\r\n", ashNotFound("-bash: linuxshell: command not found\r\n"))
+	require.Equal(t, "nc: command not found\r\n", ashNotFound("nc: command not found\r\n"))
+	require.Equal(t, "-bash: odd\r\n", ashNotFound("-bash: odd\r\n"))
 }

@@ -27,6 +27,25 @@ import (
 // busyboxBanner is the BusyBox ash greeting Mirai checks for after applet probes.
 const busyboxBanner = "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-in shell (ash)\r\nEnter 'help' for a list of built-in commands.\r\n"
 
+// busyboxUsage is what a bare `busybox` / `/bin/busybox` prints: the multi-call
+// header followed by the applet list.
+const busyboxUsage = "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) multi-call binary\r\n" +
+	"Copyright (C) 1998-2009 Erik Andersen, Rob Landley, Denys Vlasenko\r\n" +
+	"and others. Licensed under GPLv2.\r\n" +
+	"See source distribution for full notice.\r\n\r\n" +
+	"Usage: busybox [function] [arguments]...\r\n" +
+	"   or: function [arguments]...\r\n\r\n" +
+	"\tBusyBox is a multi-call binary that combines many common Unix\r\n" +
+	"\tutilities into a single executable.\r\n\r\n" +
+	"Currently defined functions:\r\n" +
+	"\t[, ash, busybox, cat, cd, chmod, cp, dd, echo, ftpget, grep, head, kill,\r\n" +
+	"\tkillall, ln, ls, mkdir, mount, mv, ping, ps, rm, sh, sleep, tail, tftp,\r\n" +
+	"\ttouch, uname, wget\r\n\r\n"
+
+// busyboxPingUsage is what `ping` prints without a host.
+const busyboxPingUsage = "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) multi-call binary\r\n\r\n" +
+	"Usage: ping [OPTIONS] HOST\r\n\r\n"
+
 // maxTelnetSample caps bytes fetched from wget/curl URLs.
 const maxTelnetSample = 10 << 20
 
@@ -181,6 +200,9 @@ func telnetLookup(cmd string, arch telnetArch) (resp []string, elf, ok bool) {
 // unknown applets are "not found", cat of an unknown file is a missing file.
 func telnetAppletReply(cmd string) []string {
 	var applet, args string
+	if cmd == "/bin/busybox" {
+		return []string{busyboxUsage}
+	}
 	if m := busyboxAppletRe.FindStringSubmatch(cmd); m != nil {
 		applet, args = m[1], m[2]
 		if !busyboxApplets[applet] {
@@ -188,6 +210,9 @@ func telnetAppletReply(cmd string) []string {
 		}
 	} else {
 		applet, args, _ = strings.Cut(cmd, " ")
+	}
+	if applet == "ping" && strings.TrimSpace(args) == "" {
+		return []string{busyboxPingUsage}
 	}
 	if applet != "cat" {
 		return nil
@@ -273,6 +298,7 @@ type telnetServer struct {
 	reader   *bufio.Reader
 	client   *http.Client
 	step     string
+	inSh     bool // `sh` has run: the prompt is telnetShPrompt and errors are ash-style
 	sampleWG sync.WaitGroup
 	sampleMu sync.Mutex
 	samples  map[int]string // event index -> sample hash
@@ -350,6 +376,20 @@ func (s *telnetServer) tagLast() {
 	ev := &s.events[len(s.events)-1]
 	ev.Variant = s.arch.name
 	ev.Visit = s.visit
+}
+
+// ashNotFound rewrites a bash-style "-bash: X: command not found" reply as the
+// BusyBox ash "sh: X: not found" once the session is inside `sh`.
+func ashNotFound(reply string) string {
+	rest, ok := strings.CutPrefix(reply, "-bash: ")
+	if !ok {
+		return reply
+	}
+	name, ok := strings.CutSuffix(rest, ": command not found\r\n")
+	if !ok {
+		return reply
+	}
+	return "sh: " + name + ": not found\r\n"
 }
 
 func telnetShellCommand(msg string) string {
@@ -718,6 +758,9 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 			}
 			skipPrompt = skipPrompt || resp.skipPrompt
 			for _, reply := range resp.out {
+				if s.inSh {
+					reply = ashNotFound(reply)
+				}
 				if err := s.write(reply); err != nil {
 					return err
 				}
@@ -727,6 +770,16 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 			}
 		}
 		if skipPrompt {
+			s.inSh = true
+		}
+		if s.inSh {
+			// Once in the BusyBox shell every command ends with its prompt.
+			if skipPrompt {
+				continue
+			}
+			if err := s.write(telnetShPrompt); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := s.write("> "); err != nil {
