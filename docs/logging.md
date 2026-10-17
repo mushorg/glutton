@@ -177,6 +177,7 @@ Example shape:
 | `nfs` | TCP | [protocols/nfs.md](protocols/nfs.md) |
 | `adb` | TCP | [protocols/adb.md](protocols/adb.md) |
 | `nvms9000` | TCP | [protocols/nvms9000.md](protocols/nvms9000.md) |
+| `pcom` | TCP | [protocols/pcom.md](protocols/pcom.md) |
 | `smb` | TCP | [protocols/smb.md](protocols/smb.md) |
 | `rdp` | TCP | [protocols/rdp.md](protocols/rdp.md) |
 
