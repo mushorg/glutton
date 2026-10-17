@@ -177,6 +177,9 @@ rules:
   - match: udp dst port 427
     type: conn_handler
     target: slp
+  - match: udp dst port 1812 or port 1813
+    type: conn_handler
+    target: radius
   - match: udp dst port 36000
     type: conn_handler
     target: itp

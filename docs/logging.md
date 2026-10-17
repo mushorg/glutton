@@ -144,6 +144,7 @@ Example shape:
 | `dnp3` | TCP | [protocols/dnp3.md](protocols/dnp3.md) |
 | `enip` | TCP, UDP | [protocols/enip.md](protocols/enip.md) |
 | `slp` | UDP | [protocols/slp.md](protocols/slp.md) |
+| `radius` | UDP | [protocols/radius.md](protocols/radius.md) |
 | `opcua` | TCP | [protocols/opcua.md](protocols/opcua.md) |
 | `mctp` | TCP | [protocols/mctp.md](protocols/mctp.md) |
 | `dahua` | TCP | [protocols/dahua.md](protocols/dahua.md) |
