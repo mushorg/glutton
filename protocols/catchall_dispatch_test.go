@@ -218,6 +218,20 @@ func TestCatchAllRoutesSOCKS(t *testing.T) {
 	require.Equal(t, "socks", finishCatchAllDispatch(t, client, hp, done))
 }
 
+func TestCatchAllRoutesSOCKS4aWithoutHostname(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 6027)
+
+	// Ochi b53eecbe-20f7-4fdc-84ea-0a530f6f9833: the hostname never arrived
+	_, err := client.Write([]byte("\x04\x01\x00\x50\x00\x00\x00\x01\x00"))
+	require.NoError(t, err)
+	reply := make([]byte, 8)
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x00, 0x5a}, reply[:2])
+
+	require.Equal(t, "socks", finishCatchAllDispatch(t, client, hp, done))
+}
+
 func TestCatchAllRoutesSOCKS5Greeting(t *testing.T) {
 	client, hp, done := startCatchAllDispatch(t, 9999)
 

@@ -60,7 +60,10 @@ type Request struct {
 	Port    uint16
 	User    string // SOCKS4 userid
 	SOCKS4a bool
-	Raw     []byte // wire bytes, version byte included
+	// Truncated marks a SOCKS4a request whose hostname never arrived; Host is
+	// empty and the error from ReadSOCKS4 says why (EOF, timeout, too long).
+	Truncated bool
+	Raw       []byte // wire bytes, version byte included
 }
 
 // Addr returns host:port of the requested destination.
@@ -159,6 +162,8 @@ func ReadSOCKS4(r *bufio.Reader) (Request, error) {
 	if ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] != 0 {
 		req.SOCKS4a = true
 		if req.Host, err = rc.cstring(); err != nil {
+			req.Host = ""
+			req.Truncated = true
 			req.Raw = rc.raw
 			return req, err
 		}
@@ -323,7 +328,9 @@ func Reply5(code byte, ip net.IP, port uint16) []byte {
 }
 
 // LooksLikeSOCKS reports whether data is exactly one SOCKS4/4a request
-// (CONNECT or BIND, non-zero port, NUL-terminated userid and hostname) or a
+// (CONNECT or BIND, non-zero port, NUL-terminated userid and hostname; a
+// SOCKS4a request may end right after the userid when the checker sends the
+// hostname in a later segment) or a
 // SOCKS5 method-selection message with exactly NMETHODS known method bytes.
 // Clients send this message and then wait for the reply, so the first
 // segment holds it alone; extra bytes mean another protocol.
@@ -370,6 +377,10 @@ func looksLikeSOCKS4(data []byte) bool {
 	}
 	if ip[0] == 0 && ip[1] == 0 && ip[2] == 0 {
 		hostStart := end
+		if hostStart == len(data) {
+			// hostname still to come: Ochi b53eecbe-20f7-4fdc-84ea-0a530f6f9833
+			return true
+		}
 		end, ok = nulField(data, hostStart)
 		if !ok || end-1 == hostStart {
 			return false

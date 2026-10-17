@@ -198,3 +198,49 @@ func TestHandleSOCKSEarlyDisconnect(t *testing.T) {
 	frames := finishSOCKS(t, client, hp, done)
 	require.Empty(t, frames)
 }
+
+// Ochi b53eecbe-20f7-4fdc-84ea-0a530f6f9833: SOCKS4a CONNECT, no hostname.
+var socks4aNoHost = []byte("\x04\x01\x00\x50\x00\x00\x00\x01\x00")
+
+func TestHandleSOCKS4aMissingHostGranted(t *testing.T) {
+	prev := socksHostWait
+	socksHostWait = 50 * time.Millisecond
+	t.Cleanup(func() { socksHostWait = prev })
+	client, hp, done := startSOCKS(t, 4096)
+
+	reply := socksExchange(t, client, socks4aNoHost, 8)
+	granted := []byte{0x00, 0x5a, 0x9c, 0x40, 0, 0, 0, 0}
+	require.Equal(t, granted, reply)
+
+	frames := finishSOCKS(t, client, hp, done)
+	require.Equal(t, []parsedSOCKS{
+		{Direction: "read", Command: "socks4a-connect", Path: ":80", Version: 4, Port: 80, Truncated: true, Payload: socks4aNoHost},
+		{Direction: "write", Command: "socks4a-connect", Status: "granted", Payload: granted},
+	}, frames)
+}
+
+func TestHandleSOCKS4aHostArrivesLater(t *testing.T) {
+	client, hp, done := startSOCKS(t, 4096)
+
+	_, err := client.Write(socks4aNoHost)
+	require.NoError(t, err)
+	_, err = client.Write([]byte("httpbin.org\x00"))
+	require.NoError(t, err)
+	reply := make([]byte, 8)
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
+
+	frames := finishSOCKS(t, client, hp, done)
+	require.Equal(t, "httpbin.org", frames[0].Host)
+	require.False(t, frames[0].Truncated)
+	require.Equal(t, "granted", frames[1].Status)
+}
+
+func TestHandleSOCKS4aMissingHostDisconnect(t *testing.T) {
+	client, hp, done := startSOCKS(t, 4096)
+	_, err := client.Write(socks4aNoHost)
+	require.NoError(t, err)
+	frames := finishSOCKS(t, client, hp, done)
+	require.Len(t, frames, 1)
+	require.True(t, frames[0].Truncated)
+}

@@ -39,6 +39,19 @@ func TestReadSOCKS4aCapturedEvent(t *testing.T) {
 	require.Equal(t, "httpbin.org:80", req.Addr())
 }
 
+func TestReadSOCKS4aMissingHost(t *testing.T) {
+	// Ochi b53eecbe-20f7-4fdc-84ea-0a530f6f9833
+	raw := []byte("\x04\x01\x00\x50\x00\x00\x00\x01\x00")
+	req, err := ReadSOCKS4(reader(raw[1:]))
+	require.ErrorIs(t, err, io.EOF)
+	require.True(t, req.SOCKS4a)
+	require.True(t, req.Truncated)
+	require.Empty(t, req.Host)
+	require.Equal(t, uint16(80), req.Port)
+	require.Equal(t, "socks4a-connect", req.Name())
+	require.Equal(t, raw, req.Raw)
+}
+
 func TestReadSOCKS4WithUser(t *testing.T) {
 	data := []byte("\x04\x01\x01\xbb\xc0\x00\x02\x01root\x00")
 	r := reader(data[1:])
@@ -124,11 +137,13 @@ func TestReplies(t *testing.T) {
 func TestLooksLikeSOCKS(t *testing.T) {
 	for name, data := range map[string][]byte{
 		"captured socks4a": socks4aHttpbin,
-		"socks4 userid":    []byte("\x04\x01\x01\xbb\xc0\x00\x02\x01root\x00"),
-		"socks4 bind":      []byte("\x04\x02\x01\xbb\xc0\x00\x02\x01\x00"),
-		"socks5 no-auth":   {0x05, 0x01, 0x00},
-		"socks5 multi":     {0x05, 0x03, 0x00, 0x01, 0x02},
-		"socks5 private":   {0x05, 0x01, 0x80},
+		// Ochi b53eecbe-20f7-4fdc-84ea-0a530f6f9833: hostname not sent yet
+		"socks4a no host": []byte("\x04\x01\x00\x50\x00\x00\x00\x01\x00"),
+		"socks4 userid":   []byte("\x04\x01\x01\xbb\xc0\x00\x02\x01root\x00"),
+		"socks4 bind":     []byte("\x04\x02\x01\xbb\xc0\x00\x02\x01\x00"),
+		"socks5 no-auth":  {0x05, 0x01, 0x00},
+		"socks5 multi":    {0x05, 0x03, 0x00, 0x01, 0x02},
+		"socks5 private":  {0x05, 0x01, 0x80},
 	} {
 		require.True(t, LooksLikeSOCKS(data), name)
 	}
@@ -143,7 +158,6 @@ func TestLooksLikeSOCKS(t *testing.T) {
 		"socks4 zero ip":     []byte("\x04\x01\x00\x50\x00\x00\x00\x00\x00"),
 		"socks4 trailing":    []byte("\x04\x01\x00\x50\x01\x02\x03\x04\x00GET"),
 		"socks4a empty host": []byte("\x04\x01\x00\x50\x00\x00\x00\x01\x00\x00"),
-		"socks4a no host":    []byte("\x04\x01\x00\x50\x00\x00\x00\x01\x00"),
 		"mongodb header":     {0x04, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xd4, 0x07, 0x00, 0x00},
 		"http":               []byte("GET / HTTP/1.1\r\n\r\n"),
 		"tls":                {0x16, 0x03, 0x01, 0x00, 0x05},

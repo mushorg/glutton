@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
@@ -50,6 +51,10 @@ var socksBoundPort = func() uint16 {
 	return uint16(32768 + n.Int64())
 }
 
+// socksHostWait is how long a SOCKS4a request may stall after the userid
+// before it is granted without a hostname; a var so tests run instantly.
+var socksHostWait = time.Second
+
 // socksBoundIP reports the sensor address as BND.ADDR, like a proxy whose
 // outbound connections leave from the same host. It never reflects the
 // requested destination.
@@ -73,8 +78,9 @@ func (s *socksServer) captureRequest(req socks.Request) {
 		Version:   int(req.Version),
 		User:      req.User,
 		Payload:   req.Raw,
+		Truncated: req.Truncated,
 	}
-	if req.Host != "" {
+	if req.Host != "" || req.Truncated {
 		frame.Command = req.Name()
 		frame.Host = req.Host
 		frame.Port = int(req.Port)
@@ -186,9 +192,20 @@ func HandleSOCKS(ctx context.Context, conn net.Conn, md connection.Metadata, log
 	var req socks.Request
 	switch version {
 	case socks.Version4:
-		if req, err = socks.ReadSOCKS4(server.r); err != nil {
+		// checkers sometimes send the SOCKS4a hostname in a later segment, or
+		// never; bound the wait and answer the request we have
+		if err := conn.SetReadDeadline(time.Now().Add(socksHostWait)); err != nil {
+			logger.Debug("Failed to set connection timeout", slog.String("protocol", "socks"), producer.ErrAttr(err))
+		}
+		req, err = socks.ReadSOCKS4(server.r)
+		var netErr net.Error
+		hostTimedOut := req.Truncated && errors.As(err, &netErr) && netErr.Timeout()
+		if err != nil && !hostTimedOut {
 			server.captureRequest(req)
 			return readFailed(err)
+		}
+		if !timeout() {
+			return nil
 		}
 		server.captureRequest(req)
 		logSOCKSRequest(logger, conn, md, req)
