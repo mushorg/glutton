@@ -92,6 +92,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | SOCKS 4/4a/5 proxy          | open-proxy checks on tcp/1080, 4145, any port |
 | ONC RPC portmapper/rpcbind  | `rpcinfo`-style DUMP/GETPORT probes on tcp/111, udp/111 |
 | HiSilicon DVR (MCTP)        | `HI_SRDK_*` control calls on tcp/9000    |
+| Dahua DVR/NVR (DVRIP)       | login attempts (plaintext credentials) on tcp/37777 |
 | RTSP (IP cameras)           | OPTIONS/DESCRIBE and credential attempts on tcp/554, 8554, 10554 |
 | Catch-all service banners   | POP3/RFB greetings, MSSQL/AJP/RPC replies |
 | DICOM                       | PACS associations, C-FIND search keys, C-STORE uploads on tcp/104, 11112 |

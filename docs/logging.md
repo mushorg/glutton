@@ -145,6 +145,7 @@ Example shape:
 | `enip` | TCP, UDP | [protocols/enip.md](protocols/enip.md) |
 | `opcua` | TCP | [protocols/opcua.md](protocols/opcua.md) |
 | `mctp` | TCP | [protocols/mctp.md](protocols/mctp.md) |
+| `dahua` | TCP | [protocols/dahua.md](protocols/dahua.md) |
 | `rtsp` | TCP | [protocols/rtsp.md](protocols/rtsp.md) |
 | `icap` | TCP | [protocols/icap.md](protocols/icap.md) |
 | `dicom` | TCP | [protocols/dicom.md](protocols/dicom.md) |
