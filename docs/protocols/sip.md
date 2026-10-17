@@ -200,6 +200,10 @@ TCP/5060 and TLS/5061 (`tls: true`, so the handler sees plaintext and the event
 carries `tls`) produce one event per connection, with `endReason` from the
 connection (`client_close`, `timeout`, `read_error` and so on).
 
+The generic `tcp` catch-all also peeks the start line and reroutes SIP from any
+other TCP port (for example 65060) here, as it does for UDP. SIP wins over HTTP
+for `OPTIONS sip:... SIP/2.0`; the `SIP/2.0` version token decides.
+
 **Framing.** Messages are framed by `Content-Length` (RFC 3261 §18.3; compact
 `l:` accepted, a missing header means no body). A message split across segments
 is one `read` frame, and several pipelined messages are answered in order.

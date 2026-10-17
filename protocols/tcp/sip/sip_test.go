@@ -599,3 +599,12 @@ func TestCalledNumberSkipsRegister(t *testing.T) {
 	require.Empty(t, CalledNumber(req))
 	require.Empty(t, Describe(req).CalledNumber)
 }
+
+func TestMayStart(t *testing.T) {
+	for _, s := range []string{"R", "REGI", "REGISTER sip:x SIP/2.0", "OPTIONS", "SIP/", "SIP/2.0 200 OK", "INVITE", "ACK "} {
+		require.True(t, MayStart([]byte(s)), s)
+	}
+	for _, s := range []string{"", "GET ", "POST", "\x16\x03\x01", "SSH-", "reg"} {
+		require.False(t, MayStart([]byte(s)), s)
+	}
+}

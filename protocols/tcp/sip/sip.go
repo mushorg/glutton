@@ -768,6 +768,25 @@ func LooksLikeSIP(data []byte) bool {
 	return ok && (scheme == "sip" || scheme == "sips" || scheme == "tel")
 }
 
+// startMethods are the request methods (and the response prefix) MayStart
+// recognizes; they match the Allow list.
+var startMethods = []string{"SIP/", "REGISTER", "INVITE", "OPTIONS", "ACK", "BYE", "CANCEL", "SUBSCRIBE", "NOTIFY", "MESSAGE", "INFO", "PRACK", "REFER", "PUBLISH", "UPDATE"}
+
+// MayStart reports whether snip (the first bytes of a stream) could begin a
+// SIP request line or status line.
+func MayStart(snip []byte) bool {
+	if len(snip) == 0 {
+		return false
+	}
+	for _, m := range startMethods {
+		n := min(len(snip), len(m))
+		if bytes.Equal(snip[:n], []byte(m)[:n]) {
+			return true
+		}
+	}
+	return false
+}
+
 func isMethod(s string) bool {
 	if s == "" || len(s) > 16 {
 		return false

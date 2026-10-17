@@ -29,6 +29,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
 	"github.com/mushorg/glutton/protocols/tcp/redis"
 	"github.com/mushorg/glutton/protocols/tcp/rtsp"
+	sipproto "github.com/mushorg/glutton/protocols/tcp/sip"
 	"github.com/mushorg/glutton/protocols/tcp/smb"
 	"github.com/mushorg/glutton/protocols/tcp/socks"
 	"github.com/mushorg/glutton/protocols/tcp/spice"
@@ -42,6 +43,9 @@ const mcpRequestLinePeek = 96
 // rtspLinePeek bounds the RTSP request-line peek; long stream URIs are
 // recognized by their rtsp:// scheme before the version arrives.
 const rtspLinePeek = 256
+
+// sipLinePeek bounds the SIP request-line peek (sip.maxStartLine).
+const sipLinePeek = 512
 
 // rdpPeekLen covers the TPKT header, X.224 LI and TPDU type of an RDP CR.
 const rdpPeekLen = 6
@@ -398,6 +402,16 @@ var catchAllMatchers = []catchAllMatcher{
 		handle: asBuffered(tcp.HandleRTSP),
 	},
 	{
+		// VoIP scanners send SIP over TCP to moved or alternate ports
+		// (65060); it shares OPTIONS with HTTP and RTSP, so it peeks the
+		// whole start line and the SIP/2.0 version token decides
+		name:   "sip",
+		peek:   fixedPeek(sipLinePeek, sipproto.MayStart),
+		line:   true,
+		match:  func(b []byte) bool { return sipproto.LooksLikeSIP(b[:min(len(b), sipLinePeek)]) },
+		handle: asBuffered(tcp.HandleSIP),
+	},
+	{
 		// SMB scanners (Censys, nmap) probe moved shares with a Negotiate;
 		// the NBSS header plus the \xffSMB / \xfeSMB magic tells it apart
 		name: "smb",
@@ -417,11 +431,12 @@ var catchAllMatchers = []catchAllMatcher{
 	},
 	{
 		// HTTP on any port goes to the HTTP handler, with or without Spicy;
-		// an RTSP request line (OPTIONS ... RTSP/1.0) is not HTTP
+		// an RTSP (OPTIONS ... RTSP/1.0) or SIP (OPTIONS sip:... SIP/2.0) request line is not HTTP
 		name: "http",
 		peek: fixedPeek(httpMethodPeek, looksLikeHTTPMethodStart),
 		match: func(b []byte) bool {
-			return looksLikeHTTPRequest(b) && !rtsp.LooksLikeRTSP(b[:min(len(b), rtspLinePeek)])
+			return looksLikeHTTPRequest(b) && !rtsp.LooksLikeRTSP(b[:min(len(b), rtspLinePeek)]) &&
+				!sipproto.LooksLikeSIP(b[:min(len(b), sipLinePeek)])
 		},
 		handle: handleDetectedHTTP,
 	},
