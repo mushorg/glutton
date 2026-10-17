@@ -163,6 +163,26 @@ func TestForPayload(t *testing.T) {
 	}
 }
 
+func TestForPayloadPJL(t *testing.T) {
+	// Shodan, Ochi event 51e8cbb7-c5c1-43ce-bfa6-5f7f0e3f1fb0 (tcp/9100)
+	resp, ok := ForPayload([]byte("@PJL INFO STATUS\n"))
+	require.True(t, ok)
+	require.Equal(t, "pjl", resp.Name)
+	require.Equal(t, "@PJL INFO STATUS\r\nCODE=10001\r\nDISPLAY=\"Ready\"\r\nONLINE=TRUE\r\n\f", string(resp.Data))
+
+	// nmap hp-pjl probe
+	resp, ok = ForPayload([]byte("\x1b%-12345X@PJL INFO ID\r\n\x1b%-12345X\r\n"))
+	require.True(t, ok)
+	require.Equal(t, "@PJL INFO ID\r\n\"HP LaserJet Pro M404dn\"\r\n\f", string(resp.Data))
+
+	resp, ok = ForPayload([]byte("@PJL ECHO hi\r\n"))
+	require.True(t, ok)
+	require.Equal(t, "@PJL ECHO hi\r\n\f", string(resp.Data))
+
+	_, ok = ForPayload([]byte("@PJX\n"))
+	require.False(t, ok)
+}
+
 // censysH2 is the h2c preface + SETTINGS from Ochi event
 // 2fa1bb07-466c-4764-851d-096aeb5ce474 (Censys, tcp/44818).
 const censysH2 = "505249202a20485454502f322e300d0a0d0a534d0d0a0d0a" +

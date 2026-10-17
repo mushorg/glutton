@@ -303,6 +303,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 		// tac_plus closes a session without single-connect after the reply
 		return Response{Name: "tacacs-authen-error", Data: tacacsAuthenError(data, tacacsKey), Close: true}, true
 	},
+	pjlReply,
 	func(data []byte) (Response, bool) {
 		order, ok := isX11Setup(data)
 		if !ok {
@@ -310,6 +311,33 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 		}
 		return Response{Name: "x11-denied", Data: x11Failed(order, x11Reason)}, true
 	},
+}
+
+// pjlUEL is the Universal Exit Language escape that prefixes PJL jobs.
+var pjlUEL = []byte("\x1b%-12345X")
+
+// pjlModel is the printer persona; the INFO ID format matches nmap's hp-pjl
+// probe (match m|^@PJL INFO ID\r?\n\"([^"]+)\"\r?\n|).
+const pjlModel = "HP LaserJet Pro M404dn"
+
+// pjlReply answers a PJL command (raw printing, tcp/9100) with a JetDirect
+// style reply: the echoed command line, its data, and a form feed.
+func pjlReply(data []byte) (Response, bool) {
+	rest := bytes.TrimPrefix(data, pjlUEL)
+	if !bytes.HasPrefix(rest, []byte("@PJL")) {
+		return Response{}, false
+	}
+	line, _, _ := bytes.Cut(rest, []byte("\n"))
+	line = bytes.TrimRight(line, "\r ")
+	cmd := string(line)
+	var body string
+	switch cmd {
+	case "@PJL INFO ID":
+		body = "\"" + pjlModel + "\"\r\n"
+	case "@PJL INFO STATUS":
+		body = "CODE=10001\r\nDISPLAY=\"Ready\"\r\nONLINE=TRUE\r\n"
+	}
+	return Response{Name: "pjl", Data: []byte(cmd + "\r\n" + body + "\f")}, true
 }
 
 // pickCandidate chooses among the responses of every matching signature; it
