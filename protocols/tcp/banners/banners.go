@@ -304,6 +304,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 		return Response{Name: "tacacs-authen-error", Data: tacacsAuthenError(data, tacacsKey), Close: true}, true
 	},
 	pjlReply,
+	weblogicT3Reply,
 	func(data []byte) (Response, bool) {
 		order, ok := isX11Setup(data)
 		if !ok {
@@ -311,6 +312,21 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 		}
 		return Response{Name: "x11-denied", Data: x11Failed(order, x11Reason)}, true
 	},
+}
+
+// weblogicT3Hello is the WebLogic T3 handshake reply (HELO:<version>.false,
+// then the AS/HL values the client offered). The format comes from public T3
+// exploit and detection tooling and is unverified against a live server.
+var weblogicT3Hello = []byte("HELO:12.2.1.4.0.false\nAS:2048\nHL:19\n\n")
+
+// weblogicT3Reply answers the T3 client hello ("t3 <version>\nAS:..\nHL:..\n\n",
+// Ochi event af8b38b0-b808-4280-8d99-21f2c860294b) that precedes T3
+// deserialization exploits.
+func weblogicT3Reply(data []byte) (Response, bool) {
+	if !bytes.HasPrefix(data, []byte("t3 ")) || !bytes.Contains(data, []byte("\n")) {
+		return Response{}, false
+	}
+	return Response{Name: "weblogic-t3", Data: weblogicT3Hello}, true
 }
 
 // pjlUEL is the Universal Exit Language escape that prefixes PJL jobs.

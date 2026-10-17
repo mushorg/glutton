@@ -259,3 +259,16 @@ func TestForPayloadPicksAmongCandidates(t *testing.T) {
 		require.Contains(t, []string{"a", "b"}, resp.Name)
 	}
 }
+
+func TestForPayloadWebLogicT3(t *testing.T) {
+	// Ochi event af8b38b0-b808-4280-8d99-21f2c860294b (tcp/27001)
+	resp, ok := ForPayload([]byte("t3 12.1.2\nAS:2048\nHL:19\n\n"))
+	require.True(t, ok)
+	require.Equal(t, "weblogic-t3", resp.Name)
+	require.Equal(t, "HELO:12.2.1.4.0.false\nAS:2048\nHL:19\n\n", string(resp.Data))
+
+	_, ok = ForPayload([]byte("t3 12.1.2"))
+	require.False(t, ok)
+	_, ok = ForPayload([]byte("t4 12.1.2\n"))
+	require.False(t, ok)
+}

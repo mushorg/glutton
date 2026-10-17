@@ -40,6 +40,7 @@ Writes set `status` to the response name or `random`.
 | TeamViewer `CMD_PING` (`17 24 10`, LE u16 length, body; Shodan sends `17 24 10 04 00 00 00 00 00`) | `teamviewer-pingok` | `CMD_PINGOK` `17 24 11 04 00 00 00 00 00` |
 | TACACS+ AUTHEN START (`c0`/`c1` `01 01`, flags, session_id, u32 body length equal to the bytes after the header; Shodan sends the header alone) | `tacacs-authen-error` | tac_plus F4.0.4 AUTHEN REPLY: client's version and session_id, seq 2, flags 0, status ERROR ("Invalid AUTHEN/START packet (too short)" or "(check keys)") encrypted with a random per-process key, then the connection closes |
 | PJL command (`@PJL ...`, optionally after the `1b 25 2d 31 32 33 34 35 58` UEL; Shodan sends `@PJL INFO STATUS`, nmap `@PJL INFO ID`) | `pjl` | HP LaserJet Pro M404dn: `INFO ID` gets the quoted model, `INFO STATUS` gets `CODE=10001 DISPLAY="Ready" ONLINE=TRUE`, other commands are echoed; replies end with a form feed |
+| WebLogic T3 hello (`t3 <version>\nAS:..\nHL:..\n\n`) | `weblogic-t3` | Replies `HELO:12.2.1.4.0.false\nAS:2048\nHL:19\n\n` (format from public T3 tooling, unverified); later T3 frames are recorded |
 | `MGLNDD_<ip>_<port>` scanner probe | `mglndd` | None |
 
 ### Port responses
