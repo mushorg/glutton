@@ -79,7 +79,7 @@ func TestReadRecordAndParseShodanDump(t *testing.T) {
 
 	c, err := Parse(body)
 	require.NoError(t, err)
-	require.Equal(t, &Call{XID: 0xe877bb11, MsgType: MsgCall, RPCVersion: 2, Program: ProgPortmap, Version: 2, Procedure: 4, Args: []byte{}}, c)
+	require.Equal(t, &Call{XID: 0xe877bb11, MsgType: MsgCall, RPCVersion: 2, Program: ProgPortmap, Version: 2, Procedure: 4, Args: []byte{}, Header: true, Cred: true}, c)
 	require.Equal(t, "PMAPPROC_DUMP", c.Command())
 	require.Equal(t, "AUTH_NONE", AuthName(c.CredFlavor))
 }
@@ -239,6 +239,27 @@ func TestParseMalformed(t *testing.T) {
 		_, err := Parse(b)
 		require.ErrorIs(t, err, ErrMalformed, "%x", b)
 	}
+}
+
+// APCO Sys udp/111 probe: 32-byte CALL missing the empty AUTH_NONE verifier
+// (Ochi event e773c076-56e9-4cc4-ae39-8e8ac4ce6a46).
+func TestParseTruncatedCallHeader(t *testing.T) {
+	b := []byte{
+		0x12, 0x34, 0x56, 0x78, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+		0x00, 0x01, 0x86, 0xa0, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	}
+	c, err := Parse(b)
+	require.ErrorIs(t, err, ErrMalformed)
+	require.NotNil(t, c)
+	require.True(t, c.Header)
+	require.True(t, c.Cred)
+	require.Equal(t, uint32(0x12345678), c.XID)
+	require.Equal(t, uint32(ProgPortmap), c.Program)
+	require.Equal(t, uint32(4), c.Version)
+	require.Equal(t, uint32(4), c.Procedure)
+	require.Equal(t, uint32(0), c.CredFlavor)
+	require.Equal(t, "RPCBPROC_DUMP", c.Command())
 }
 
 func TestReadRecordFragments(t *testing.T) {

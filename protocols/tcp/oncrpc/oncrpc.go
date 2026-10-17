@@ -29,7 +29,6 @@ const (
 	// MaxFragments bounds the record-marking fragments of one TCP message.
 	MaxFragments = 16
 
-	minCallSize  = 40  // xid..verf with two empty AUTH_NONE bodies
 	maxAuthBody  = 400 // RFC 5531 opaque_auth limit
 	maxXDRString = 255
 	maxAuthGIDs  = 16
@@ -62,6 +61,11 @@ type Call struct {
 	VerfFlavor uint32
 	AuthSys    *AuthSys // set when CredFlavor is AUTH_SYS and its body parses
 	Args       []byte
+	// Header is true when RPCVersion through Procedure were decoded. The call
+	// may still be malformed (truncated auth verifier, etc.).
+	Header bool
+	// Cred is true when CredFlavor and its opaque body were decoded.
+	Cred bool
 }
 
 // Query holds the arguments of GETPORT (v2) or GETADDR/GETVERSADDR (v3/v4),
@@ -113,6 +117,8 @@ func (d *decoder) str() (string, error) {
 
 // Parse decodes an RPC message header. Only calls are decoded past msg_type;
 // for a reply the returned Call has XID and MsgType set and no error.
+// Truncated or malformed calls still return a Call with whatever header fields
+// were readable (Header/Cred mark how far decoding got) plus ErrMalformed.
 func Parse(b []byte) (*Call, error) {
 	d := &decoder{b: b}
 	c := &Call{}
@@ -129,18 +135,20 @@ func Parse(b []byte) (*Call, error) {
 		}
 		return c, nil
 	}
-	if len(b) < minCallSize {
-		return c, ErrMalformed
-	}
-	for _, f := range []*uint32{&c.RPCVersion, &c.Program, &c.Version, &c.Procedure, &c.CredFlavor} {
+	for _, f := range []*uint32{&c.RPCVersion, &c.Program, &c.Version, &c.Procedure} {
 		if *f, err = d.u32(); err != nil {
 			return c, err
 		}
+	}
+	c.Header = true
+	if c.CredFlavor, err = d.u32(); err != nil {
+		return c, err
 	}
 	cred, err := d.opaque(maxAuthBody)
 	if err != nil {
 		return c, err
 	}
+	c.Cred = true
 	if c.CredFlavor == AuthSysFlavor {
 		c.AuthSys = parseAuthSys(cred)
 	}

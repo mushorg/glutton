@@ -37,6 +37,37 @@ type parsedRPCBind struct {
 	Truncated     bool    `json:"truncated,omitempty"`
 }
 
+// describeRPCCall copies the parsed call header and portmapper arguments into
+// a read frame. Partial calls (truncated before the verifier) still get xid /
+// program / version / procedure and a best-effort command when Header is set.
+func describeRPCCall(frame *parsedRPCBind, c *oncrpc.Call) {
+	if c == nil {
+		return
+	}
+	switch c.MsgType {
+	case oncrpc.MsgReply:
+		frame.XID = c.XID
+		frame.Command = "REPLY"
+	case oncrpc.MsgCall:
+		frame.XID = c.XID
+		if !c.Header {
+			return
+		}
+		frame.Command = c.Command()
+		frame.Program, frame.Version, frame.Procedure = c.Program, c.Version, c.Procedure
+		if c.Cred {
+			frame.Auth = oncrpc.AuthName(c.CredFlavor)
+			if a := c.AuthSys; a != nil {
+				frame.MachineName = a.MachineName
+				frame.UID, frame.GID = &a.UID, &a.GID
+			}
+		}
+		if q, err := oncrpc.ParseQuery(c); err == nil && q != nil {
+			frame.TargetProgram, frame.TargetVersion, frame.Netid = q.Program, q.Version, q.Netid
+		}
+	}
+}
+
 // HandleRPCBind answers an ONC RPC portmapper / rpcbind call (program
 // 100000, versions 2-4) in one datagram on udp/111. Replies go only to the
 // datagram source and are charged against udp_reply_limit; CALLIT/INDIRECT
@@ -56,24 +87,12 @@ func HandleRPCBind(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []by
 
 	frame := parsedRPCBind{Direction: "read", Command: "UNKNOWN", Payload: payload, Truncated: len(data) > maxRPCBindPayload}
 	call, err := oncrpc.Parse(payload)
+	describeRPCCall(&frame, call)
+	events = append(events, frame)
 	if err != nil {
-		events = append(events, frame)
 		logger.Debug("Failed to parse RPC message", slog.String("protocol", "rpcbind"), producer.ErrAttr(err), slog.Int("bytes", len(payload)))
 		return nil
 	}
-	frame.Command, frame.XID = call.Command(), call.XID
-	if call.MsgType == oncrpc.MsgCall {
-		frame.Program, frame.Version, frame.Procedure = call.Program, call.Version, call.Procedure
-		frame.Auth = oncrpc.AuthName(call.CredFlavor)
-		if a := call.AuthSys; a != nil {
-			frame.MachineName = a.MachineName
-			frame.UID, frame.GID = &a.UID, &a.GID
-		}
-		if q, err := oncrpc.ParseQuery(call); err == nil && q != nil {
-			frame.TargetProgram, frame.TargetVersion, frame.Netid = q.Program, q.Version, q.Netid
-		}
-	}
-	events = append(events, frame)
 
 	logger.Info("rpcbind request received",
 		slog.String("handler", "rpcbind"),

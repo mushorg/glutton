@@ -69,3 +69,25 @@ func TestHandleRPCBindUDPNoReply(t *testing.T) {
 		require.LessOrEqual(t, len(frames[0].Payload), maxRPCBindPayload, tc.name)
 	}
 }
+
+// APCO Sys truncated rpcbind v4 DUMP (Ochi event e773c076-56e9-4cc4-ae39-8e8ac4ce6a46).
+// Missing the 8-byte empty AUTH_NONE verifier; decode the header, do not reply.
+var rpcbindApcoRead1 = []byte("\x124Vx\x00\x00\x00\x00\x00\x00\x00\x02\x00\x01\x86\xa0\x00\x00\x00\x04\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00")
+
+func TestHandleRPCBindUDPTruncatedDump(t *testing.T) {
+	h := &recordingHoneypot{}
+	src, dst := rpcbindAddrs()
+
+	require.NoError(t, HandleRPCBind(context.Background(), src, dst, rpcbindApcoRead1, connection.Metadata{}, testLogger{}, h))
+	require.Len(t, h.produced, 1)
+	require.Equal(t, "rpcbind", h.produced[0].handler)
+	require.Equal(t, rpcbindApcoRead1, h.produced[0].payload)
+	require.Empty(t, h.replies)
+	require.Equal(t, []parsedRPCBind{
+		{
+			Direction: "read", Command: "RPCBPROC_DUMP", XID: 0x12345678,
+			Program: 100000, Version: 4, Procedure: 4, Auth: "AUTH_NONE",
+			Payload: rpcbindApcoRead1,
+		},
+	}, h.produced[0].decoded)
+}

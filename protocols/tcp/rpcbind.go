@@ -59,9 +59,7 @@ func (s *rpcbindServer) read() (*oncrpc.Call, error) {
 	}
 	frame := parsedRPCBind{Direction: "read", Command: "UNKNOWN", Payload: raw, Truncated: truncated}
 	call, perr := oncrpc.Parse(body)
-	if perr == nil {
-		describeRPCCall(&frame, call)
-	}
+	describeRPCCall(&frame, call)
 	s.events = append(s.events, frame)
 	if err != nil {
 		return nil, err
@@ -79,21 +77,33 @@ func (s *rpcbindServer) write(xid uint32, command string, body []byte, status st
 }
 
 // describeRPCCall copies the parsed call header and portmapper arguments into
-// a read frame.
+// a read frame. Partial calls (truncated before the verifier) still get xid /
+// program / version / procedure and a best-effort command when Header is set.
 func describeRPCCall(frame *parsedRPCBind, c *oncrpc.Call) {
-	frame.Command = c.Command()
-	frame.XID = c.XID
-	if c.MsgType != oncrpc.MsgCall {
+	if c == nil {
 		return
 	}
-	frame.Program, frame.Version, frame.Procedure = c.Program, c.Version, c.Procedure
-	frame.Auth = oncrpc.AuthName(c.CredFlavor)
-	if a := c.AuthSys; a != nil {
-		frame.MachineName = a.MachineName
-		frame.UID, frame.GID = &a.UID, &a.GID
-	}
-	if q, err := oncrpc.ParseQuery(c); err == nil && q != nil {
-		frame.TargetProgram, frame.TargetVersion, frame.Netid = q.Program, q.Version, q.Netid
+	switch c.MsgType {
+	case oncrpc.MsgReply:
+		frame.XID = c.XID
+		frame.Command = "REPLY"
+	case oncrpc.MsgCall:
+		frame.XID = c.XID
+		if !c.Header {
+			return
+		}
+		frame.Command = c.Command()
+		frame.Program, frame.Version, frame.Procedure = c.Program, c.Version, c.Procedure
+		if c.Cred {
+			frame.Auth = oncrpc.AuthName(c.CredFlavor)
+			if a := c.AuthSys; a != nil {
+				frame.MachineName = a.MachineName
+				frame.UID, frame.GID = &a.UID, &a.GID
+			}
+		}
+		if q, err := oncrpc.ParseQuery(c); err == nil && q != nil {
+			frame.TargetProgram, frame.TargetVersion, frame.Netid = q.Program, q.Version, q.Netid
+		}
 	}
 }
 

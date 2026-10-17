@@ -147,7 +147,7 @@ func TestHandleRPCBindPartialRecordStored(t *testing.T) {
 	produced, err := waitRPCBind(t, hp, done)
 	require.NoError(t, err)
 	require.Equal(t, connection.EndClientClose, produced.endReason)
-	require.Equal(t, []parsedRPCBind{{Direction: "read", Command: "UNKNOWN", Payload: partial}}, produced.decoded)
+	require.Equal(t, []parsedRPCBind{{Direction: "read", Command: "UNKNOWN", XID: 0xe877bb11, Payload: partial}}, produced.decoded)
 }
 
 func TestHandleRPCBindMalformedCall(t *testing.T) {
