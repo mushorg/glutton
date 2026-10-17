@@ -80,3 +80,30 @@ func decodeNetBIOSName(b []byte) (name string, n int, ok bool) {
 	n++ // terminating zero label
 	return strings.TrimRight(string(raw[:15]), " \x00"), n, true
 }
+
+// PeekLen is how many client bytes LooksLikeSMB needs: the 4-byte NBSS header
+// plus the SMB magic, or the first byte of a session request's called name.
+const PeekLen = 8
+
+// LooksLikeSMB reports whether b opens an SMB conversation on any port: a
+// session message whose body starts with \xffSMB (SMB1) or \xfeSMB (SMB2),
+// or an NBSS session request (port 139 style) whose called name is a
+// first-level encoded NetBIOS name.
+func LooksLikeSMB(b []byte) bool {
+	if len(b) < PeekLen || b[1]&^0x01 != 0 {
+		return false
+	}
+	length := int(b[1]&0x01)<<16 | int(b[2])<<8 | int(b[3])
+	switch b[0] {
+	case NBSSSessionMessage:
+		switch {
+		case b[4] == 0xff && string(b[5:8]) == "SMB":
+			return length >= 32
+		case b[4] == 0xfe && string(b[5:8]) == "SMB":
+			return length >= 64
+		}
+	case NBSSSessionRequest:
+		return b[4] == 0x20 && length >= 34
+	}
+	return false
+}

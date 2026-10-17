@@ -1,7 +1,10 @@
 # `smb` decoded data
 
 Transport: TCP, ports 445 (Direct TCP) and 139 (NetBIOS session service), same
-length-prefixed framing. Covers SMB1 and SMB2. Shared encodings and frame
+length-prefixed framing. Covers SMB1 and SMB2. SMB on any other port is also
+detected by the catch-all `tcp` handler (an NBSS header followed by `\xffSMB` /
+`\xfeSMB`, or an NBSS session request) and handed to this handler, so scanners
+that probe moved shares (e.g. Censys on tcp/25026) get a real Negotiate reply. Shared encodings and frame
 fields are described in [Logging and producers](../logging.md#decoded-data).
 
 `decoded` is an array of per-direction frames, one event per TCP session.

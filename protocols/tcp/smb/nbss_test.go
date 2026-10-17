@@ -6,6 +6,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestLooksLikeSMB(t *testing.T) {
+	// Censys SMB1 Negotiate captured on tcp/25026
+	smb1 := []byte{0x00, 0x00, 0x00, 0x2f, 0xff, 'S', 'M', 'B', 0x72, 0, 0, 0, 0, 0x18, 0x43, 0xc8,
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xfe,
+		0, 0, 0, 0, 0, 0x0c, 0, 0x02, 'N', 'T', ' ', 'L', 'M', ' ', '0', '.', '1', '2', 0}
+	smb2 := append([]byte{0x00, 0x00, 0x00, 0x40, 0xfe, 'S', 'M', 'B'}, make([]byte, 60)...)
+	nbss := append([]byte{0x81, 0x00, 0x00, 0x44, 0x20}, make([]byte, 8)...)
+
+	tests := []struct {
+		name string
+		in   []byte
+		want bool
+	}{
+		{"smb1 negotiate", smb1, true},
+		{"smb2 negotiate", smb2, true},
+		{"nbss session request", nbss, true},
+		{"short", smb1[:7], false},
+		{"empty", nil, false},
+		{"smb1 length too small", []byte{0x00, 0x00, 0x00, 0x04, 0xff, 'S', 'M', 'B', 0, 0, 0, 0}, false},
+		{"wrong magic", []byte{0x00, 0x00, 0x00, 0x2f, 0xff, 'S', 'M', 'X', 0x72}, false},
+		{"magic not at body start", []byte{0x00, 0x00, 0x00, 0x2f, 0x00, 0xff, 'S', 'M', 'B'}, false},
+		{"reserved flag bits", []byte{0x00, 0x80, 0x00, 0x2f, 0xff, 'S', 'M', 'B', 0x72}, false},
+		{"garbage", []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}, false},
+		{"http", []byte("GET / HTTP/1.1\r\n"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, LooksLikeSMB(tt.in))
+		})
+	}
+}
+
 // encodeNetBIOSName first-level encodes name padded to 15 bytes plus suffix.
 func encodeNetBIOSName(name string, suffix byte) []byte {
 	raw := []byte(name)

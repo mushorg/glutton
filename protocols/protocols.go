@@ -27,6 +27,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
 	"github.com/mushorg/glutton/protocols/tcp/redis"
 	"github.com/mushorg/glutton/protocols/tcp/rtsp"
+	"github.com/mushorg/glutton/protocols/tcp/smb"
 	"github.com/mushorg/glutton/protocols/tcp/socks"
 	"github.com/mushorg/glutton/protocols/tcp/spice"
 	"github.com/mushorg/glutton/protocols/udp"
@@ -392,6 +393,16 @@ var catchAllMatchers = []catchAllMatcher{
 		line:   true,
 		match:  func(b []byte) bool { return rtsp.LooksLikeRTSP(b[:min(len(b), rtspLinePeek)]) },
 		handle: asBuffered(tcp.HandleRTSP),
+	},
+	{
+		// SMB scanners (Censys, nmap) probe moved shares with a Negotiate;
+		// the NBSS header plus the \xffSMB / \xfeSMB magic tells it apart
+		name: "smb",
+		peek: fixedPeek(smb.PeekLen, func(snip []byte) bool {
+			return snip[0] == smb.NBSSSessionMessage || snip[0] == smb.NBSSSessionRequest
+		}),
+		match:  smb.LooksLikeSMB,
+		handle: asBuffered(tcp.HandleSMB),
 	},
 	{
 		// HL7 senders and scanners also find interface engines off 2575
