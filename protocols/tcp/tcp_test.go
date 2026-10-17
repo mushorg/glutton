@@ -793,6 +793,47 @@ func TestHandleTCPTLSHandshakeOnlyClient(t *testing.T) {
 	requireTLSHandshakeWrite(t, events[1])
 }
 
+func TestHandleTCPTLSNewlineProbeNoReply(t *testing.T) {
+	// Ochi event 331e8ff0-4377-406c-b2c7-f5fa7b161023: Shodan on tcp/55443
+	// finishes TLS then sends a lone "\n"; older sensors answered with random
+	// bytes inside the tunnel. Stay quiet like a real HTTPS listener.
+	raw, hp, done := startCatchAllTCP(t, 55443)
+	client := tls.Client(raw, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // test client for a self-signed cert
+	require.NoError(t, client.Handshake())
+
+	probe := []byte("\n")
+	_, err := client.Write(probe)
+	require.NoError(t, err)
+	// no application-data reply should arrive before the client hangs up
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(50*time.Millisecond)))
+	buf := make([]byte, 1)
+	_, err = client.Read(buf)
+	require.ErrorIs(t, err, os.ErrDeadlineExceeded)
+
+	produced := finishCatchAllProduced(t, client, hp, done)
+	require.NotNil(t, produced.tls)
+	require.Equal(t, connection.EndClientClose, produced.endReason)
+	events := produced.decoded.([]parsedTCP)
+	require.Len(t, events, 3)
+	require.Equal(t, "tls-clienthello", events[0].Command)
+	requireTLSHandshakeWrite(t, events[1])
+	require.Equal(t, parsedTCP{
+		Direction:   "read",
+		Command:     "tls-probe",
+		Payload:     probe,
+		PayloadHash: helpers.SHA256Hex(probe),
+	}, events[2])
+}
+
+func TestIsTLSNewlineProbe(t *testing.T) {
+	require.True(t, isTLSNewlineProbe([]byte("\n")))
+	require.True(t, isTLSNewlineProbe([]byte("\r\n")))
+	require.True(t, isTLSNewlineProbe([]byte("\r\n\r\n")))
+	require.False(t, isTLSNewlineProbe(nil))
+	require.False(t, isTLSNewlineProbe([]byte("GET /\n")))
+	require.False(t, isTLSNewlineProbe([]byte("\n\n\n\n\n")))
+}
+
 func TestHandleTCPTLSAlertMalformedHello(t *testing.T) {
 	// the record header matches the signature but the hello is cut short
 	client, hp, done := startCatchAll(t, 8009)

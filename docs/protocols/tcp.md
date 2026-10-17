@@ -64,7 +64,7 @@ Writes set `status` to the response name or `random`.
 | 9333 | `litecoin` | Sends nothing and hangs up, as litecoind does with bytes that are not its network magic |
 | 21379 | `opc-tunneller` | MatrikonOPC Tunneller default port. Sends nothing but keeps the connection open, so the client hello and its follow-up frames are recorded; the real server's reply framing is not public |
 
-Silent responses (`mglndd`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin or Litecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 21379 (`opc-tunneller`). Clients that send nothing get no reply.
+Silent responses (`mglndd`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin or Litecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 21379 (`opc-tunneller`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
 
 ## TLS ClientHello
 
@@ -73,7 +73,7 @@ A complete ClientHello is tagged `tls-clienthello`. The handler then:
 - finishes the handshake with the shared self-signed certificate (`helpers.TerminateTLSFrom`) and sets the event's `tls` object;
 - records a `write` frame with `status` `tls-handshake` for the server's handshake flight (also when the client hangs up mid-handshake or crypto/tls sends a fatal alert). If a handshake write fails, the frame is still recorded, with an `error` field (`reply over budget` for a `tcp_reply_limit` drop, otherwise `write failed`) and only the bytes that went out, and the event's `endReason` is `write_error`;
 - hands the session to the `http` handler when the first decrypted message is an HTTP request (HTTPS scanners on ports without a `tls:` rule). The produced event is then an `http` event with the `tls` object, and there is no `tcp` event and no `tls-clienthello` frame;
-- otherwise answers the next decrypted client message exactly like a plaintext first message (signature, then port response, then random bytes);
+- otherwise answers the next decrypted client message exactly like a plaintext first message (signature, then port response, then random bytes), except a lone CR/LF probe (`\n`, `\r\n`, …) is tagged `tls-probe` and gets no reply, as a real HTTPS server waiting for a request line would;
 - sends a server-first port banner inside the tunnel right after the handshake.
 
 Frames after the handshake hold plaintext. A client that hangs up during or right after the handshake leaves the `tls-clienthello` read and the `tls-handshake` write (no top-level `tls` object when the handshake never completed).

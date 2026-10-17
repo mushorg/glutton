@@ -101,6 +101,22 @@ func randomReply() ([]byte, error) {
 	return randomBytes, nil
 }
 
+// isTLSNewlineProbe reports whether data is only CR/LF bytes: the Shodan-style
+// TLS banner grab that sends a lone "\n" (or "\r\n") after the handshake and
+// waits for an application banner. A real HTTPS server stays quiet; answering
+// with random bytes fingerprints the catch-all.
+func isTLSNewlineProbe(data []byte) bool {
+	if len(data) == 0 || len(data) > 4 {
+		return false
+	}
+	for _, b := range data {
+		if b != '\n' && b != '\r' {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *tcpServer) write(data []byte, status string) error {
 	if _, err := s.conn.Write(data); err != nil {
 		return err
@@ -352,6 +368,12 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		sigResp, matched := banners.ForPayload(data)
 		command := ""
 		if matched {
+			command = sigResp.Name
+		} else if md.TLS != nil && isTLSNewlineProbe(data) {
+			// stay quiet like HTTPS: do not fall through to random (or a
+			// plaintext port banner) for a lone newline after the handshake
+			sigResp = banners.Response{Name: "tls-probe", NoReply: true}
+			matched = true
 			command = sigResp.Name
 		} else if greeted && round == 1 {
 			// only the message right after the greeting answers it
