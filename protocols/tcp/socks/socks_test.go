@@ -165,3 +165,19 @@ func TestLooksLikeSOCKS(t *testing.T) {
 		require.False(t, LooksLikeSOCKS(data), name)
 	}
 }
+
+func TestTunnelHTTPReply(t *testing.T) {
+	got := TunnelHTTPReply()
+	require.True(t, bytes.HasPrefix(got, []byte("HTTP/1.1 200 OK\r\n")))
+	require.Contains(t, string(got), `"ip":"`+JudgeIP+`"`)
+	require.Contains(t, string(got), `"origin":"`+JudgeIP+`"`)
+	require.NotContains(t, string(got), "glutton")
+	require.NotContains(t, string(got), "honeypot")
+}
+
+func TestLooksLikeHTTPRequest(t *testing.T) {
+	require.True(t, LooksLikeHTTPRequest([]byte("GET /ip HTTP/1.1\r\n\r\n")))
+	require.True(t, LooksLikeHTTPRequest([]byte("HEAD / HTTP/1.0\r\n\r\n")))
+	require.False(t, LooksLikeHTTPRequest([]byte{0x16, 0x03, 0x01}))
+	require.False(t, LooksLikeHTTPRequest([]byte("CONNECT example.com:443 HTTP/1.1\r\n")))
+}

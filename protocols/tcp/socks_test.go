@@ -2,6 +2,7 @@ package tcp
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"net"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/helpers"
+	"github.com/mushorg/glutton/protocols/tcp/socks"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
@@ -76,14 +78,15 @@ func TestHandleSOCKS4aCapturedEvent(t *testing.T) {
 	reply := socksExchange(t, client, socks4aHttpbin, 8)
 	granted := []byte{0x00, 0x5a, 0x9c, 0x40, 0, 0, 0, 0}
 	require.Equal(t, granted, reply)
-	_, err := client.Write(socksTunnelGET)
-	require.NoError(t, err)
+	judge := socks.TunnelHTTPReply()
+	require.Equal(t, judge, socksExchange(t, client, socksTunnelGET, len(judge)))
 
 	frames := finishSOCKS(t, client, hp, done)
 	require.Equal(t, []parsedSOCKS{
 		{Direction: "read", Command: "socks4a-connect", Path: "httpbin.org:80", Version: 4, Host: "httpbin.org", Port: 80, Payload: socks4aHttpbin},
 		{Direction: "write", Command: "socks4a-connect", Status: "granted", Payload: granted},
 		{Direction: "read", Command: "tunnel", Path: "httpbin.org:80", Payload: socksTunnelGET, PayloadHash: helpers.SHA256Hex(socksTunnelGET)},
+		{Direction: "write", Command: "tunnel", Status: "200", Payload: judge},
 	}, frames)
 }
 
@@ -107,8 +110,8 @@ func TestHandleSOCKS5NoAuth(t *testing.T) {
 	connect := []byte("\x05\x01\x00\x03\x0bhttpbin.org\x00\x50")
 	granted := []byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0x9c, 0x40}
 	require.Equal(t, granted, socksExchange(t, client, connect, 10))
-	_, err := client.Write(socksTunnelGET)
-	require.NoError(t, err)
+	judge := socks.TunnelHTTPReply()
+	require.Equal(t, judge, socksExchange(t, client, socksTunnelGET, len(judge)))
 
 	frames := finishSOCKS(t, client, hp, done)
 	require.Equal(t, []parsedSOCKS{
@@ -117,7 +120,58 @@ func TestHandleSOCKS5NoAuth(t *testing.T) {
 		{Direction: "read", Command: "socks5-connect", Path: "httpbin.org:80", Version: 5, Host: "httpbin.org", Port: 80, Payload: connect},
 		{Direction: "write", Command: "socks5-connect", Status: "granted", Payload: granted},
 		{Direction: "read", Command: "tunnel", Path: "httpbin.org:80", Payload: socksTunnelGET, PayloadHash: helpers.SHA256Hex(socksTunnelGET)},
+		{Direction: "write", Command: "tunnel", Status: "200", Payload: judge},
 	}, frames)
+}
+
+// Ochi 2dfb646d-c67a-4073-90bf-a7a1d80bd953: SOCKS5 CONNECT api.ipinfo.io:443
+// then a TLS ClientHello (PFCLOUD open-proxy judge).
+var socks5IpinfoConnect = []byte("\x05\x01\x00\x03\rapi.ipinfo.io\x01\xbb")
+
+func TestHandleSOCKS5TLSJudge(t *testing.T) {
+	client, hp, done := startSOCKS(t, 4096)
+
+	require.Equal(t, []byte{0x05, 0x00}, socksExchange(t, client, []byte{0x05, 0x01, 0x00}, 2))
+	granted := []byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0x9c, 0x40}
+	require.Equal(t, granted, socksExchange(t, client, socks5IpinfoConnect, 10))
+
+	tc := tls.Client(client, &tls.Config{ServerName: "api.ipinfo.io", InsecureSkipVerify: true})
+	require.NoError(t, tc.Handshake())
+	req := []byte("GET / HTTP/1.1\r\nHost: api.ipinfo.io\r\n\r\n")
+	_, err := tc.Write(req)
+	require.NoError(t, err)
+	judge := socks.TunnelHTTPReply()
+	got := make([]byte, len(judge))
+	_, err = io.ReadFull(tc, got)
+	require.NoError(t, err)
+	require.Equal(t, judge, got)
+	_ = client.Close() // server already closed after the judge reply
+
+	require.NoError(t, <-done)
+	var ev producedTCP
+	select {
+	case ev = <-hp.produced:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for produced SOCKS event")
+	}
+	require.Equal(t, "socks", ev.protocol)
+	frames, ok := ev.decoded.([]parsedSOCKS)
+	require.True(t, ok)
+	require.GreaterOrEqual(t, len(frames), 7)
+	require.Equal(t, "socks5-connect", frames[2].Command)
+	require.Equal(t, "api.ipinfo.io:443", frames[2].Path)
+	require.Equal(t, "granted", frames[3].Status)
+	require.Equal(t, "tls-clienthello", frames[4].Command)
+	require.Equal(t, "api.ipinfo.io", frames[4].SNI)
+	require.NotEmpty(t, frames[4].JA4)
+	require.Equal(t, "tls-handshake", frames[5].Status)
+	require.NotEmpty(t, frames[5].Payload)
+	require.Equal(t, "tunnel", frames[6].Command)
+	require.Equal(t, req, frames[6].Payload)
+	require.Equal(t, "200", frames[7].Status)
+	require.Equal(t, judge, frames[7].Payload)
+	require.NotNil(t, ev.tls)
+	require.Equal(t, "api.ipinfo.io", ev.tls.ServerName)
 }
 
 func TestHandleSOCKS5UserPassRecordsPassword(t *testing.T) {

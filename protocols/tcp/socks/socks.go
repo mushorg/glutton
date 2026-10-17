@@ -4,8 +4,10 @@ package socks
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -325,6 +327,34 @@ func Reply5(code byte, ip net.IP, port uint16) []byte {
 	}
 	binary.BigEndian.PutUint16(b[8:10], port)
 	return b
+}
+
+// JudgeIP is the egress address TunnelHTTPReply reports. It is a TEST-NET-2
+// documentation address so the sensor never claims its own public IP.
+const JudgeIP = "198.51.100.10"
+
+// TunnelHTTPReply is a canned HTTP/1.1 JSON body that open-proxy judges
+// (httpbin /ip, api.ipinfo.io, and similar) accept after CONNECT. Nothing is
+// dialed; the body is fixed.
+func TunnelHTTPReply() []byte {
+	body := fmt.Sprintf(`{"ip":%q,"origin":%q}`, JudgeIP, JudgeIP)
+	return []byte(fmt.Sprintf(
+		"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: %d\r\n\r\n%s",
+		len(body), body,
+	))
+}
+
+// LooksLikeHTTPRequest reports whether b starts with a common HTTP method.
+func LooksLikeHTTPRequest(b []byte) bool {
+	for _, m := range [][]byte{
+		[]byte("GET "), []byte("HEAD "), []byte("POST "),
+		[]byte("PUT "), []byte("OPTIONS "), []byte("DELETE "),
+	} {
+		if bytes.HasPrefix(b, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // LooksLikeSOCKS reports whether data is exactly one SOCKS4/4a request

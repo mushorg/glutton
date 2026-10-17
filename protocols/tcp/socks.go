@@ -2,9 +2,11 @@ package tcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
+	"io"
 	"log/slog"
 	"math/big"
 	"net"
@@ -21,9 +23,9 @@ import (
 
 type parsedSOCKS struct {
 	Direction   string `json:"direction,omitempty"`
-	Command     string `json:"command,omitempty"` // socks4a-connect, socks5-greeting, socks5-auth, tunnel, ...
+	Command     string `json:"command,omitempty"` // socks4a-connect, socks5-greeting, socks5-auth, tunnel, tls-clienthello, ...
 	Path        string `json:"path,omitempty"`    // requested host:port
-	Status      string `json:"status,omitempty"`  // granted, rejected, no-auth, user-pass, no-acceptable-method on writes
+	Status      string `json:"status,omitempty"`  // granted, rejected, no-auth, user-pass, no-acceptable-method, tls-handshake, 200 on writes
 	Version     int    `json:"version,omitempty"`
 	Host        string `json:"host,omitempty"`
 	Port        int    `json:"port,omitempty"`
@@ -33,6 +35,9 @@ type parsedSOCKS struct {
 	Payload     []byte `json:"payload,omitempty"`
 	PayloadHash string `json:"payload_hash,omitempty"`
 	Truncated   bool   `json:"truncated,omitempty"`
+	Error       string `json:"error,omitempty"` // why a tls-handshake write failed
+	// TLS ClientHello fingerprint fields on a tls-clienthello read.
+	*helpers.ClientHello
 }
 
 type socksServer struct {
@@ -55,20 +60,11 @@ var socksBoundPort = func() uint16 {
 // before it is granted without a hostname; a var so tests run instantly.
 var socksHostWait = time.Second
 
-// socksBoundIP reports the sensor address as BND.ADDR, like a proxy whose
-// outbound connections leave from the same host. It never reflects the
+// socksBoundIP is the BND.ADDR reported for a granted CONNECT. Always 0.0.0.0
+// so the reply does not leak the sensor address (RFC 1928 allows an
+// unspecified bind address; many proxies do the same). It never reflects the
 // requested destination.
-func socksBoundIP(conn net.Conn) net.IP {
-	if conn == nil || conn.LocalAddr() == nil {
-		return net.IPv4zero
-	}
-	host, _, err := net.SplitHostPort(conn.LocalAddr().String())
-	if err != nil {
-		return net.IPv4zero
-	}
-	if ip := net.ParseIP(host).To4(); ip != nil {
-		return ip
-	}
+func socksBoundIP(_ net.Conn) net.IP {
 	return net.IPv4zero
 }
 
@@ -102,19 +98,16 @@ func (s *socksServer) write(data []byte, command, status string) error {
 	return nil
 }
 
-// readTunnel captures what the client sends through a granted tunnel, up to
-// max_tcp_payload. Nothing is forwarded. readErr is set only when nothing
-// arrived.
-func (s *socksServer) readTunnel(path string) (readErr, storeErr error) {
+// readTunnelBytes reads up to max_tcp_payload from r. readErr is set only when
+// nothing arrived.
+func readTunnelBytes(r io.Reader) (data []byte, truncated bool, readErr error) {
 	limit := viper.GetInt("max_tcp_payload")
 	if limit <= 0 {
 		limit = maxBufferSize
 	}
-	data := []byte{}
 	buffer := make([]byte, maxBufferSize)
-	truncated := false
 	for {
-		n, err := s.r.Read(buffer)
+		n, err := r.Read(buffer)
 		data = append(data, buffer[:n]...)
 		if len(data) > limit {
 			data = data[:limit]
@@ -130,24 +123,114 @@ func (s *socksServer) readTunnel(path string) (readErr, storeErr error) {
 		}
 	}
 	if len(data) == 0 {
-		return readErr, nil
+		return nil, false, readErr
 	}
-	// Store returns an empty hash for a payload it already has
-	_, storeErr = helpers.Store(data, "payloads")
+	return data, truncated, nil
+}
+
+func (s *socksServer) captureTunnel(path, command string, data []byte, truncated bool, hello *helpers.ClientHello) error {
+	_, storeErr := helpers.Store(data, "payloads")
 	s.events = append(s.events, parsedSOCKS{
 		Direction:   "read",
-		Command:     "tunnel",
+		Command:     command,
 		Path:        path,
 		Payload:     data,
 		PayloadHash: helpers.SHA256Hex(data),
 		Truncated:   truncated,
+		ClientHello: hello,
 	})
-	return nil, storeErr
+	return storeErr
+}
+
+func (s *socksServer) writeTo(w io.Writer, data []byte, command, status string) error {
+	if _, err := w.Write(data); err != nil {
+		return err
+	}
+	s.events = append(s.events, parsedSOCKS{
+		Direction: "write",
+		Command:   command,
+		Status:    status,
+		Payload:   data,
+	})
+	return nil
+}
+
+// handleTunnel captures the first bytes after a granted CONNECT. A complete
+// TLS ClientHello is terminated (self-signed CN=localhost) and tagged
+// tls-clienthello with SNI/JA fingerprints; a following HTTP request gets a
+// canned JSON judge reply. Plaintext HTTP in the tunnel gets the same reply.
+// Nothing is dialed or forwarded.
+func (s *socksServer) handleTunnel(ctx context.Context, path string, md *connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) (endReason string, err error) {
+	data, truncated, readErr := readTunnelBytes(s.r)
+	if len(data) == 0 {
+		return connection.EndReasonFromRead(readErr), readErr
+	}
+
+	if !truncated {
+		if hello, ok := helpers.ParseClientHello(data); ok {
+			if storeErr := s.captureTunnel(path, "tls-clienthello", data, false, hello); storeErr != nil {
+				logger.Error("Failed to store tunneled payload", slog.String("protocol", "socks"), producer.ErrAttr(storeErr))
+			}
+			if err := h.UpdateConnectionTimeout(ctx, s.conn); err != nil {
+				logger.Debug("Failed to set connection timeout", slog.String("protocol", "socks"), producer.ErrAttr(err))
+				return connection.EndTimeout, nil
+			}
+			rec := &tcpWriteRecorder{Conn: s.conn, on: true}
+			tlsConn, info, herr := helpers.TerminateTLSFrom(rec, io.MultiReader(bytes.NewReader(data), s.r))
+			rec.on = false
+			if rec.buf.Len() > 0 || rec.err != nil {
+				frame := parsedSOCKS{Direction: "write", Status: "tls-handshake", Error: writeErrorName(rec.err)}
+				if rec.buf.Len() > 0 {
+					frame.Payload = append([]byte(nil), rec.buf.Bytes()...)
+					frame.PayloadHash = helpers.SHA256Hex(frame.Payload)
+				}
+				s.events = append(s.events, frame)
+			}
+			if herr != nil {
+				logger.Debug("TLS handshake failed", slog.String("protocol", "socks"), producer.ErrAttr(herr))
+				if rec.err != nil {
+					return connection.EndWriteError, nil
+				}
+				return connection.EndReasonFromRead(herr), nil
+			}
+			md.TLS = info
+			if err := h.UpdateConnectionTimeout(ctx, tlsConn); err != nil {
+				logger.Debug("Failed to set connection timeout", slog.String("protocol", "socks"), producer.ErrAttr(err))
+				return connection.EndTimeout, nil
+			}
+			plain, plainTrunc, plainErr := readTunnelBytes(tlsConn)
+			if len(plain) == 0 {
+				return connection.EndReasonFromRead(plainErr), nil
+			}
+			if storeErr := s.captureTunnel(path, "tunnel", plain, plainTrunc, nil); storeErr != nil {
+				logger.Error("Failed to store tunneled payload", slog.String("protocol", "socks"), producer.ErrAttr(storeErr))
+			}
+			if !plainTrunc && socks.LooksLikeHTTPRequest(plain) {
+				if err := s.writeTo(tlsConn, socks.TunnelHTTPReply(), "tunnel", "200"); err != nil {
+					logger.Error("Failed to write to connection", slog.String("protocol", "socks"), producer.ErrAttr(err))
+					return connection.EndWriteError, nil
+				}
+			}
+			return connection.EndHandlerClose, nil
+		}
+	}
+
+	if storeErr := s.captureTunnel(path, "tunnel", data, truncated, nil); storeErr != nil {
+		logger.Error("Failed to store tunneled payload", slog.String("protocol", "socks"), producer.ErrAttr(storeErr))
+	}
+	if !truncated && socks.LooksLikeHTTPRequest(data) {
+		if err := s.write(socks.TunnelHTTPReply(), "tunnel", "200"); err != nil {
+			logger.Error("Failed to write to connection", slog.String("protocol", "socks"), producer.ErrAttr(err))
+			return connection.EndWriteError, nil
+		}
+	}
+	return connection.EndHandlerClose, nil
 }
 
 // HandleSOCKS answers SOCKS4, SOCKS4a and SOCKS5 proxy requests: it grants
-// CONNECT without dialing anything, captures the first tunneled request and
-// closes. SOCKS5 clients offering username/password are asked for it.
+// CONNECT without dialing anything, then answers a tunneled TLS/HTTP judge
+// check with a canned reply. SOCKS5 clients offering username/password are
+// asked for it.
 func HandleSOCKS(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := &socksServer{events: []parsedSOCKS{}, conn: conn, r: bufio.NewReader(conn)}
 	endReason := connection.EndHandlerClose
@@ -301,12 +384,12 @@ func HandleSOCKS(ctx context.Context, conn net.Conn, md connection.Metadata, log
 	if !timeout() {
 		return nil
 	}
-	readErr, storeErr := server.readTunnel(req.Addr())
-	if storeErr != nil {
-		logger.Error("Failed to store tunneled payload", slog.String("protocol", "socks"), producer.ErrAttr(storeErr))
+	reason, err := server.handleTunnel(ctx, req.Addr(), &md, logger, h)
+	if reason != "" {
+		endReason = reason
 	}
-	if readErr != nil {
-		return readFailed(readErr)
+	if err != nil {
+		logger.Debug("Failed to read data", slog.String("protocol", "socks"), producer.ErrAttr(err))
 	}
 	return nil
 }
