@@ -7,6 +7,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,12 +28,32 @@ func SelfSignedCertificate(subject pkix.Name, dnsNames ...string) (tls.Certifica
 	v, _ := selfSignedCerts.LoadOrStore(subject.String(), &certEntry{})
 	e := v.(*certEntry)
 	e.once.Do(func() {
-		e.cert, e.err = generateCertificate(subject, dnsNames)
+		e.cert, e.err = generateCertificate(subject, dnsNames, nil)
 	})
 	return e.cert, e.err
 }
 
-func generateCertificate(subject pkix.Name, dnsNames []string) (tls.Certificate, error) {
+// SelfSignedCertificateForHost returns a self-signed certificate whose CN and
+// SAN match host (DNS name or IP). Empty, oversized, or invalid hosts fall
+// back to CN=localhost. Cached once per host string for the process lifetime.
+func SelfSignedCertificateForHost(host string) (tls.Certificate, error) {
+	host = strings.TrimSpace(host)
+	if host == "" || len(host) > 253 || strings.ContainsRune(host, 0) {
+		return SelfSignedCertificate(pkix.Name{CommonName: "localhost"}, "localhost")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		key := "ip:" + ip.String()
+		v, _ := selfSignedCerts.LoadOrStore(key, &certEntry{})
+		e := v.(*certEntry)
+		e.once.Do(func() {
+			e.cert, e.err = generateCertificate(pkix.Name{CommonName: ip.String()}, nil, []net.IP{ip})
+		})
+		return e.cert, e.err
+	}
+	return SelfSignedCertificate(pkix.Name{CommonName: host}, host)
+}
+
+func generateCertificate(subject pkix.Name, dnsNames []string, ips []net.IP) (tls.Certificate, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return tls.Certificate{}, err
@@ -44,6 +66,7 @@ func generateCertificate(subject pkix.Name, dnsNames []string) (tls.Certificate,
 		SerialNumber:          serial,
 		Subject:               subject,
 		DNSNames:              dnsNames,
+		IPAddresses:           ips,
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,

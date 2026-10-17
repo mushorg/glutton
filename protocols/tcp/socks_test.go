@@ -128,6 +128,29 @@ func TestHandleSOCKS5NoAuth(t *testing.T) {
 // then a TLS ClientHello (PFCLOUD open-proxy judge).
 var socks5IpinfoConnect = []byte("\x05\x01\x00\x03\rapi.ipinfo.io\x01\xbb")
 
+// Ochi 6c15697e-3ba8-4453-b035-57aa7eb10e9a: SOCKS5 CONNECT ipv4.icanhazip.com:443
+// (PFCLOUD open-proxy judge; older sensors served CN=localhost and the client
+// aborted during the handshake).
+var socks5IcanhazConnect = []byte("\x05\x01\x00\x03\x12ipv4.icanhazip.com\x01\xbb")
+
+func TestTunnelCertName(t *testing.T) {
+	require.Equal(t, "ipv4.icanhazip.com", tunnelCertName("ipv4.icanhazip.com", "other.example:443"))
+	require.Equal(t, "api.ipinfo.io", tunnelCertName("", "api.ipinfo.io:443"))
+	require.Equal(t, "", tunnelCertName("", "not-a-host-port"))
+}
+
+// tlsJudgeClient accepts the honeypot's self-signed cert but still checks that
+// the leaf name matches serverName (the check open-proxy judges often do).
+func tlsJudgeClient(conn net.Conn, serverName string) *tls.Conn {
+	return tls.Client(conn, &tls.Config{
+		ServerName:         serverName,
+		InsecureSkipVerify: true,
+		VerifyConnection: func(state tls.ConnectionState) error {
+			return state.PeerCertificates[0].VerifyHostname(serverName)
+		},
+	})
+}
+
 func TestHandleSOCKS5TLSJudge(t *testing.T) {
 	client, hp, done := startSOCKS(t, 4096)
 
@@ -135,8 +158,9 @@ func TestHandleSOCKS5TLSJudge(t *testing.T) {
 	granted := []byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0x9c, 0x40}
 	require.Equal(t, granted, socksExchange(t, client, socks5IpinfoConnect, 10))
 
-	tc := tls.Client(client, &tls.Config{ServerName: "api.ipinfo.io", InsecureSkipVerify: true})
+	tc := tlsJudgeClient(client, "api.ipinfo.io")
 	require.NoError(t, tc.Handshake())
+	require.NoError(t, tc.ConnectionState().PeerCertificates[0].VerifyHostname("api.ipinfo.io"))
 	req := []byte("GET / HTTP/1.1\r\nHost: api.ipinfo.io\r\n\r\n")
 	_, err := tc.Write(req)
 	require.NoError(t, err)
@@ -172,6 +196,41 @@ func TestHandleSOCKS5TLSJudge(t *testing.T) {
 	require.Equal(t, judge, frames[7].Payload)
 	require.NotNil(t, ev.tls)
 	require.Equal(t, "api.ipinfo.io", ev.tls.ServerName)
+}
+
+func TestHandleSOCKS5TLSJudgeIcanhazip(t *testing.T) {
+	client, hp, done := startSOCKS(t, 4096)
+
+	require.Equal(t, []byte{0x05, 0x00}, socksExchange(t, client, []byte{0x05, 0x01, 0x00}, 2))
+	granted := []byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0x9c, 0x40}
+	require.Equal(t, granted, socksExchange(t, client, socks5IcanhazConnect, 10))
+
+	tc := tlsJudgeClient(client, "ipv4.icanhazip.com")
+	require.NoError(t, tc.Handshake())
+	req := []byte("GET / HTTP/1.1\r\nHost: ipv4.icanhazip.com\r\n\r\n")
+	_, err := tc.Write(req)
+	require.NoError(t, err)
+	judge := socks.TunnelHTTPReply()
+	got := make([]byte, len(judge))
+	_, err = io.ReadFull(tc, got)
+	require.NoError(t, err)
+	require.Equal(t, judge, got)
+	_ = client.Close()
+
+	require.NoError(t, <-done)
+	var ev producedTCP
+	select {
+	case ev = <-hp.produced:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for produced SOCKS event")
+	}
+	frames, ok := ev.decoded.([]parsedSOCKS)
+	require.True(t, ok)
+	require.Equal(t, "ipv4.icanhazip.com:443", frames[2].Path)
+	require.Equal(t, "ipv4.icanhazip.com", frames[4].SNI)
+	require.Equal(t, "200", frames[7].Status)
+	require.NotNil(t, ev.tls)
+	require.Equal(t, "ipv4.icanhazip.com", ev.tls.ServerName)
 }
 
 func TestHandleSOCKS5UserPassRecordsPassword(t *testing.T) {

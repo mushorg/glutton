@@ -12,6 +12,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSelfSignedCertificateForHost(t *testing.T) {
+	dnsCert, err := SelfSignedCertificateForHost("ipv4.icanhazip.com")
+	require.NoError(t, err)
+	leaf, err := x509.ParseCertificate(dnsCert.Certificate[0])
+	require.NoError(t, err)
+	require.Equal(t, "ipv4.icanhazip.com", leaf.Subject.CommonName)
+	require.NoError(t, leaf.VerifyHostname("ipv4.icanhazip.com"))
+
+	ipCert, err := SelfSignedCertificateForHost("198.51.100.10")
+	require.NoError(t, err)
+	ipLeaf, err := x509.ParseCertificate(ipCert.Certificate[0])
+	require.NoError(t, err)
+	require.NoError(t, ipLeaf.VerifyHostname("198.51.100.10"))
+
+	fallback, err := SelfSignedCertificateForHost("")
+	require.NoError(t, err)
+	fbLeaf, err := x509.ParseCertificate(fallback.Certificate[0])
+	require.NoError(t, err)
+	require.Equal(t, "localhost", fbLeaf.Subject.CommonName)
+}
+
 func TestTerminateTLS(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()

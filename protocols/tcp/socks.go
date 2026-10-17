@@ -155,11 +155,24 @@ func (s *socksServer) writeTo(w io.Writer, data []byte, command, status string) 
 	return nil
 }
 
+// tunnelCertName picks the name for the tunnel TLS certificate: ClientHello
+// SNI when present, otherwise the CONNECT host from path (host:port).
+func tunnelCertName(sni, path string) string {
+	if sni != "" {
+		return sni
+	}
+	host, _, err := net.SplitHostPort(path)
+	if err != nil {
+		return ""
+	}
+	return host
+}
+
 // handleTunnel captures the first bytes after a granted CONNECT. A complete
-// TLS ClientHello is terminated (self-signed CN=localhost) and tagged
-// tls-clienthello with SNI/JA fingerprints; a following HTTP request gets a
-// canned JSON judge reply. Plaintext HTTP in the tunnel gets the same reply.
-// Nothing is dialed or forwarded.
+// TLS ClientHello is terminated with a self-signed cert matching the SNI (or
+// CONNECT host) and tagged tls-clienthello with SNI/JA fingerprints; a
+// following HTTP request gets a canned JSON judge reply. Plaintext HTTP in
+// the tunnel gets the same reply. Nothing is dialed or forwarded.
 func (s *socksServer) handleTunnel(ctx context.Context, path string, md *connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) (endReason string, err error) {
 	data, truncated, readErr := readTunnelBytes(s.r)
 	if len(data) == 0 {
@@ -175,8 +188,13 @@ func (s *socksServer) handleTunnel(ctx context.Context, path string, md *connect
 				logger.Debug("Failed to set connection timeout", slog.String("protocol", "socks"), producer.ErrAttr(err))
 				return connection.EndTimeout, nil
 			}
+			cert, certErr := helpers.SelfSignedCertificateForHost(tunnelCertName(hello.SNI, path))
+			if certErr != nil {
+				logger.Error("Failed to build tunnel TLS certificate", slog.String("protocol", "socks"), producer.ErrAttr(certErr))
+				return connection.EndHandlerClose, nil
+			}
 			rec := &tcpWriteRecorder{Conn: s.conn, on: true}
-			tlsConn, info, herr := helpers.TerminateTLSFrom(rec, io.MultiReader(bytes.NewReader(data), s.r))
+			tlsConn, info, herr := helpers.TerminateTLSFromWith(cert, rec, io.MultiReader(bytes.NewReader(data), s.r))
 			rec.on = false
 			if rec.buf.Len() > 0 || rec.err != nil {
 				frame := parsedSOCKS{Direction: "write", Status: "tls-handshake", Error: writeErrorName(rec.err)}
@@ -229,8 +247,8 @@ func (s *socksServer) handleTunnel(ctx context.Context, path string, md *connect
 
 // HandleSOCKS answers SOCKS4, SOCKS4a and SOCKS5 proxy requests: it grants
 // CONNECT without dialing anything, then answers a tunneled TLS/HTTP judge
-// check with a canned reply. SOCKS5 clients offering username/password are
-// asked for it.
+// check with a canned reply (tunnel TLS cert matches SNI/CONNECT host).
+// SOCKS5 clients offering username/password are asked for it.
 func HandleSOCKS(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := &socksServer{events: []parsedSOCKS{}, conn: conn, r: bufio.NewReader(conn)}
 	endReason := connection.EndHandlerClose
