@@ -49,14 +49,16 @@ const busyboxPingUsage = "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) multi-call b
 // maxTelnetSample caps bytes fetched from wget/curl URLs.
 const maxTelnetSample = 10 << 20
 
-// telnetShPrompt is the BusyBox root shell prompt written after `sh`. The
-// sigil must not be the first byte: Mirai's consume_any_prompt scans the
-// receive buffer from the end down to index 1, so a bare "$ " never matches.
-const telnetShPrompt = "~ # "
+// telnetShPrompt is written after commands once `sh` has switched the
+// session into the BusyBox shell. Same bytes as the pre-sh prompt: this fleet
+// answers `> ` for enable/linuxshell/system/shell and stalls on anything else
+// after `sh` (`$ `, `~ # `, `\r\n> `; Ochi event 1997a98e-cfb2-48dc-88bf-d487b3a0a3c9).
+const telnetShPrompt = "> "
 
-// telnetShReply is what `sh` writes: the ash banner of an interactive BusyBox
-// shell followed by its prompt, so clients that wait for a banner carry on.
-const telnetShReply = busyboxBanner + telnetShPrompt
+// telnetShReply is unused as a distinct write: `sh` is silent like enable
+// (the loop writes telnetShPrompt). Kept so skipPrompt can still mark inSh
+// if a canned sh reply is added back.
+const telnetShReply = telnetShPrompt
 
 // telnetGreeting is the prompt written after a successful login.
 const telnetGreeting = "welcome\r\n> "
@@ -69,13 +71,10 @@ var miraiCom = map[string][]string{
 	"(cat .s || cp /bin/echo .s)": {"cat: .s: No such file or directory"},
 	"nc":                          {"nc: command not found"},
 	"wget":                        {"wget: missing URL"},
-	"sh":                          {telnetShReply},
-	"sh || shell":                 {telnetShReply},
-	"enable\x00":                  {"-bash: enable: command not found"},
-	"linuxshell\x00":              {"-bash: linuxshell: command not found"},
-	"system\x00":                  {"-bash: system: command not found"},
-	"shell\x00":                   {"-bash: shell: command not found"},
-	"sh\x00":                      {telnetShReply},
+	// enable / linuxshell / system / shell / sh are silent: a body with ':'
+	// (old "-bash: X: command not found") is a false Mirai prompt, and a
+	// distinct sh write (`$ `, `~ # `, `\r\n> `) stalled this fleet after it
+	// had answered every bare "> ". The loop still writes "> ".
 	//	"fgrep XDVR /mnt/mtd/dep2.sh\x00":		   {"cd /mnt/mtd && ./XDVRStart.hisi ./td3500 &"},
 	"busybox": {busyboxBanner},
 	"echo -ne '\\x48\\x6f\\x6c\\x6c\\x61\\x46\\x6f\\x72\\x41\\x6c\\x6c\\x61\\x68\\x0a'\r\n": {"\x48\x6f\x6c\x6c\x61\x46\x6f\x72\x41\x6c\x6c\x61\x68\x0arn"},
@@ -299,8 +298,9 @@ type parsedTelnet struct {
 	Path        string `json:"path,omitempty"` // wget/curl URL when present
 	Message     string `json:"message,omitempty"`
 	PayloadHash string `json:"payload_hash,omitempty"`
-	Variant     string `json:"variant,omitempty"` // architecture variant, on writes that depend on it
-	Visit       int    `json:"visit,omitempty"`   // source's visit number, on writes that depend on it
+	Variant     string `json:"variant,omitempty"`   // architecture variant, on writes that depend on it
+	Visit       int    `json:"visit,omitempty"`     // source's visit number, on writes that depend on it
+	OffsetMs    int64  `json:"offset_ms,omitempty"` // milliseconds since the connection was accepted
 }
 
 type telnetServer struct {
@@ -310,6 +310,7 @@ type telnetServer struct {
 	client   *http.Client
 	step     string
 	inSh     bool // `sh` has run: the prompt is telnetShPrompt and errors are ash-style
+	started  time.Time
 	sampleWG sync.WaitGroup
 	sampleMu sync.Mutex
 	samples  map[int]string // event index -> sample hash
@@ -328,9 +329,19 @@ func newTelnetServer(conn net.Conn) *telnetServer {
 		reader:  bufio.NewReader(conn),
 		client:  &http.Client{Timeout: 5 * time.Second},
 		samples: map[int]string{},
+		started: telnetNow(),
 		srcIP:   remoteIP(conn),
 		arch:    telnetArches[0],
 	}
+}
+
+// telnetNow is the clock behind parsedTelnet.OffsetMs; tests swap it.
+var telnetNow = time.Now
+
+// add records one frame with its offset from the start of the connection.
+func (s *telnetServer) add(ev parsedTelnet) {
+	ev.OffsetMs = telnetNow().Sub(s.started).Milliseconds()
+	s.events = append(s.events, ev)
 }
 
 // telnetRecall remembers each source's last visit; tests swap it for a store
@@ -479,7 +490,7 @@ func (s *telnetServer) write(msg string) error {
 	if _, err := s.conn.Write([]byte(msg)); err != nil {
 		return err
 	}
-	s.events = append(s.events, parsedTelnet{Direction: "write", Command: telnetWriteCommand(msg), Message: msg})
+	s.add(parsedTelnet{Direction: "write", Command: telnetWriteCommand(msg), Message: msg})
 	return nil
 }
 
@@ -547,7 +558,7 @@ func (s *telnetServer) readBinary() error {
 		if n >= 2 && data[0] == 0x16 && data[1] == 0x03 {
 			cmd = "tls_client_hello"
 		}
-		s.events = append(s.events, parsedTelnet{Direction: "read", Command: cmd, Message: string(data)})
+		s.add(parsedTelnet{Direction: "read", Command: cmd, Message: string(data)})
 	}
 	return err
 }
@@ -558,7 +569,7 @@ func (s *telnetServer) read() (string, error) {
 	if len(msg) > 0 {
 		cleaned, negotiation := stripTelnetIAC([]byte(msg))
 		if len(negotiation) > 0 {
-			s.events = append(s.events, parsedTelnet{Direction: "read", Message: string(negotiation)})
+			s.add(parsedTelnet{Direction: "read", Message: string(negotiation)})
 		}
 		if len(cleaned) > 0 {
 			cmd := ""
@@ -568,7 +579,7 @@ func (s *telnetServer) read() (string, error) {
 			default:
 				cmd = telnetShellCommand(string(cleaned))
 			}
-			s.events = append(s.events, parsedTelnet{Direction: "read", Command: cmd, Message: string(cleaned)})
+			s.add(parsedTelnet{Direction: "read", Command: cmd, Message: string(cleaned)})
 		}
 		return string(cleaned), err
 	}
