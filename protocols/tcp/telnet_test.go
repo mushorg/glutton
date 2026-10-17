@@ -105,7 +105,7 @@ func TestHandleTelnetMiraiFlow(t *testing.T) {
 	expect("> ")
 
 	send("sh\x00\r\n")
-	expect("$ ")
+	expect(telnetShPrompt)
 
 	send("/bin/busybox UNSTABLE\x00\r\n")
 	expect("UNSTABLE: applet not found\r\n")
@@ -153,7 +153,7 @@ func TestHandleTelnetMiraiFlow(t *testing.T) {
 		{Direction: "write", Message: "-bash: shell: command not found\r\n"},
 		{Direction: "write", Message: "> "},
 		{Direction: "read", Command: "sh", Message: "sh\x00\r\n"},
-		{Direction: "write", Message: "$ "},
+		{Direction: "write", Message: telnetShPrompt},
 		{Direction: "read", Command: "/bin/busybox", Message: "/bin/busybox UNSTABLE\x00\r\n"},
 		{Direction: "write", Message: "UNSTABLE: applet not found\r\n"},
 		{Direction: "write", Message: busyboxBanner},
@@ -221,7 +221,7 @@ func TestTelnetReply(t *testing.T) {
 		{"(cat .s || cp /bin/echo .s)", []string{"cat: .s: No such file or directory\r\n"}, false},
 		{"shell\r\n", []string{"-bash: shell: command not found\r\n"}, false},
 		{"enable\x00\r\n", []string{"-bash: enable: command not found\r\n"}, false},
-		{" sh\r\n", []string{"$ "}, true},
+		{" sh\r\n", []string{telnetShPrompt}, true},
 		{"ping", nil, false},
 		{"\r\n", nil, false},
 	}
@@ -236,6 +236,29 @@ func TestTelnetReply(t *testing.T) {
 	resp, err := telnetReply("cat /proc/self/exe", telnetArches[1])
 	require.NoError(t, err)
 	require.Equal(t, []string{telnetArches[1].elfHeader() + "\r\n"}, resp.out)
+}
+
+// miraiConsumeAnyPrompt mirrors Mirai's scanner.c consume_any_prompt: it scans
+// the receive buffer from the end down to index 1 (never 0) for a prompt sigil.
+func miraiConsumeAnyPrompt(buf string) bool {
+	for i := len(buf) - 1; i > 0; i-- {
+		if strings.ContainsRune(":>$#%", rune(buf[i])) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestTelnetShPromptMirai covers Ochi event f80c50ae-1a00-40b1-a410-18bcdeb32550:
+// a bare "$ " after `sh\x00` was never seen as a prompt and the bot stalled.
+func TestTelnetShPromptMirai(t *testing.T) {
+	require.False(t, miraiConsumeAnyPrompt("$ "), "old reply must reproduce the stall")
+	for _, cmd := range []string{"sh\x00\r\n", "sh\r\n", "sh || shell"} {
+		resp, err := telnetReply(cmd, telnetArches[0])
+		require.NoError(t, err, cmd)
+		require.True(t, resp.skipPrompt, cmd)
+		require.True(t, miraiConsumeAnyPrompt(strings.Join(resp.out, "")), cmd)
+	}
 }
 
 // TestHandleTelnetArchProbe replays Ochi event 59ffc4e5-6a75-4259-8bb0-0b5ebb0a8039:
@@ -277,12 +300,12 @@ func TestHandleTelnetArchProbe(t *testing.T) {
 	expect("welcome\r\n> ")
 
 	send("sh\r\n")
-	expect("$ ")
+	expect(telnetShPrompt)
 	send("shell\r\n")
 	expect("-bash: shell: command not found\r\n")
 	expect("> ")
 	send("ping; sh\r\n")
-	expect("$ ")
+	expect(telnetShPrompt)
 	send("/bin/busybox HISILICON\r\n")
 	expect("HISILICON: applet not found\r\n")
 	expect(busyboxBanner)
@@ -319,12 +342,12 @@ func TestHandleTelnetArchProbe(t *testing.T) {
 		{Direction: "read", Command: "password", Message: "admin\r\n"},
 		{Direction: "write", Message: "welcome\r\n> "},
 		{Direction: "read", Command: "sh", Message: "sh\r\n"},
-		{Direction: "write", Message: "$ "},
+		{Direction: "write", Message: telnetShPrompt},
 		{Direction: "read", Command: "shell", Message: "shell\r\n"},
 		{Direction: "write", Message: "-bash: shell: command not found\r\n"},
 		{Direction: "write", Message: "> "},
 		{Direction: "read", Command: "ping", Message: "ping; sh\r\n"},
-		{Direction: "write", Message: "$ "},
+		{Direction: "write", Message: telnetShPrompt},
 		{Direction: "read", Command: "/bin/busybox", Message: "/bin/busybox HISILICON\r\n"},
 		{Direction: "write", Message: "HISILICON: applet not found\r\n"},
 		{Direction: "write", Message: busyboxBanner},

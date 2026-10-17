@@ -30,6 +30,11 @@ const busyboxBanner = "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) built-in shell 
 // maxTelnetSample caps bytes fetched from wget/curl URLs.
 const maxTelnetSample = 10 << 20
 
+// telnetShPrompt is the BusyBox root shell prompt written after `sh`. The
+// sigil must not be the first byte: Mirai's consume_any_prompt scans the
+// receive buffer from the end down to index 1, so a bare "$ " never matches.
+const telnetShPrompt = "~ # "
+
 // Mirai botnet  - https://github.com/CymmetriaResearch/MTPot/blob/master/mirai_conf.json
 // Hajime botnet - https://security.rapiditynetworks.com/publications/2016-10-16/hajime.pdf
 var miraiCom = map[string][]string{
@@ -38,13 +43,13 @@ var miraiCom = map[string][]string{
 	"(cat .s || cp /bin/echo .s)": {"cat: .s: No such file or directory"},
 	"nc":                          {"nc: command not found"},
 	"wget":                        {"wget: missing URL"},
-	"sh":                          {"$"},
-	"sh || shell":                 {"$"},
+	"sh":                          {telnetShPrompt},
+	"sh || shell":                 {telnetShPrompt},
 	"enable\x00":                  {"-bash: enable: command not found"},
 	"linuxshell\x00":              {"-bash: linuxshell: command not found"},
 	"system\x00":                  {"-bash: system: command not found"},
 	"shell\x00":                   {"-bash: shell: command not found"},
-	"sh\x00":                      {"$"},
+	"sh\x00":                      {telnetShPrompt},
 	//	"fgrep XDVR /mnt/mtd/dep2.sh\x00":		   {"cd /mnt/mtd && ./XDVRStart.hisi ./td3500 &"},
 	"busybox": {busyboxBanner},
 	"echo -ne '\\x48\\x6f\\x6c\\x6c\\x61\\x46\\x6f\\x72\\x41\\x6c\\x6c\\x61\\x68\\x0a'\r\n": {"\x48\x6f\x6c\x6c\x61\x46\x6f\x72\x41\x6c\x6c\x61\x68\x0arn"},
@@ -240,9 +245,9 @@ func telnetReply(cmd string, arch telnetArch) (telnetResponse, error) {
 			return telnetResponse{}, err
 		}
 		reply := resp[n.Int64()]
-		// sh emits a real shell prompt (dollar + space, no CRLF); do not append "> ".
-		if reply == "$" {
-			return telnetResponse{out: []string{"$ "}, skipPrompt: true}, nil
+		// sh emits a real shell prompt (no CRLF); do not append "> ".
+		if reply == telnetShPrompt {
+			return telnetResponse{out: []string{telnetShPrompt}, skipPrompt: true}, nil
 		}
 		return telnetResponse{out: []string{reply + "\r\n"}, variant: elf}, nil
 	}
