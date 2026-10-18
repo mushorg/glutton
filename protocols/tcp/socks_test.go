@@ -85,7 +85,7 @@ func TestHandleSOCKS4aCapturedEvent(t *testing.T) {
 	require.Equal(t, []parsedSOCKS{
 		{Direction: "read", Command: "socks4a-connect", Path: "httpbin.org:80", Version: 4, Host: "httpbin.org", Port: 80, Payload: socks4aHttpbin},
 		{Direction: "write", Command: "socks4a-connect", Status: "granted", Payload: granted},
-		{Direction: "read", Command: "tunnel", Path: "httpbin.org:80", Payload: socksTunnelGET, PayloadHash: helpers.SHA256Hex(socksTunnelGET)},
+		{Direction: "read", Command: "tunnel", Path: "httpbin.org:80", Payload: socksTunnelGET, PayloadHash: helpers.SHA256Hex(socksTunnelGET), Requests: 1, DistinctRequests: 1, RequestLine: "GET /ip HTTP/1.1"},
 		{Direction: "write", Command: "tunnel", Status: "200", Payload: judge},
 	}, frames)
 }
@@ -119,7 +119,7 @@ func TestHandleSOCKS5NoAuth(t *testing.T) {
 		{Direction: "write", Command: "socks5-greeting", Status: "no-auth", Payload: []byte{0x05, 0x00}},
 		{Direction: "read", Command: "socks5-connect", Path: "httpbin.org:80", Version: 5, Host: "httpbin.org", Port: 80, Payload: connect},
 		{Direction: "write", Command: "socks5-connect", Status: "granted", Payload: granted},
-		{Direction: "read", Command: "tunnel", Path: "httpbin.org:80", Payload: socksTunnelGET, PayloadHash: helpers.SHA256Hex(socksTunnelGET)},
+		{Direction: "read", Command: "tunnel", Path: "httpbin.org:80", Payload: socksTunnelGET, PayloadHash: helpers.SHA256Hex(socksTunnelGET), Requests: 1, DistinctRequests: 1, RequestLine: "GET /ip HTTP/1.1"},
 		{Direction: "write", Command: "tunnel", Status: "200", Payload: judge},
 	}, frames)
 }
@@ -276,6 +276,45 @@ func TestHandleSOCKSTunnelTruncated(t *testing.T) {
 	require.Len(t, frames, 3)
 	require.True(t, frames[2].Truncated)
 	require.Equal(t, socksTunnelGET[:16], frames[2].Payload)
+}
+
+// Pipelined flood from Ochi event f87615a7-3f26-4df7-9c4b-a76c3cd90dec: one
+// SOCKS4 CONNECT, then the same absolute-URI GET repeated past the capture cap.
+func TestHandleSOCKSPipelinedFlood(t *testing.T) {
+	const reqLine = "GET http://167.235.123.162:24001/shop?category_id=change_looks HTTP/1.1"
+	const ua = "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US) AppleWebKit/532.0 (KHTML, like Gecko) Chrome/3.0.196.2 Safari/532.0"
+	one := reqLine + "\r\nHost: 167.235.123.162:24001\r\nAccept: */*\r\nUser-Agent: " + ua + "\r\nConnection: Keep-Alive\r\n\r\n"
+	flood := []byte(strings.Repeat(one, 20))
+	connect := []byte("\x04\x01\x5d\xc1\xa7\xeb\x7b\xa2\x00")
+
+	client, hp, done := startSOCKS(t, 4096)
+	socksExchange(t, client, connect, 8)
+	_, err := client.Write(flood)
+	require.NoError(t, err)
+
+	frames := finishSOCKS(t, client, hp, done)
+	require.Len(t, frames, 3, "no reply is written to truncated tunnel data")
+	tun := frames[2]
+	require.Equal(t, "tunnel", tun.Command)
+	require.True(t, tun.Truncated)
+	require.Len(t, tun.Payload, 4096)
+	require.Less(t, 4096%len(one), len(reqLine), "fixture: the cut lands inside a request line")
+	require.Equal(t, 4096/len(one), tun.Requests, "whole copies only; a request line cut by the cap is not counted")
+	require.Equal(t, 1, tun.DistinctRequests)
+	require.Equal(t, reqLine, tun.RequestLine)
+	require.Equal(t, ua, tun.UserAgent)
+}
+
+func TestHandleSOCKSNonHTTPTunnelHasNoRequestCount(t *testing.T) {
+	client, hp, done := startSOCKS(t, 4096)
+	socksExchange(t, client, socks4aHttpbin, 8)
+	_, err := client.Write([]byte("\x00\x01\x02\x03"))
+	require.NoError(t, err)
+
+	frames := finishSOCKS(t, client, hp, done)
+	require.Len(t, frames, 3)
+	require.Zero(t, frames[2].Requests)
+	require.Empty(t, frames[2].RequestLine)
 }
 
 func TestHandleSOCKSTruncatedRequest(t *testing.T) {

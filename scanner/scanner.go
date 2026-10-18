@@ -104,6 +104,12 @@ var payloadFleets = map[string]map[string]string{
 	"rdp": {
 		"0003c8efa0acdc0c6540f4bdb920f6bcabdd01d0ed98e0f21938144c44e121a5": "rdp-nla-prober",
 	},
+	// SOCKS4 CONNECT to 167.235.123.162:24001, then a pipelined flood of one
+	// absolute-URI GET with a Chrome/3.0.196.2 user agent (Ochi f87615a7).
+	// The hash covers the CONNECT request, so it matches only this target.
+	"socks": {
+		"b211715c04660f10841bbd1315b6ca7a4f4c755d1127f5c59d7122ae51a6eb13": "socks-http-flood",
+	},
 }
 
 // ClassifyPayload returns the fleet label for a handler and payload hash, or "".

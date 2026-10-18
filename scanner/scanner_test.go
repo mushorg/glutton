@@ -25,4 +25,8 @@ func TestClassifyPayload(t *testing.T) {
 	require.Equal(t, "rdp-nla-prober", ClassifyPayload("rdp", h))
 	require.Empty(t, ClassifyPayload("tcp", h))
 	require.Empty(t, ClassifyPayload("rdp", "deadbeef"))
+
+	const socksHash = "b211715c04660f10841bbd1315b6ca7a4f4c755d1127f5c59d7122ae51a6eb13"
+	require.Equal(t, "socks-http-flood", ClassifyPayload("socks", socksHash))
+	require.Empty(t, ClassifyPayload("tcp", socksHash))
 }

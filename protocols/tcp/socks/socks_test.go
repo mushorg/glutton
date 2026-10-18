@@ -181,3 +181,23 @@ func TestLooksLikeHTTPRequest(t *testing.T) {
 	require.False(t, LooksLikeHTTPRequest([]byte{0x16, 0x03, 0x01}))
 	require.False(t, LooksLikeHTTPRequest([]byte("CONNECT example.com:443 HTTP/1.1\r\n")))
 }
+
+func TestSummarizeHTTP(t *testing.T) {
+	one := "GET /a HTTP/1.1\r\nHost: x\r\nUser-Agent: ua/1\r\n\r\n"
+	two := "POST /b HTTP/1.0\r\nHost: x\r\nContent-Length: 0\r\n\r\n"
+
+	sum, ok := SummarizeHTTP([]byte(one + one + two + "GET /c HTT"))
+	require.True(t, ok)
+	require.Equal(t, HTTPSummary{Requests: 3, Distinct: 2, First: "GET /a HTTP/1.1", UserAgent: "ua/1"}, sum)
+
+	// bare LF line endings
+	sum, ok = SummarizeHTTP([]byte("GET / HTTP/1.1\nHost: x\n\n"))
+	require.True(t, ok)
+	require.Equal(t, 1, sum.Requests)
+
+	// header lines and non-HTTP bytes are never request lines
+	for _, in := range []string{"", "\x00\x01\x02", "Host: GET / HTTP/1.1\r\n", "GET /no-version\r\n"} {
+		_, ok = SummarizeHTTP([]byte(in))
+		require.False(t, ok, "%q", in)
+	}
+}

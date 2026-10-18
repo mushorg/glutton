@@ -428,3 +428,50 @@ func nulField(data []byte, start int) (int, bool) {
 	}
 	return 0, false
 }
+
+// HTTPSummary describes the HTTP requests found in captured tunnel bytes. A
+// proxy-abuse tool often pipelines the same request many times; the summary
+// shows the volume without storing each repeat.
+type HTTPSummary struct {
+	Requests  int    // complete request lines seen
+	Distinct  int    // distinct request lines
+	First     string // first request line
+	UserAgent string // User-Agent of the first request that has one
+}
+
+// SummarizeHTTP counts HTTP/1.x request lines (`METHOD target HTTP/1.x`) at
+// line starts in data. Header lines never match, so each pipelined request
+// counts once. It reports ok=false when data holds no request line.
+func SummarizeHTTP(data []byte) (sum HTTPSummary, ok bool) {
+	seen := map[string]struct{}{}
+	for _, raw := range bytes.Split(data, []byte("\n")) {
+		line := bytes.TrimSuffix(raw, []byte("\r"))
+		if isRequestLine(line) {
+			sum.Requests++
+			key := string(line)
+			if _, dup := seen[key]; !dup {
+				seen[key] = struct{}{}
+			}
+			if sum.First == "" {
+				sum.First = key
+			}
+			continue
+		}
+		if sum.UserAgent == "" && sum.Requests > 0 && len(line) > 12 && bytes.EqualFold(line[:12], []byte("user-agent: ")) {
+			sum.UserAgent = string(line[12:])
+		}
+	}
+	sum.Distinct = len(seen)
+	return sum, sum.Requests > 0
+}
+
+// isRequestLine reports whether line is `METHOD target HTTP/1.0|1.1`.
+func isRequestLine(line []byte) bool {
+	if !LooksLikeHTTPRequest(line) {
+		return false
+	}
+	if !bytes.HasSuffix(line, []byte(" HTTP/1.1")) && !bytes.HasSuffix(line, []byte(" HTTP/1.0")) {
+		return false
+	}
+	return true
+}

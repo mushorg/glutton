@@ -36,6 +36,11 @@ type parsedSOCKS struct {
 	PayloadHash string `json:"payload_hash,omitempty"`
 	Truncated   bool   `json:"truncated,omitempty"`
 	Error       string `json:"error,omitempty"` // why a tls-handshake write failed
+	// HTTP request volume in a tunnel read: pipelined repeats are counted, not stored.
+	Requests         int    `json:"requests,omitempty"`
+	DistinctRequests int    `json:"distinct_requests,omitempty"`
+	RequestLine      string `json:"request_line,omitempty"` // first request line
+	UserAgent        string `json:"user_agent,omitempty"`
 	// TLS ClientHello fingerprint fields on a tls-clienthello read.
 	*helpers.ClientHello
 }
@@ -130,7 +135,7 @@ func readTunnelBytes(r io.Reader) (data []byte, truncated bool, readErr error) {
 
 func (s *socksServer) captureTunnel(path, command string, data []byte, truncated bool, hello *helpers.ClientHello) error {
 	_, storeErr := helpers.Store(data, "payloads")
-	s.events = append(s.events, parsedSOCKS{
+	frame := parsedSOCKS{
 		Direction:   "read",
 		Command:     command,
 		Path:        path,
@@ -138,7 +143,16 @@ func (s *socksServer) captureTunnel(path, command string, data []byte, truncated
 		PayloadHash: helpers.SHA256Hex(data),
 		Truncated:   truncated,
 		ClientHello: hello,
-	})
+	}
+	if command == "tunnel" {
+		if sum, ok := socks.SummarizeHTTP(data); ok {
+			frame.Requests = sum.Requests
+			frame.DistinctRequests = sum.Distinct
+			frame.RequestLine = sum.First
+			frame.UserAgent = sum.UserAgent
+		}
+	}
+	s.events = append(s.events, frame)
 	return storeErr
 }
 
