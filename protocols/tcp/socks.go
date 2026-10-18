@@ -234,6 +234,7 @@ func (s *socksServer) handleTunnel(ctx context.Context, path string, md *connect
 				return connection.EndReasonFromRead(herr), nil
 			}
 			md.TLS = info
+			md.AddInner("tls")
 			if err := h.UpdateConnectionTimeout(ctx, tlsConn); err != nil {
 				logger.Debug("Failed to set connection timeout", slog.String("protocol", "socks"), producer.ErrAttr(err))
 				return connection.EndTimeout, nil

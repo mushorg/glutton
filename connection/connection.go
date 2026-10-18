@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"syscall"
@@ -90,6 +91,35 @@ type Metadata struct {
 	EndReason  string
 	// TLS is set when the sensor terminated TLS (rule option tls) before the handler.
 	TLS *TLSInfo
+	// Outer lists protocol layers a wrapper peeled off before the handler ran
+	// (e.g. "tls"), outermost first.
+	Outer []string
+	// Inner lists protocol layers the handler itself decoded inside its own
+	// stream (e.g. "tls", "http" inside a socks tunnel), outermost first.
+	Inner []string
+}
+
+// Stack returns the protocol layers of a session from the wire up:
+// transport, wrapper layers, the handler, then layers nested inside it.
+// Consecutive duplicates collapse.
+func (m Metadata) Stack(transport, handler string) []string {
+	stack := make([]string, 0, 2+len(m.Outer)+len(m.Inner))
+	for _, name := range append(append([]string{transport}, m.Outer...), append([]string{handler}, m.Inner...)...) {
+		if name == "" || (len(stack) > 0 && stack[len(stack)-1] == name) {
+			continue
+		}
+		stack = append(stack, name)
+	}
+	return stack
+}
+
+// AddInner appends a nested layer once, ignoring repeats.
+func (m *Metadata) AddInner(names ...string) {
+	for _, name := range names {
+		if !slices.Contains(m.Inner, name) {
+			m.Inner = append(m.Inner, name)
+		}
+	}
 }
 
 type ConnTable struct {

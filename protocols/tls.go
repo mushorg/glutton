@@ -124,6 +124,7 @@ func looksLikeTLSRecord(b []byte) bool {
 // for a failed handshake itself because fn never runs.
 func finishTLS(ctx context.Context, fn TCPHandlerFunc, conn, tlsConn net.Conn, info *connection.TLSInfo, err error, md connection.Metadata, log interfaces.Logger, h interfaces.Honeypot) error {
 	md.TLS = info
+	md.Outer = append(append([]string(nil), md.Outer...), "tls")
 	if err == nil {
 		return fn(ctx, tlsConn, md)
 	}

@@ -33,6 +33,7 @@ Producer events follow the `producer.Event` schema:
 | `rule` | string, optional | Rule match string when metadata includes a rule. |
 | `ruleName` | string, optional | Optional `name` from `rules.yaml`. |
 | `handler` | string | Handler name supplied by the protocol handler. |
+| `handlers` | array of strings, optional | Protocol stack from the wire up, e.g. `["tcp", "tls", "socks", "tls", "http"]`: the transport, a `tls` layer the sensor terminated before the handler (rule `tls`), the `handler`, then layers the handler decoded inside its own stream (a SOCKS tunnel carrying TLS and HTTP). The last entry is the innermost protocol. Older sensors omit it; fall back to `[transport, handler]`. |
 | `payload` | string (base64), optional | First-frame payload bytes. |
 | `payloadHash` | string (hex), optional | SHA-256 of the (sanitized) top-level payload. |
 | `frameCount` | number, optional | Number of decoded frames when `decoded` is a slice. Omitted when 0. |

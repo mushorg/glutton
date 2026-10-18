@@ -84,6 +84,7 @@ func TestMakeEventTCPEnvelope(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "tcp", ev.Transport)
 	require.Equal(t, "smb", ev.Handler)
+	require.Equal(t, []string{"tcp", "smb"}, ev.Handlers)
 	require.Equal(t, "sensor-1", ev.SensorID)
 	require.Equal(t, "v9.9.9", ev.SensorVersion)
 	require.Equal(t, "192.0.2.10", ev.DstHost)

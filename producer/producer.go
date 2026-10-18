@@ -34,27 +34,30 @@ type Producer struct {
 
 // Event is a struct for glutton events
 type Event struct {
-	Timestamp     time.Time   `json:"timestamp,omitempty"`
-	StartedAt     time.Time   `json:"startedAt,omitempty"`
-	DurationMs    int64       `json:"durationMs,omitempty"`
-	Transport     string      `json:"transport,omitempty"`
-	SrcHost       string      `json:"srcHost,omitempty"`
-	SrcPort       string      `json:"srcPort,omitempty"`
-	SrcPtr        string      `json:"srcPtr,omitempty"`
-	DstHost       string      `json:"dstHost,omitempty"`
-	DstPort       uint16      `json:"dstPort,omitempty"`
-	SensorID      string      `json:"sensorID,omitempty"`
-	SensorVersion string      `json:"sensorVersion,omitempty"`
-	Rule          string      `json:"rule,omitempty"`
-	RuleName      string      `json:"ruleName,omitempty"`
-	Handler       string      `json:"handler,omitempty"`
-	Payload       string      `json:"payload,omitempty"`
-	PayloadHash   string      `json:"payloadHash,omitempty"`
-	FrameCount    int         `json:"frameCount,omitempty"`
-	EndReason     string      `json:"endReason,omitempty"`
-	Scanner       string      `json:"scanner,omitempty"`
-	Decoded       interface{} `json:"decoded,omitempty"`
-	TLS           *TLSInfo    `json:"tls,omitempty"`
+	Timestamp     time.Time `json:"timestamp,omitempty"`
+	StartedAt     time.Time `json:"startedAt,omitempty"`
+	DurationMs    int64     `json:"durationMs,omitempty"`
+	Transport     string    `json:"transport,omitempty"`
+	SrcHost       string    `json:"srcHost,omitempty"`
+	SrcPort       string    `json:"srcPort,omitempty"`
+	SrcPtr        string    `json:"srcPtr,omitempty"`
+	DstHost       string    `json:"dstHost,omitempty"`
+	DstPort       uint16    `json:"dstPort,omitempty"`
+	SensorID      string    `json:"sensorID,omitempty"`
+	SensorVersion string    `json:"sensorVersion,omitempty"`
+	Rule          string    `json:"rule,omitempty"`
+	RuleName      string    `json:"ruleName,omitempty"`
+	Handler       string    `json:"handler,omitempty"`
+	// Handlers is the protocol stack from the wire up, e.g.
+	// ["tcp", "tls", "socks", "tls", "http"]. Handler stays the rule's handler.
+	Handlers    []string    `json:"handlers,omitempty"`
+	Payload     string      `json:"payload,omitempty"`
+	PayloadHash string      `json:"payloadHash,omitempty"`
+	FrameCount  int         `json:"frameCount,omitempty"`
+	EndReason   string      `json:"endReason,omitempty"`
+	Scanner     string      `json:"scanner,omitempty"`
+	Decoded     interface{} `json:"decoded,omitempty"`
+	TLS         *TLSInfo    `json:"tls,omitempty"`
 }
 
 // TLSInfo is set when the sensor terminated TLS before the handler ran.

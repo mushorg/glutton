@@ -151,3 +151,10 @@ func TestEndReasonFromReadTCPReset(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, EndClientReset, EndReasonFromRead(err))
 }
+
+func TestMetadataStack(t *testing.T) {
+	md := Metadata{Outer: []string{"tls"}}
+	md.AddInner("tls", "http", "http")
+	require.Equal(t, []string{"tcp", "tls", "socks", "tls", "http"}, md.Stack("tcp", "socks"))
+	require.Equal(t, []string{"udp", "dns"}, Metadata{}.Stack("udp", "dns"))
+}
