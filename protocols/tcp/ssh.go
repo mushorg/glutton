@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	mrand "math/rand/v2"
 	"net"
 	"os"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	"github.com/mushorg/glutton/protocols/recall"
 	sshproto "github.com/mushorg/glutton/protocols/tcp/ssh"
 
 	"github.com/spf13/viper"
@@ -29,7 +31,7 @@ import (
 // for (user, password, public key) and the outcome.
 type parsedSSH struct {
 	Direction         string `json:"direction,omitempty"`
-	Command           string `json:"command,omitempty"` // banner, kexinit, auth-<method>
+	Command           string `json:"command,omitempty"` // banner, kexinit, auth-<method>, pty-req, shell, exec, cmd
 	Status            string `json:"status,omitempty"`  // auth outcome on writes
 	Payload           []byte `json:"payload,omitempty"`
 	Truncated         bool   `json:"truncated,omitempty"`
@@ -40,11 +42,33 @@ type parsedSSH struct {
 	Password          string `json:"password,omitempty"`
 	PubkeyType        string `json:"pubkey_type,omitempty"`
 	PubkeyFingerprint string `json:"pubkey_fingerprint,omitempty"`
+	Variant           string `json:"variant,omitempty"` // persona, on the banner write
+	Visit             int    `json:"visit,omitempty"`   // visit number of the source, on the banner write
 }
 
 // sshMaxAuthTries is the OpenSSH MaxAuthTries default; x/crypto disconnects
 // with "too many authentication failures" once it is reached.
 const sshMaxAuthTries = 6
+
+// sshAcceptAfter is how many password attempts from one source (counted across
+// its connections within a recall visit) fail before the next one opens the
+// fake shell; ssh.accept_after overrides it.
+const sshAcceptAfter = 3
+
+// sshMaxSessions and sshMaxShellLines bound what one connection can do once
+// logged in.
+const (
+	sshMaxSessions   = 4
+	sshMaxShellLines = 256
+)
+
+// sshRecall remembers the persona of each source; tests swap it for a store
+// they control.
+var sshRecall = recall.Shared
+
+// sshPick chooses a persona for a source seen for the first time; tests
+// replace it to be deterministic.
+var sshPick = mrand.IntN
 
 // sshMaxPassword caps a recorded password; longer ones set truncated.
 const sshMaxPassword = 1024
@@ -163,6 +187,14 @@ type sshServer struct {
 	pubkey cryptossh.PublicKey
 	// password is the password of the latest password request.
 	password []byte
+	// tries counts the password attempts on this connection, for when recall
+	// is disabled.
+	tries int
+
+	persona sshproto.Persona
+	visit   int
+	ip      net.IP
+	shell   bool
 
 	ctx    context.Context
 	h      interfaces.Honeypot
@@ -186,7 +218,7 @@ func (s *sshServer) capture(direction string, stream *sshproto.Stream, data []by
 		}
 	}
 	for _, m := range msgs {
-		s.events = append(s.events, sshFrame(direction, m))
+		s.events = append(s.events, s.frame(direction, m))
 		if direction == "read" && m.Kind == sshproto.KindVersion {
 			s.logger.Info(
 				"ssh client",
@@ -200,12 +232,15 @@ func (s *sshServer) capture(direction string, stream *sshproto.Stream, data []by
 	}
 }
 
-func sshFrame(direction string, m sshproto.Message) parsedSSH {
+func (s *sshServer) frame(direction string, m sshproto.Message) parsedSSH {
 	f := parsedSSH{Direction: direction, Payload: m.Raw, Truncated: m.Truncated}
 	switch m.Kind {
 	case sshproto.KindVersion:
 		f.Command = "banner"
 		f.Version = m.Version
+		if direction == "write" {
+			f.Variant, f.Visit = s.persona.Name, s.visit
+		}
 	case sshproto.KindKexInit:
 		f.Command = "kexinit"
 		f.HASSH, f.HASSHAlgorithms = m.KexInit.HASSH(direction == "write")
@@ -309,19 +344,25 @@ func (c *sshConn) Close() error {
 	return c.Conn.Close()
 }
 
-// HandleSSH completes the SSH key exchange with an OpenSSH persona and records
-// the client's identification string, KEXINIT (with its HASSH) and every
-// authentication request, rejecting all of them.
+// HandleSSH completes the SSH key exchange with an OpenSSH persona (picked per
+// source through recall) and records the client's identification string,
+// KEXINIT (with its HASSH) and every authentication request. Password
+// attempts are rejected until the source has made sshAcceptAfter of them,
+// then the login opens a fake shell (see ssh_shell.go) whose commands are
+// recorded.
 func HandleSSH(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	host, port, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
 		host = conn.RemoteAddr().String()
 	}
 	server := &sshServer{events: []parsedSSH{}, ctx: ctx, h: h, logger: logger, md: md, host: host, port: port}
+	server.ip = net.ParseIP(host)
+	server.persona, server.visit = sshChoosePersona(server.ip)
+	server.shell = viper.GetBool("ssh.shell") || !viper.IsSet("ssh.shell")
 	defer func() {
 		server.mu.Lock()
 		if m, ok := server.reads.Flush(); ok {
-			server.events = append(server.events, sshFrame("read", m))
+			server.events = append(server.events, server.frame("read", m))
 		}
 		server.produced = true
 		events := server.events
@@ -330,6 +371,7 @@ func HandleSSH(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			md.EndReason = connection.EndHandlerClose
 		}
 		server.mu.Unlock()
+		server.noteVisit(events)
 		if err := h.ProduceTCP("ssh", conn, md, helpers.FirstOrEmpty(events).Payload, events); err != nil {
 			logger.Error("Failed to produce message", slog.String("protocol", "ssh"), producer.ErrAttr(err))
 		}
@@ -349,10 +391,13 @@ func HandleSSH(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			Ciphers:      sshCiphers,
 			MACs:         sshMACs,
 		},
-		ServerVersion: sshproto.ServerVersion,
+		ServerVersion: server.persona.Version,
 		MaxAuthTries:  sshMaxAuthTries,
 		PasswordCallback: func(_ cryptossh.ConnMetadata, password []byte) (*cryptossh.Permissions, error) {
 			server.notePassword(password)
+			if server.acceptPassword(password) {
+				return nil, nil
+			}
 			return nil, errSSHDenied
 		},
 		PublicKeyCallback: func(_ cryptossh.ConnMetadata, key cryptossh.PublicKey) (*cryptossh.Permissions, error) {
@@ -370,6 +415,11 @@ func HandleSSH(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		logger.Debug("SSH session ended", slog.String("protocol", "ssh"), producer.ErrAttr(err))
 		return nil
 	}
+	if server.shell {
+		server.serveShell(sconn, chans, reqs)
+		_ = sconn.Close()
+		return nil
+	}
 	// every method is rejected, so this is not reached; never serve a session
 	go cryptossh.DiscardRequests(reqs)
 	go func() {
@@ -378,4 +428,47 @@ func HandleSSH(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 	}()
 	return sconn.Close()
+}
+
+// sshChoosePersona picks the persona of ip: the one ssh.persona names, else
+// the one recall remembers for the source, else a random one.
+func sshChoosePersona(ip net.IP) (sshproto.Persona, int) {
+	visit := sshRecall.Begin("ssh", ip, 0).Number
+	if p, ok := sshproto.PersonaByName(viper.GetString("ssh.persona")); ok {
+		return p, visit
+	}
+	names := sshproto.PersonaNames()
+	return sshproto.Personas[sshRecall.Choose("ssh", ip, names, sshPick)], visit
+}
+
+// acceptPassword reports whether this password attempt opens the shell.
+func (s *sshServer) acceptPassword(password []byte) bool {
+	if !s.shell || len(password) == 0 {
+		return false
+	}
+	s.mu.Lock()
+	s.tries++
+	tries := s.tries
+	s.mu.Unlock()
+	if n := sshRecall.Count("ssh", s.ip, "password"); n > tries {
+		tries = n
+	}
+	after := sshAcceptAfter
+	if viper.IsSet("ssh.accept_after") {
+		after = viper.GetInt("ssh.accept_after")
+	}
+	return tries > after
+}
+
+// noteVisit records what the source did in its recall visit.
+func (s *sshServer) noteVisit(events []parsedSSH) {
+	sshRecall.Note("ssh", s.ip, func(sum *recall.Summary) {
+		for _, f := range events {
+			if f.Direction != "read" {
+				continue
+			}
+			sum.AddCommand(f.Command)
+			sum.AddUsername(f.User)
+		}
+	})
 }

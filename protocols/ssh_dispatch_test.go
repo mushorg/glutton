@@ -3,6 +3,7 @@ package protocols
 import (
 	"bufio"
 	"net"
+	"strings"
 	"testing"
 
 	sshproto "github.com/mushorg/glutton/protocols/tcp/ssh"
@@ -18,7 +19,8 @@ func sendSSHVersion(t *testing.T) func(net.Conn) {
 		require.NoError(t, err)
 		line, err := bufio.NewReader(c).ReadString('\n')
 		require.NoError(t, err)
-		require.Equal(t, sshproto.ServerVersion+"\r\n", line)
+		// the persona is picked per source, so any of them may answer
+		require.Contains(t, sshproto.PersonaVersions(), strings.TrimSuffix(line, "\r\n"))
 	}
 }
 

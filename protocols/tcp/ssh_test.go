@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/recall"
 	sshproto "github.com/mushorg/glutton/protocols/tcp/ssh"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 	cryptossh "golang.org/x/crypto/ssh"
 )
@@ -22,6 +24,22 @@ const sshTimeout = 20 * time.Second
 // startSSH serves one connection with HandleSSH over loopback TCP; net.Pipe
 // would deadlock, since both sides write their identification string first.
 func startSSH(t *testing.T) (string, *fakeHoneypot, chan error) {
+	t.Helper()
+	useSSHRecall(t, recall.New(recall.DefaultConfig()), 0)
+	viper.Set("ssh.shell", false)
+	t.Cleanup(func() { viper.Set("ssh.shell", nil) })
+	return serveSSH(t)
+}
+
+// useSSHRecall swaps the persona store and picker for the test.
+func useSSHRecall(t *testing.T, store *recall.Store, pick int) {
+	t.Helper()
+	oldStore, oldPick := sshRecall, sshPick
+	sshRecall, sshPick = store, func(int) int { return pick }
+	t.Cleanup(func() { sshRecall, sshPick = oldStore, oldPick })
+}
+
+func serveSSH(t *testing.T) (string, *fakeHoneypot, chan error) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -100,6 +118,8 @@ var sshBannerWrite = parsedSSH{
 	Command:   "banner",
 	Payload:   []byte(sshproto.ServerVersion + "\r\n"),
 	Version:   sshproto.ServerVersion,
+	Variant:   "ubuntu-22.04",
+	Visit:     1,
 }
 
 func TestSSHParamikoReplay(t *testing.T) {
