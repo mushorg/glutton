@@ -383,7 +383,9 @@ func TestHandleRDPMCSOverTLS(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("handler did not finish")
 	}
-	events := waitProduced(t, hp).decoded.([]parsedRDP)
+	ev := waitProduced(t, hp)
+	require.Equal(t, []string{"tcp", "rdp", "tls"}, ev.stack)
+	events := ev.decoded.([]parsedRDP)
 	require.Equal(t, "MCSConnectInitial", events[4].Command)
 	require.Equal(t, "MCSConnectResponse", events[5].Command)
 }

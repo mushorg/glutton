@@ -766,6 +766,7 @@ func TestHandleTCPTLSTerminatesAndReplies(t *testing.T) {
 	require.NotNil(t, produced.tls)
 	require.Equal(t, "TLS 1.3", produced.tls.Version)
 	require.Empty(t, produced.tls.ServerName)
+	require.Equal(t, []string{"tcp", "tls"}, produced.stack)
 	events := produced.decoded.([]parsedTCP)
 	require.Len(t, events, 4)
 	require.Equal(t, "read", events[0].Direction)
@@ -776,6 +777,39 @@ func TestHandleTCPTLSTerminatesAndReplies(t *testing.T) {
 	requireTLSHandshakeWrite(t, events[1])
 	require.Equal(t, parsedTCP{Direction: "read", Payload: req, PayloadHash: helpers.SHA256Hex(req)}, events[2])
 	require.Equal(t, parsedTCP{Direction: "write", Status: "http", Payload: reply, PayloadHash: helpers.SHA256Hex(reply)}, events[3])
+}
+
+func TestHandleTCPAfterTLSSeesTLSOuterLayer(t *testing.T) {
+	t.Chdir(t.TempDir())
+	previousMaxPayload := viper.Get("max_tcp_payload")
+	viper.Set("max_tcp_payload", 4096)
+	t.Cleanup(func() { viper.Set("max_tcp_payload", previousMaxPayload) })
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { ln.Close() })
+	seen := make(chan []string, 1)
+	done := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			done <- err
+			return
+		}
+		_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+		done <- HandleTCPWith(context.Background(), conn, connection.Metadata{TargetPort: 8443}, &recordingLogger{}, newFakeHoneypot(), Options{
+			AfterTLS: func(_ context.Context, c net.Conn, md connection.Metadata) (net.Conn, bool, error) {
+				seen <- md.Stack("tcp", "http")
+				return c, false, nil
+			},
+		})
+	}()
+	raw, err := net.Dial("tcp", ln.Addr().String())
+	require.NoError(t, err)
+	client := tls.Client(raw, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // test client for a self-signed cert
+	require.NoError(t, client.Handshake())
+	require.Equal(t, []string{"tcp", "tls", "http"}, <-seen)
+	require.NoError(t, client.Close())
+	<-done
 }
 
 func TestHandleTCPTLSHandshakeOnlyClient(t *testing.T) {

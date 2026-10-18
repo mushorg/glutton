@@ -213,7 +213,9 @@ func handleJabber(ctx context.Context, server *jabberServer, md connection.Metad
 		return nil
 	}
 	if first[0] == 0x16 {
-		if err := server.startTLS(); err != nil {
+		err := server.startTLS()
+		md.AddInner("tls")
+		if err != nil {
 			return tlsErr(err)
 		}
 	}
@@ -296,7 +298,9 @@ func handleJabber(ctx context.Context, server *jabberServer, md connection.Metad
 			if err := server.write("proceed", "", "proceed", jabber.Proceed()); err != nil {
 				return writeErr(err)
 			}
-			if err := server.startTLS(); err != nil {
+			err := server.startTLS()
+			md.AddInner("tls")
+			if err != nil {
 				return tlsErr(err)
 			}
 			// The client restarts the stream over TLS.

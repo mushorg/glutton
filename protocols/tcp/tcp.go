@@ -338,6 +338,7 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 				return nil
 			}
 			md.TLS = info
+			md.AddInner("tls")
 			server.conn = tlsConn
 
 			greeted = hasPortResp && portResp.ServerFirst
@@ -347,8 +348,11 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 				}
 			} else if opts.AfterTLS != nil {
 				// the next handler's event carries the handshake in its tls
-				// object, so the ClientHello frame is not needed there
-				next, took, err := opts.AfterTLS(ctx, server.conn, md)
+				// object, so the ClientHello frame is not needed there; TLS is
+				// an outer layer for it, not one of the catch-all's own
+				handoffMD := md.WithOuter("tls")
+				handoffMD.Inner = nil
+				next, took, err := opts.AfterTLS(ctx, server.conn, handoffMD)
 				if took {
 					handoff = true
 					return err

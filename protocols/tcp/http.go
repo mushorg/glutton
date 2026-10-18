@@ -353,7 +353,7 @@ func handleHTTP(ctx context.Context, server *httpServer, md connection.Metadata,
 	endReason = reason
 	if mcpRaw != nil {
 		handoff = true
-		return HandleMCP(ctx, PrependConn(conn, mcpRaw), md, logger, h)
+		return HandleMCP(ctx, PrependConn(conn, mcpRaw), md.WithOuter("http"), logger, h)
 	}
 	return nil
 }

@@ -178,6 +178,7 @@ func tunnelCertName(sni, path string) string {
 // route for. The conn is not read again, so a flood past the capture cap is
 // never served.
 func (s *socksServer) serveTunnelHTTP(ctx context.Context, w net.Conn, data []byte, md *connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) string {
+	md.AddInner("http")
 	srv := newHTTPServer(&readerConn{Conn: w, r: bytes.NewReader(data)})
 	srv.tunnel = true
 	srv.tunnelReply = socks.TunnelHTTPReply()

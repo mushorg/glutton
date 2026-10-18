@@ -152,6 +152,13 @@ func TestEndReasonFromReadTCPReset(t *testing.T) {
 	require.Equal(t, EndClientReset, EndReasonFromRead(err))
 }
 
+func TestMetadataWithOuter(t *testing.T) {
+	md := Metadata{Outer: []string{"tls"}}
+	next := md.WithOuter("http")
+	require.Equal(t, []string{"tcp", "tls", "http", "mcp"}, next.Stack("tcp", "mcp"))
+	require.Equal(t, []string{"tcp", "tls", "mcp"}, md.Stack("tcp", "mcp"), "receiver must not change")
+}
+
 func TestMetadataStack(t *testing.T) {
 	md := Metadata{Outer: []string{"tls"}}
 	md.AddInner("tls", "http", "http")

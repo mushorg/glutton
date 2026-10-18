@@ -287,7 +287,7 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, log 
 
 		if i == 0 && tcp.IsMCPPath(path) {
 			handoff = true
-			return tcp.HandleMCP(ctx, tcp.PrependConn(conn, raw), md, log, hp)
+			return tcp.HandleMCP(ctx, tcp.PrependConn(conn, raw), md.WithOuter("http"), log, hp)
 		}
 
 		log.Info(fmt.Sprintf("HTTP %s %s request handled: %s", version, method, path),

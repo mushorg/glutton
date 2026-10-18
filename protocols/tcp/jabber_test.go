@@ -210,7 +210,8 @@ func TestHandleJabberDirectTLS(t *testing.T) {
 	j.expect(tc, jabber.StreamHeader("s1", "example.com"), jabber.Features(false))
 	require.NoError(t, j.client.Close())
 
-	_, frames := j.finish()
+	ev, frames := j.finish()
+	require.Equal(t, []string{"tcp", "jabber", "tls"}, ev.stack)
 	require.Len(t, frames, 4)
 	require.Equal(t, "tls", frames[0].Command)
 	require.True(t, frames[0].TLS)
@@ -233,7 +234,8 @@ func TestHandleJabberStartTLS(t *testing.T) {
 	j.expect(tc, jabber.StreamHeader("s1", "example.com"), jabber.Features(false))
 	require.NoError(t, j.client.Close())
 
-	_, frames := j.finish()
+	ev, frames := j.finish()
+	require.Equal(t, []string{"tcp", "jabber", "tls"}, ev.stack)
 	commands := make([]string, 0, len(frames))
 	for _, f := range frames {
 		commands = append(commands, f.Direction+":"+f.Command)

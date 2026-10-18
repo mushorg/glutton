@@ -113,6 +113,14 @@ func (m Metadata) Stack(transport, handler string) []string {
 	return stack
 }
 
+// WithOuter returns a copy of m with layers appended to Outer, for a handler
+// that handed the session to another one after decoding those layers itself
+// (HTTP before MCP, the catch-all's TLS before HTTP).
+func (m Metadata) WithOuter(names ...string) Metadata {
+	m.Outer = append(slices.Clone(m.Outer), names...)
+	return m
+}
+
 // AddInner appends a nested layer once, ignoring repeats.
 func (m *Metadata) AddInner(names ...string) {
 	for _, name := range names {

@@ -549,6 +549,7 @@ func TestHandleHTTPHandsOffMCP(t *testing.T) {
 
 	produced := waitProduced(t, hp)
 	require.Equal(t, "mcp", produced.protocol)
+	require.Equal(t, []string{"tcp", "http", "mcp"}, produced.stack)
 	_, ok := produced.decoded.([]parsedMCP)
 	require.True(t, ok)
 	select {

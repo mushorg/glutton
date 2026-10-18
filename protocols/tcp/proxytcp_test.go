@@ -73,6 +73,7 @@ type producedTCP struct {
 	decoded   interface{}
 	endReason string
 	tls       *connection.TLSInfo
+	stack     []string
 }
 
 type fakeHoneypot struct {
@@ -84,7 +85,7 @@ func newFakeHoneypot() *fakeHoneypot {
 }
 
 func (h *fakeHoneypot) ProduceTCP(protocol string, conn net.Conn, md connection.Metadata, payload []byte, decoded interface{}) error {
-	h.produced <- producedTCP{protocol: protocol, payload: payload, decoded: decoded, endReason: md.EndReason, tls: md.TLS}
+	h.produced <- producedTCP{protocol: protocol, payload: payload, decoded: decoded, endReason: md.EndReason, tls: md.TLS, stack: md.Stack("tcp", protocol)}
 	return nil
 }
 

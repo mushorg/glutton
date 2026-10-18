@@ -210,6 +210,7 @@ func TestHandleSOCKS5TLSJudge(t *testing.T) {
 	requireJudgeHTTP(t, frames[6].HTTP, judge)
 	require.NotNil(t, ev.tls)
 	require.Equal(t, "api.ipinfo.io", ev.tls.ServerName)
+	require.Equal(t, []string{"tcp", "socks", "tls", "http"}, ev.stack)
 }
 
 func TestHandleSOCKS5TLSJudgeIcanhazip(t *testing.T) {

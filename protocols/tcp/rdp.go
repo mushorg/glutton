@@ -318,6 +318,7 @@ func HandleRDP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			tlsConn, info, hsErr := helpers.TerminateTLSFromWith(rdpCert, rec, io.MultiReader(bytes.NewReader(raw), conn))
 			rec.on = false
 			md.TLS = info
+			md.AddInner("tls")
 			server.events = append(server.events, parsedRDP{
 				Direction: "read",
 				Command:   rdp.CmdTLSClientHello,
