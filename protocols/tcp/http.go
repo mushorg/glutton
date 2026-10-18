@@ -145,6 +145,11 @@ type httpServer struct {
 	sessionTracker[parsedHTTP]
 	conn  net.Conn
 	bufin *bufio.Reader
+	// tunnel marks HTTP carried inside another handler's connection (SOCKS):
+	// frames stay local (no session grouping), there is no MCP handoff, and
+	// tunnelReply replaces the empty 200 for requests nothing else answers.
+	tunnel      bool
+	tunnelReply []byte
 }
 
 func newHTTPServer(conn net.Conn) *httpServer {
@@ -215,7 +220,9 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 	query := params.Encode()
 	body, _ := io.ReadAll(req.Body)
 
-	if c, err := req.Cookie(httpSessionCookie); err == nil && strings.TrimSpace(c.Value) != "" {
+	if s.tunnel {
+		// frames stay in s.local for the parent handler to embed
+	} else if c, err := req.Cookie(httpSessionCookie); err == nil && strings.TrimSpace(c.Value) != "" {
 		s.bind(strings.TrimSpace(c.Value))
 	} else {
 		s.ensure()
@@ -311,7 +318,11 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 		return s.write(resp)
 	}
 
-	if err := s.write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")); err != nil {
+	reply := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+	if s.tunnelReply != nil {
+		reply = s.tunnelReply
+	}
+	if err := s.write(reply); err != nil {
 		return fmt.Errorf("failed to send HTTP response: %w", err)
 	}
 	return nil
@@ -324,9 +335,6 @@ func HandleHTTP(ctx context.Context, conn net.Conn, md connection.Metadata, logg
 
 func handleHTTP(ctx context.Context, server *httpServer, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	conn := server.conn
-	server.md = md
-	server.logger = logger
-	server.h = h
 
 	handoff := false
 	endReason := connection.EndHandlerClose
@@ -341,28 +349,45 @@ func handleHTTP(ctx context.Context, server *httpServer, md connection.Metadata,
 		}
 	}()
 
+	reason, mcpRaw := server.serve(ctx, md, logger, h)
+	endReason = reason
+	if mcpRaw != nil {
+		handoff = true
+		return HandleMCP(ctx, PrependConn(conn, mcpRaw), md, logger, h)
+	}
+	return nil
+}
+
+// serve runs the HTTP request loop on s.conn and records frames on s. It does
+// not produce an event or close the connection. When the first request targets
+// an MCP endpoint (and s is not a tunnel) it stops and returns that request's
+// raw bytes so the caller can hand the connection to MCP.
+func (s *httpServer) serve(ctx context.Context, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) (endReason string, mcpRaw []byte) {
+	s.md = md
+	s.logger = logger
+	s.h = h
+	conn := s.conn
+	endReason = connection.EndHandlerClose
+
 	srcHost, srcPort, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
 	for i := 0; i < maxHTTPRequests; i++ {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "http"), producer.ErrAttr(err))
-			endReason = connection.EndTimeout
-			return nil
+			return connection.EndTimeout, nil
 		}
 
-		raw, err := readHTTPMessage(server.bufin, maxHTTPBody)
+		raw, err := readHTTPMessage(s.bufin, maxHTTPBody)
 		if len(raw) > 0 {
 			req, parseErr := http.ReadRequest(bufio.NewReader(bytes.NewReader(raw)))
 			if parseErr != nil {
 				logger.Debug("Failed to read the HTTP request", slog.String("protocol", "http"), producer.ErrAttr(parseErr))
-				server.record(parsedHTTP{Direction: "read", Payload: append([]byte(nil), raw...)})
-				endReason = connection.EndReadError
-				break
+				s.record(parsedHTTP{Direction: "read", Payload: append([]byte(nil), raw...)})
+				return connection.EndReadError, nil
 			}
 
-			if i == 0 && IsMCPPath(req.URL.EscapedPath()) {
-				handoff = true
-				return HandleMCP(ctx, PrependConn(conn, raw), md, logger, h)
+			if i == 0 && !s.tunnel && IsMCPPath(req.URL.EscapedPath()) {
+				return endReason, raw
 			}
 
 			logger.Info(
@@ -376,17 +401,15 @@ func handleHTTP(ctx context.Context, server *httpServer, md connection.Metadata,
 				slog.String("query", req.URL.Query().Encode()),
 			)
 
-			if handleErr := server.handleRequest(ctx, req, raw, md, logger, h); handleErr != nil {
+			if handleErr := s.handleRequest(ctx, req, raw, md, logger, h); handleErr != nil {
 				logger.Debug("Failed to handle HTTP request", slog.String("protocol", "http"), producer.ErrAttr(handleErr))
-				endReason = connection.EndWriteError
-				return nil
+				return connection.EndWriteError, nil
 			}
 		}
 		if err != nil {
 			logger.Debug("Failed to read data", slog.String("protocol", "http"), producer.ErrAttr(err))
-			endReason = connection.EndReasonFromRead(err)
-			break
+			return connection.EndReasonFromRead(err), nil
 		}
 	}
-	return nil
+	return endReason, nil
 }

@@ -41,6 +41,9 @@ type parsedSOCKS struct {
 	DistinctRequests int    `json:"distinct_requests,omitempty"`
 	RequestLine      string `json:"request_line,omitempty"` // first request line
 	UserAgent        string `json:"user_agent,omitempty"`
+	// HTTP is what the HTTP handler decoded from a plaintext (or TLS-terminated)
+	// tunnel read, including its replies; set instead of a socks write frame.
+	HTTP []parsedHTTP `json:"http,omitempty"`
 	// TLS ClientHello fingerprint fields on a tls-clienthello read.
 	*helpers.ClientHello
 }
@@ -156,19 +159,6 @@ func (s *socksServer) captureTunnel(path, command string, data []byte, truncated
 	return storeErr
 }
 
-func (s *socksServer) writeTo(w io.Writer, data []byte, command, status string) error {
-	if _, err := w.Write(data); err != nil {
-		return err
-	}
-	s.events = append(s.events, parsedSOCKS{
-		Direction: "write",
-		Command:   command,
-		Status:    status,
-		Payload:   data,
-	})
-	return nil
-}
-
 // tunnelCertName picks the name for the tunnel TLS certificate: ClientHello
 // SNI when present, otherwise the CONNECT host from path (host:port).
 func tunnelCertName(sni, path string) string {
@@ -180,6 +170,24 @@ func tunnelCertName(sni, path string) string {
 		return ""
 	}
 	return host
+}
+
+// serveTunnelHTTP replays the captured tunnel bytes through the HTTP handler
+// and attaches its frames (requests and replies) to the tunnel read frame just
+// captured. Replies go to w; the canned judge reply answers what HTTP has no
+// route for. The conn is not read again, so a flood past the capture cap is
+// never served.
+func (s *socksServer) serveTunnelHTTP(ctx context.Context, w net.Conn, data []byte, md *connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) string {
+	srv := newHTTPServer(&readerConn{Conn: w, r: bytes.NewReader(data)})
+	srv.tunnel = true
+	srv.tunnelReply = socks.TunnelHTTPReply()
+	reason, _ := srv.serve(ctx, *md, logger, h)
+	s.events[len(s.events)-1].HTTP = srv.local
+	switch reason {
+	case connection.EndWriteError, connection.EndTimeout:
+		return reason
+	}
+	return connection.EndHandlerClose
 }
 
 // handleTunnel captures the first bytes after a granted CONNECT. A complete
@@ -238,10 +246,7 @@ func (s *socksServer) handleTunnel(ctx context.Context, path string, md *connect
 				logger.Error("Failed to store tunneled payload", slog.String("protocol", "socks"), producer.ErrAttr(storeErr))
 			}
 			if !plainTrunc && socks.LooksLikeHTTPRequest(plain) {
-				if err := s.writeTo(tlsConn, socks.TunnelHTTPReply(), "tunnel", "200"); err != nil {
-					logger.Error("Failed to write to connection", slog.String("protocol", "socks"), producer.ErrAttr(err))
-					return connection.EndWriteError, nil
-				}
+				return s.serveTunnelHTTP(ctx, tlsConn, plain, md, logger, h), nil
 			}
 			return connection.EndHandlerClose, nil
 		}
@@ -251,10 +256,7 @@ func (s *socksServer) handleTunnel(ctx context.Context, path string, md *connect
 		logger.Error("Failed to store tunneled payload", slog.String("protocol", "socks"), producer.ErrAttr(storeErr))
 	}
 	if !truncated && socks.LooksLikeHTTPRequest(data) {
-		if err := s.write(socks.TunnelHTTPReply(), "tunnel", "200"); err != nil {
-			logger.Error("Failed to write to connection", slog.String("protocol", "socks"), producer.ErrAttr(err))
-			return connection.EndWriteError, nil
-		}
+		return s.serveTunnelHTTP(ctx, s.conn, data, md, logger, h), nil
 	}
 	return connection.EndHandlerClose, nil
 }

