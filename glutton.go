@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"time"
 	"unicode/utf16"
@@ -260,11 +261,37 @@ func (g *Glutton) udpListen(wg *sync.WaitGroup) {
 		if hfunc, ok := g.udpProtocolHandlers[handlerName]; ok {
 			data := append([]byte(nil), buffer[:n]...)
 			go func() {
+				defer g.recoverPanic("udp", handlerName)
 				if err := hfunc(g.ctx, srcAddr, dstAddr, data, md); err != nil {
 					g.Logger.Error("Failed to handle UDP payload", producer.ErrAttr(err))
 				}
 			}()
 		}
+	}
+}
+
+// recoverPanic must be deferred directly. It turns a handler panic into an
+// entry in <var-dir>/panic.log (and an error log line) instead of crashing the
+// sensor.
+func (g *Glutton) recoverPanic(transport, handler string) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	stack := debug.Stack()
+	g.Logger.Error("Handler panic",
+		slog.String("transport", transport),
+		slog.String("handler", handler),
+		slog.Any("panic", r))
+
+	f, err := os.OpenFile(filepath.Join(viper.GetString("var-dir"), "panic.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		g.Logger.Error("Failed to open panic log", producer.ErrAttr(err))
+		return
+	}
+	defer f.Close()
+	if _, err := fmt.Fprintf(f, "%s %s handler=%s panic: %v\n%s\n", time.Now().UTC().Format(time.RFC3339), transport, handler, r, stack); err != nil {
+		g.Logger.Error("Failed to write panic log", producer.ErrAttr(err))
 	}
 }
 
@@ -321,6 +348,7 @@ func (g *Glutton) tcpListen() {
 
 		if hfunc, ok := g.tcpProtocolHandlers[handlerName]; ok {
 			go func() {
+				defer g.recoverPanic("tcp", handlerName)
 				if err := hfunc(g.ctx, conn, md); err != nil {
 					g.Logger.Error("Failed to handle ", producer.ErrAttr(err), slog.String("handler", handlerName))
 				}

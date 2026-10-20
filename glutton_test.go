@@ -3,7 +3,11 @@ package glutton
 import (
 	"bytes"
 	"context"
+	"io"
+	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -185,4 +189,17 @@ func TestDefaultRulesRoutePOP3(t *testing.T) {
 		require.Equal(t, "pop3", match.Target, "port %d", tc.port)
 		require.Equal(t, tc.tls, match.TLS, "port %d", tc.port)
 	}
+}
+
+func TestRecoverPanicWritesLog(t *testing.T) {
+	dir := t.TempDir()
+	viper.Set("var-dir", dir)
+	g := &Glutton{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	func() {
+		defer g.recoverPanic("tcp", "boom")
+		panic("kaboom")
+	}()
+	data, err := os.ReadFile(filepath.Join(dir, "panic.log"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "handler=boom panic: kaboom")
 }
