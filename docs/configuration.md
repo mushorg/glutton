@@ -75,7 +75,8 @@ Source: `config/config.yaml`. Keys you'll most often touch:
 | `ssh.host_keys` | `[]` | TCP SSH: private key files (PEM or OpenSSH format) used as host keys. Empty generates RSA 3072, ECDSA P-256 and Ed25519 keys once per process, so host key fingerprints change on every restart; set this to keep them stable. |
 | `ssh.shell` | `true` | TCP SSH: open the fake shell after `ssh.accept_after` password attempts from one source. `false` rejects every login. |
 | `ssh.accept_after` | `3` | TCP SSH: password attempts from one source (across its connections within a `recall` visit) that fail before the next one logs in. |
-| `ssh.persona` | `""` | TCP SSH: pin one persona (`ubuntu-22.04`, `ubuntu-20.04`, `ubuntu-24.04`, `debian-12`, `debian-11`, `centos-7`) instead of picking one per source. |
+| `ssh.idle_timeout` | `10s` | TCP SSH: how long a logged-in connection may stay open without a running session (a Go duration). |
+| `ssh.persona` | `""` | TCP SSH: pin one persona (`ubuntu-22.04`, `ubuntu-20.04`, `ubuntu-24.04`, `debian-12`, `debian-11`) instead of picking one per source. |
 | `icap.service` | `C-ICAP/0.5.10 server - Echo demo service` | TCP ICAP: the `Service` header in `OPTIONS` replies. |
 | `icap.istag` | `CI0001-XXXXXXXXX` | TCP ICAP: the `ISTag` (without quotes) on every reply. The default is what an unconfigured c-icap echo service sends. |
 | `rdp.computer_name`                                                  | *(random `WIN-XXXXX…`)* | TCP RDP: the NetBIOS computer name used in the NTLM Challenge TargetInfo and as the TLS certificate CN. Must be a valid NetBIOS name (≤15 chars). When unset a random `WIN-XXXXXXXXXXX` is generated once per process and reused for all sessions. |

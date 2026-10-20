@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
@@ -31,7 +32,7 @@ import (
 // for (user, password, public key) and the outcome.
 type parsedSSH struct {
 	Direction         string `json:"direction,omitempty"`
-	Command           string `json:"command,omitempty"` // banner, kexinit, auth-<method>, pty-req, shell, exec, cmd
+	Command           string `json:"command,omitempty"` // banner, kexinit, auth-<method>, pty-req, shell, exec, cmd, write-file, channel-open, channel-request, global-request
 	Status            string `json:"status,omitempty"`  // auth outcome on writes
 	Payload           []byte `json:"payload,omitempty"`
 	Truncated         bool   `json:"truncated,omitempty"`
@@ -42,8 +43,12 @@ type parsedSSH struct {
 	Password          string `json:"password,omitempty"`
 	PubkeyType        string `json:"pubkey_type,omitempty"`
 	PubkeyFingerprint string `json:"pubkey_fingerprint,omitempty"`
-	Variant           string `json:"variant,omitempty"` // persona, on the banner write
-	Visit             int    `json:"visit,omitempty"`   // visit number of the source, on the banner write
+	Variant           string `json:"variant,omitempty"`      // persona, on the banner write
+	Visit             int    `json:"visit,omitempty"`        // visit number of the source, on the banner write
+	Path              string `json:"path,omitempty"`         // file the shell wrote, on write-file frames
+	PayloadHash       string `json:"payload_hash,omitempty"` // SHA-256 of the stored file content, on write-file frames
+	Type              string `json:"type,omitempty"`         // channel or request type, on channel-open, global-request and channel-request frames
+	Target            string `json:"target,omitempty"`       // host:port a forward asked for; never dialed
 }
 
 // sshMaxAuthTries is the OpenSSH MaxAuthTries default; x/crypto disconnects
@@ -55,12 +60,18 @@ const sshMaxAuthTries = 6
 // fake shell; ssh.accept_after overrides it.
 const sshAcceptAfter = 3
 
-// sshMaxSessions and sshMaxShellLines bound what one connection can do once
-// logged in.
+// sshMaxSessions, sshMaxShellLines and sshMaxExtraFrames bound what one
+// connection can do once logged in; the last one caps the write-file,
+// channel-open, channel-request and global-request frames together.
 const (
-	sshMaxSessions   = 4
-	sshMaxShellLines = 256
+	sshMaxSessions    = 4
+	sshMaxShellLines  = 256
+	sshMaxExtraFrames = 64
 )
+
+// sshIdleTimeout is how long a logged-in connection may stay open without a
+// running session (ssh.idle_timeout overrides it).
+const sshIdleTimeout = 10 * time.Second
 
 // sshRecall remembers the persona of each source; tests swap it for a store
 // they control.
@@ -190,6 +201,8 @@ type sshServer struct {
 	// tries counts the password attempts on this connection, for when recall
 	// is disabled.
 	tries int
+	// extra counts the frames capped by sshMaxExtraFrames.
+	extra int
 
 	persona sshproto.Persona
 	visit   int

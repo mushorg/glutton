@@ -18,7 +18,11 @@ type Persona struct {
 }
 
 // Personas lists the available systems. The first one is the original
-// persona and the banner the catch-all uses.
+// persona and the banner the catch-all uses. Every persona must be an OpenSSH
+// that ships strict key exchange (the distributions backported it to the
+// versions listed), because x/crypto always offers kex-strict-s-v00@openssh.com:
+// an older persona such as CentOS 7's OpenSSH 7.4 would contradict its own
+// KEXINIT.
 var Personas = []Persona{
 	{
 		Name: "ubuntu-22.04", Version: ServerVersion, Hostname: "ubuntu",
@@ -49,12 +53,6 @@ var Personas = []Persona{
 		Pretty: "Debian GNU/Linux 11 (bullseye)", ID: "debian", Release: "11",
 		Kernel: "5.10.0-30-amd64", Build: "#1 SMP Debian 5.10.218-1 (2024-06-01)",
 		CPU: "Intel(R) Xeon(R) CPU E5-2650 v2 @ 2.60GHz", Cores: 8,
-	},
-	{
-		Name: "centos-7", Version: "SSH-2.0-OpenSSH_7.4", Hostname: "localhost.localdomain",
-		Pretty: "CentOS Linux 7 (Core)", ID: "centos", Release: "7",
-		Kernel: "3.10.0-1160.el7.x86_64", Build: "#1 SMP Mon Oct 19 16:18:59 UTC 2020",
-		CPU: "Intel(R) Xeon(R) CPU E5-2670 0 @ 2.60GHz", Cores: 4,
 	},
 }
 
