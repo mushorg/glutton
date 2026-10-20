@@ -49,6 +49,7 @@ type parsedSSH struct {
 	PayloadHash       string `json:"payload_hash,omitempty"` // SHA-256 of the stored file content, on write-file frames
 	Type              string `json:"type,omitempty"`         // channel or request type, on channel-open, global-request and channel-request frames
 	Target            string `json:"target,omitempty"`       // host:port a forward asked for; never dialed
+	OffsetMs          int64  `json:"offset_ms,omitempty"`    // milliseconds from the connection start to this frame; absent within the first millisecond
 }
 
 // sshMaxAuthTries is the OpenSSH MaxAuthTries default; x/crypto disconnects
@@ -209,12 +210,22 @@ type sshServer struct {
 	ip      net.IP
 	shell   bool
 
+	// start is when the connection was accepted; frame offsets count from it.
+	start time.Time
+
 	ctx    context.Context
 	h      interfaces.Honeypot
 	logger interfaces.Logger
 	md     connection.Metadata
 	host   string
 	port   string
+}
+
+// stamp sets the offset of a frame that is about to be recorded. The caller
+// holds s.mu.
+func (s *sshServer) stamp(f parsedSSH) parsedSSH {
+	f.OffsetMs = time.Since(s.start).Milliseconds()
+	return f
 }
 
 // capture frames the unencrypted start of one direction as it passes.
@@ -231,7 +242,7 @@ func (s *sshServer) capture(direction string, stream *sshproto.Stream, data []by
 		}
 	}
 	for _, m := range msgs {
-		s.events = append(s.events, s.frame(direction, m))
+		s.events = append(s.events, s.stamp(s.frame(direction, m)))
 		if direction == "read" && m.Kind == sshproto.KindVersion {
 			s.logger.Info(
 				"ssh client",
@@ -298,7 +309,7 @@ func (s *sshServer) authLog(meta cryptossh.ConnMetadata, method string, err erro
 	if err == nil {
 		status = "success"
 	}
-	s.events = append(s.events, read, parsedSSH{Direction: "write", Command: read.Command, Status: status})
+	s.events = append(s.events, s.stamp(read), s.stamp(parsedSSH{Direction: "write", Command: read.Command, Status: status}))
 	if method != "none" {
 		s.logger.Info(
 			"ssh login attempt",
@@ -346,6 +357,7 @@ func (c *sshConn) Write(p []byte) (int, error) {
 	c.s.capture("write", &c.s.writes, p[:n], false)
 	if err != nil {
 		c.s.setEndReason(connection.EndWriteError)
+		c.s.logger.Debug("Failed to write SSH data", slog.String("protocol", "ssh"), producer.ErrAttr(err))
 	}
 	return n, err
 }
@@ -368,18 +380,19 @@ func HandleSSH(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	if err != nil {
 		host = conn.RemoteAddr().String()
 	}
-	server := &sshServer{events: []parsedSSH{}, ctx: ctx, h: h, logger: logger, md: md, host: host, port: port}
+	server := &sshServer{events: []parsedSSH{}, start: connStart(md), ctx: ctx, h: h, logger: logger, md: md, host: host, port: port}
 	server.ip = net.ParseIP(host)
 	server.persona, server.visit = sshChoosePersona(server.ip)
 	server.shell = viper.GetBool("ssh.shell") || !viper.IsSet("ssh.shell")
 	defer func() {
 		server.mu.Lock()
 		if m, ok := server.reads.Flush(); ok {
-			server.events = append(server.events, server.frame("read", m))
+			server.events = append(server.events, server.stamp(server.frame("read", m)))
 		}
 		server.produced = true
 		events := server.events
 		md.EndReason = server.endReason
+		md.Fleet = sshFleet(events)
 		if md.EndReason == "" {
 			md.EndReason = connection.EndHandlerClose
 		}
@@ -441,6 +454,26 @@ func HandleSSH(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		}
 	}()
 	return sconn.Close()
+}
+
+// sshFleet labels a session that wrote an authorized_keys file, the key
+// implant bots run after a login (see sshproto.IsAuthorizedKeys).
+func sshFleet(events []parsedSSH) string {
+	for _, f := range events {
+		if f.Direction == "read" && f.Command == "write-file" && sshproto.IsAuthorizedKeys(f.Path) {
+			return sshproto.FleetAuthKeysImplant
+		}
+	}
+	return ""
+}
+
+// connStart is when the connection was accepted, or now where the metadata
+// does not say.
+func connStart(md connection.Metadata) time.Time {
+	if md.Added.IsZero() {
+		return time.Now()
+	}
+	return md.Added
 }
 
 // sshChoosePersona picks the persona of ip: the one ssh.persona names, else

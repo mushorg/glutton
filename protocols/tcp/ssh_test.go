@@ -57,7 +57,18 @@ func serveSSH(t *testing.T) (string, *fakeHoneypot, chan error) {
 	return ln.Addr().String(), hp, done
 }
 
+// waitSSHEvent returns the produced event and its frames without their
+// offsets, which depend on timing; waitSSHEventTimed keeps them.
 func waitSSHEvent(t *testing.T, hp *fakeHoneypot, done chan error) (producedTCP, []parsedSSH) {
+	t.Helper()
+	ev, frames := waitSSHEventTimed(t, hp, done)
+	for i := range frames {
+		frames[i].OffsetMs = 0
+	}
+	return ev, frames
+}
+
+func waitSSHEventTimed(t *testing.T, hp *fakeHoneypot, done chan error) (producedTCP, []parsedSSH) {
 	t.Helper()
 	select {
 	case ev := <-hp.produced:

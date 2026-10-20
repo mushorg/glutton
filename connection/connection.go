@@ -89,6 +89,10 @@ type Metadata struct {
 	TargetPort uint16
 	TargetIP   string
 	EndReason  string
+	// Fleet is a behavioral label the handler gave the session (e.g.
+	// "ssh-authkeys-implant"); the producer uses it as the scanner when no
+	// network or payload classification applies.
+	Fleet string
 	// TLS is set when the sensor terminated TLS (rule option tls) before the handler.
 	TLS *TLSInfo
 	// Outer lists protocol layers a wrapper peeled off before the handler ran

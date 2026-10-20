@@ -32,7 +32,7 @@ func (s *sshServer) addFrame(f parsedSSH) {
 	if s.produced {
 		return
 	}
-	s.events = append(s.events, f)
+	s.events = append(s.events, s.stamp(f))
 }
 
 // addExtra appends a frame that a client can repeat at will, up to
@@ -47,7 +47,7 @@ func (s *sshServer) addExtra(f parsedSSH) {
 		return
 	}
 	s.extra++
-	s.events = append(s.events, f)
+	s.events = append(s.events, s.stamp(f))
 }
 
 // recordWrites records the files a shell line wrote and stores their content.

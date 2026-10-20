@@ -2,7 +2,7 @@
 
 Transport: TCP. Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `status`, `payload`, `truncated`, `version`, `hassh`, `hassh_algorithms`, `user`, `password`, `pubkey_type`, `pubkey_fingerprint`, `variant`, `visit`, `path`, `payload_hash`, `type`, `target`
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `status`, `payload`, `truncated`, `version`, `hassh`, `hassh_algorithms`, `user`, `password`, `pubkey_type`, `pubkey_fingerprint`, `variant`, `visit`, `path`, `payload_hash`, `type`, `target`, `offset_ms`
 
 SSH on tcp/22 and tcp/2222 (minus the management port `ports.ssh`, which is never redirected), and on any port where the catch-all sees a client identification string starting with `SSH-`. The key exchange and authentication use `golang.org/x/crypto/ssh`. The handler records what passes:
 
@@ -20,6 +20,10 @@ SSH on tcp/22 and tcp/2222 (minus the management port `ports.ssh`, which is neve
 | `channel-request` | read | After a login: a session request the shell does not serve (`subsystem` such as `sftp`, `x11-req`, `auth-agent-req@openssh.com`), refused. `type` is the request type. |
 | `global-request` | read | After a login: a connection-level request (`tcpip-forward`, `no-more-sessions@openssh.com`, ...), refused. `type` and, for forwards, `target` as above. |
 | `cmd` | read / write | After a login: `payload` is a line typed in the shell (read) or the fake shell's output (write, `status` `ok`, or `not-found` for an unknown command). Post-login frames hold plaintext, not wire bytes. |
+
+Every frame carries `offset_ms`, the milliseconds from the connection start (the same clock as the event's `startedAt` and `durationMs`) to the moment the frame was recorded; it is absent within the first millisecond. Compare the last frame's offset with `durationMs` to tell a client that left from one the sensor closed at the idle timeout.
+
+A session that writes an `authorized_keys` file (`write-file` with a path ending in `/.ssh/authorized_keys` or `authorized_keys2`) gets the event `scanner` label `ssh-authkeys-implant`. The label is behavioral, not an attribution: many bots run the same `echo "ssh-rsa …" >> authorized_keys` one-liner. A network scanner label (Censys, Shodan, …) takes precedence. The top-level `payload` of an `ssh` event is the sensor's banner, so the payload-hash fleets do not apply to it.
 
 The banner write carries `variant` (the persona) and `visit` (the source's visit number, see `recall`).
 

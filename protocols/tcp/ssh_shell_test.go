@@ -209,7 +209,7 @@ func TestSSHShellImplantAndIdleClose(t *testing.T) {
 	require.Contains(t, string(out), "-rw------- 1 kafei kafei")
 
 	// the client stays connected; the idle timeout ends the visit
-	ev, frames := waitSSHEvent(t, hp, done)
+	ev, frames := waitSSHEventTimed(t, hp, done)
 	require.Equal(t, "handler_close", ev.endReason)
 	writes := sshFramesByCommand(frames, "read", "write-file")
 	require.Len(t, writes, 1)
@@ -219,6 +219,14 @@ func TestSSHShellImplantAndIdleClose(t *testing.T) {
 	stored, err := os.ReadFile(filepath.Join(dir, writes[0].PayloadHash))
 	require.NoError(t, err)
 	require.Equal(t, writes[0].Payload, stored)
+	require.Equal(t, sshproto.FleetAuthKeysImplant, ev.fleet)
+	// frames carry their offset from the connection start, in order
+	var last int64
+	for _, f := range frames {
+		require.GreaterOrEqual(t, f.OffsetMs, last, "%s %s", f.Direction, f.Command)
+		last = f.OffsetMs
+	}
+	require.Positive(t, last)
 	require.Len(t, sshFramesByCommand(frames, "read", "exec"), 2)
 	for _, f := range sshFramesByCommand(frames, "write", "cmd") {
 		require.Equal(t, "ok", f.Status)

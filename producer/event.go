@@ -118,6 +118,9 @@ func (p *Producer) makeEventTCP(handler string, conn net.Conn, md connection.Met
 	if event.Scanner == "" {
 		event.Scanner = scanner.ClassifyPayload(handler, event.PayloadHash)
 	}
+	if event.Scanner == "" {
+		event.Scanner = md.Fleet
+	}
 	return &event, nil
 }
 
