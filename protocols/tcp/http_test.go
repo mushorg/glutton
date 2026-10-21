@@ -1,9 +1,11 @@
 package tcp
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,6 +17,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/citrix"
 	"github.com/mushorg/glutton/protocols/tcp/log4shell"
 	"github.com/mushorg/glutton/protocols/tcp/php2shell"
+	"github.com/mushorg/glutton/protocols/tcp/plex2shell"
 	"github.com/mushorg/glutton/protocols/tcp/pve"
 	"github.com/stretchr/testify/require"
 )
@@ -802,4 +805,74 @@ func TestHandleHTTPPHP2Shell(t *testing.T) {
 		Boundary:      "b",
 	}, events[0].PHP2Shell)
 	require.Nil(t, events[1].PHP2Shell)
+}
+
+// A Plex2Shell subscribe probe on tcp/32400 is tagged and answered like an
+// unclaimed Plex server; the callback host is recorded, never dialed.
+func TestHandleHTTPPlex2Shell(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+	httpNow = func() time.Time { return time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { httpNow = time.Now })
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{TargetPort: plex2shell.Port}, &recordingLogger{}, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+
+	probe := "/player/timeline/subscribe?protocol=http%3A%2F%2F127.0.0.1.45-194-92-222.sslip.io%3A8952&X-Plex-Target-Client-Identifier=poc_1"
+	reader := bufio.NewReader(client)
+	for _, path := range []string{probe, "/identity"} {
+		_, err := client.Write(httpTestRequest("GET", path, "", nil))
+		require.NoError(t, err)
+		resp, err := http.ReadResponse(reader, nil)
+		require.NoError(t, err)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		require.Equal(t, 200, resp.StatusCode)
+		require.Equal(t, "1.0", resp.Header.Get("X-Plex-Protocol"))
+	}
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "http", produced.protocol)
+	events := produced.decoded.([]parsedHTTP)
+	require.Len(t, events, 4)
+	require.Equal(t, &plex2shell.Request{
+		Indicators:       []string{plex2shell.SubscribePath, plex2shell.LoopbackPrefixHost, plex2shell.PoCClient},
+		CallbackHost:     "127.0.0.1.45-194-92-222.sslip.io",
+		CallbackIP:       "45.194.92.222",
+		CallbackPort:     8952,
+		ClientIdentifier: "poc_1",
+	}, events[0].Plex2Shell)
+	require.Equal(t, "200", events[1].Status)
+	require.Nil(t, events[2].Plex2Shell)
+	require.Equal(t, "200", events[3].Status)
+}
+
+// Unknown paths on tcp/32400 are 401, as on a real server without a token.
+func TestHandleHTTPPlexUnauthorized(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+	hp := newFakeHoneypot()
+	go func() {
+		_ = HandleHTTP(context.Background(), serverConn, connection.Metadata{TargetPort: plex2shell.Port}, &recordingLogger{}, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write(httpTestRequest("GET", "/library/sections", "", nil))
+	require.NoError(t, err)
+	resp, err := http.ReadResponse(bufio.NewReader(client), nil)
+	require.NoError(t, err)
+	require.Equal(t, 401, resp.StatusCode)
 }

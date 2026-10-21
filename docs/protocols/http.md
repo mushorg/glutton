@@ -6,7 +6,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 
 ## `http` (Go)
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `ja4h`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `log4shell`, `php2shell`, `session_id`, `dest_port`, `src_port`, `payload`
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `ja4h`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `log4shell`, `php2shell`, `plex2shell`, `session_id`, `dest_port`, `src_port`, `payload`
 
 ### Frame fields
 
@@ -19,7 +19,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 | `dest_port`, `src_port` | reads | Ports of the connection the frame arrived on (see [Sessions](#sessions)). |
 | `status` | writes | Response status, e.g. `200`. |
 | `username`, `password` | reads | `Authorization: Basic` credentials, or the Proxmox VE ticket login form (see [Emulated applications](#emulated-applications)). |
-| `browser`, `binary`, `args`, `citrix`, `log4shell`, `php2shell`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
+| `browser`, `binary`, `args`, `citrix`, `log4shell`, `php2shell`, `plex2shell`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
 
 ### Sessions
 
@@ -116,6 +116,27 @@ Package: `protocols/tcp/php2shell`. Parse-only: a `multipart/form-data` read tha
 | `long_session_cookie` | `PHPSESSID` cookie value longer than 256 B. |
 
 `parts` counts part delimiters in the first 1 MiB of the body; `content_length` is the larger of the declared and received size; `boundary` is capped at 128 B. `truncated` is set when either cap applies. The Spicy `http` handler does not set `php2shell`.
+
+#### Plex2Shell (CVE-2026-96652, -96654, -96655, -96656)
+
+Package: `protocols/tcp/plex2shell`. Every path on tcp/32400 is answered as an unclaimed Plex Media Server older than the fix (1.43.3.10861), and a tagged request on any other port gets the same reply. The only public request bytes are one honeypot log line, so the tags are heuristics on that shape, not signatures. The callback host is recorded and never resolved or dialed.
+
+| Request | Response |
+| --- | --- |
+| `GET /identity` | `200` XML `MediaContainer` with a per-sensor `machineIdentifier` and a vulnerable `version` |
+| `GET /player/timeline/(un)subscribe` | `200` `<Response code="200" status="OK" />` |
+| Anything else | `401 Unauthorized` |
+
+The reply bodies are best recollection of a real server, not captures. A read that matches at least one indicator sets `plex2shell` to `{indicators, callback_host, callback_ip, callback_port, agent, client_identifier, truncated}`:
+
+| `indicators` | Meaning |
+| --- | --- |
+| `subscribe_path` | Path is `/player/timeline/subscribe`. |
+| `loopback_prefix_host` | A query or `X-Plex-*` value holds a host that starts with a loopback literal and has more labels (`127.0.0.1.<ip>.sslip.io:8952`). Plain `127.0.0.1:32400` is not tagged. |
+| `agent_callback` | A `com.plexapp.agents.*` plugin reference, with its `/function/<name>` when present. |
+| `poc_client` | `X-Plex-Target-Client-Identifier` (header or query) starts with `poc_`. |
+
+`callback_ip` is the address embedded in a `sslip.io`/`nip.io` name, read from the name alone. Query and header text is scanned up to 16 KiB, fields are capped at 256 B, and `truncated` is set when either applies. The Spicy `http` handler does not set `plex2shell`.
 
 #### Local file include (LFI)
 
