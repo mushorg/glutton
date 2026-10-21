@@ -2,6 +2,7 @@ package udp
 
 import (
 	"context"
+	"encoding/hex"
 	"log/slog"
 	"math/rand/v2"
 	"net"
@@ -30,15 +31,23 @@ type parsedSNMP struct {
 	NonRepeaters   int64    `json:"non_repeaters,omitempty"`
 	MaxRepetitions int64    `json:"max_repetitions,omitempty"`
 	OIDs           []string `json:"oids,omitempty"`
-	Status         string   `json:"status,omitempty"`
-	Payload        []byte   `json:"payload,omitempty"`
-	Truncated      bool     `json:"truncated,omitempty"`
+	// SNMPv3: msgID, msgFlags, the USM user and engineID (hex) the client
+	// sent, and the scoped PDU's context name.
+	MsgID        int64  `json:"msg_id,omitempty"`
+	MsgFlags     int    `json:"msg_flags,omitempty"`
+	SecurityName string `json:"security_name,omitempty"`
+	EngineID     string `json:"engine_id,omitempty"`
+	ContextName  string `json:"context_name,omitempty"`
+	Status       string `json:"status,omitempty"`
+	Payload      []byte `json:"payload,omitempty"`
+	Truncated    bool   `json:"truncated,omitempty"`
 }
 
-// HandleSNMP parses an SNMPv1/v2c datagram and answers like a read-only
-// embedded device (community "public", system group only). Replies are never
+// HandleSNMP parses an SNMP datagram and answers like a read-only embedded
+// device (community "public", system group only). v1/v2c replies are never
 // larger than the request: a response that does not fit becomes a tooBig
-// error. Other communities, SNMPv3 and non-request PDUs are recorded without a
+// error. SNMPv3 USM discovery gets a Report (see snmp.Agent). Other
+// communities, other v3 messages and non-request PDUs are recorded without a
 // reply, as a real agent drops them.
 func HandleSNMP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	payload := make([]byte, min(len(data), maxSNMPPayload))
@@ -62,7 +71,7 @@ func HandleSNMP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte,
 	}
 	frame.Version = snmp.VersionName(msg.Version)
 	frame.Community = msg.Community
-	if msg.Version != snmp.Version3 {
+	if msg.PDUType != 0 {
 		frame.Command = snmp.PDUName(msg.PDUType)
 		frame.RequestID = msg.RequestID
 		if msg.PDUType == snmp.PDUGetBulk {
@@ -72,6 +81,13 @@ func HandleSNMP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte,
 		for _, o := range msg.OIDs {
 			frame.OIDs = append(frame.OIDs, o.String())
 		}
+	}
+	if msg.Version == snmp.Version3 {
+		frame.MsgID = msg.MsgID
+		frame.MsgFlags = int(msg.Flags)
+		frame.SecurityName = msg.UserName
+		frame.EngineID = hex.EncodeToString(msg.EngineID)
+		frame.ContextName = msg.ContextName
 	}
 	events = append(events, frame)
 
@@ -89,7 +105,11 @@ func HandleSNMP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte,
 	if resp == nil {
 		return nil
 	}
-	events = append(events, parsedSNMP{Direction: "write", Command: snmp.PDUName(snmp.PDUResponse), Status: status, Payload: resp})
+	respType := byte(snmp.PDUResponse)
+	if msg.Version == snmp.Version3 {
+		respType = snmp.PDUReport
+	}
+	events = append(events, parsedSNMP{Direction: "write", Command: snmp.PDUName(respType), Status: status, Payload: resp})
 	if err := h.ReplyUDP(srcAddr, dstAddr, resp); err != nil {
 		logger.Error("Failed to send SNMP reply", slog.String("protocol", "snmp"), producer.ErrAttr(err))
 		endReason = connection.EndWriteError

@@ -278,3 +278,139 @@ func parseResponse(t *testing.T, b []byte) respMsg {
 	}
 	return r
 }
+
+// v3Discovery is the engine-discovery probe captured from 64.205.72.85
+// (Ochi event da656960-b52d-4f05-a47f-da632ad36e57).
+var v3Discovery = []byte{
+	0x30, 0x4b, 0x02, 0x01, 0x03, 0x30, 0x10, 0x02, 0x04, 0x44, 0xba, 0x33, 0x55, 0x02, 0x02, 0x10,
+	0x00, 0x04, 0x01, 0x04, 0x02, 0x01, 0x03, 0x04, 0x10, 0x30, 0x0e, 0x04, 0x00, 0x02, 0x01, 0x00,
+	0x02, 0x01, 0x00, 0x04, 0x00, 0x04, 0x00, 0x04, 0x00, 0x30, 0x22, 0x04, 0x00, 0x04, 0x00, 0xa0,
+	0x1c, 0x02, 0x04, 0x4a, 0x85, 0x17, 0xe1, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x0e, 0x30,
+	0x0c, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x02, 0x00, 0x05, 0x00,
+}
+
+func TestParseV3Discovery(t *testing.T) {
+	m, err := Parse(v3Discovery)
+	require.NoError(t, err)
+	require.Equal(t, Version3, m.Version)
+	require.Equal(t, int64(0x44ba3355), m.MsgID)
+	require.Equal(t, int64(4096), m.MaxSize)
+	require.Equal(t, byte(FlagReportable), m.Flags)
+	require.Equal(t, int64(3), m.SecModel)
+	require.True(t, m.usm)
+	require.Empty(t, m.EngineID)
+	require.Empty(t, m.UserName)
+	require.Empty(t, m.ContextName)
+	require.Equal(t, byte(PDUGet), m.PDUType)
+	require.Equal(t, int64(0x4a8517e1), m.RequestID)
+	require.Equal(t, []OID{{1, 3, 6, 1, 2, 1, 1, 2, 0}}, m.OIDs)
+}
+
+func TestParseV3Truncated(t *testing.T) {
+	// Every prefix with a fixed-up outer length parses without error or panic
+	// and never claims a complete USM before the USM parameters end.
+	for n := 5; n < len(v3Discovery); n++ {
+		cut := append([]byte(nil), v3Discovery[:n]...)
+		cut[1] = byte(n - 2)
+		m, err := Parse(cut)
+		require.NoError(t, err, n)
+		require.Equal(t, Version3, m.Version, n)
+		if n < 41 { // the USM OCTET STRING ends at byte 41
+			require.False(t, m.usm, n)
+		}
+	}
+}
+
+func TestReportToDiscovery(t *testing.T) {
+	a := testAgent()
+	m, err := Parse(v3Discovery)
+	require.NoError(t, err)
+
+	resp, status := a.Respond(m, len(v3Discovery))
+	require.Equal(t, StatusUnknownEngineID, status)
+	require.NotNil(t, resp)
+	// Larger than the 77-byte request, within the Report cap.
+	require.Greater(t, len(resp), len(v3Discovery))
+	require.LessOrEqual(t, len(resp), reportMaxLen)
+
+	r, err := Parse(resp)
+	require.NoError(t, err)
+	require.Equal(t, Version3, r.Version)
+	require.Equal(t, m.MsgID, r.MsgID)
+	require.Equal(t, byte(0), r.Flags)
+	require.Equal(t, int64(secModelUSM), r.SecModel)
+	require.Equal(t, a.engineID, r.EngineID)
+	require.Equal(t, a.engineBoots, r.EngineBoots)
+	require.Equal(t, a.engineID, r.ContextEngineID)
+	require.Equal(t, byte(PDUReport), r.PDUType)
+	require.Equal(t, m.RequestID, r.RequestID)
+	require.Equal(t, []OID{oidUnknownEngineIDs}, r.OIDs)
+
+	// RFC 3411: high bit set, enterprise 8072, within 5..32 bytes.
+	require.Equal(t, []byte{0x80, 0x00, 0x1f, 0x88}, a.engineID[:4])
+	require.GreaterOrEqual(t, len(a.engineID), 5)
+	require.LessOrEqual(t, len(a.engineID), maxEngineIDLen)
+
+	// The counter advances on every Report.
+	c1 := reportCounter(t, resp)
+	resp2, _ := a.Respond(m, len(v3Discovery))
+	require.Equal(t, c1+1, reportCounter(t, resp2))
+}
+
+// reportCounter reads the trailing Counter32 TLV (tag 0x41, 1-5 content bytes),
+// the last element of a Report built by encodeReport.
+func reportCounter(t *testing.T, b []byte) int64 {
+	t.Helper()
+	for n := 1; n <= 5; n++ {
+		i := len(b) - n - 2
+		if b[i] == tagCounter32 && int(b[i+1]) == n {
+			var v int64
+			for _, c := range b[i+2:] {
+				v = v<<8 | int64(c)
+			}
+			return v
+		}
+	}
+	t.Fatal("no Counter32 at end of report")
+	return 0
+}
+
+func TestReportToLearnedEngineID(t *testing.T) {
+	a := testAgent()
+	m := &Message{Version: Version3, MsgID: 5, Flags: FlagReportable, SecModel: secModelUSM, usm: true, EngineID: a.engineID, UserName: "admin"}
+	resp, status := a.Respond(m, 100)
+	require.Equal(t, StatusUnknownUserName, status)
+	r, err := Parse(resp)
+	require.NoError(t, err)
+	require.Equal(t, []OID{oidUnknownUserNames}, r.OIDs)
+}
+
+func TestV3SilentCases(t *testing.T) {
+	a := testAgent()
+	base := Message{Version: Version3, Flags: FlagReportable, SecModel: secModelUSM, usm: true}
+	for name, mod := range map[string]func(m *Message){
+		"not reportable": func(m *Message) { m.Flags = 0 },
+		"auth":           func(m *Message) { m.Flags |= FlagAuth },
+		"auth priv":      func(m *Message) { m.Flags |= FlagAuth | FlagPriv },
+		"other model":    func(m *Message) { m.SecModel = 2 },
+		"usm incomplete": func(m *Message) { m.usm = false },
+	} {
+		m := base
+		mod(&m)
+		resp, _ := a.Respond(&m, 1500)
+		require.Nil(t, resp, name)
+	}
+	// An engineID over the RFC limit is not decoded as USM.
+	long := make([]byte, maxEngineIDLen+1)
+	usm := tlv(tagOctetString, long)
+	for _, f := range [][]byte{encInt(tagInteger, 0), encInt(tagInteger, 0), tlv(tagOctetString, nil), tlv(tagOctetString, nil), tlv(tagOctetString, nil)} {
+		usm = append(usm, f...)
+	}
+	require.Error(t, parseUSM(&Message{}, tlv(tagSequence, usm)))
+}
+
+func TestAgentEngineIDPerSeed(t *testing.T) {
+	now := func() time.Time { return time.Unix(1_700_000_000, 0) }
+	require.Equal(t, NewAgent(1, now).engineID, NewAgent(1, now).engineID)
+	require.NotEqual(t, NewAgent(1, now).engineID, NewAgent(2, now).engineID)
+}

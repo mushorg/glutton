@@ -1,9 +1,12 @@
 package snmp
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math/rand/v2"
 	"slices"
+	"sync/atomic"
 	"time"
 )
 
@@ -13,7 +16,20 @@ const (
 	StatusTooBig     = "too_big"
 	StatusNoSuchName = "no_such_name"
 	StatusNoAccess   = "no_access"
+
+	// SNMPv3 Reports: the request carried an engineID other than the agent's
+	// (including the empty discovery one), or the agent's engineID with a user
+	// it does not have.
+	StatusUnknownEngineID = "unknown_engine_id"
+	StatusUnknownUserName = "unknown_user_name"
 )
+
+// reportMaxLen caps an SNMPv3 Report. A discovery probe is smaller than the
+// Report it must trigger (about 105 bytes against 60-80), so the "never larger
+// than the request" rule would silence exactly the traffic v3 support is for.
+// The cap keeps the amplification factor under 3 and udp_reply_limit bounds
+// the total.
+const reportMaxLen = 160
 
 // Agent is a read-only embedded Linux router. It answers the system group
 // (1.3.6.1.2.1.1) and nothing else.
@@ -22,6 +38,12 @@ type Agent struct {
 	name  string
 	boot  time.Time
 	now   func() time.Time
+
+	engineID    []byte
+	engineBoots int64
+	// Report counters (usmStats*), seeded so they differ between sensors.
+	unknownEngineIDs atomic.Uint32
+	unknownUserNames atomic.Uint32
 }
 
 var (
@@ -34,6 +56,9 @@ var (
 
 	// net-snmp's Linux sysObjectID, matching the Linux sysDescr.
 	valSysObjectID = OID{1, 3, 6, 1, 4, 1, 8072, 3, 2, 10}
+
+	oidUnknownEngineIDs = OID{1, 3, 6, 1, 6, 3, 15, 1, 1, 4, 0}
+	oidUnknownUserNames = OID{1, 3, 6, 1, 6, 3, 15, 1, 1, 3, 0}
 )
 
 var (
@@ -48,13 +73,21 @@ func NewAgent(seed uint64, now func() time.Time) *Agent {
 	r := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
 	built := time.Date(2022+r.IntN(3), time.Month(1+r.IntN(12)), 1+r.IntN(28), r.IntN(24), r.IntN(60), r.IntN(60), 0, time.UTC)
 	name := fmt.Sprintf("%s-%04x", hostPrefixes[r.IntN(len(hostPrefixes))], r.IntN(0x10000))
-	return &Agent{
+	a := &Agent{
 		descr: fmt.Sprintf("Linux %s %s #1 SMP %s %s", name, kernels[r.IntN(len(kernels))], built.Format("Mon Jan  2 15:04:05 UTC 2006"), arches[r.IntN(len(arches))]),
 		name:  name,
 		// Booted between 1 hour and 90 days before first use.
 		boot: now().Add(-time.Duration(1+r.IntN(90*24)) * time.Hour),
 		now:  now,
 	}
+	// RFC 3411 engineID: enterprise 8072 (net-snmp) with the high bit set,
+	// format 0x80 (enterprise specific) and 8 persona bytes. Drawn after the
+	// persona fields so those stay stable.
+	a.engineID = binary.BigEndian.AppendUint64([]byte{0x80, 0x00, 0x1f, 0x88, 0x80}, r.Uint64())
+	a.engineBoots = int64(1 + r.IntN(20))
+	a.unknownEngineIDs.Store(uint32(r.IntN(5000)))
+	a.unknownUserNames.Store(uint32(r.IntN(500)))
+	return a
 }
 
 type entry struct {
@@ -89,11 +122,39 @@ func next(mib []entry, o OID) (entry, bool) {
 	return entry{}, false
 }
 
+// respondV3 answers SNMPv3 USM discovery. Only an unauthenticated, reportable
+// message gets a Report: with an engineID that is not the agent's it is
+// usmStatsUnknownEngineIDs carrying the agent's engineID, with the agent's own
+// engineID it is usmStatsUnknownUserNames (the agent has no users). Everything
+// else (authenticated or encrypted requests, non-reportable messages, other
+// security models, malformed USM parameters) is dropped.
+func (a *Agent) respondV3(m *Message) (resp []byte, status string) {
+	if !m.usm || m.SecModel != secModelUSM || m.Flags&FlagReportable == 0 || m.Flags&(FlagAuth|FlagPriv) != 0 {
+		return nil, ""
+	}
+	oid, counter := oidUnknownEngineIDs, &a.unknownEngineIDs
+	status = StatusUnknownEngineID
+	if bytes.Equal(m.EngineID, a.engineID) {
+		oid, counter = oidUnknownUserNames, &a.unknownUserNames
+		status = StatusUnknownUserName
+	}
+	secs := int64(a.now().Sub(a.boot) / time.Second)
+	resp = encodeReport(m.MsgID, m.RequestID, a.engineID, a.engineBoots, secs, oid, counter.Add(1))
+	if len(resp) > reportMaxLen {
+		return nil, ""
+	}
+	return resp, status
+}
+
 // Respond builds the reply to m, never longer than maxLen bytes (the request
-// size). It returns nil when the agent stays silent: an unknown community,
-// SNMPv3, a PDU that is not a request, or a reply that cannot fit even as a
-// tooBig error.
+// size), except for SNMPv3 Reports (see reportMaxLen). It returns nil when the
+// agent stays silent: an unknown community, an SNMPv3 message that is not a
+// discovery probe, a PDU that is not a request, or a reply that cannot fit
+// even as a tooBig error.
 func (a *Agent) Respond(m *Message, maxLen int) (resp []byte, status string) {
+	if m.Version == Version3 {
+		return a.respondV3(m)
+	}
 	if m.Version != Version1 && m.Version != Version2c {
 		return nil, ""
 	}

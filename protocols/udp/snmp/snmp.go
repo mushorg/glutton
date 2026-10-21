@@ -1,10 +1,11 @@
-// Package snmp parses SNMPv1/v2c messages (RFC 3416, BER) and builds the
-// replies of a small read-only embedded agent. It does no I/O.
+// Package snmp parses SNMPv1/v2c/v3 messages (RFC 3416, RFC 3412, BER) and
+// builds the replies of a small read-only embedded agent. It does no I/O.
 package snmp
 
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -16,6 +17,7 @@ const (
 	tagNull        = 0x05
 	tagOID         = 0x06
 	tagSequence    = 0x30
+	tagCounter32   = 0x41
 	tagTimeTicks   = 0x43
 
 	// Exception values (v2c varbind values).
@@ -33,11 +35,25 @@ const (
 	PDUGetBulk   = 0xa5
 	PDUInform    = 0xa6
 	PDUTrapV2    = 0xa7
+	PDUReport    = 0xa8
 	pduTagFirst  = PDUGet
 	pduTagLast   = PDUTrapV2
 	maxArcs      = 128
 	maxVarbinds  = 64
 	maxBulkRound = 64
+
+	// maxEngineIDLen is the RFC 3411 limit for an SnmpEngineID. Names read from
+	// the wire are clipped to maxNameLen for the decoded frame.
+	maxEngineIDLen = 32
+	maxNameLen     = 128
+)
+
+// SNMPv3 message flags (RFC 3412 §6.4) and the USM security model.
+const (
+	FlagAuth       = 0x01
+	FlagPriv       = 0x02
+	FlagReportable = 0x04
+	secModelUSM    = 3
 )
 
 // Versions as carried on the wire.
@@ -58,8 +74,9 @@ const (
 // Community is the only community the agent answers.
 const Community = "public"
 
-// Message is a parsed SNMPv1/v2c message. Version 3 is recognized but not
-// decoded further.
+// Message is a parsed SNMP message. For v3 the header, USM parameters and an
+// unencrypted scoped PDU are decoded as far as the datagram is well formed;
+// decoding stops at the first malformed element and keeps what came before.
 type Message struct {
 	Version   int
 	Community string
@@ -70,6 +87,19 @@ type Message struct {
 	NonRepeaters   int64
 	MaxRepetitions int64
 	OIDs           []OID
+
+	// SNMPv3 only.
+	MsgID           int64
+	MaxSize         int64
+	Flags           byte
+	SecModel        int64
+	EngineID        []byte // authoritativeEngineID from the USM parameters
+	EngineBoots     int64
+	EngineTime      int64
+	UserName        string
+	ContextEngineID []byte
+	ContextName     string
+	usm             bool // the USM parameters decoded completely
 }
 
 // OID is a decoded object identifier.
@@ -128,6 +158,8 @@ func PDUName(t byte) string {
 		return "InformRequest"
 	case PDUTrapV2:
 		return "SNMPv2-Trap"
+	case PDUReport:
+		return "Report"
 	}
 	return "UNKNOWN"
 }
@@ -209,7 +241,8 @@ func LooksLikeSNMP(data []byte) bool {
 	return false
 }
 
-// Parse decodes a v1/v2c message. For v3 it returns only Version set.
+// Parse decodes a message. A malformed v3 body is not an error: the message
+// keeps the fields decoded so far, so the handler can still record them.
 func Parse(data []byte) (*Message, error) {
 	body, rest, err := expect(data, tagSequence)
 	if err != nil {
@@ -228,6 +261,7 @@ func Parse(data []byte) (*Message, error) {
 	}
 	m := &Message{Version: int(ver)}
 	if ver == Version3 {
+		_ = parseV3(m, body)
 		return m, nil
 	}
 	if ver != Version1 && ver != Version2c {
@@ -252,38 +286,141 @@ func Parse(data []byte) (*Message, error) {
 		return m, nil
 	}
 
-	reqID, pdu, err := intField(pdu)
-	if err != nil {
+	if err := parsePDU(m, pdu); err != nil {
 		return nil, err
 	}
-	m.RequestID = reqID
+	return m, nil
+}
+
+// parsePDU decodes request-id, the two integers that follow and the varbind
+// OIDs of a PDU body.
+func parsePDU(m *Message, pdu []byte) error {
+	var err error
+	if m.RequestID, pdu, err = intField(pdu); err != nil {
+		return err
+	}
 	if m.NonRepeaters, pdu, err = intField(pdu); err != nil {
-		return nil, err
+		return err
 	}
 	if m.MaxRepetitions, pdu, err = intField(pdu); err != nil {
-		return nil, err
+		return err
 	}
 	vbl, _, err := expect(pdu, tagSequence)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for len(vbl) > 0 && len(m.OIDs) < maxVarbinds {
 		var vb []byte
 		vb, vbl, err = expect(vbl, tagSequence)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		oidBytes, _, err := expect(vb, tagOID)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		oid, err := decodeOID(oidBytes)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		m.OIDs = append(m.OIDs, oid)
 	}
-	return m, nil
+	return nil
+}
+
+// parseV3 decodes msgGlobalData, the USM security parameters and, when it is
+// not encrypted, the scoped PDU (RFC 3412 §6, RFC 3414 §2.4). body starts after
+// the version INTEGER.
+func parseV3(m *Message, body []byte) error {
+	gd, body, err := expect(body, tagSequence)
+	if err != nil {
+		return err
+	}
+	if m.MsgID, gd, err = intField(gd); err != nil {
+		return err
+	}
+	if m.MaxSize, gd, err = intField(gd); err != nil {
+		return err
+	}
+	flags, gd, err := expect(gd, tagOctetString)
+	if err != nil {
+		return err
+	}
+	if len(flags) > 0 {
+		m.Flags = flags[0]
+	}
+	if m.SecModel, _, err = intField(gd); err != nil {
+		return err
+	}
+	secParams, body, err := expect(body, tagOctetString)
+	if err != nil {
+		return err
+	}
+	if m.SecModel == secModelUSM {
+		if err := parseUSM(m, secParams); err != nil {
+			return err
+		}
+	}
+	scoped, _, err := expect(body, tagSequence)
+	if err != nil {
+		// An encrypted scoped PDU is an OCTET STRING; nothing more to read.
+		return err
+	}
+	ctxEngine, scoped, err := expect(scoped, tagOctetString)
+	if err != nil {
+		return err
+	}
+	m.ContextEngineID = slices.Clone(ctxEngine[:min(len(ctxEngine), maxEngineIDLen)])
+	ctxName, scoped, err := expect(scoped, tagOctetString)
+	if err != nil {
+		return err
+	}
+	m.ContextName = string(ctxName[:min(len(ctxName), maxNameLen)])
+	pduTag, pdu, _, err := readTLV(scoped)
+	if err != nil {
+		return err
+	}
+	if pduTag < pduTagFirst || pduTag > PDUReport {
+		return fmt.Errorf("snmp: PDU tag %#x", pduTag)
+	}
+	m.PDUType = pduTag
+	return parsePDU(m, pdu)
+}
+
+// parseUSM decodes UsmSecurityParameters: engineID, boots, time, user name,
+// authentication and privacy parameters.
+func parseUSM(m *Message, b []byte) error {
+	b, _, err := expect(b, tagSequence)
+	if err != nil {
+		return err
+	}
+	engineID, b, err := expect(b, tagOctetString)
+	if err != nil {
+		return err
+	}
+	if len(engineID) > maxEngineIDLen {
+		return errBER
+	}
+	m.EngineID = slices.Clone(engineID)
+	if m.EngineBoots, b, err = intField(b); err != nil {
+		return err
+	}
+	if m.EngineTime, b, err = intField(b); err != nil {
+		return err
+	}
+	user, b, err := expect(b, tagOctetString)
+	if err != nil {
+		return err
+	}
+	m.UserName = string(user[:min(len(user), maxNameLen)])
+	if _, b, err = expect(b, tagOctetString); err != nil {
+		return err
+	}
+	if _, _, err = expect(b, tagOctetString); err != nil {
+		return err
+	}
+	m.usm = true
+	return nil
 }
 
 func intField(b []byte) (int64, []byte, error) {
@@ -409,3 +546,40 @@ var (
 	noSuchObjectValue = []byte{tagNoSuchObject, 0}
 	endOfMibValue     = []byte{tagEndOfMibView, 0}
 )
+
+// encodeReport builds an SNMPv3 Report PDU (RFC 3412 §7.2.6) for a USM
+// discovery or unknown-user failure: msgFlags 0 (noAuthNoPriv, not
+// reportable), the agent's engineID, boots and time in the security
+// parameters, and a single Counter32 varbind naming the failure.
+func encodeReport(msgID, reqID int64, engineID []byte, boots, engineTime int64, oid OID, counter uint32) []byte {
+	global := encInt(tagInteger, msgID)
+	global = append(global, encInt(tagInteger, reportMaxSize)...)
+	global = append(global, tlv(tagOctetString, []byte{0})...)
+	global = append(global, encInt(tagInteger, secModelUSM)...)
+
+	usm := tlv(tagOctetString, engineID)
+	usm = append(usm, encInt(tagInteger, boots)...)
+	usm = append(usm, encInt(tagInteger, engineTime)...)
+	usm = append(usm, tlv(tagOctetString, nil)...) // user name
+	usm = append(usm, tlv(tagOctetString, nil)...) // auth parameters
+	usm = append(usm, tlv(tagOctetString, nil)...) // priv parameters
+
+	pdu := encInt(tagInteger, reqID)
+	pdu = append(pdu, encInt(tagInteger, 0)...)
+	pdu = append(pdu, encInt(tagInteger, 0)...)
+	pdu = append(pdu, tlv(tagSequence, varbind(oid, encInt(tagCounter32, int64(counter))))...)
+
+	scoped := tlv(tagOctetString, engineID)
+	scoped = append(scoped, tlv(tagOctetString, nil)...) // context name
+	scoped = append(scoped, tlv(PDUReport, pdu)...)
+
+	msg := encInt(tagInteger, Version3)
+	msg = append(msg, tlv(tagSequence, global)...)
+	msg = append(msg, tlv(tagOctetString, tlv(tagSequence, usm))...)
+	msg = append(msg, tlv(tagSequence, scoped)...)
+	return tlv(tagSequence, msg)
+}
+
+// reportMaxSize is the msgMaxSize a net-snmp agent advertises (largest UDP
+// payload over IPv4).
+const reportMaxSize = 65507
