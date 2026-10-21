@@ -10,6 +10,12 @@ import (
 // It expects no protocol answer.
 var mglnddProbe = regexp.MustCompile(`^MGLNDD_[^_\s]+_\d+\r?\n?$`)
 
+// LDAP resultCode values (RFC 4511 appendix A) used in BindResponses.
+const (
+	ldapSuccess            = 0
+	ldapInvalidCredentials = 49
+)
+
 // rootDSE is an OpenLDAP-style root DSE, returned for every anonymous base
 // search of the empty DN regardless of the requested attributes.
 var rootDSE = []struct {
@@ -89,6 +95,45 @@ func ldapRootDSEQuery(data []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return msgID, true
+}
+
+// ldapSimpleBind reports whether data is an LDAPMessage carrying a BindRequest
+// with simple authentication and returns the raw messageID INTEGER content to
+// echo. anonymous is true when both the name and the password are empty.
+// SASL binds are not matched.
+func ldapSimpleBind(data []byte) (msgID []byte, anonymous, ok bool) {
+	tag, msg, _, ok := berTLV(data)
+	if !ok || tag != 0x30 {
+		return nil, false, false
+	}
+	tag, msgID, msg, ok = berTLV(msg)
+	if !ok || tag != 0x02 || len(msgID) == 0 || len(msgID) > 4 {
+		return nil, false, false
+	}
+	tag, req, _, ok := berTLV(msg)
+	if !ok || tag != 0x60 { // [APPLICATION 0] BindRequest
+		return nil, false, false
+	}
+	tag, _, req, ok = berTLV(req) // version
+	if !ok || tag != 0x02 {
+		return nil, false, false
+	}
+	tag, name, req, ok := berTLV(req)
+	if !ok || tag != 0x04 {
+		return nil, false, false
+	}
+	tag, pass, _, ok := berTLV(req)
+	if !ok || tag != 0x80 { // [0] simple authentication
+		return nil, false, false
+	}
+	return msgID, len(name) == 0 && len(pass) == 0, true
+}
+
+// ldapBindReply builds a BindResponse with the given resultCode and empty
+// matchedDN and diagnosticMessage, under the client's messageID.
+func ldapBindReply(msgID []byte, resultCode byte) []byte {
+	return berEncode(0x30, berEncode(0x02, msgID),
+		berEncode(0x61, berEncode(0x0a, []byte{resultCode}), berEncode(0x04), berEncode(0x04)))
 }
 
 // ldapRootDSEReply builds a SearchResultEntry with the root DSE followed by

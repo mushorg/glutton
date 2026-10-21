@@ -491,6 +491,40 @@ func TestHandleTCPLDAPRootDSE(t *testing.T) {
 	}, events)
 }
 
+func TestHandleTCPLDAPBind(t *testing.T) {
+	// Ochi: tcp/636, 198.235.24.226 (TLS already terminated before the catch-all)
+	for _, tc := range []struct {
+		name    string
+		bind    []byte
+		status  string
+		resCode byte
+	}{
+		{"anonymous", []byte{0x30, 0x0c, 0x02, 0x01, 0x01, 0x60, 0x07, 0x02, 0x01, 0x03, 0x04, 0x00, 0x80, 0x00}, "ldap-bind", 0x00},
+		{"credentials", []byte{
+			0x30, 0x19, 0x02, 0x01, 0x02, 0x60, 0x14, 0x02, 0x01, 0x03,
+			0x04, 0x08, 'c', 'n', '=', 'a', 'd', 'm', 'i', 'n', 0x80, 0x05, 'a', 'd', 'm', 'i', 'n',
+		}, "ldap-bind-invalid", 0x31},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, hp, done := startCatchAll(t, 636)
+
+			_, err := client.Write(tc.bind)
+			require.NoError(t, err)
+			want, ok := banners.ForPayload(tc.bind)
+			require.True(t, ok)
+			reply := readAll(t, client, len(want.Data))
+			require.Equal(t, want.Data, reply)
+			require.Equal(t, tc.resCode, reply[len(reply)-5])
+
+			events := finishCatchAll(t, client, hp, done)
+			require.Equal(t, []parsedTCP{
+				{Direction: "read", Command: tc.status, Payload: tc.bind, PayloadHash: helpers.SHA256Hex(tc.bind)},
+				{Direction: "write", Status: tc.status, Payload: reply, PayloadHash: helpers.SHA256Hex(reply)},
+			}, events)
+		})
+	}
+}
+
 func TestHandleTCPNiagaraFoxHello(t *testing.T) {
 	client, hp, done := startCatchAll(t, 1911)
 

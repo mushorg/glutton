@@ -282,6 +282,17 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 		}
 		return Response{Name: "ldap-rootdse", Data: ldapRootDSEReply(msgID)}, true
 	},
+	func(data []byte) (Response, bool) {
+		msgID, anonymous, ok := ldapSimpleBind(data)
+		if !ok {
+			return Response{}, false
+		}
+		if anonymous {
+			return Response{Name: "ldap-bind", Data: ldapBindReply(msgID, ldapSuccess)}, true
+		}
+		// the guess is not accepted, but the client may go on to search
+		return Response{Name: "ldap-bind-invalid", Data: ldapBindReply(msgID, ldapInvalidCredentials)}, true
+	},
 	bitcoinReply,
 	litecoinReply,
 	func(data []byte) (Response, bool) {
