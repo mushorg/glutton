@@ -302,3 +302,34 @@ func TestReadRecordCapsAndEOF(t *testing.T) {
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	require.Equal(t, []byte{0x80, 0}, raw)
 }
+
+// Censys RPC probe for program 6969 on a moved port (Ochi event 19:05:27Z
+// 2026-10-21, tcp/27488).
+var censysCall = mustHex("80000028cafecafe00000000000000020000" + "1b39000000010000000300000000000000000000000000000000")
+
+func TestLooksLikeCall(t *testing.T) {
+	require.True(t, LooksLikeCall(censysCall))
+	require.True(t, LooksLikeCall(shodanDump))
+	require.False(t, LooksLikeCall(censysCall[:PeekLen-1]))
+	notCall := append([]byte(nil), censysCall...)
+	notCall[11] = MsgReply
+	require.False(t, LooksLikeCall(notCall))
+	badVers := append([]byte(nil), censysCall...)
+	badVers[15] = 3
+	require.False(t, LooksLikeCall(badVers))
+	noLast := append([]byte(nil), censysCall...)
+	noLast[0] = 0
+	require.False(t, LooksLikeCall(noLast))
+	short := append([]byte(nil), censysCall...)
+	short[3] = 8
+	require.False(t, LooksLikeCall(short))
+	require.False(t, LooksLikeCall([]byte("GET / HTTP/1.1\r\n\r\n")))
+}
+
+func TestReplyUnknownProgram(t *testing.T) {
+	c, err := Parse(censysCall[4:])
+	require.NoError(t, err)
+	body, status := Reply(c, Env{})
+	require.Equal(t, "PROG_UNAVAIL", status)
+	require.Equal(t, mustHex("cafecafe"+"00000001"+"00000000"+"00000000"+"00000000"+"00000001"), body)
+}

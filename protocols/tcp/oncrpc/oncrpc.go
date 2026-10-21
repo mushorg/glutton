@@ -496,3 +496,23 @@ func ReadRecord(r io.Reader, maxBody int) (raw, body []byte, truncated bool, err
 		}
 	}
 }
+
+// PeekLen covers the record mark, XID, message type and RPC version of a call.
+const PeekLen = 16
+
+// minCallLen is the smallest CALL body: xid, type, rpcvers, prog, vers, proc
+// and an empty credential and verifier.
+const minCallLen = 40
+
+// LooksLikeCall reports whether b starts with a record-marked RPC version 2
+// CALL in a single last fragment, so scanners probing RPC services on moved
+// ports can be told apart from other traffic.
+func LooksLikeCall(b []byte) bool {
+	if len(b) < PeekLen {
+		return false
+	}
+	mark := binary.BigEndian.Uint32(b)
+	n := mark &^ 0x80000000
+	return mark&0x80000000 != 0 && n >= minCallLen && n <= 16*1024 &&
+		binary.BigEndian.Uint32(b[8:]) == MsgCall && binary.BigEndian.Uint32(b[12:]) == 2
+}

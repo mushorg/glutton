@@ -26,6 +26,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/minecraft"
 	"github.com/mushorg/glutton/protocols/tcp/mssql"
 	"github.com/mushorg/glutton/protocols/tcp/nvms9000"
+	"github.com/mushorg/glutton/protocols/tcp/oncrpc"
 	"github.com/mushorg/glutton/protocols/tcp/postgres"
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
 	"github.com/mushorg/glutton/protocols/tcp/redis"
@@ -392,6 +393,14 @@ var catchAllMatchers = []catchAllMatcher{
 		peek:   fixedPeek(nvms9000.PeekLen, func(snip []byte) bool { return bytes.HasPrefix(snip, nvms9000.Magic) }),
 		match:  nvms9000.LooksLikeNVMS,
 		handle: asBuffered(tcp.HandleNVMS9000),
+	},
+	{
+		// RPC scanners (Censys) send a record-marked CALL to any port; the
+		// rpcbind handler answers with PROG_UNAVAIL for foreign programs
+		name:   "rpcbind",
+		peek:   fixedPeek(oncrpc.PeekLen, func(snip []byte) bool { return snip[0] == 0x80 }),
+		match:  oncrpc.LooksLikeCall,
+		handle: asBuffered(tcp.HandleRPCBind),
 	},
 	{
 		// SPICE scanners send the link message to QEMU/KVM consoles on any
