@@ -84,6 +84,16 @@ that sends one INVITE per visit still reaches the early-media, challenged or bus
 outcomes. The count starts over only once the source is forgotten (`recall.ttl`
 or eviction).
 
+**Challenged REGISTER.** With `sip.register_challenge: true` (default off) an
+unauthenticated REGISTER gets a `401` digest challenge in every variant, and any
+credentials in the retry are accepted with `200`. A REGISTER-only scanner then
+reveals the `username` and digest it guesses with (`nonce`, `digest_response`, …)
+and still reaches the INVITE stage. On UDP the `401` opens a dialog like an
+INVITE does, so the retry (same `call_id`, higher CSeq) lands in the same event
+(`read` REGISTER, `write` 401, `read` REGISTER with `username`, `write` 200,
+`endReason` `handler_close`); a scanner that never retries is produced when the
+dialog idles out (`timeout`).
+
 **Contact and Via port.** The `Contact` of the `180`, `183` and `200`, and the
 `Via` of the honeypot's own BYE, name the port the INVITE arrived on (falling
 back to the Request-URI port, then 5060, only when that is unknown). A call to a

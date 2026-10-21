@@ -608,3 +608,27 @@ func TestMayStart(t *testing.T) {
 		require.False(t, MayStart([]byte(s)), s)
 	}
 }
+
+func TestReplyRegisterChallenge(t *testing.T) {
+	on := true
+	RegisterChallengeSet = &on
+	t.Cleanup(func() { RegisterChallengeSet = nil })
+
+	authHeader := `Authorization: Digest username="1000",realm="asterisk",nonce="x",uri="sip:1.2.3.4",response="00"`
+	register := []byte(strings.ReplaceAll(string(pplsipInvite), "INVITE", "REGISTER"))
+	for _, v := range Variants {
+		resps := testResponder().Reply(parseRequest(t, register), nil, nil, v)
+		require.Len(t, resps, 1, v.String())
+		require.Equal(t, gosip.StatusCode(401), resps[0].StatusCode(), v.String())
+		require.Contains(t, resps[0].String(), "WWW-Authenticate: Digest realm=\"asterisk\"")
+
+		// any credentials are accepted
+		resps = testResponder().Reply(parseRequest(t, withAuth(register, authHeader)), nil, nil, v)
+		require.Len(t, resps, 1, v.String())
+		require.Equal(t, gosip.StatusCode(200), resps[0].StatusCode(), v.String())
+	}
+
+	// INVITE is not affected
+	resps := testResponder().Reply(parseRequest(t, pplsipInvite), nil, nil, Answer)
+	require.Len(t, resps, 3)
+}

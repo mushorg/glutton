@@ -132,7 +132,7 @@ func parseSIP(data []byte, complete bool) (sip.Message, error) {
 // HandleSIP parses a UDP SIP datagram and answers it like a misconfigured
 // Asterisk PBX (OPTIONS and REGISTER 200, INVITE 100/180 then 200 with SDP
 // after a ringing delay; the first few INVITEs per source get 404).
-// An INVITE opens a dialog keyed by source IP and Call-ID: later datagrams
+// An INVITE (or a challenged REGISTER) opens a dialog keyed by source IP and Call-ID: later datagrams
 // with that key (ACK, BYE, CANCEL, retransmits) join it, and the dialog is
 // produced as one event when it ends (BYE or CANCEL answered, idle timeout,
 // frame cap or table eviction). Any other datagram is one event of its own.
@@ -165,12 +165,14 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 	if frame.CallID != "" {
 		key := sipDialogKey(srcAddr, frame.CallID)
 		d := sipDialogs.get(key)
-		if req, ok := msg.(sip.Request); ok && req.Method() == sip.INVITE && d == nil {
+		if req, ok := msg.(sip.Request); ok && d == nil && opensSIPDialog(req) {
 			visit = beginSIPVisit(srcAddr.IP, logger)
 			var evicted *sipDialog
 			d, evicted = sipDialogs.open(key, func() *sipDialog {
 				d := newSIPDialog(ctx, key, sipDialogs, srcAddr, dstAddr, md, logger, h)
-				d.reject = visit.RejectInvite(srcAddr.IP)
+				if req.Method() == sip.INVITE {
+					d.reject = visit.RejectInvite(srcAddr.IP)
+				}
 				d.visit = visit
 				return d
 			})
@@ -188,6 +190,19 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 		visit = beginSIPVisit(srcAddr.IP, logger)
 	}
 	return handleSIPDatagram(srcAddr, dstAddr, msg, frame, nil, visit, md, logger, h)
+}
+
+// opensSIPDialog reports whether req starts a dialog: an INVITE, or a REGISTER
+// that is challenged (sip.register_challenge) so its credentialed retry joins
+// the same event.
+func opensSIPDialog(req sip.Request) bool {
+	switch req.Method() {
+	case sip.INVITE:
+		return true
+	case sip.REGISTER:
+		return sipproto.RegisterChallenge() && sipproto.Credentials(req) == ""
+	}
+	return false
 }
 
 // handleSIPDatagram answers a datagram outside any dialog and produces it as

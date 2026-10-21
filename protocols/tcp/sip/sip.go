@@ -207,7 +207,8 @@ func sourceVia(req gosip.Request, src net.Addr) ([]gosip.Header, bool) {
 // reply returns the responses to send for req, in order. A nil slice means
 // no reply (ACK, or a request the honeypot ignores).
 //
-// REGISTER is accepted with or without credentials, and INVITE is answered
+// REGISTER is accepted with or without credentials (unless sip.register_challenge
+// asks for a 401 first, which any credentials then satisfy), and INVITE is answered
 // (100 Trying, 180 Ringing, 200 OK with an SDP answer), so scanners that probe
 // an extension go on to place the toll-fraud call and reveal the dialed
 // number. BYE ends that call with 200. Other session-creating requests
@@ -225,7 +226,7 @@ func (r *Responder) reply(req gosip.Request, local net.Addr, v Variant) []gosip.
 			&gosip.GenericHeader{HeaderName: "Supported", Contents: supported},
 		)}
 	case gosip.REGISTER:
-		if v == Auth && Credentials(req) == "" {
+		if (v == Auth || RegisterChallenge()) && Credentials(req) == "" {
 			return []gosip.Response{r.challenge(req)}
 		}
 		return []gosip.Response{r.register(req)}

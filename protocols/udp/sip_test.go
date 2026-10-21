@@ -444,6 +444,7 @@ func stubSIPDialogs(t *testing.T) *fakeSIPTimers {
 	origTable, origAfter, origIdle := sipDialogs, sipAfterFunc, sipIdle
 	origLimit, origRing := sipproto.RejectLimit, sipRingDelay
 	origMedia := sipMedia
+	sipproto.RegisterChallengeSet = nil
 	sipDialogs = newSIPDialogTable(maxSIPDialogs)
 	sipMedia = &sipMediaTable{bindings: map[string]*sipDialog{}}
 	sipAfterFunc = timers.afterFunc
@@ -453,6 +454,7 @@ func stubSIPDialogs(t *testing.T) *fakeSIPTimers {
 	t.Cleanup(func() {
 		sipDialogs, sipAfterFunc, sipIdle = origTable, origAfter, origIdle
 		sipMedia = origMedia
+		sipproto.RegisterChallengeSet = nil
 		sipproto.RejectLimit, sipRingDelay = origLimit, origRing
 	})
 	return timers
@@ -1346,4 +1348,82 @@ func TestHandleSIPAckedAnswerDoesNotEscalate(t *testing.T) {
 
 	sendSIP(t, h, pplsipSrc, inviteWithCallID("call-2"))
 	require.True(t, strings.HasPrefix(string(h.replies[len(h.replies)-1]), "SIP/2.0 180 Ringing\r\n"))
+}
+
+func enableRegisterChallenge() {
+	on := true
+	sipproto.RegisterChallengeSet = &on
+}
+
+// the credentialed retry joins the 401 in one event, with the digest the
+// scanner guessed with
+func TestHandleSIPRegisterChallengeRetryOneEvent(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	enableRegisterChallenge()
+	h := &recordingHoneypot{}
+	src := &net.UDPAddr{IP: net.ParseIP("185.243.5.243"), Port: 49618}
+
+	sendSIP(t, h, src, voipRegisterRead1)
+	require.Empty(t, h.produced, "the challenged REGISTER waits for its retry")
+	require.Len(t, h.replies, 1)
+	require.True(t, strings.HasPrefix(string(h.replies[0]), "SIP/2.0 401 Unauthorized\r\n"))
+	require.Contains(t, string(h.replies[0]), `WWW-Authenticate: Digest realm="asterisk",nonce="feedface"`)
+
+	digest := `Authorization: Digest username="100",realm="asterisk",nonce="feedface",uri="sip:1.2.3.4:5060",response="d41d8cd98f00b204e9800998ecf8427e"`
+	retry := strings.Replace(string(voipRegisterRead1), "CSeq: 1 REGISTER\r\n", "CSeq: 2 REGISTER\r\n"+digest+"\r\n", 1)
+	sendSIP(t, h, src, []byte(retry))
+
+	require.Len(t, h.produced, 1)
+	require.Equal(t, "sip", h.produced[0].handler)
+	require.Equal(t, connection.EndHandlerClose, h.produced[0].endReason)
+	require.Equal(t, voipRegisterRead1, h.produced[0].payload)
+	require.Empty(t, sipDialogs.dialogs)
+	require.Empty(t, timers.pending())
+
+	events := h.produced[0].decoded.([]parsedSIP)
+	require.Len(t, events, 4)
+	require.Equal(t, []string{"read", "write", "read", "write"}, []string{events[0].Direction, events[1].Direction, events[2].Direction, events[3].Direction})
+	require.Equal(t, "REGISTER", events[0].Command)
+	require.Equal(t, "401", events[1].Status)
+	require.Equal(t, "100", events[2].Username)
+	require.Equal(t, "feedface", events[2].Nonce)
+	require.Equal(t, "d41d8cd98f00b204e9800998ecf8427e", events[2].DigestResponse)
+	require.Equal(t, "200", events[3].Status)
+	require.Equal(t, "answer", events[3].Variant)
+	require.Equal(t, 1, events[3].Visit)
+}
+
+// a scanner that gives up after the 401 is still produced, when the dialog idles out
+func TestHandleSIPRegisterChallengeNoRetry(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	enableRegisterChallenge()
+	h := &recordingHoneypot{}
+	src := &net.UDPAddr{IP: net.ParseIP("185.243.5.243"), Port: 49618}
+
+	sendSIP(t, h, src, voipRegisterRead1)
+	require.Empty(t, h.produced)
+	timers.fire(t, time.Minute)
+
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndTimeout, h.produced[0].endReason)
+	events := h.produced[0].decoded.([]parsedSIP)
+	require.Len(t, events, 2)
+	require.Equal(t, "401", events[1].Status)
+	require.Empty(t, sipDialogs.dialogs)
+}
+
+// without the knob a REGISTER is accepted at once and produced as its own event
+func TestHandleSIPRegisterNoChallengeByDefault(t *testing.T) {
+	stubSIPResponder(t)
+	stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+	src := &net.UDPAddr{IP: net.ParseIP("185.243.5.243"), Port: 49618}
+
+	sendSIP(t, h, src, voipRegisterRead1)
+	require.Len(t, h.produced, 1)
+	events := h.produced[0].decoded.([]parsedSIP)
+	require.Len(t, events, 2)
+	require.Equal(t, "200", events[1].Status)
 }

@@ -134,3 +134,18 @@ func (v Visit) Note(ip net.IP, reads []VisitRead) {
 		}
 	})
 }
+
+// RegisterChallengeSet overrides sip.register_challenge in tests when non-nil.
+var RegisterChallengeSet *bool
+
+// RegisterChallenge reports whether an unauthenticated REGISTER is answered
+// with a 401 digest challenge in every variant (config key
+// sip.register_challenge, default off). Any credentials are then accepted, so
+// a REGISTER-only scanner reveals the username and digest it guesses with and
+// still reaches the INVITE stage.
+func RegisterChallenge() bool {
+	if RegisterChallengeSet != nil {
+		return *RegisterChallengeSet
+	}
+	return viper.GetBool("sip.register_challenge")
+}

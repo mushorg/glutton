@@ -124,8 +124,8 @@ func (t *sipDialogTable) remove(key string, expected *sipDialog) {
 	}
 }
 
-// sipDialog collects the frames of one call (INVITE, ACK, BYE, retransmits)
-// and produces them as one event when it ends.
+// sipDialog collects the frames of one call (INVITE, ACK, BYE, retransmits) or
+// of a challenged REGISTER and its retry, and produces them as one event when it ends.
 type sipDialog struct {
 	mu       sync.Mutex
 	key      string
@@ -255,6 +255,11 @@ func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
 	switch req.Method() {
 	case sip.BYE, sip.CANCEL:
 		return connection.EndClientClose, nil
+	case sip.REGISTER:
+		// the credentialed retry completes the registration
+		if sipproto.Credentials(req) != "" {
+			return connection.EndHandlerClose, nil
+		}
 	}
 	return "", nil
 }
