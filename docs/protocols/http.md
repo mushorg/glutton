@@ -6,7 +6,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 
 ## `http` (Go)
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `log4shell`, `php2shell`, `session_id`, `dest_port`, `src_port`, `payload`
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `ja4h`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `log4shell`, `php2shell`, `session_id`, `dest_port`, `src_port`, `payload`
 
 ### Frame fields
 
@@ -15,6 +15,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 | `command` | reads | HTTP method. |
 | `query` | reads | Raw query string. |
 | `parameters` | reads | Parsed query map. |
+| `ja4h` | reads | [FoxIO JA4H](https://github.com/FoxIO-LLC/ja4) client fingerprint `a_b_c_d`, computed from the raw request (method, version, cookie/referer flags, header count and language; hashes of header order, sorted cookie names and cookie values). Empty when the request line did not parse. |
 | `dest_port`, `src_port` | reads | Ports of the connection the frame arrived on (see [Sessions](#sessions)). |
 | `status` | writes | Response status, e.g. `200`. |
 | `username`, `password` | reads | `Authorization: Basic` credentials, or the Proxmox VE ticket login form (see [Emulated applications](#emulated-applications)). |

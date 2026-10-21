@@ -20,6 +20,7 @@ import (
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/citrix"
+	"github.com/mushorg/glutton/protocols/tcp/ja4h"
 	"github.com/mushorg/glutton/protocols/tcp/log4shell"
 	"github.com/mushorg/glutton/protocols/tcp/php2shell"
 	"github.com/mushorg/glutton/protocols/tcp/pve"
@@ -113,6 +114,7 @@ type parsedHTTP struct {
 	Username   string             `json:"username,omitempty"` // HTTP Basic or Proxmox VE login
 	Password   string             `json:"password,omitempty"` // HTTP Basic or Proxmox VE login
 	UserAgent  string             `json:"user_agent,omitempty"`
+	JA4H       string             `json:"ja4h,omitempty"` // FoxIO JA4H fingerprint of the request, set on reads
 	Status     string             `json:"status,omitempty"`
 	SessionID  string             `json:"session_id,omitempty"`
 	DestPort   uint16             `json:"dest_port,omitempty"` // set on reads; sessions can span ports
@@ -241,6 +243,7 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 		Parameters: httpParameters(params),
 		Host:       req.Host,
 		UserAgent:  req.UserAgent(),
+		JA4H:       ja4h.Fingerprint(raw),
 		Payload:    raw,
 	}
 	if user, pass, ok := req.BasicAuth(); ok {
