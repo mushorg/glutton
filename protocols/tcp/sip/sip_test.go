@@ -283,6 +283,7 @@ func TestTool(t *testing.T) {
 		{"pplsip", "pplsip"},
 		{"VaxSIPUserAgent/3.1", "vaxsipuseragent"},
 		{"sundayddr", "sundayddr"},
+		{"zxcvfdf11", "zxcvfdf"},
 		{"Asterisk PBX 18.20.0", ""},
 		{"Zoiper rev.12345", ""},
 	}

@@ -565,6 +565,7 @@ var sipTools = []struct{ match, name string }{
 	{"sipcli", "sipcli"},
 	{"sipsak", "sipsak"},
 	{"pplsip", "pplsip"},
+	{"zxcvfdf", "zxcvfdf"},
 	{"vaxsipuseragent", "vaxsipuseragent"},
 	{"sundayddr", "sundayddr"},
 	{"sipptk", "sipptk"},

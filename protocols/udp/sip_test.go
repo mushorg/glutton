@@ -1324,14 +1324,51 @@ func TestHandleSIPUnackedFinalEscalatesWithinVisit(t *testing.T) {
 	ignore()
 	require.Equal(t, "auth/1", writeVariants(t, h.produced[3].decoded)[0])
 
-	// busy, then the rotation wraps to progress, skipping answer
+	// busy, then the rotation wraps to progress, skipping answer. The source
+	// has now ignored sipproto.SilentUnacked finals, so the 486 is not resent.
 	invite("call-5")
 	timers.fire(t, sipRing)
 	require.True(t, strings.HasPrefix(last(), "SIP/2.0 486 Busy Here\r\n"))
-	ignore()
+	timers.fire(t, 64*sipT1)
 	require.Equal(t, "busy/1", writeVariants(t, h.produced[4].decoded)[0])
 	invite("call-6")
 	require.True(t, strings.HasPrefix(last(), "SIP/2.0 183 Session Progress\r\n"))
+}
+
+// A source that ignored sipproto.SilentUnacked final responses gets the next
+// one once: no resends, but the same unACKed count, BYE and endReason.
+func TestHandleSIPSilentSourceFinalNotResent(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	sipproto.RejectLimit = 0
+	h := &recordingHoneypot{}
+	dst := &net.UDPAddr{IP: pplsipDst.IP, Port: 65476}
+	invite := func(callID string) {
+		t.Helper()
+		require.NoError(t, HandleSIP(context.Background(), pplsipSrc, dst, inviteWithCallID(callID), connection.Metadata{}, testLogger{}, h))
+	}
+
+	for i := 0; i < sipproto.SilentUnacked; i++ {
+		invite("call-" + strconv.Itoa(i))
+		if i != 2 { // the auth variant (third call) answers with a 401 right away
+			timers.fire(t, sipRing)
+		}
+		for _, d := range []time.Duration{sipT1, 2 * sipT1, 4 * sipT1, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2} {
+			timers.fire(t, d)
+		}
+	}
+	require.Len(t, h.produced, sipproto.SilentUnacked)
+	// a source that is not silent yet still saw the resends
+	require.Greater(t, len(summarizeSIP(t, h.produced[0].decoded)), 6)
+
+	invite("call-silent")
+	timers.fire(t, sipRing)
+	timers.fire(t, 64*sipT1)
+	require.Len(t, h.produced, sipproto.SilentUnacked+1)
+	got := h.produced[sipproto.SilentUnacked]
+	require.Equal(t, connection.EndTimeout, got.endReason)
+	// 100, 180 and 486 once each, nothing resent
+	require.Equal(t, []string{"100", "180", "486"}, statuses(summarizeSIP(t, got.decoded)))
 }
 
 // A caller that ACKs keeps its variant: only ignored finals escalate.

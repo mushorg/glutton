@@ -356,7 +356,10 @@ func (d *sipDialog) stopRingLocked() {
 }
 
 // sendFinalLocked sends the INVITE's final response and resends it at T1
-// backoff until an ACK arrives. unacked is the endReason if none does.
+// backoff until an ACK arrives. unacked is the endReason if none does. A
+// silent source (see sipproto.Visit.Silent) gets it once: the timer waits out
+// the 64*T1 window in one step, so the unACKed count, the BYE after a 200 and
+// the endReason stay the same without the resends.
 func (d *sipDialog) sendFinalLocked(final sip.Response, unacked string) (string, error) {
 	data := []byte(final.String())
 	if err := d.writeLocked(data, final); err != nil {
@@ -370,6 +373,9 @@ func (d *sipDialog) sendFinalLocked(final sip.Response, unacked string) (string,
 	d.finalEnd = unacked
 	d.acked = false
 	d.interval = sipT1
+	if d.visit.Silent(d.src.IP) {
+		d.interval = 64 * sipT1
+	}
 	d.waited = 0
 	d.resend = sipAfterFunc(d.interval, d.resendFinal)
 	return "", nil

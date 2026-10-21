@@ -19,6 +19,12 @@ const (
 	// next call in the same visit gets the next variant instead of the same
 	// outcome until recall.visit_gap passes.
 	UnackedCounter = "unacked"
+	// SilentUnacked is how many unACKed final responses in one visit make a
+	// source silent: a dialer that ignored that many gets each later final
+	// response once, without the RFC 3261 resends. The captured dial-prefix
+	// testers (User-Agent zxcvfdf11, pplsip) never ACK, so the resends were
+	// about a dozen datagrams per call to a peer that does not read them.
+	SilentUnacked = 3
 	// inviteCounter counts the new INVITE calls of a visit for RejectInvite.
 	inviteCounter = "invite"
 	// DefaultRejectInvites is how many new INVITE calls in a source's first
@@ -109,6 +115,16 @@ func (v Visit) NoteUnacked(ip net.IP, code int, logger interfaces.Logger) bool {
 		slog.Int("unacked", n),
 	)
 	return true
+}
+
+// Silent reports whether the source has left SilentUnacked or more final
+// responses unACKed in this visit, so resending them is pointless. It is
+// false without a visit or a store (recall disabled).
+func (v Visit) Silent(ip net.IP) bool {
+	if v.Number == 0 || v.Store == nil {
+		return false
+	}
+	return v.Store.Counter(recallKey, ip, UnackedCounter) >= SilentUnacked
 }
 
 // VisitRead is the part of a read frame a visit remembers.

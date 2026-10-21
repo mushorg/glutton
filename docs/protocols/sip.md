@@ -55,8 +55,8 @@ schemes (Basic, …) are left in `payload` only.
 
 `tool` names the scanning or war-dialing tool behind a request, matched first on
 the `User-Agent` (SIPVicious — both the classic `friendly-scanner` and the
-rewrite — `sipcli`, `sipsak`, `pplsip`, `VaxSIPUserAgent`, `sundayddr` and
-others) and, failing that, on a header habit (SIPVicious defaults its `From`/`To`
+rewrite — `sipcli`, `sipsak`, `pplsip`, `zxcvfdf` (the `zxcvfdf11` dial-prefix
+tester), `VaxSIPUserAgent`, `sundayddr` and others) and, failing that, on a header habit (SIPVicious defaults its `From`/`To`
 domain to `1.1.1.1`, a tell that survives a changed `User-Agent`). It is a
 triage hint, not proof: a scanner can forge any `User-Agent`.
 
@@ -113,6 +113,11 @@ so a call is one event.
   ringing, then the final response.
 - The final response (`200`, `404` or `487`) is resent at RFC 3261 T1 backoff
   (0.5 s doubling to 4 s) until an ACK arrives. Each resend is a `write` frame.
+  A source that already left three final responses unACKed in the visit (see
+  Escalation below) gets each later final response once: no resends, but the
+  64*T1 wait, the BYE after a `200` and the `endReason` are unchanged. The
+  dial-prefix testers seen so far (`zxcvfdf11`, `pplsip`) never ACK, so this
+  drops about a dozen datagrams per call to a peer that does not read them.
 - The ACK to a `404` or `487` produces the dialog with `client_close`. After
   64*T1, an unACKed `404` ends with `timeout` and an unACKed `487` with
   `client_close`, without a BYE.
