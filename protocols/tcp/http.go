@@ -21,6 +21,7 @@ import (
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/citrix"
 	"github.com/mushorg/glutton/protocols/tcp/log4shell"
+	"github.com/mushorg/glutton/protocols/tcp/php2shell"
 	"github.com/mushorg/glutton/protocols/tcp/pve"
 	"github.com/mushorg/glutton/protocols/tcp/selenium"
 )
@@ -122,6 +123,7 @@ type parsedHTTP struct {
 	Truncated  bool               `json:"truncated,omitempty"` // a Selenium binary/args cap applied
 	Citrix     *citrix.Request    `json:"citrix,omitempty"`    // CVE-2019-19781 stage, NSC_USER, template
 	Log4Shell  *log4shell.Request `json:"log4shell,omitempty"` // CVE-2021-44228 JNDI lookups (parse-only)
+	PHP2Shell  *php2shell.Request `json:"php2shell,omitempty"` // CVE-2026-109618/109619 multipart shape (parse-only)
 	Payload    []byte             `json:"payload,omitempty"`   // raw HTTP request or response bytes
 }
 
@@ -258,6 +260,14 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 	}
 	frame.Citrix = citrix.Inspect(req.Method, path, req.Header, body)
 	frame.Log4Shell = log4shell.Inspect(path, req.URL.RawQuery, req.Header, body)
+	frame.PHP2Shell = php2shell.Inspect(req.Header, body)
+	if frame.PHP2Shell != nil {
+		logger.Info(
+			"HTTP PHP2Shell multipart request",
+			slog.String("handler", "http"),
+			slog.Any("indicators", frame.PHP2Shell.Indicators),
+		)
+	}
 	if frame.Log4Shell != nil {
 		logger.Info(
 			"HTTP Log4Shell JNDI lookup",

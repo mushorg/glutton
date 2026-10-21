@@ -14,6 +14,7 @@ import (
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/tcp/citrix"
 	"github.com/mushorg/glutton/protocols/tcp/log4shell"
+	"github.com/mushorg/glutton/protocols/tcp/php2shell"
 	"github.com/mushorg/glutton/protocols/tcp/pve"
 	"github.com/stretchr/testify/require"
 )
@@ -755,4 +756,50 @@ func TestHandleHTTPLog4Shell(t *testing.T) {
 		require.Equal(t, "200", events[i].Status)
 		require.Nil(t, events[i].Log4Shell)
 	}
+}
+
+// A multipart upload-progress probe is tagged and a plain upload is not. POSTs
+// without a canned reply get no response, so only read frames are recorded.
+func TestHandleHTTPPHP2Shell(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{TargetPort: 8080}, &recordingLogger{}, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+
+	multipartPOST := func(field string) []byte {
+		body := []byte("--b\r\nContent-Disposition: form-data; name=\"" + field + "\"\r\n\r\nx\r\n--b--\r\n")
+		req := httpTestRequest("POST", "/index.php", "", body)
+		return bytes.Replace(req, []byte("Connection: keep-alive\r\n"), []byte("Connection: keep-alive\r\nContent-Type: multipart/form-data; boundary=b\r\n"), 1)
+	}
+	for _, r := range [][]byte{multipartPOST("PHP_SESSION_UPLOAD_PROGRESS"), multipartPOST("file")} {
+		_, err := client.Write(r)
+		require.NoError(t, err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "http", produced.protocol)
+	events := produced.decoded.([]parsedHTTP)
+	require.Len(t, events, 2)
+	require.Equal(t, &php2shell.Request{
+		Indicators:    []string{php2shell.UploadProgress},
+		Parts:         1,
+		ContentLength: int64(len("--b\r\nContent-Disposition: form-data; name=\"PHP_SESSION_UPLOAD_PROGRESS\"\r\n\r\nx\r\n--b--\r\n")),
+		Boundary:      "b",
+	}, events[0].PHP2Shell)
+	require.Nil(t, events[1].PHP2Shell)
 }

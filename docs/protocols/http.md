@@ -6,7 +6,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 
 ## `http` (Go)
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `log4shell`, `session_id`, `dest_port`, `src_port`, `payload`
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `log4shell`, `php2shell`, `session_id`, `dest_port`, `src_port`, `payload`
 
 ### Frame fields
 
@@ -18,7 +18,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 | `dest_port`, `src_port` | reads | Ports of the connection the frame arrived on (see [Sessions](#sessions)). |
 | `status` | writes | Response status, e.g. `200`. |
 | `username`, `password` | reads | `Authorization: Basic` credentials, or the Proxmox VE ticket login form (see [Emulated applications](#emulated-applications)). |
-| `browser`, `binary`, `args`, `citrix`, `log4shell`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
+| `browser`, `binary`, `args`, `citrix`, `log4shell`, `php2shell`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
 
 ### Sessions
 
@@ -102,6 +102,19 @@ Each lookup is `{location, raw, resolved}`:
 - `resolved` is the expression with `lower:`, `upper:` and `name:-default` lookups evaluated (`${${lower:j}ndi:...}`, `${${::-j}${::-n}di:...}`); it is omitted when identical to `raw`.
 
 Caps: 16 lookups per request, 512 B per expression, 16 KiB scanned per field or body; `truncated` is set when any applies. The Spicy `http` handler does not set `log4shell`.
+
+#### PHP2Shell (CVE-2026-109618, CVE-2026-109619)
+
+Package: `protocols/tcp/php2shell`. Parse-only: a `multipart/form-data` read that matches at least one indicator sets `php2shell` to `{indicators, parts, content_length, boundary, truncated}`. The reply is whatever the request would get anyway. Public reporting names multipart parsing as the only known trigger but publishes no exploit bytes, so the indicators are request-shape heuristics, not signatures. A plain file upload is not tagged.
+
+| `indicators` | Meaning |
+| --- | --- |
+| `upload_progress` | Body contains the `PHP_SESSION_UPLOAD_PROGRESS` field (the memory-disclosure path). |
+| `many_parts` | At least 100 multipart parts. |
+| `large_body` | Declared `Content-Length` or received body of at least 1 MiB. |
+| `long_session_cookie` | `PHPSESSID` cookie value longer than 256 B. |
+
+`parts` counts part delimiters in the first 1 MiB of the body; `content_length` is the larger of the declared and received size; `boundary` is capped at 128 B. `truncated` is set when either cap applies. The Spicy `http` handler does not set `php2shell`.
 
 #### Local file include (LFI)
 
