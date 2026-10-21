@@ -1,6 +1,7 @@
 package tftp
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -47,4 +48,58 @@ func TestErrorFittingNeverLarger(t *testing.T) {
 		require.LessOrEqual(t, len(ErrorFitting(ErrFileNotFound, "File not found", n)), n)
 	}
 	require.Len(t, ErrorFitting(ErrFileNotFound, "File not found", 19), 19)
+}
+
+func TestNegotiate(t *testing.T) {
+	size := SizeFor("f")
+	require.Equal(t, SizeFor("f"), size, "stable per filename")
+	require.NotEqual(t, SizeFor("f"), SizeFor("g"))
+
+	got := Negotiate("f", []Option{
+		{Name: "TSIZE", Value: "0"},
+		{Name: "blksize", Value: "99999"},
+		{Name: "timeout", Value: "3"},
+		{Name: "windowsize", Value: "4"},
+		{Name: "blksize", Value: "16"}, // duplicate
+	})
+	require.Equal(t, []Option{
+		{Name: "tsize", Value: strconv.Itoa(size)},
+		{Name: "blksize", Value: "1468"},
+		{Name: "timeout", Value: "3"},
+	}, got)
+
+	for name, in := range map[string][]Option{
+		"tsize on a read of a sized file": {{Name: "tsize", Value: "512"}},
+		"blksize too small":               {{Name: "blksize", Value: "4"}},
+		"blksize not a number":            {{Name: "blksize", Value: "big"}},
+		"timeout zero":                    {{Name: "timeout", Value: "0"}},
+		"timeout too large":               {{Name: "timeout", Value: "256"}},
+		"unknown":                         {{Name: "foo", Value: "1"}},
+	} {
+		require.Empty(t, Negotiate("f", in), name)
+	}
+}
+
+func TestOACKFittingNeverExceedsMax(t *testing.T) {
+	opts := []Option{{Name: "tsize", Value: "123456"}, {Name: "blksize", Value: "16"}}
+	full := OACKPacket(opts)
+	require.Equal(t, []byte("\x00\x06tsize\x00123456\x00blksize\x0016\x00"), full)
+
+	pkt, acked := OACKFitting(opts, len(full))
+	require.Equal(t, full, pkt)
+	require.Equal(t, opts, acked)
+
+	// One byte short: the trailing option is dropped, not truncated mid-field.
+	pkt, acked = OACKFitting(opts, len(full)-1)
+	require.Equal(t, []byte("\x00\x06tsize\x00123456\x00"), pkt)
+	require.Equal(t, opts[:1], acked)
+
+	for max := 0; max <= len(full); max++ {
+		if pkt, _ := OACKFitting(opts, max); pkt != nil {
+			require.LessOrEqual(t, len(pkt), max)
+		}
+	}
+	pkt, acked = OACKFitting(opts, 5)
+	require.Nil(t, pkt)
+	require.Nil(t, acked)
 }
