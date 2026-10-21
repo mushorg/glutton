@@ -110,9 +110,10 @@ rules:
   - match: tcp dst port 5555 or port 5037
     type: conn_handler
     target: adb
-  - match: tcp dst port 104 or port 11112
+  - match: tcp dst port 104 or port 11112 or port 2761 or port 2762
     type: conn_handler
     target: dicom
+    tls: auto
   - match: tcp dst port 6036
     type: conn_handler
     target: nvms9000

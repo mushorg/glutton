@@ -4,7 +4,7 @@ Transport: TCP. Shared encodings and frame fields are described in [Logging and 
 
 **`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `status`, `pdu_type`, `called_ae`, `calling_ae`, `application_context`, `abstract_syntaxes`, `transfer_syntaxes`, `implementation_class_uid`, `implementation_version`, `username`, `password`, `message_id`, `sop_class_uid`, `sop_instance_uid`, `move_destination`, `query`, `payload_hash`, `payload`, `truncated`
 
-The handler speaks the DICOM Upper Layer protocol used by PACS and imaging devices on tcp/104 and tcp/11112. One event is produced per TCP session.
+The handler speaks the DICOM Upper Layer protocol used by PACS and imaging devices on tcp/104, tcp/11112, tcp/2761 and tcp/2762 (plain or TLS, sniffed with `tls: auto`). One event is produced per TCP session.
 
 ## Frames
 

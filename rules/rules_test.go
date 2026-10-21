@@ -349,3 +349,21 @@ func TestRuleTLSMode(t *testing.T) {
 	_, err = Init(strings.NewReader("rules:\n  - match: tcp dst port 443\n    type: proxy_tcp\n    target: 127.0.0.1:443\n    tls: true\n"))
 	require.ErrorContains(t, err, "only supported on conn_handler")
 }
+
+func TestDefaultRulesRouteDICOMPorts(t *testing.T) {
+	fh, err := os.Open("../config/rules.yaml")
+	require.NoError(t, err)
+	defer fh.Close()
+	rs, err := Init(fh)
+	require.NoError(t, err)
+
+	srcAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 50000}
+	for _, port := range []int{104, 11112, 2761, 2762} {
+		dstAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
+		match, err := rs.Match("tcp", srcAddr, dstAddr)
+		require.NoError(t, err)
+		require.NotNil(t, match, "port %d", port)
+		require.Equal(t, "dicom", match.Target, "port %d", port)
+		require.Equal(t, TLSAuto, match.TLS, "port %d", port)
+	}
+}
