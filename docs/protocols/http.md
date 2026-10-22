@@ -106,7 +106,7 @@ Caps: 16 lookups per request, 512 B per expression, 16 KiB scanned per field or 
 
 #### PHP2Shell (CVE-2026-109618, CVE-2026-109619)
 
-Package: `protocols/tcp/php2shell`. Parse-only: a `multipart/form-data` read that matches at least one indicator sets `php2shell` to `{indicators, parts, content_length, boundary, truncated}`. The reply is whatever the request would get anyway. Public reporting names multipart parsing as the only known trigger but publishes no exploit bytes, so the indicators are request-shape heuristics, not signatures. A plain file upload is not tagged.
+Package: `protocols/tcp/php2shell`. Parse-only: a `multipart/form-data` read that matches at least one indicator sets `php2shell` to `{indicators, parts, content_length, boundary, max_depth, truncated}`. The reply is whatever the request would get anyway. Public reporting names multipart parsing as the only known trigger but publishes no exploit bytes, so the indicators are request-shape heuristics plus the probe shape of the public [Assetnote scanner](https://github.com/assetnote/php2shell-scanner) (`POST /index.php`, `boundary=` empty, LF-only parts named `a[]` plus 62 `[a]` levels, 1/8/20 MiB). A plain file upload is not tagged.
 
 | `indicators` | Meaning |
 | --- | --- |
@@ -114,8 +114,11 @@ Package: `protocols/tcp/php2shell`. Parse-only: a `multipart/form-data` read tha
 | `many_parts` | At least 100 multipart parts. |
 | `large_body` | Declared `Content-Length` or received body of at least 1 MiB. |
 | `long_session_cookie` | `PHPSESSID` cookie value longer than 256 B. |
+| `empty_boundary` | `boundary=` is present but empty (RFC 2046 requires 1–70 chars); parts are then counted on bare `--`. |
+| `nested_name` | A part name nested at least 32 array levels (`max_depth` holds the deepest seen). |
+| `scanner_user_agent` | `User-Agent` contains `PHP2Shell/`. |
 
-`parts` counts part delimiters in the first 1 MiB of the body; `content_length` is the larger of the declared and received size; `boundary` is capped at 128 B. `truncated` is set when either cap applies. The Spicy `http` handler does not set `php2shell`.
+`parts` and `max_depth` cover the first 1 MiB of the body; bodies over 1 MiB are not read, so the scanner's 8 and 20 MiB probes are tagged from headers alone (`empty_boundary`, `large_body`, `scanner_user_agent`); `content_length` is the larger of the declared and received size; `boundary` is capped at 128 B. `truncated` is set when either cap applies. The Spicy `http` handler does not set `php2shell`.
 
 #### Plex2Shell (CVE-2026-96652, -96654, -96655, -96656)
 
