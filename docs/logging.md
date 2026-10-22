@@ -175,6 +175,7 @@ Example shape:
 | `pop3` | TCP | [protocols/pop3.md](protocols/pop3.md) |
 | `whois` | TCP | [protocols/whois.md](protocols/whois.md) |
 | `ident` | TCP | [protocols/ident.md](protocols/ident.md) |
+| `dns` | TCP | [protocols/dns.md](protocols/dns.md) |
 | `acpp` | TCP | [protocols/acpp.md](protocols/acpp.md) |
 | `rpcbind` | TCP/UDP | [protocols/rpcbind.md](protocols/rpcbind.md) |
 | `nfs` | TCP | [protocols/nfs.md](protocols/nfs.md) |

@@ -51,6 +51,9 @@ rules:
   - match: tcp dst port 113
     type: conn_handler
     target: ident
+  - match: tcp dst port 53
+    type: conn_handler
+    target: dns
   - match: tcp dst port 5009
     type: conn_handler
     target: acpp
