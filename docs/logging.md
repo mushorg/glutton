@@ -161,6 +161,7 @@ Example shape:
 | `postgres` | TCP | [protocols/postgres.md](protocols/postgres.md) |
 | `redis` | TCP | [protocols/redis.md](protocols/redis.md) |
 | `minecraft` | TCP | [protocols/minecraft.md](protocols/minecraft.md) |
+| `rcon` | TCP | [protocols/rcon.md](protocols/rcon.md) |
 | `socks` | TCP | [protocols/socks.md](protocols/socks.md) |
 | `mcp` | TCP | [protocols/mcp.md](protocols/mcp.md) |
 | `telnet` | TCP | [protocols/telnet.md](protocols/telnet.md) |

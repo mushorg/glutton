@@ -170,6 +170,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"postgres":   bindTCP(tcp.HandlePostgres, log, h),
 		"redis":      bindTCP(tcp.HandleRedis, log, h),
 		"minecraft":  bindTCP(tcp.HandleMinecraft, log, h),
+		"rcon":       bindTCP(tcp.HandleRCON, log, h),
 		"socks":      bindTCP(tcp.HandleSOCKS, log, h),
 		"http":       bindTCP(tcp.HandleHTTP, log, h),
 		"mcp":        bindTCP(tcp.HandleMCP, log, h),
