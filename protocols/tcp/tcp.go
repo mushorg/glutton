@@ -301,7 +301,7 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	if data == nil {
 		return err
 	}
-	payloadHash := server.storeRead(data, host, port, md, logger)
+	payloadHash := server.hashRead(data, host, port, md, logger)
 
 	// A complete ClientHello on a port without a tls: rule: finish the
 	// handshake and answer what the client sends inside the tunnel, as on a
@@ -362,7 +362,7 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			if data, err = read(); data == nil {
 				return err
 			}
-			payloadHash = server.storeRead(data, host, port, md, logger)
+			payloadHash = server.hashRead(data, host, port, md, logger)
 		}
 	}
 
@@ -426,16 +426,13 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		if data, err = read(); data == nil {
 			return err
 		}
-		payloadHash = server.storeRead(data, host, port, md, logger)
+		payloadHash = server.hashRead(data, host, port, md, logger)
 	}
 }
 
-// storeRead stores a client message as a payload sample and logs its arrival.
-func (s *tcpServer) storeRead(data []byte, host, port string, md connection.Metadata, logger interfaces.Logger) string {
-	payloadHash, err := helpers.Store(data, "payloads")
-	if err != nil {
-		logger.Error("Failed to store payload", slog.String("handler", "tcp"), producer.ErrAttr(err))
-	}
+// hashRead hashes a client message and logs its arrival.
+func (s *tcpServer) hashRead(data []byte, host, port string, md connection.Metadata, logger interfaces.Logger) string {
+	payloadHash := helpers.SHA256Hex(data)
 	logger.Info(
 		"Packet got handled by TCP handler",
 		slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),

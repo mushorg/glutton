@@ -125,9 +125,5 @@ func HandleUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 			log.Error("Failed to produce message", slog.String("protocol", "udp"), producer.ErrAttr(err))
 		}
 	}()
-
-	if _, err := helpers.Store(payload, "payloads"); err != nil {
-		log.Error("failed to store UDP payload", slog.String("protocol", "udp"), producer.ErrAttr(err))
-	}
 	return nil
 }
