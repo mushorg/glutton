@@ -35,7 +35,7 @@ rules:
     type: conn_handler
     target: sip
     tls: true
-  - match: tcp dst port 5222 or port 5223
+  - match: tcp dst port 5222 or port 5223 or port 5269
     type: conn_handler
     target: jabber
   - match: tcp dst port 995

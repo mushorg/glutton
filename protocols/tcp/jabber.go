@@ -281,10 +281,15 @@ func handleJabber(ctx context.Context, server *jabberServer, md connection.Metad
 					slog.Bool("tls", server.tls),
 				)
 			}
-			if err := server.write("stream", from, "", jabber.StreamHeader(server.newStreamID(), from)); err != nil {
+			// jabber:server streams (tcp/5269) get the s2s header and features.
+			ns, features := jabber.NSClient, jabber.Features(!server.tls)
+			if st.Space == jabber.NSServer {
+				ns, features = jabber.NSServer, jabber.ServerFeatures(!server.tls)
+			}
+			if err := server.write("stream", from, "", jabber.StreamHeaderNS(ns, server.newStreamID(), from)); err != nil {
 				return writeErr(err)
 			}
-			if err := server.write("features", "", "", jabber.Features(!server.tls)); err != nil {
+			if err := server.write("features", "", "", features); err != nil {
 				return writeErr(err)
 			}
 

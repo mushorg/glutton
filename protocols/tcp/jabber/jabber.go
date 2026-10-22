@@ -14,6 +14,8 @@ import (
 
 const (
 	NSClient   = "jabber:client"
+	NSServer   = "jabber:server"
+	NSDialback = "urn:xmpp:features:dialback"
 	NSStream   = "http://etherx.jabber.org/streams"
 	NSSASL     = "urn:ietf:params:xml:ns:xmpp-sasl"
 	NSTLS      = "urn:ietf:params:xml:ns:xmpp-tls"
@@ -197,11 +199,30 @@ func escapeAttr(s string) string {
 	return b.String()
 }
 
-// StreamHeader builds the server's response stream header.
+// StreamHeader builds the server's response stream header for a client stream.
 func StreamHeader(id, from string) []byte {
+	return StreamHeaderNS(NSClient, id, from)
+}
+
+// StreamHeaderNS builds the response stream header with the given default
+// namespace (jabber:client or jabber:server).
+func StreamHeaderNS(ns, id, from string) []byte {
 	return []byte(fmt.Sprintf(
 		"<?xml version='1.0'?><stream:stream xmlns='%s' xmlns:stream='%s' id='%s' from='%s' version='1.0' xml:lang='en'>",
-		NSClient, NSStream, escapeAttr(id), escapeAttr(from)))
+		ns, NSStream, escapeAttr(id), escapeAttr(from)))
+}
+
+// ServerFeatures builds the <stream:features> for a server-to-server stream:
+// STARTTLS (when not yet encrypted) and dialback. No SASL is offered.
+func ServerFeatures(offerTLS bool) []byte {
+	var b strings.Builder
+	b.WriteString("<stream:features>")
+	if offerTLS {
+		fmt.Fprintf(&b, "<starttls xmlns='%s'/>", NSTLS)
+	}
+	fmt.Fprintf(&b, "<dialback xmlns='%s'/>", NSDialback)
+	b.WriteString("</stream:features>")
+	return []byte(b.String())
 }
 
 // Features builds the pre-authentication <stream:features>. STARTTLS is

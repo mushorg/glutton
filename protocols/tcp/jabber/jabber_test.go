@@ -109,3 +109,12 @@ func TestResponses(t *testing.T) {
 		require.NoError(t, xml.Unmarshal(b, new(struct{})), string(b))
 	}
 }
+
+func TestServerStreamResponses(t *testing.T) {
+	require.Contains(t, string(StreamHeaderNS(NSServer, "abc", "example.com")), "xmlns='jabber:server'")
+	require.Equal(t, StreamHeaderNS(NSClient, "abc", "x"), StreamHeader("abc", "x"))
+	require.Contains(t, string(ServerFeatures(true)), "xmpp-tls")
+	require.NotContains(t, string(ServerFeatures(false)), "starttls")
+	require.NotContains(t, string(ServerFeatures(true)), "mechanism")
+	require.Contains(t, string(ServerFeatures(false)), NSDialback)
+}

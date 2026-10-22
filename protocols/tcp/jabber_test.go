@@ -101,6 +101,33 @@ func TestHandleJabberStreamHeader(t *testing.T) {
 	}, frames)
 }
 
+func TestHandleJabberServerStream(t *testing.T) {
+	// Observed on tcp/5269: a jabber:client stream-open, then jabber:server.
+	for _, tc := range []struct {
+		name, ns string
+		header   []byte
+		features []byte
+	}{
+		{"client", jabber.NSClient, jabber.StreamHeader("s1", "example.com"), jabber.Features(true)},
+		{"server", jabber.NSServer, jabber.StreamHeaderNS(jabber.NSServer, "s1", "example.com"), jabber.ServerFeatures(true)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			j := startJabber(t)
+			open := "<?xml version='1.0'?><stream:stream to='example.com' xmlns='" + tc.ns + "' xmlns:stream='http://etherx.jabber.org/streams' version='1.0'>"
+			j.send(j.client, open)
+			j.expect(j.client, tc.header, tc.features)
+			require.NoError(t, j.client.Close())
+
+			_, frames := j.finish()
+			require.Equal(t, []parsedJabber{
+				{Direction: "read", Command: "stream", Path: "example.com", Payload: []byte(open)},
+				{Direction: "write", Command: "stream", Path: "example.com", Payload: tc.header},
+				{Direction: "write", Command: "features", Payload: tc.features},
+			}, frames)
+		})
+	}
+}
+
 func TestHandleJabberPlainAuth(t *testing.T) {
 	j := startJabber(t)
 	auth := "<auth xmlns='urn:ietf:params:xml:ns:xmpp-sasl' mechanism='PLAIN'>" +
