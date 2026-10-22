@@ -24,6 +24,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/hl7"
 	"github.com/mushorg/glutton/protocols/tcp/mctp"
 	"github.com/mushorg/glutton/protocols/tcp/minecraft"
+	"github.com/mushorg/glutton/protocols/tcp/mqtt"
 	"github.com/mushorg/glutton/protocols/tcp/mssql"
 	"github.com/mushorg/glutton/protocols/tcp/nvms9000"
 	"github.com/mushorg/glutton/protocols/tcp/oncrpc"
@@ -413,10 +414,24 @@ var catchAllMatchers = []catchAllMatcher{
 	{
 		// Minecraft server-list scanners (matscan) ping any port; the
 		// Handshake is short and arrives whole, so peek for all of it
-		name:   "minecraft",
-		peek:   minecraft.HandshakeLen,
-		match:  minecraft.LooksLikeHandshake,
+		name: "minecraft",
+		peek: func(snip []byte) (int, bool) {
+			// the pre-1.7 ping (nmap) is FE 01, optionally with a plugin message
+			if len(snip) >= minecraft.LegacyPingLen && snip[0] == 0xfe && snip[1] == 0x01 && (len(snip) < 3 || snip[2] != 0x00) {
+				return minecraft.LegacyPingLen, true
+			}
+			return minecraft.HandshakeLen(snip)
+		},
+		match:  func(b []byte) bool { return minecraft.LooksLikeHandshake(b) || minecraft.LooksLikeLegacyPing(b) },
 		handle: asBuffered(tcp.HandleMinecraft),
+	},
+	{
+		// MQTT scanners (nmap, Shodan) send a CONNECT to moved brokers; the
+		// fixed header, protocol name and level tell it apart
+		name:   "mqtt",
+		peek:   fixedPeek(mqtt.PeekLen, func(snip []byte) bool { return snip[0] == 0x10 }),
+		match:  mqtt.LooksLikeConnect,
+		handle: asBuffered(tcp.HandleMQTT),
 	},
 	{
 		// camera scanners probe RTSP on any port; it shares OPTIONS and the

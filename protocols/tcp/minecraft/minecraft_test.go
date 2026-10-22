@@ -176,3 +176,37 @@ func TestLooksLikeHandshakeRejects(t *testing.T) {
 		require.False(t, LooksLikeHandshake(b), name)
 	}
 }
+
+func TestLooksLikeLegacyPing(t *testing.T) {
+	plugin := []byte{0xfe, 0x01, 0xfa, 0x00, 0x0b}
+	tests := []struct {
+		name string
+		in   []byte
+		want bool
+	}{
+		{"bare ping", []byte{0xfe, 0x01}, true},
+		{"with plugin message", plugin, true},
+		{"single byte", []byte{0xfe}, false},
+		{"254-byte handshake prefix", []byte{0xfe, 0x01, 0x00}, false},
+		{"other bytes after ping", []byte{0xfe, 0x01, 0x41}, false},
+		{"wrong magic", []byte{0xfe, 0x02}, false},
+		{"modern handshake", []byte{0x0d, 0x00, 0x2f}, false},
+		{"empty", nil, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, LooksLikeLegacyPing(tc.in))
+		})
+	}
+}
+
+func TestBuildLegacyKick(t *testing.T) {
+	got := BuildLegacyKick(Personas[0])
+	require.Equal(t, byte(0xff), got[0])
+	units := int(got[1])<<8 | int(got[2])
+	require.Equal(t, 2*units, len(got)-3)
+	// UTF-16BE of "§1\0127\01.21.4\0A Minecraft Server\00\020"
+	want := "§1\x00127\x001.21.4\x00A Minecraft Server\x000\x0020"
+	require.Equal(t, units, len([]rune(want)))
+	require.Equal(t, []byte{0x00, 0xa7, 0x00, '1', 0x00, 0x00, 0x00, '1', 0x00, '2', 0x00, '7'}, got[3:15])
+}

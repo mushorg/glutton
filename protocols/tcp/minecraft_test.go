@@ -2,6 +2,7 @@ package tcp
 
 import (
 	"context"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -256,4 +257,39 @@ func readMCPacket(c net.Conn) ([]byte, error) {
 		return nil, err
 	}
 	return pkt.Raw, nil
+}
+
+func TestMinecraftLegacyPing(t *testing.T) {
+	for name, raw := range map[string][]byte{
+		"bare":          {0xfe, 0x01},
+		"plugin_packet": {0xfe, 0x01, 0xfa, 0x00, 0x0b, 'M', 0, 'C', 0, '|', 0, 'P', 0, 'i', 0, 'n', 0, 'g', 0, 'H', 0, 'o', 0, 's', 0, 't'},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var reply []byte
+			p, logger := runMinecraft(t, func(c net.Conn) {
+				go func() { _, _ = c.Write(raw) }()
+				reply = make([]byte, len(minecraft.BuildLegacyKick(minecraft.Personas[0])))
+				_, err := io.ReadFull(c, reply)
+				require.NoError(t, err)
+			})
+			require.Equal(t, "minecraft", p.protocol)
+			require.Equal(t, raw, p.payload)
+			frames := p.decoded.([]parsedMinecraft)
+			require.Len(t, frames, 2)
+			require.Equal(t, parsedMinecraft{Direction: "read", Command: "legacy_ping", Payload: raw}, frames[0])
+			require.Equal(t, "write", frames[1].Direction)
+			require.Equal(t, "legacy_status_response", frames[1].Status)
+			require.Equal(t, reply, frames[1].Payload)
+			require.Equal(t, minecraft.BuildLegacyKick(minecraft.Personas[0]), reply)
+			require.Empty(t, logger.errs)
+		})
+	}
+}
+
+func TestMinecraftLegacyPingSingleByteIsMalformed(t *testing.T) {
+	// a lone 0xFE is a truncated VarInt, not a ping: still recorded
+	p, _ := runMinecraft(t, func(c net.Conn) { _, _ = c.Write([]byte{0xfe}) })
+	frames := p.decoded.([]parsedMinecraft)
+	require.Len(t, frames, 1)
+	require.Equal(t, "malformed", frames[0].Command)
 }

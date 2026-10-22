@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -330,4 +331,46 @@ func BuildLoginDisconnect(reason string) []byte {
 		js = fmt.Sprintf(`{"translate":%q,"with":[%q]}`, reason, DefaultVersionName)
 	}
 	return BuildPacket(IDLoginDiscon, stringBody(js))
+}
+
+// Legacy (pre-1.7) server list ping: 0xFE 0x01, optionally followed by a
+// 0xFA "MC|PingHost" plugin message. nmap and matscan-style scanners still
+// send it. The server answers with a 0xFF kick packet carrying a UTF-16BE
+// string.
+const (
+	legacyPingByte  = 0xFE
+	legacyPingMagic = 0x01
+	legacyPluginMsg = 0xFA
+	legacyKickByte  = 0xFF
+	// LegacyPingLen is the fixed part of the ping a dispatcher needs to see.
+	LegacyPingLen = 2
+	// legacyProtocol is what modern vanilla servers put in the legacy
+	// reply, whatever their real protocol number is.
+	legacyProtocol = 127
+)
+
+// LooksLikeLegacyPing reports whether b starts with a legacy ping: FE 01 on
+// its own or followed by the FA plugin message. FE 01 00 is the length prefix
+// and packet ID of a 254-byte Handshake, so that is not a legacy ping.
+func LooksLikeLegacyPing(b []byte) bool {
+	if len(b) < LegacyPingLen || b[0] != legacyPingByte || b[1] != legacyPingMagic {
+		return false
+	}
+	return len(b) == LegacyPingLen || b[2] == legacyPluginMsg
+}
+
+// BuildLegacyKick builds the 1.4+ legacy ping reply: a 0xFF kick whose
+// string is "§1", protocol, version, MOTD, online and max players separated
+// by NUL, encoded as UTF-16BE and prefixed with its length in code units.
+func BuildLegacyKick(p Persona) []byte {
+	s := fmt.Sprintf("§1\x00%d\x00%s\x00%s\x00%d\x00%d",
+		legacyProtocol, DefaultVersionName, p.MOTD, len(p.Players), p.Max)
+	units := utf16.Encode([]rune(s))
+	out := make([]byte, 3, 3+2*len(units))
+	out[0] = legacyKickByte
+	binary.BigEndian.PutUint16(out[1:], uint16(len(units)))
+	for _, u := range units {
+		out = binary.BigEndian.AppendUint16(out, u)
+	}
+	return out
 }

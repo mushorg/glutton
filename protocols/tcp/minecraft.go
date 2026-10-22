@@ -1,7 +1,9 @@
 package tcp
 
 import (
+	"bufio"
 	"context"
+	"io"
 	"log/slog"
 	"net"
 	"strings"
@@ -40,6 +42,7 @@ type parsedMinecraft struct {
 type minecraftServer struct {
 	events []parsedMinecraft
 	conn   net.Conn
+	r      io.Reader // conn behind a buffer, so a legacy ping can be sniffed
 
 	// Recall: the persona is picked once per connection.
 	srcIP   net.IP
@@ -116,10 +119,10 @@ func (s *minecraftServer) disconnect(reason string) error {
 // readLingeringLogin records a Login Start the client sent before it saw the
 // Disconnect. Nothing is answered.
 func (s *minecraftServer) readLingeringLogin() {
-	if err := s.conn.SetReadDeadline(time.Now().Add(minecraftLingerWait)); err != nil {
-		return
-	}
-	pkt, err := minecraft.ReadPacket(s.conn)
+	// Best effort: bytes already buffered are read even if the deadline
+	// cannot be set (the peer has gone away).
+	_ = s.conn.SetReadDeadline(time.Now().Add(minecraftLingerWait))
+	pkt, err := minecraft.ReadPacket(s.r)
 	if err != nil {
 		if len(pkt.Raw) > 0 {
 			s.events = append(s.events, parsedMinecraft{Direction: "read", Command: "malformed", Payload: pkt.Raw, Truncated: true})
@@ -127,6 +130,30 @@ func (s *minecraftServer) readLingeringLogin() {
 		return
 	}
 	s.events = append(s.events, loginStartFrame(pkt))
+}
+
+// maxLegacyPing caps the bytes recorded for a legacy ping: FE 01 plus the
+// FA MC|PingHost message is about 30 bytes plus the host name.
+const maxLegacyPing = 256
+
+// sniffLegacyPing consumes and returns a pre-1.7 server list ping if one
+// starts the connection, else nil with nothing consumed. It never waits for
+// more than the two bytes that tell the ping apart; the plugin message is
+// taken from what already arrived with them.
+func (s *minecraftServer) sniffLegacyPing(br *bufio.Reader) []byte {
+	if first, err := br.Peek(1); err != nil || first[0] != 0xfe {
+		return nil
+	}
+	if _, err := br.Peek(minecraft.LegacyPingLen); err != nil {
+		return nil
+	}
+	buffered, _ := br.Peek(min(br.Buffered(), maxLegacyPing))
+	if !minecraft.LooksLikeLegacyPing(buffered) {
+		return nil
+	}
+	raw := make([]byte, len(buffered))
+	_, _ = io.ReadFull(br, raw)
+	return raw
 }
 
 func loginStartFrame(pkt minecraft.Packet) parsedMinecraft {
@@ -142,7 +169,8 @@ func loginStartFrame(pkt minecraft.Packet) parsedMinecraft {
 
 // HandleMinecraft answers Minecraft Java server-list pings and records login attempts.
 func HandleMinecraft(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
-	server := &minecraftServer{events: []parsedMinecraft{}, conn: conn, srcIP: remoteIP(conn), persona: minecraft.Personas[0]}
+	br := bufio.NewReader(conn)
+	server := &minecraftServer{events: []parsedMinecraft{}, conn: conn, r: br, srcIP: remoteIP(conn), persona: minecraft.Personas[0]}
 	defer func() {
 		server.note()
 		if err := h.ProduceTCP("minecraft", conn, md, helpers.FirstOrEmpty[parsedMinecraft](server.events).Payload, server.events); err != nil {
@@ -152,6 +180,21 @@ func HandleMinecraft(ctx context.Context, conn net.Conn, md connection.Metadata,
 			logger.Debug("Failed to close Minecraft connection", slog.String("protocol", "minecraft"), producer.ErrAttr(err))
 		}
 	}()
+
+	if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+		logger.Debug("Failed to set connection timeout", slog.String("protocol", "minecraft"), producer.ErrAttr(err))
+		return nil
+	}
+	if legacy := server.sniffLegacyPing(br); legacy != nil {
+		server.events = append(server.events, parsedMinecraft{Direction: "read", Command: "legacy_ping", Payload: legacy})
+		server.begin(logger)
+		if err := server.write(minecraft.BuildLegacyKick(server.persona), "legacy_status_response"); err != nil {
+			logger.Error("Failed to write message", slog.String("protocol", "minecraft"), producer.ErrAttr(err))
+			return err
+		}
+		server.tagLast()
+		return nil
+	}
 
 	var (
 		state      int32 // 0 handshake, then minecraft.StateStatus / StateLogin
@@ -164,7 +207,7 @@ func HandleMinecraft(ctx context.Context, conn net.Conn, md connection.Metadata,
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "minecraft"), producer.ErrAttr(err))
 			return nil
 		}
-		pkt, err := minecraft.ReadPacket(conn)
+		pkt, err := minecraft.ReadPacket(br)
 		if err != nil {
 			if len(pkt.Raw) > 0 {
 				// Partial or rejected frame: keep what the attacker sent.
