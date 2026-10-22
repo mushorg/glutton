@@ -272,6 +272,10 @@ func ForPort(port uint16) (Response, bool) {
 		// reply framing is not public, so record the hello and its follow-ups
 		// without answering rather than sending random bytes.
 		return Response{Name: "opc-tunneller", NoReply: true}, true
+	case 9530:
+		// Xiongmai macGuarder: "OpenTelnet:OpenOnce" is matched in
+		// ForPayload; the client's challenge answer is recorded unanswered
+		return Response{Name: "xiongmai-9530", NoReply: true}, true
 	case 5938:
 		// TeamViewer greets a silent client (nmap -sV); CMD_PING is matched
 		// in ForPayload
@@ -357,6 +361,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	pjlReply,
 	weblogicT3Reply,
 	zookeeperReply,
+	xiongmaiReply,
 	func(data []byte) (Response, bool) {
 		order, ok := isX11Setup(data)
 		if !ok {

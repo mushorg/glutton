@@ -554,6 +554,29 @@ func TestHandleTCPNiagaraFoxHello(t *testing.T) {
 	}, events)
 }
 
+func TestHandleTCPXiongmaiOpenTelnet(t *testing.T) {
+	client, hp, done := startCatchAll(t, 9530)
+
+	// Shodan probe, Ochi live stream 2026-10-22 22:06 UTC
+	open := []byte("OpenTelnet:OpenOnce")
+	_, err := client.Write(open)
+	require.NoError(t, err)
+	reply := readAll(t, client, len("randNum:")+8)
+	require.Regexp(t, `^randNum:[0-9]{8}$`, string(reply))
+
+	// the challenge answer (synthetic) is recorded without a reply
+	answer := []byte("randNum:5a1f0c7e")
+	_, err = client.Write(answer)
+	require.NoError(t, err)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Command: "xiongmai-randnum", Payload: open, PayloadHash: helpers.SHA256Hex(open)},
+		{Direction: "write", Status: "xiongmai-randnum", Payload: reply, PayloadHash: helpers.SHA256Hex(reply)},
+		{Direction: "read", Payload: answer, PayloadHash: helpers.SHA256Hex(answer)},
+	}, events)
+}
+
 // btcMsg frames a mainnet Bitcoin P2P message.
 func btcMsg(command string, payload []byte) []byte {
 	sum := sha256.Sum256(payload)

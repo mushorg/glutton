@@ -45,6 +45,7 @@ Writes set `status` to the response name or `random`.
 | PJL command (`@PJL ...`, optionally after the `1b 25 2d 31 32 33 34 35 58` UEL; Shodan sends `@PJL INFO STATUS`, nmap `@PJL INFO ID`) | `pjl` | HP LaserJet Pro M404dn: `INFO ID` gets the quoted model, `INFO STATUS` gets `CODE=10001 DISPLAY="Ready" ONLINE=TRUE`, other commands are echoed; replies end with a form feed |
 | WebLogic T3 hello (`t3 <version>\nAS:..\nHL:..\n\n`) | `weblogic-t3` | Replies `HELO:12.2.1.4.0.false\nAS:2048\nHL:19\n\n` (format from public T3 tooling, unverified); later T3 frames are recorded |
 | ZooKeeper four-letter command `srvr` (also `stat`/`stats`, which nmap's `stats\r\n` probe reaches; bare command only) | `zookeeper-srvr` | ZooKeeper 3.6.3 standalone `srvr` block (`Zookeeper version:` … `Node count: 5`, bare LF; version and build strings unverified); the connection closes after the reply |
+| Xiongmai/HiSilicon DVR backdoor `OpenTelnet:OpenOnce` (bare, as Shodan sends it, or with the public PoC's 1-byte length prefix; trailing NUL/CR/LF allowed) | `xiongmai-randnum` | `randNum:` + 8 random decimal digits, the macGuarder/dvrHelper challenge (no terminator); the challenge is never verified, see port 9530 |
 | `MGLNDD_<ip>_<port>` scanner probe | `mglndd` | None |
 
 ### Port responses
@@ -65,6 +66,7 @@ Writes set `status` to the response name or `random`.
 | 8126 | `statsd-stats` | Etsy statsd management console `stats` block ending in `END\n\n`, with uptime and `last_*` deltas from the clock |
 | 8333 | `bitcoin` | Sends nothing and hangs up, as bitcoind does with bytes that are not its network magic |
 | 9333 | `litecoin` | Sends nothing and hangs up, as litecoind does with bytes that are not its network magic |
+| 9530 | `xiongmai-9530` | Xiongmai macGuarder/dvrHelper backdoor port. `OpenTelnet:OpenOnce` gets `xiongmai-randnum`; anything else, including the client's challenge answer, is recorded without a reply and the connection stays open (a real device's failure string is not public) |
 | 21379 | `opc-tunneller` | MatrikonOPC Tunneller default port. Sends nothing but keeps the connection open, so the client hello and its follow-up frames are recorded; the real server's reply framing is not public |
 
 Silent responses (`mglndd`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin or Litecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 21379 (`opc-tunneller`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
