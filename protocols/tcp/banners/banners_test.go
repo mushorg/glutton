@@ -276,3 +276,27 @@ func TestForPayloadWebLogicT3(t *testing.T) {
 	_, ok = ForPayload([]byte("t4 12.1.2\n"))
 	require.False(t, ok)
 }
+
+func TestForPayloadHTTP2SettingsFollowUp(t *testing.T) {
+	// client SETTINGS after the preface (Censys, tcp/101 over TLS)
+	settings, err := hex.DecodeString("00001804000000000000020000000000040000426800060004000000030000000a")
+	require.NoError(t, err)
+	resp, ok := ForPayload(settings)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "http2-settings-ack", Data: h2SettingsAck}, resp)
+
+	// the client's own ACK needs no answer
+	resp, ok = ForPayload(h2SettingsAck)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "http2-settings-ack", NoReply: true}, resp)
+
+	// stream id set, length mismatch and non-multiple-of-6 are not SETTINGS
+	for _, data := range [][]byte{
+		{0, 0, 0, 4, 0, 0, 0, 0, 1},
+		settings[:20],
+		{0, 0, 1, 4, 0, 0, 0, 0, 0, 1},
+	} {
+		_, ok := ForPayload(data)
+		require.False(t, ok, "%x", data)
+	}
+}

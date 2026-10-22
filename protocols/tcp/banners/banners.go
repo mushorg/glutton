@@ -128,6 +128,22 @@ var (
 			"000008070000000000" + "0000000000000000")
 )
 
+// h2SettingsAck is an empty SETTINGS frame with the ACK flag on stream 0.
+var h2SettingsAck = []byte{0, 0, 0, 4, 1, 0, 0, 0, 0}
+
+// h2SettingsFrame reports whether data is a complete h2 SETTINGS frame on
+// stream 0 (the client's follow-up to the preface) and whether it is an ACK.
+func h2SettingsFrame(data []byte) (ack, ok bool) {
+	if len(data) < 9 || data[3] != 4 || data[5]|data[6]|data[7]|data[8] != 0 {
+		return false, false
+	}
+	n := int(data[0])<<16 | int(data[1])<<8 | int(data[2])
+	if n%6 != 0 || len(data) != 9+n {
+		return false, false
+	}
+	return data[4]&1 != 0, true
+}
+
 // x11Reason is Xorg's refusal for a client without authorization; nmap
 // reports it as "X11 (access denied)".
 const x11Reason = "No protocol specified\n"
@@ -271,6 +287,16 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	},
 	func(data []byte) (Response, bool) {
 		return Response{Name: "http2-settings", Data: h2Reply}, bytes.HasPrefix(data, h2Preface)
+	},
+	func(data []byte) (Response, bool) {
+		ack, ok := h2SettingsFrame(data)
+		if !ok {
+			return Response{}, false
+		}
+		if ack {
+			return Response{Name: "http2-settings-ack", NoReply: true}, true
+		}
+		return Response{Name: "http2-settings-ack", Data: h2SettingsAck}, true
 	},
 	func(data []byte) (Response, bool) {
 		return Response{Name: "mglndd", Silent: true}, mglnddProbe.Match(data)
