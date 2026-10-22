@@ -62,6 +62,10 @@ func TestForPort(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "niagara-fox", Silent: true}, resp)
 
+	resp, ok = ForPort(3551)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "apcupsd", Silent: true}, resp)
+
 	resp, ok = ForPort(21379)
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "opc-tunneller", NoReply: true}, resp)
@@ -299,4 +303,38 @@ func TestForPayloadHTTP2SettingsFollowUp(t *testing.T) {
 		_, ok := ForPayload(data)
 		require.False(t, ok, "%x", data)
 	}
+}
+
+func TestApcupsdStatus(t *testing.T) {
+	prevNow := now
+	now = func() time.Time { return time.Date(2026, 10, 22, 18, 30, 41, 0, time.UTC) }
+	t.Cleanup(func() { now = prevNow })
+
+	resp, ok := ForPayload([]byte("\x00\x06status"))
+	require.True(t, ok)
+	require.Equal(t, "apcupsd-status", resp.Name)
+
+	_, ok = ForPayload([]byte("\x00\x06events"))
+	require.False(t, ok)
+
+	id := apcupsdIdentity{hostname: "ups01", serial: "3B1214X12345", started: now().Add(-72 * time.Hour)}
+	data := apcupsdStatus(id)
+	var lines []string
+	for len(data) >= 2 {
+		n := int(binary.BigEndian.Uint16(data))
+		data = data[2:]
+		if n == 0 {
+			break
+		}
+		require.GreaterOrEqual(t, len(data), n)
+		require.Equal(t, byte('\n'), data[n-1])
+		lines = append(lines, string(data[:n-1]))
+		data = data[n:]
+	}
+	require.Empty(t, data)
+	require.Equal(t, "APC      : 001,036,0879", lines[0])
+	require.Equal(t, "DATE     : 2026-10-22 18:30:41 +0000  ", lines[1])
+	require.Equal(t, "STARTTIME: 2026-10-19 18:30:41 +0000  ", lines[8])
+	require.Equal(t, "SERIALNO : 3B1214X12345  ", lines[30])
+	require.Equal(t, "END APC  : 2026-10-22 18:30:41 +0000  ", lines[len(lines)-1])
 }

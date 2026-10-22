@@ -263,6 +263,10 @@ func ForPort(port uint16) (Response, bool) {
 		// a Niagara station drops a connection that does not open with a Fox
 		// hello; the hello itself is matched in ForPayload
 		return Response{Name: "niagara-fox", Silent: true}, true
+	case 3551:
+		// apcupsd ignores input that is not a NIS command; "status" is
+		// matched in ForPayload
+		return Response{Name: "apcupsd", Silent: true}, true
 	case 21379:
 		// MatrikonOPC Tunneller default port. The server-side component's
 		// reply framing is not public, so record the hello and its follow-ups
@@ -326,6 +330,12 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 			return Response{}, false
 		}
 		return Response{Name: "niagara-fox-hello", Data: foxHello(foxIdentity)}, true
+	},
+	func(data []byte) (Response, bool) {
+		if !isApcupsdStatus(data) {
+			return Response{}, false
+		}
+		return Response{Name: "apcupsd-status", Data: apcupsdStatus(apcupsdUPS)}, true
 	},
 	func(data []byte) (Response, bool) {
 		if !isTNSConnect(data) {
