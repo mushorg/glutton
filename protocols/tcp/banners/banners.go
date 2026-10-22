@@ -356,6 +356,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	},
 	pjlReply,
 	weblogicT3Reply,
+	zookeeperReply,
 	func(data []byte) (Response, bool) {
 		order, ok := isX11Setup(data)
 		if !ok {
@@ -378,6 +379,35 @@ func weblogicT3Reply(data []byte) (Response, bool) {
 		return Response{}, false
 	}
 	return Response{Name: "weblogic-t3", Data: weblogicT3Hello}, true
+}
+
+// zookeeperSrvr is the ZooKeeper 3.6.3 standalone reply to the "srvr"
+// four-letter command (the only one enabled by default since 3.5). The field
+// order follows the admin guide and Metricbeat's srvr parser; the version and
+// build strings are from memory and unverified. nmap match: p/Zookeeper/ v/$1/
+// i/Built on $2/ (via its Memcache "stats\r\n" probe).
+var zookeeperSrvr = []byte("Zookeeper version: 3.6.3--6401e4ad2087061bc6b9f80dec2d69f2e3c8660a, built on 04/08/2021 16:35 GMT\n" +
+	"Latency min/avg/max: 0/0/0\n" +
+	"Received: 1\n" +
+	"Sent: 0\n" +
+	"Connections: 1\n" +
+	"Outstanding: 0\n" +
+	"Zxid: 0x0\n" +
+	"Mode: standalone\n" +
+	"Node count: 5\n")
+
+// zookeeperReply answers a ZooKeeper four-letter command (Ochi: "srvr\n" on
+// tcp/2181). A server reads the first four bytes as the command, so nmap's
+// "stats\r\n" probe reaches "stat"; both get the srvr block, which leaves out
+// the "Clients:" list a real "stat" adds. Matching only the bare command keeps
+// other protocols on any port out of this signature. The server closes after
+// replying.
+func zookeeperReply(data []byte) (Response, bool) {
+	switch string(bytes.TrimRight(data, "\r\n")) {
+	case "srvr", "stat", "stats":
+		return Response{Name: "zookeeper-srvr", Data: zookeeperSrvr, Close: true}, true
+	}
+	return Response{}, false
 }
 
 // pjlUEL is the Universal Exit Language escape that prefixes PJL jobs.

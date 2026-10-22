@@ -268,6 +268,24 @@ func TestForPayloadPicksAmongCandidates(t *testing.T) {
 	}
 }
 
+func TestForPayloadZooKeeper(t *testing.T) {
+	// Ochi tcp/2181 event from 137.184.53.149: "srvr\n"
+	for _, in := range []string{"srvr\n", "srvr", "stat\r\n", "stats\r\n"} {
+		resp, ok := ForPayload([]byte(in))
+		require.True(t, ok, in)
+		require.Equal(t, "zookeeper-srvr", resp.Name)
+		require.True(t, resp.Close)
+		require.True(t, bytes.HasPrefix(resp.Data, []byte("Zookeeper version: 3.6.3-")))
+		require.True(t, bytes.HasSuffix(resp.Data, []byte("Mode: standalone\nNode count: 5\n")))
+		require.NotContains(t, string(resp.Data), "\r", "ZooKeeper text uses bare LF")
+	}
+
+	for _, in := range []string{"", "srv", "srvr x", "status\n", "ruok\n", "GET / HTTP/1.1\r\n\r\n"} {
+		resp, ok := ForPayload([]byte(in))
+		require.False(t, ok && resp.Name == "zookeeper-srvr", in)
+	}
+}
+
 func TestForPayloadWebLogicT3(t *testing.T) {
 	// Ochi event af8b38b0-b808-4280-8d99-21f2c860294b (tcp/27001)
 	resp, ok := ForPayload([]byte("t3 12.1.2\nAS:2048\nHL:19\n\n"))
