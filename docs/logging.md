@@ -174,6 +174,7 @@ Example shape:
 | `bittorrent` | TCP | [protocols/bittorrent.md](protocols/bittorrent.md) |
 | `jabber` | TCP | [protocols/jabber.md](protocols/jabber.md) |
 | `pop3` | TCP | [protocols/pop3.md](protocols/pop3.md) |
+| `imap` | TCP | [protocols/imap.md](protocols/imap.md) |
 | `whois` | TCP | [protocols/whois.md](protocols/whois.md) |
 | `ident` | TCP | [protocols/ident.md](protocols/ident.md) |
 | `dns` | TCP | [protocols/dns.md](protocols/dns.md) |

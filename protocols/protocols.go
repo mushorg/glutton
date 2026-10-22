@@ -157,6 +157,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"memcache":   bindTCP(tcp.HandleMemcache, log, h),
 		"jabber":     bindTCP(tcp.HandleJabber, log, h),
 		"pop3":       bindTCP(tcp.HandlePOP3, log, h),
+		"imap":       bindTCP(tcp.HandleIMAP, log, h),
 		"whois":      bindTCP(tcp.HandleWHOIS, log, h),
 		"ident":      bindTCP(tcp.HandleIdent, log, h),
 		"dns":        bindTCP(tcp.HandleDNS, log, h),

@@ -45,6 +45,13 @@ rules:
   - match: tcp dst port 110
     type: conn_handler
     target: pop3
+  - match: tcp dst port 993
+    type: conn_handler
+    target: imap
+    tls: true
+  - match: tcp dst port 143
+    type: conn_handler
+    target: imap
   - match: tcp dst port 43
     type: conn_handler
     target: whois
