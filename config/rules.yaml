@@ -133,6 +133,10 @@ rules:
   - match: tcp dst port 2575
     type: conn_handler
     target: hl7
+  - match: tcp dst port 631
+    type: conn_handler
+    target: ipp
+    tls: auto
   - match: tcp dst port 25565
     type: conn_handler
     target: minecraft

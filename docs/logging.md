@@ -153,6 +153,7 @@ Example shape:
 | `dahua` | TCP | [protocols/dahua.md](protocols/dahua.md) |
 | `rtsp` | TCP | [protocols/rtsp.md](protocols/rtsp.md) |
 | `icap` | TCP | [protocols/icap.md](protocols/icap.md) |
+| `ipp` | TCP | [protocols/ipp.md](protocols/ipp.md) |
 | `dicom` | TCP | [protocols/dicom.md](protocols/dicom.md) |
 | `hl7` | TCP | [protocols/hl7.md](protocols/hl7.md) |
 | `mongodb` | TCP | [protocols/mongodb.md](protocols/mongodb.md) |

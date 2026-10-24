@@ -188,6 +188,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"mctp":       mctpOrTCP(log, h),
 		"nvms9000":   nvmsOrTCP(log, h),
 		"rtsp":       rtspOrTCP(log, h),
+		"ipp":        ippOrTCP(log, h),
 		"hl7":        hl7OrTCP(log, h),
 		"proxy_tcp":  bindTCP(tcp.HandleProxyTCP, log, h),
 		"tcp":        catchAllTCP(log, h),
@@ -620,6 +621,33 @@ func rtspOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		}
 		if line, _ := bufConn.peekLine(rtspLinePeek); rtsp.LooksLikeRTSP(line) {
 			return tcp.HandleRTSP(ctx, bufConn, md, log, h)
+		}
+		return catchAll(ctx, bufConn, md)
+	}
+}
+
+// ippOrTCP serves the CUPS port (tcp/631): HTTP requests (IPP POSTs and
+// web interface fetches) go to the IPP handler; anything else goes through
+// the catch-all dispatch so it is still answered and stored.
+func ippOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
+	catchAll := catchAllTCP(log, h)
+	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			log.Debug("failed to set connection timeout", producer.ErrAttr(err))
+			return conn.Close()
+		}
+		bufConn := newBufferedConn(conn)
+		// wait (up to the connection timeout) for the client to speak first
+		if _, err := bufConn.peek(1); err != nil {
+			log.Debug("failed to peek connection", producer.ErrAttr(err))
+			return conn.Close()
+		}
+		if err := bufConn.SetReadDeadline(time.Now().Add(mctpPeekTimeout)); err != nil {
+			log.Debug("failed to set peek deadline", producer.ErrAttr(err))
+		}
+		// a short peek (deadline) still holds the bytes that arrived
+		if snip, _ := bufConn.peek(httpMethodPeek); looksLikeHTTPRequest(snip) {
+			return tcp.HandleIPP(ctx, bufConn, md, log, h)
 		}
 		return catchAll(ctx, bufConn, md)
 	}

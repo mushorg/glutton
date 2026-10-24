@@ -101,6 +101,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | DICOM                       | PACS associations, C-FIND search keys, C-STORE uploads on tcp/104, 11112, 2761, 2762 |
 | HL7 v2 (MLLP)               | ADT/ORU/QRY messages to interface engines on tcp/2575, any port |
 | ICAP                        | OPTIONS/REQMOD/RESPMOD on tcp/1344, 11344 |
+| IPP / CUPS                  | Get-Printer-Attributes, print jobs, CUPS admin and credential attempts on tcp/631 |
 | SSH                         | key exchange, HASSH and login attempts on tcp/22, 2222, any port |
 | Hadoop YARN                 | `POST */cluster/apps/new-application`    |
 | Docker Engine API           | `GET /v1.16/version`                     |
