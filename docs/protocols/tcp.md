@@ -48,6 +48,7 @@ Writes set `status` to the response name or `random`.
 | Xiongmai/HiSilicon DVR backdoor `OpenTelnet:OpenOnce` (bare, as Shodan sends it, or with the public PoC's 1-byte length prefix; trailing NUL/CR/LF allowed) | `xiongmai-randnum` | `randNum:` + 8 random decimal digits, the macGuarder/dvrHelper challenge (no terminator); the challenge is never verified, see port 9530 |
 | Erlang epmd `NAMES_REQ` (exactly `00 01 6e`, nmap's `epmd` probe; Shodan sends it to tcp/4369) | `epmd-names` | RabbitMQ broker's epmd: port `00 00 11 11` then `name rabbit at port 25672\n`; the connection closes after the reply |
 | Erlang epmd `PORT_PLEASE2_REQ` (`00 <len> 7a <node name>`, length covering the rest) | `epmd-port2` | `PORT2_RESP` for `rabbit` (port 25672, normal node, TCP, distribution versions 6..5, no extra) or result `1` (not found) for any other name; the connection closes after the reply |
+| SAProuter message without its NI length prefix (`ROUTER_ADM\0`, `NI_ROUTE\0`, `NI_PING\0`; Shodan sends a bare 35-byte `ROUTER_ADM` info request to tcp/3299) | `saprouter-too-big` | `NI_RTERR` "Network packet too big" (rc -93) quoting the first 4 bytes as the rejected NI length (`NiBufIIn: message length 1380930900 exceeds max (10024)` for `ROUT`), with the current time and a per-run host in `SAProuter 40.4 (SP3) on '<host>'`; the connection closes after the reply |
 | `MGLNDD_<ip>_<port>` scanner probe | `mglndd` | None |
 
 ### Port responses
@@ -60,6 +61,7 @@ Writes set `status` to the response name or `random`.
 | 139 | `netbios-session` | |
 | 389 | `ldap` | Sends nothing, as an LDAP server does with input it cannot parse |
 | 1433 | `mssql-prelogin` | Only on sensors without the `mssql` rule, and only for the first message; the next one (a LOGIN7) ends the session instead of getting the PRELOGIN reply again. A TDS PRELOGIN on any port goes to the [`mssql`](mssql.md) handler |
+| 3299 | `saprouter-timeout` | `NI_RTERR` "connection timed out" (rc -5, `no route received within 5s`), which nmap reports as `SAProuter 40.4 SP3`: sent to a client that stays silent for 2s, or as the reply to bytes that match no signature; the connection closes after it |
 | 4369 | `epmd` | Sends nothing and closes, as epmd does with a request it cannot parse; `NAMES_REQ` and `PORT_PLEASE2_REQ` get `epmd-names` / `epmd-port2` |
 | 1911 | `niagara-fox` | Sends nothing and hangs up on bytes that are not a Fox hello (including Fox messages after the hello), as a Niagara station does before a session is open |
 | 4444 | `cmd-shell` | See [Server-first banners](#server-first-banners) |

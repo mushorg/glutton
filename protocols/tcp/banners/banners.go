@@ -276,6 +276,11 @@ func ForPort(port uint16) (Response, bool) {
 		// Xiongmai macGuarder: "OpenTelnet:OpenOnce" is matched in
 		// ForPayload; the client's challenge answer is recorded unanswered
 		return Response{Name: "xiongmai-9530", NoReply: true}, true
+	case 3299:
+		// saprouter sends this to a client that sends no complete route
+		// request in time (nmap's NULL probe), then closes; unframed router
+		// messages are matched in ForPayload
+		return Response{Name: "saprouter-timeout", Data: saprouterTimeout(), GreetWhenIdle: true, Close: true}, true
 	case 4369:
 		// epmd closes a connection whose request it cannot parse;
 		// NAMES_REQ and PORT_PLEASE2_REQ are matched in ForPayload
@@ -366,6 +371,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	weblogicT3Reply,
 	zookeeperReply,
 	epmdReply,
+	saprouterReply,
 	xiongmaiReply,
 	func(data []byte) (Response, bool) {
 		order, ok := isX11Setup(data)

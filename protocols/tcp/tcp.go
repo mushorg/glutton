@@ -275,7 +275,9 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			endReason = connection.EndWriteError
 			return false, nil
 		}
-		return true, nil
+		// a service that hangs up after its greeting (saprouter's timeout
+		// error) ends the session here
+		return !banner.Close, nil
 	}
 	// read reads the next client message; a nil result means the session is over.
 	read := func() ([]byte, error) {

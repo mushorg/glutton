@@ -1009,6 +1009,45 @@ func TestHandleTCPTeamViewer(t *testing.T) {
 	require.False(t, HasServerBanner(5938))
 }
 
+func TestHandleTCPSaprouter(t *testing.T) {
+	// Shodan's unframed ROUTER_ADM info request: saprouter reads "ROUT" as
+	// the NI length and refuses it
+	client, hp, done := startCatchAll(t, 3299)
+	adm := append([]byte("ROUTER_ADM\x00\x02\x02"), make([]byte, 22)...)
+	_, err := client.Write(adm)
+	require.NoError(t, err)
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	require.Contains(t, string(reply), "NiBufIIn: message length 1380930900 exceeds max (10024)")
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 2)
+	require.Equal(t, "saprouter-too-big", events[0].Command)
+	require.Equal(t, "saprouter-too-big", events[1].Status)
+
+	// nmap's NULL probe: the timeout error, then the connection closes
+	client, hp, done = startCatchAllWith(t, 3299, HandleTCPSilent)
+	reply, err = io.ReadAll(client)
+	require.NoError(t, err)
+	require.Contains(t, string(reply), "connection timed out")
+	events = finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 1)
+	require.Equal(t, "saprouter-timeout", events[0].Status)
+
+	// other bytes get the timeout error as the reply and the connection closes
+	client, hp, done = startCatchAll(t, 3299)
+	_, err = client.Write([]byte{0x00, 0x00, 0x00, 0x10})
+	require.NoError(t, err)
+	reply, err = io.ReadAll(client)
+	require.NoError(t, err)
+	require.Contains(t, string(reply), "connection timed out")
+	events = finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 2)
+	require.Equal(t, "saprouter-timeout", events[1].Status)
+
+	require.True(t, GreetsWhenIdle(3299))
+	require.False(t, HasServerBanner(3299))
+}
+
 func TestHandleTCPSilentWithoutIdleBanner(t *testing.T) {
 	client, hp, done := startCatchAllWith(t, 9999, HandleTCPSilent)
 	events := finishCatchAll(t, client, hp, done)
