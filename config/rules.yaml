@@ -149,6 +149,9 @@ rules:
   - match: tcp dst port 32400
     type: conn_handler
     target: http
+  - match: tcp dst port 9200
+    type: conn_handler
+    target: http
   - match: tcp dst port 22 or port 2222
     type: conn_handler
     target: ssh

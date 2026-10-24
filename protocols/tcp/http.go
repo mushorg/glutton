@@ -20,6 +20,7 @@ import (
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/citrix"
+	"github.com/mushorg/glutton/protocols/tcp/elasticsearch"
 	"github.com/mushorg/glutton/protocols/tcp/ja4h"
 	"github.com/mushorg/glutton/protocols/tcp/log4shell"
 	"github.com/mushorg/glutton/protocols/tcp/php2shell"
@@ -106,29 +107,30 @@ func handlePOST(req *http.Request, body []byte, logger interfaces.Logger) ([]byt
 }
 
 type parsedHTTP struct {
-	Direction  string              `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
-	Command    string              `json:"command,omitempty"`   // HTTP method
-	Path       string              `json:"path,omitempty"`
-	Query      string              `json:"query,omitempty"`
-	Parameters url.Values          `json:"parameters,omitempty"` // parsed query key/values
-	Host       string              `json:"host,omitempty"`
-	Username   string              `json:"username,omitempty"` // HTTP Basic or Proxmox VE login
-	Password   string              `json:"password,omitempty"` // HTTP Basic or Proxmox VE login
-	UserAgent  string              `json:"user_agent,omitempty"`
-	JA4H       string              `json:"ja4h,omitempty"` // FoxIO JA4H fingerprint of the request, set on reads
-	Status     string              `json:"status,omitempty"`
-	SessionID  string              `json:"session_id,omitempty"`
-	DestPort   uint16              `json:"dest_port,omitempty"`  // set on reads; sessions can span ports
-	SrcPort    string              `json:"src_port,omitempty"`   // set on reads; sessions can span connections
-	Browser    string              `json:"browser,omitempty"`    // Selenium new-session browserName
-	Binary     string              `json:"binary,omitempty"`     // Selenium new-session browser binary
-	Args       []string            `json:"args,omitempty"`       // Selenium new-session browser args
-	Truncated  bool                `json:"truncated,omitempty"`  // a Selenium binary/args cap applied
-	Citrix     *citrix.Request     `json:"citrix,omitempty"`     // CVE-2019-19781 stage, NSC_USER, template
-	Log4Shell  *log4shell.Request  `json:"log4shell,omitempty"`  // CVE-2021-44228 JNDI lookups (parse-only)
-	PHP2Shell  *php2shell.Request  `json:"php2shell,omitempty"`  // CVE-2026-109618/109619 multipart shape (parse-only)
-	Plex2Shell *plex2shell.Request `json:"plex2shell,omitempty"` // CVE-2026-96652/-96654/-96655/-96656 subscribe callback shape
-	Payload    []byte              `json:"payload,omitempty"`    // raw HTTP request or response bytes
+	Direction  string                 `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
+	Command    string                 `json:"command,omitempty"`   // HTTP method
+	Path       string                 `json:"path,omitempty"`
+	Query      string                 `json:"query,omitempty"`
+	Parameters url.Values             `json:"parameters,omitempty"` // parsed query key/values
+	Host       string                 `json:"host,omitempty"`
+	Username   string                 `json:"username,omitempty"` // HTTP Basic or Proxmox VE login
+	Password   string                 `json:"password,omitempty"` // HTTP Basic or Proxmox VE login
+	UserAgent  string                 `json:"user_agent,omitempty"`
+	JA4H       string                 `json:"ja4h,omitempty"` // FoxIO JA4H fingerprint of the request, set on reads
+	Status     string                 `json:"status,omitempty"`
+	SessionID  string                 `json:"session_id,omitempty"`
+	DestPort   uint16                 `json:"dest_port,omitempty"`     // set on reads; sessions can span ports
+	SrcPort    string                 `json:"src_port,omitempty"`      // set on reads; sessions can span connections
+	Browser    string                 `json:"browser,omitempty"`       // Selenium new-session browserName
+	Binary     string                 `json:"binary,omitempty"`        // Selenium new-session browser binary
+	Args       []string               `json:"args,omitempty"`          // Selenium new-session browser args
+	Truncated  bool                   `json:"truncated,omitempty"`     // a Selenium binary/args cap applied
+	Citrix     *citrix.Request        `json:"citrix,omitempty"`        // CVE-2019-19781 stage, NSC_USER, template
+	Elastic    *elasticsearch.Request `json:"elasticsearch,omitempty"` // tcp/9200 REST operation, index, scripts
+	Log4Shell  *log4shell.Request     `json:"log4shell,omitempty"`     // CVE-2021-44228 JNDI lookups (parse-only)
+	PHP2Shell  *php2shell.Request     `json:"php2shell,omitempty"`     // CVE-2026-109618/109619 multipart shape (parse-only)
+	Plex2Shell *plex2shell.Request    `json:"plex2shell,omitempty"`    // CVE-2026-96652/-96654/-96655/-96656 subscribe callback shape
+	Payload    []byte                 `json:"payload,omitempty"`       // raw HTTP request or response bytes
 }
 
 // httpParameters returns the query map, or nil when empty so omitempty drops it.
@@ -264,6 +266,18 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 			frame.Username, frame.Password = user, pass
 		}
 	}
+	elastic := md.TargetPort == elasticsearch.Port
+	if elastic {
+		frame.Elastic = elasticsearch.Inspect(req.Method, path, req.URL.RawQuery, body)
+		if len(frame.Elastic.Scripts) > 0 {
+			logger.Info(
+				"HTTP Elasticsearch script request",
+				slog.String("handler", "http"),
+				slog.String("operation", frame.Elastic.Operation),
+				slog.String("lang", frame.Elastic.Lang),
+			)
+		}
+	}
 	frame.Citrix = citrix.Inspect(req.Method, path, req.Header, body)
 	frame.Log4Shell = log4shell.Inspect(path, req.URL.RawQuery, req.Header, body)
 	frame.PHP2Shell = php2shell.Inspect(req.Header, body)
@@ -297,6 +311,9 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 	}
 	if proxmox {
 		return s.write(pve.Respond(req.Method, path, httpNow()))
+	}
+	if elastic {
+		return s.write(elasticsearch.Respond(req.Method, path, req.URL.RawQuery, frame.Elastic))
 	}
 	if md.TargetPort == plex2shell.Port || frame.Plex2Shell != nil {
 		return s.write(plex2shell.Respond(req.Method, path, httpNow()))

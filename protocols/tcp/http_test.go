@@ -15,6 +15,7 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/tcp/citrix"
+	"github.com/mushorg/glutton/protocols/tcp/elasticsearch"
 	"github.com/mushorg/glutton/protocols/tcp/log4shell"
 	"github.com/mushorg/glutton/protocols/tcp/php2shell"
 	"github.com/mushorg/glutton/protocols/tcp/plex2shell"
@@ -234,6 +235,111 @@ func TestHandleHTTPProxmox(t *testing.T) {
 	require.Equal(t, "/api2/json/version", events[4].Path)
 	require.Equal(t, "401", events[5].Status)
 	require.Contains(t, string(events[2].Payload), "password=hunter2")
+}
+
+func TestHandleHTTPElasticsearch(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{TargetPort: elasticsearch.Port}, &recordingLogger{}, hp)
+	}()
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write(httpTestRequest("GET", "/", "", nil))
+	require.NoError(t, err)
+	status, headers, body := readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "application/json; charset=UTF-8", headers.Get("Content-Type"))
+	require.Contains(t, string(body), `"number" : "1.4.2"`)
+	require.Contains(t, string(body), `"name" : "`+elasticsearch.Node().Name+`"`)
+	sessionID := sessionCookieFromHeaders(t, headers)
+
+	_, err = client.Write(httpTestRequest("GET", "/_cat/indices?v", sessionID, nil))
+	require.NoError(t, err)
+	status, _, body = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.True(t, strings.HasPrefix(string(body), "health status index"))
+
+	// CVE-2015-1427 Groovy sandbox escape, synthetic
+	probe := []byte(`{"size":1,"script_fields":{"lupin":{"lang":"groovy","script":"java.lang.Math.class.forName(\"java.lang.Runtime\").getRuntime().exec(\"id\").getText()"}}}`)
+	_, err = client.Write(httpTestRequest("POST", "/_search?pretty", sessionID, probe))
+	require.NoError(t, err)
+	status, _, body = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Contains(t, string(body), `"hits" : [ ]`)
+
+	_, err = client.Write(httpTestRequest("DELETE", "/customers", sessionID, nil))
+	require.NoError(t, err)
+	status, _, body = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, `{"error":"IndexMissingException[[customers] missing]","status":404}`, string(body))
+
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "http", produced.protocol)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+	events, ok := produced.decoded.([]parsedHTTP)
+	require.True(t, ok)
+	require.Len(t, events, 8)
+	require.Equal(t, produced.payload, events[0].Payload)
+	require.Equal(t, &elasticsearch.Request{Operation: "info"}, events[0].Elastic)
+	require.Equal(t, "write", events[1].Direction)
+	require.Equal(t, "200", events[1].Status)
+	require.Nil(t, events[1].Elastic)
+	require.Equal(t, &elasticsearch.Request{Operation: "cat_indices"}, events[2].Elastic)
+	require.Equal(t, "POST", events[4].Command)
+	require.Equal(t, "/_search", events[4].Path)
+	require.Equal(t, &elasticsearch.Request{
+		Operation: "search",
+		Lang:      "groovy",
+		Scripts:   []string{`java.lang.Math.class.forName("java.lang.Runtime").getRuntime().exec("id").getText()`},
+	}, events[4].Elastic)
+	require.Contains(t, string(events[4].Payload), "script_fields")
+	require.Equal(t, "200", events[5].Status)
+	require.Equal(t, &elasticsearch.Request{Operation: "delete_index", Index: "customers"}, events[6].Elastic)
+	require.Equal(t, "404", events[7].Status)
+}
+
+func TestHandleHTTPElasticsearchOtherPort(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{TargetPort: 8080}, &recordingLogger{}, hp)
+	}()
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write(httpTestRequest("GET", "/_cat/indices", "", nil))
+	require.NoError(t, err)
+	status, _, body := readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, body)
+	require.NoError(t, client.Close())
+	<-done
+
+	events, ok := waitProduced(t, hp).decoded.([]parsedHTTP)
+	require.True(t, ok)
+	require.Nil(t, events[0].Elastic)
 }
 
 func TestHandleHTTPParameters(t *testing.T) {

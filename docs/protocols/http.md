@@ -6,7 +6,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 
 ## `http` (Go)
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `ja4h`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `log4shell`, `php2shell`, `plex2shell`, `session_id`, `dest_port`, `src_port`, `payload`
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `ja4h`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `elasticsearch`, `log4shell`, `php2shell`, `plex2shell`, `session_id`, `dest_port`, `src_port`, `payload`
 
 ### Frame fields
 
@@ -19,7 +19,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 | `dest_port`, `src_port` | reads | Ports of the connection the frame arrived on (see [Sessions](#sessions)). |
 | `status` | writes | Response status, e.g. `200`. |
 | `username`, `password` | reads | `Authorization: Basic` credentials, or the Proxmox VE ticket login form (see [Emulated applications](#emulated-applications)). |
-| `browser`, `binary`, `args`, `citrix`, `log4shell`, `php2shell`, `plex2shell`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
+| `browser`, `binary`, `args`, `citrix`, `elasticsearch`, `log4shell`, `php2shell`, `plex2shell`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
 
 ### Sessions
 
@@ -143,6 +143,31 @@ The reply bodies are best recollection of a real server, not captures. A read th
 
 `callback_ip` is the address embedded in a `sslip.io`/`nip.io` name, read from the name alone. Query and header text is scanned up to 16 KiB, fields are capped at 256 B, and `truncated` is set when either applies. The Spicy `http` handler does not set `plex2shell`.
 
+#### Elasticsearch 1.4
+
+Package: `protocols/tcp/elasticsearch`. Every path on tcp/9200 is answered as an unauthenticated Elasticsearch 1.4.2 node: version 1.4.2 is still vulnerable to the dynamic-scripting RCEs scanners probe for (CVE-2014-3120 MVEL, CVE-2015-1427 Groovy). The node is a fresh single-node cluster with no indices, so searches return no hits and scripts never produce output. Scripts are recorded and never evaluated. The endpoint list follows [elasticpot](https://gitlab.com/bontchev/elasticpot); the replies are written from the public ES 1.x REST API. Replies carry only `Content-Type` and `Content-Length`, as ES 1.x does (plus the `session` cookie).
+
+| Request | Response |
+| --- | --- |
+| `GET`/`HEAD /` | `200` pretty-printed banner: node `name`, `cluster_name`, `version.number` `1.4.2`, tagline |
+| `_search`, `_count` (no index, `_all` or a wildcard) | `200`, zero hits (`?source=` bodies are read too) |
+| `/<index>/_search`, `GET /<index>`, document `GET`/`DELETE`, `DELETE /<index>` | `404` `IndexMissingException[[<index>] missing]` |
+| `DELETE /*`, `DELETE /_all`, `PUT`/`POST /<index>` | `200` `{"acknowledged":true}` |
+| `PUT`/`POST /<index>/<type>[/<id>]` | `201` `created:true`, `_version` 1, a random 20-char `_id` when none is given |
+| `/_cluster/health` | `200` green, 1 node, 0 shards |
+| `/_nodes*` | `200` the node (`inet[/172.31.x.y:9300]`) |
+| `/_cat`, `/_cat/{indices,nodes,master,aliases,shards,plugins}` | `200` text (`?v` adds the header row) or `?format=json` |
+| `/_stats`, `/_mapping`, `/_settings`, `/_aliases`, `/_alias` | `200` empty |
+| Anything else | `400` `No handler found for uri [<path>] and method [<method>]` |
+
+`?pretty` pretty-prints JSON replies the way ES does (`"key" : value`). Every read on tcp/9200 sets `elasticsearch` to `{operation, index, type, id, lang, scripts, truncated}`:
+
+- `operation` is the REST operation: `info`, `search`, `count`, `cat`, `cat_indices`, `cat_nodes`, …, `cluster_health`, `nodes`, `stats`, `mapping`, `settings`, `aliases`, `alias`, `get_index`, `create_index`, `delete_index`, `index_document`, `get_document`, `delete_document`, or `unknown`.
+- `index`, `type`, `id` come from the path (percent-decoded, so `/%2A/_alias` has index `*`).
+- `scripts` holds every `script` value in a JSON body or `?source=` (a string, or the `script`/`inline`/`source` field of a script object), and `lang` the first `lang` (`groovy`, `mvel`).
+
+Caps: 8 scripts of 4 KiB, 256 B for `index`/`type`/`id`/`lang`, and JSON nesting depth 32; `truncated` is set when any applies. Node `name` and `cluster_name` come from `elasticsearch.node_name` and `elasticsearch.cluster_name` (see [Configuration](../configuration.md)). The Spicy `http` handler does not set `elasticsearch`.
+
 #### Local file include (LFI)
 
 `protocols/tcp/lfi.go`. A GET whose **query** or **path** looks like a traversal to a known file (`passwd`, `hosts`, `win.ini`, `amportal.conf`) gets `200` `text/plain` with a canned body from `resources/lfi/`. Examples: `?file=../../etc/passwd`, `/..%2F..%2Fetc%2Fpasswd`. Citrix `/vpn/../vpns/` staging still wins when it matches first. Unknown basenames keep the generic empty `200`.
@@ -162,3 +187,4 @@ Keep-alive HTTP parsed with Spicy. `command`, `query`, `parameters`, and `status
 - **Citrix CVE-2019-19781:** same replies and `citrix` frames as the [Go handler](#citrix-adc--netscaler-gateway-cve-2019-19781), except `nsc_user` is never set (headers are not exposed).
 - **LFI:** same path- and query-based canned replies as the [Go handler](#local-file-include-lfi).
 - **Proxmox VE:** not emulated.
+- **Elasticsearch:** not emulated.

@@ -68,6 +68,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | Ethereum JSON-RPC           | `POST` body containing `eth_blockNumber` |
 | Wallet probes               | URIs containing `wallet`                 |
 | Selenium Grid               | `POST /session` browser-binary payloads  |
+| Elasticsearch (tcp/9200)    | ES 1.4 recon, `script_fields` MVEL/Groovy RCE scripts, index wipe/ransom notes |
 | SMTP                        | mail submission probes                   |
 | RDP                         | Remote Desktop handshake                 |
 | SMB                         | Windows file-sharing probes              |
