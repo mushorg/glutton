@@ -2,11 +2,9 @@ package tcp
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
-	"io"
 	"log/slog"
 	"math/big"
 	"net"
@@ -18,7 +16,6 @@ import (
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/socks"
-	"github.com/spf13/viper"
 )
 
 type parsedSOCKS struct {
@@ -106,161 +103,30 @@ func (s *socksServer) write(data []byte, command, status string) error {
 	return nil
 }
 
-// readTunnelBytes reads up to max_tcp_payload from r. readErr is set only when
-// nothing arrived.
-func readTunnelBytes(r io.Reader) (data []byte, truncated bool, readErr error) {
-	limit := viper.GetInt("max_tcp_payload")
-	if limit <= 0 {
-		limit = maxBufferSize
-	}
-	buffer := make([]byte, maxBufferSize)
-	for {
-		n, err := r.Read(buffer)
-		data = append(data, buffer[:n]...)
-		if len(data) > limit {
-			data = data[:limit]
-			truncated = true
-			break
-		}
-		if err != nil {
-			readErr = err
-			break
-		}
-		if n < len(buffer) {
-			break
-		}
-	}
-	if len(data) == 0 {
-		return nil, false, readErr
-	}
-	return data, truncated, nil
-}
-
-func (s *socksServer) captureTunnel(path, command string, data []byte, truncated bool, hello *helpers.ClientHello) error {
-	_, storeErr := helpers.Store(data, "payloads")
-	frame := parsedSOCKS{
-		Direction:   "read",
-		Command:     command,
-		Path:        path,
-		Payload:     data,
-		PayloadHash: helpers.SHA256Hex(data),
-		Truncated:   truncated,
-		ClientHello: hello,
-	}
-	if command == "tunnel" {
-		if sum, ok := socks.SummarizeHTTP(data); ok {
-			frame.Requests = sum.Requests
-			frame.DistinctRequests = sum.Distinct
-			frame.RequestLine = sum.First
-			frame.UserAgent = sum.UserAgent
-		}
-	}
-	s.events = append(s.events, frame)
-	return storeErr
-}
-
-// tunnelCertName picks the name for the tunnel TLS certificate: ClientHello
-// SNI when present, otherwise the CONNECT host from path (host:port).
-func tunnelCertName(sni, path string) string {
-	if sni != "" {
-		return sni
-	}
-	host, _, err := net.SplitHostPort(path)
-	if err != nil {
-		return ""
-	}
-	return host
-}
-
-// serveTunnelHTTP replays the captured tunnel bytes through the HTTP handler
-// and attaches its frames (requests and replies) to the tunnel read frame just
-// captured. Replies go to w; the canned judge reply answers what HTTP has no
-// route for. The conn is not read again, so a flood past the capture cap is
-// never served.
-func (s *socksServer) serveTunnelHTTP(ctx context.Context, w net.Conn, data []byte, md *connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) string {
-	md.AddInner("http")
-	srv := newHTTPServer(&readerConn{Conn: w, r: bytes.NewReader(data)})
-	srv.tunnel = true
-	srv.tunnelReply = socks.TunnelHTTPReply()
-	reason, _ := srv.serve(ctx, *md, logger, h)
-	s.events[len(s.events)-1].HTTP = srv.local
-	switch reason {
-	case connection.EndWriteError, connection.EndTimeout:
-		return reason
-	}
-	return connection.EndHandlerClose
-}
-
-// handleTunnel captures the first bytes after a granted CONNECT. A complete
-// TLS ClientHello is terminated with a self-signed cert matching the SNI (or
-// CONNECT host) and tagged tls-clienthello with SNI/JA fingerprints; a
-// following HTTP request gets a canned JSON judge reply. Plaintext HTTP in
-// the tunnel gets the same reply. Nothing is dialed or forwarded.
+// handleTunnel captures the first bytes after a granted CONNECT (see
+// serveTunnel). Nothing is dialed or forwarded.
 func (s *socksServer) handleTunnel(ctx context.Context, path string, md *connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) (endReason string, err error) {
-	data, truncated, readErr := readTunnelBytes(s.r)
-	if len(data) == 0 {
-		return connection.EndReasonFromRead(readErr), readErr
-	}
-
-	if !truncated {
-		if hello, ok := helpers.ParseClientHello(data); ok {
-			if storeErr := s.captureTunnel(path, "tls-clienthello", data, false, hello); storeErr != nil {
-				logger.Error("Failed to store tunneled payload", slog.String("protocol", "socks"), producer.ErrAttr(storeErr))
-			}
-			if err := h.UpdateConnectionTimeout(ctx, s.conn); err != nil {
-				logger.Debug("Failed to set connection timeout", slog.String("protocol", "socks"), producer.ErrAttr(err))
-				return connection.EndTimeout, nil
-			}
-			cert, certErr := helpers.SelfSignedCertificateForHost(tunnelCertName(hello.SNI, path))
-			if certErr != nil {
-				logger.Error("Failed to build tunnel TLS certificate", slog.String("protocol", "socks"), producer.ErrAttr(certErr))
-				return connection.EndHandlerClose, nil
-			}
-			rec := &tcpWriteRecorder{Conn: s.conn, on: true}
-			tlsConn, info, herr := helpers.TerminateTLSFromWith(cert, rec, io.MultiReader(bytes.NewReader(data), s.r))
-			rec.on = false
-			if rec.buf.Len() > 0 || rec.err != nil {
-				frame := parsedSOCKS{Direction: "write", Status: "tls-handshake", Error: writeErrorName(rec.err)}
-				if rec.buf.Len() > 0 {
-					frame.Payload = append([]byte(nil), rec.buf.Bytes()...)
-					frame.PayloadHash = helpers.SHA256Hex(frame.Payload)
-				}
-				s.events = append(s.events, frame)
-			}
-			if herr != nil {
-				logger.Debug("TLS handshake failed", slog.String("protocol", "socks"), producer.ErrAttr(herr))
-				if rec.err != nil {
-					return connection.EndWriteError, nil
-				}
-				return connection.EndReasonFromRead(herr), nil
-			}
-			md.TLS = info
-			md.AddInner("tls")
-			if err := h.UpdateConnectionTimeout(ctx, tlsConn); err != nil {
-				logger.Debug("Failed to set connection timeout", slog.String("protocol", "socks"), producer.ErrAttr(err))
-				return connection.EndTimeout, nil
-			}
-			plain, plainTrunc, plainErr := readTunnelBytes(tlsConn)
-			if len(plain) == 0 {
-				return connection.EndReasonFromRead(plainErr), nil
-			}
-			if storeErr := s.captureTunnel(path, "tunnel", plain, plainTrunc, nil); storeErr != nil {
-				logger.Error("Failed to store tunneled payload", slog.String("protocol", "socks"), producer.ErrAttr(storeErr))
-			}
-			if !plainTrunc && socks.LooksLikeHTTPRequest(plain) {
-				return s.serveTunnelHTTP(ctx, tlsConn, plain, md, logger, h), nil
-			}
-			return connection.EndHandlerClose, nil
+	return serveTunnel(ctx, s.conn, s.r, path, "socks", md, logger, h, func(f tunnelFrame) {
+		frame := parsedSOCKS{
+			Direction:   f.Direction,
+			Command:     f.Command,
+			Path:        f.Path,
+			Status:      f.Status,
+			Payload:     f.Payload,
+			PayloadHash: f.PayloadHash,
+			Truncated:   f.Truncated,
+			Error:       f.Error,
+			HTTP:        f.HTTP,
+			ClientHello: f.Hello,
 		}
-	}
-
-	if storeErr := s.captureTunnel(path, "tunnel", data, truncated, nil); storeErr != nil {
-		logger.Error("Failed to store tunneled payload", slog.String("protocol", "socks"), producer.ErrAttr(storeErr))
-	}
-	if !truncated && socks.LooksLikeHTTPRequest(data) {
-		return s.serveTunnelHTTP(ctx, s.conn, data, md, logger, h), nil
-	}
-	return connection.EndHandlerClose, nil
+		if f.Summary != nil {
+			frame.Requests = f.Summary.Requests
+			frame.DistinctRequests = f.Summary.Distinct
+			frame.RequestLine = f.Summary.First
+			frame.UserAgent = f.Summary.UserAgent
+		}
+		s.events = append(s.events, frame)
+	})
 }
 
 // HandleSOCKS answers SOCKS4, SOCKS4a and SOCKS5 proxy requests: it grants

@@ -108,13 +108,13 @@ func handlePOST(req *http.Request, body []byte, logger interfaces.Logger) ([]byt
 
 type parsedHTTP struct {
 	Direction  string                 `json:"direction,omitempty"` // "read" (from attacker) or "write" (from honeypot)
-	Command    string                 `json:"command,omitempty"`   // HTTP method
-	Path       string                 `json:"path,omitempty"`
+	Command    string                 `json:"command,omitempty"`   // HTTP method; tunnel or tls-clienthello after CONNECT
+	Path       string                 `json:"path,omitempty"`      // URL path; CONNECT target (host:port) on CONNECT and tunnel reads
 	Query      string                 `json:"query,omitempty"`
 	Parameters url.Values             `json:"parameters,omitempty"` // parsed query key/values
 	Host       string                 `json:"host,omitempty"`
-	Username   string                 `json:"username,omitempty"` // HTTP Basic or Proxmox VE login
-	Password   string                 `json:"password,omitempty"` // HTTP Basic or Proxmox VE login
+	Username   string                 `json:"username,omitempty"` // HTTP Basic, Proxy-Authorization Basic or Proxmox VE login
+	Password   string                 `json:"password,omitempty"` // HTTP Basic, Proxy-Authorization Basic or Proxmox VE login
 	UserAgent  string                 `json:"user_agent,omitempty"`
 	JA4H       string                 `json:"ja4h,omitempty"` // FoxIO JA4H fingerprint of the request, set on reads
 	Status     string                 `json:"status,omitempty"`
@@ -124,13 +124,37 @@ type parsedHTTP struct {
 	Browser    string                 `json:"browser,omitempty"`       // Selenium new-session browserName
 	Binary     string                 `json:"binary,omitempty"`        // Selenium new-session browser binary
 	Args       []string               `json:"args,omitempty"`          // Selenium new-session browser args
-	Truncated  bool                   `json:"truncated,omitempty"`     // a Selenium binary/args cap applied
+	Truncated  bool                   `json:"truncated,omitempty"`     // a Selenium binary/args or tunnel capture cap applied
 	Citrix     *citrix.Request        `json:"citrix,omitempty"`        // CVE-2019-19781 stage, NSC_USER, template
 	Elastic    *elasticsearch.Request `json:"elasticsearch,omitempty"` // tcp/9200 REST operation, index, scripts
 	Log4Shell  *log4shell.Request     `json:"log4shell,omitempty"`     // CVE-2021-44228 JNDI lookups (parse-only)
 	PHP2Shell  *php2shell.Request     `json:"php2shell,omitempty"`     // CVE-2026-109618/109619 multipart shape (parse-only)
 	Plex2Shell *plex2shell.Request    `json:"plex2shell,omitempty"`    // CVE-2026-96652/-96654/-96655/-96656 subscribe callback shape
 	Payload    []byte                 `json:"payload,omitempty"`       // raw HTTP request or response bytes
+	// CONNECT tunnel frames (see serveTunnel): payload_hash and truncated on
+	// tunnel/tls-clienthello reads, error on a failed tls-handshake write,
+	// HTTP request volume and the tunneled HTTP frames on a tunnel read.
+	PayloadHash      string       `json:"payload_hash,omitempty"`
+	Error            string       `json:"error,omitempty"`
+	Requests         int          `json:"requests,omitempty"`
+	DistinctRequests int          `json:"distinct_requests,omitempty"`
+	RequestLine      string       `json:"request_line,omitempty"`
+	HTTP             []parsedHTTP `json:"http,omitempty"`
+	// TLS ClientHello fingerprint fields on a tls-clienthello read.
+	*helpers.ClientHello
+}
+
+// httpConnectReply grants a CONNECT the way proxies do: no body, no
+// Content-Length (RFC 9110 9.3.6).
+var httpConnectReply = []byte("HTTP/1.1 200 Connection established\r\n\r\n")
+
+// proxyBasicAuth returns the credentials of a Proxy-Authorization: Basic header.
+func proxyBasicAuth(req *http.Request) (username, password string, ok bool) {
+	auth := req.Header.Get("Proxy-Authorization")
+	if auth == "" {
+		return "", "", false
+	}
+	return (&http.Request{Header: http.Header{"Authorization": {auth}}}).BasicAuth()
 }
 
 // httpParameters returns the query map, or nil when empty so omitempty drops it.
@@ -211,6 +235,11 @@ func (s *httpServer) write(data []byte) error {
 	if s.sessionID != "" {
 		data = addHeaderAfterStatus(data, "Set-Cookie", httpSessionCookie+"="+s.sessionID)
 	}
+	return s.writeRaw(data)
+}
+
+// writeRaw sends data as is, without the session cookie.
+func (s *httpServer) writeRaw(data []byte) error {
 	if _, err := s.conn.Write(data); err != nil {
 		return err
 	}
@@ -225,6 +254,10 @@ func (s *httpServer) write(data []byte) error {
 func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw []byte, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	defer req.Body.Close()
 	path := req.URL.EscapedPath()
+	connect := req.Method == http.MethodConnect && !s.tunnel
+	if connect {
+		path = req.RequestURI // authority-form host:port
+	}
 	params := req.URL.Query()
 	query := params.Encode()
 	body, _ := io.ReadAll(req.Body)
@@ -252,6 +285,8 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 		Payload:    raw,
 	}
 	if user, pass, ok := req.BasicAuth(); ok {
+		frame.Username, frame.Password = user, pass
+	} else if user, pass, ok := proxyBasicAuth(req); ok {
 		frame.Username, frame.Password = user, pass
 	}
 	grid := selenium.IsGridRequest(md.TargetPort, path)
@@ -306,6 +341,10 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 	}
 	s.record(frame)
 
+	if connect {
+		// a proxy reply carries no session cookie
+		return s.writeRaw(httpConnectReply)
+	}
 	if grid {
 		return s.write(selenium.Respond(req.Method, path, body))
 	}
@@ -371,6 +410,43 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 		return fmt.Errorf("failed to send HTTP response: %w", err)
 	}
 	return nil
+}
+
+// serveConnect captures what the client sends through a granted CONNECT to
+// target. Nothing is dialed or forwarded.
+func (s *httpServer) serveConnect(ctx context.Context, target string) string {
+	if err := s.h.UpdateConnectionTimeout(ctx, s.conn); err != nil {
+		s.logger.Debug("Failed to set connection timeout", slog.String("protocol", "http"), producer.ErrAttr(err))
+		return connection.EndTimeout
+	}
+	// TLS info and inner layers stay on the frames: the session may span
+	// connections that were not tunnels
+	md := s.md
+	reason, err := serveTunnel(ctx, s.conn, s.bufin, target, "http", &md, s.logger, s.h, func(f tunnelFrame) {
+		frame := parsedHTTP{
+			Direction:   f.Direction,
+			Command:     f.Command,
+			Path:        f.Path,
+			Status:      f.Status,
+			Payload:     f.Payload,
+			PayloadHash: f.PayloadHash,
+			Truncated:   f.Truncated,
+			Error:       f.Error,
+			HTTP:        f.HTTP,
+			ClientHello: f.Hello,
+		}
+		if f.Summary != nil {
+			frame.Requests = f.Summary.Requests
+			frame.DistinctRequests = f.Summary.Distinct
+			frame.RequestLine = f.Summary.First
+			frame.UserAgent = f.Summary.UserAgent
+		}
+		s.record(frame)
+	})
+	if err != nil {
+		s.logger.Debug("Failed to read data", slog.String("protocol", "http"), producer.ErrAttr(err))
+	}
+	return reason
 }
 
 // HandleHTTP takes a net.Conn and does basic HTTP communication
@@ -449,6 +525,10 @@ func (s *httpServer) serve(ctx context.Context, md connection.Metadata, logger i
 			if handleErr := s.handleRequest(ctx, req, raw, md, logger, h); handleErr != nil {
 				logger.Debug("Failed to handle HTTP request", slog.String("protocol", "http"), producer.ErrAttr(handleErr))
 				return connection.EndWriteError, nil
+			}
+			if req.Method == http.MethodConnect && !s.tunnel {
+				// the connection is now a tunnel: stop parsing HTTP
+				return s.serveConnect(ctx, req.RequestURI), nil
 			}
 		}
 		if err != nil {

@@ -6,19 +6,21 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 
 ## `http` (Go)
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `ja4h`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `elasticsearch`, `log4shell`, `php2shell`, `plex2shell`, `session_id`, `dest_port`, `src_port`, `payload`
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `ja4h`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `elasticsearch`, `log4shell`, `php2shell`, `plex2shell`, `session_id`, `dest_port`, `src_port`, `payload`, and on [CONNECT tunnel](#connect-proxy-tunnels) frames `payload_hash`, `error`, `requests`, `distinct_requests`, `request_line`, `http`, plus TLS ClientHello fingerprint fields (`sni`, `ja4`, …)
 
 ### Frame fields
 
 | Field | Set on | Meaning |
 | --- | --- | --- |
-| `command` | reads | HTTP method. |
+| `command` | reads | HTTP method; `tunnel` or `tls-clienthello` for bytes sent through a granted `CONNECT`. |
+| `path` | reads | URL path; the `CONNECT` target (`host:port`) on `CONNECT` and tunnel reads. |
 | `query` | reads | Raw query string. |
 | `parameters` | reads | Parsed query map. |
 | `ja4h` | reads | [FoxIO JA4H](https://github.com/FoxIO-LLC/ja4) client fingerprint `a_b_c_d`, computed from the raw request (method, version, cookie/referer flags, header count and language; hashes of header order, sorted cookie names and cookie values). Empty when the request line did not parse. |
 | `dest_port`, `src_port` | reads | Ports of the connection the frame arrived on (see [Sessions](#sessions)). |
 | `status` | writes | Response status, e.g. `200`. |
-| `username`, `password` | reads | `Authorization: Basic` credentials, or the Proxmox VE ticket login form (see [Emulated applications](#emulated-applications)). |
+| `username`, `password` | reads | `Authorization: Basic` credentials, otherwise `Proxy-Authorization: Basic` (any method, including `CONNECT`), or the Proxmox VE ticket login form (see [Emulated applications](#emulated-applications)). Recorded in plaintext. |
+| `payload_hash`, `truncated`, `error`, `requests`, `distinct_requests`, `request_line`, `http`, `sni`, `ja4`, … | tunnel frames | See [CONNECT proxy tunnels](#connect-proxy-tunnels). |
 | `browser`, `binary`, `args`, `citrix`, `elasticsearch`, `log4shell`, `php2shell`, `plex2shell`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
 
 ### Sessions
@@ -32,6 +34,17 @@ The handler speaks keep-alive HTTP and groups frames across TCP connections into
 - At most 1024 sessions are tracked at once. When full, the session idle the longest is produced early with `endReason` `evicted`; if every session has an open connection, the new connection produces its own event when it closes.
 - The idle session table is shared with [`mcp`](mcp.md).
 - The request line plus headers may be at most 64 KiB (bodies at most 1 MiB). A larger header block is recorded up to the cap as an unparsed read and ends the connection with `endReason` `read_error`.
+
+### CONNECT proxy tunnels
+
+A `CONNECT host:port` request is answered like an open proxy: `HTTP/1.1 200 Connection established` with no headers (no `session` cookie, no `Content-Length`). The handler then stops parsing HTTP on that connection and captures what the client sends through the tunnel, using the same code as [`socks`](socks.md) (`protocols/tcp/tunnel.go`). Nothing is dialed, resolved or forwarded.
+
+- The first tunnel bytes (up to `max_tcp_payload`) become a read frame with `command` `tunnel`, `path` the CONNECT target, `payload_hash` (the bytes are stored with `helpers.Store`), and `truncated` when the cap applied.
+- A plaintext HTTP request in the tunnel gets the canned open-proxy judge reply (`{"ip":"198.51.100.10",…}`). The tunnel frame then carries `requests`/`distinct_requests`/`request_line`/`user_agent` and an `http` array with the request and reply frames.
+- A TLS ClientHello is recorded as `command` `tls-clienthello` with its fingerprint fields, answered with a self-signed certificate for the SNI (or CONNECT host) and a `write` with `status` `tls-handshake` (`error` set if it could not be sent). The decrypted first message is the `tunnel` read. The TLS details stay on the frames; the event's top-level `tls` object is not set, because the session can span other connections.
+- Opaque data (for example a connect-back checker's random token) gets no reply, and the connection closes with `endReason` `handler_close`.
+
+> **Change (2026-10-24):** before this date `CONNECT` got the generic `200 OK` with `Content-Length: 0`. The tunnel bytes were then parsed as HTTP, so a non-HTTP token sat until the connection timeout and was stored as an untagged read with `endReason` `read_error` (Ochi event 137b2e1d-350c-4e23-bbb6-54a7f0ce35ef). `Proxy-Authorization` credentials were not recorded.
 
 ### Emulated applications
 
