@@ -78,7 +78,7 @@ Array-of-frames `decoded` entries share these JSON names when the handler fills 
 - `http`: `dest_port` and `src_port` on reads, because a session can span connections and ports while the top-level `dstPort`/`srcPort` belong to the first connection.
 - `rdp`: `ntlm_domain`, `ntlm_user`, `ntlm_workstation` and `ntlm_version` on the `NTLMAuthenticate` frame, plus `netntlmv2` (hashcat `-m 5600`) for NTLMv2; `nla_accepted` when a password in `rdp.credentials` or `rdp.guess_passwords` matched, then `ntlm_user` and `nla_password` from the decrypted authInfo; `client_data` (client name, build, screen, keyboard, channels) on `MCSConnectInitial`; `client_info` (domain, username, `password`) on `ClientInfo`. Most probes never do NLA: the Confirm prefers TLS, so the password arrives in `client_info`. An unknown CredSSP password still gets `STATUS_LOGON_FAILURE`.
 - `sip`: `from`, `to`, `call_id`, `username`, `called_number` (normalized dialed number), `tool` (fingerprinted scanner/dialer), the digest-auth fields `realm`/`nonce`/`digest_uri`/`digest_response`/`algorithm`/`qop`/`nc`/`cnonce` (the honeypot issued the nonce, so these crack the guessed password offline, hashcat `-m 11400`), and `variant`/`visit` on writes. UDP calls end with one `command` `rtp` frame per caller media stream: `dtmf` digits, `packets`/`lost`, `duration_ms`, and `payload_hash` of the WAV recording.
-- `ssh`, `telnet`, `jabber`, `smtp`, `opcua`, `mqtt`, `dicom`, `pop3`, `ftp`, `http`, `rtsp`, `socks`, `hiflying`, `mssql`, `firebird`, `postgres`, `smb`: `username` (or `user`) and `password` as the client sent them. Passwords are guessing attempts, not confidential data, so they are recorded in plaintext. `smb` also sets `lm_response`/`ntlm_response` (hex) for basic Session Setup challenge responses.
+- `ssh`, `telnet`, `jabber`, `smtp`, `opcua`, `mqtt`, `dicom`, `pop3`, `ftp`, `http`, `rtsp`, `socks`, `hiflying`, `mssql`, `firebird`, `postgres`, `smb`, `rsync`: `username` (or `user`) and `password` as the client sent them. Passwords are guessing attempts, not confidential data, so they are recorded in plaintext. `smb` also sets `lm_response`/`ntlm_response` (hex) for basic Session Setup challenge responses. `rsync` sets `response` (the base64 digest of the password and the AUTHREQD challenge) instead of `password`.
 - `hl7`: `security` (MSH-8) as the client sent it; some senders put a password or token there, so it is recorded in plaintext like other credentials.
 - `dtls`, `jabber`: `server_name`.
 - `smb`, `tcp`: `shellcode` on a read, listing shellcode/PE heuristics matched in the captured payload; `smb` also sets `xor_key` and `decoded_hash` when a DoublePulsar payload was de-obfuscated, and `variant`/`visit` on emulated DoublePulsar replies.
@@ -177,6 +177,7 @@ Example shape:
 | `imap` | TCP | [protocols/imap.md](protocols/imap.md) |
 | `whois` | TCP | [protocols/whois.md](protocols/whois.md) |
 | `ident` | TCP | [protocols/ident.md](protocols/ident.md) |
+| `rsync` | TCP | [protocols/rsync.md](protocols/rsync.md) |
 | `dns` | TCP | [protocols/dns.md](protocols/dns.md) |
 | `acpp` | TCP | [protocols/acpp.md](protocols/acpp.md) |
 | `rpcbind` | TCP/UDP | [protocols/rpcbind.md](protocols/rpcbind.md) |

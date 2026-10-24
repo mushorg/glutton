@@ -31,6 +31,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/postgres"
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
 	"github.com/mushorg/glutton/protocols/tcp/redis"
+	"github.com/mushorg/glutton/protocols/tcp/rsync"
 	"github.com/mushorg/glutton/protocols/tcp/rtsp"
 	sipproto "github.com/mushorg/glutton/protocols/tcp/sip"
 	"github.com/mushorg/glutton/protocols/tcp/smb"
@@ -160,6 +161,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"imap":       bindTCP(tcp.HandleIMAP, log, h),
 		"whois":      bindTCP(tcp.HandleWHOIS, log, h),
 		"ident":      bindTCP(tcp.HandleIdent, log, h),
+		"rsync":      bindTCP(tcp.HandleRsync, log, h),
 		"dns":        bindTCP(tcp.HandleDNS, log, h),
 		"acpp":       bindTCP(tcp.HandleACPP, log, h),
 		"rpcbind":    bindTCP(tcp.HandleRPCBind, log, h),
@@ -329,6 +331,14 @@ var catchAllMatchers = []catchAllMatcher{
 		peek:   fixedPeek(4, func(snip []byte) bool { return bytes.HasPrefix(snip, []byte("SSH-")) }),
 		match:  func(b []byte) bool { return bytes.HasPrefix(b, []byte("SSH-")) },
 		handle: asBuffered(tcp.HandleSSH),
+	},
+	{
+		// rsync module listers send their version line first, also to
+		// daemons moved off 873
+		name:   "rsync",
+		peek:   fixedPeek(rsync.PeekLen, func(snip []byte) bool { return bytes.HasPrefix(snip, []byte("@RSY")) }),
+		match:  rsync.LooksLikeGreeting,
+		handle: asBuffered(tcp.HandleRsync),
 	},
 	{
 		// proxy checkers send SOCKS requests to any port; the request is the

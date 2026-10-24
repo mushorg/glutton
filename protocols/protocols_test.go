@@ -108,6 +108,7 @@ func TestMapTCPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "imap", "expected IMAP handler")
 	require.Contains(t, m, "whois", "expected WHOIS handler")
 	require.Contains(t, m, "ident", "expected Ident handler")
+	require.Contains(t, m, "rsync", "expected rsync handler")
 	require.Contains(t, m, "dns", "expected DNS handler")
 	require.Contains(t, m, "acpp", "expected ACPP handler")
 	require.Contains(t, m, "rcon", "expected RCON handler")
