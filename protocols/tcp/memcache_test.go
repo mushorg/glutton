@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -242,4 +243,37 @@ func TestHandleMemcachePartialLineOnEOF(t *testing.T) {
 	require.GreaterOrEqual(t, len(events), 1)
 	require.Equal(t, "stats", events[0].Command)
 	require.Equal(t, []byte("stats"), events[0].Payload)
+}
+
+func TestHandleMemcacheCapsLongLine(t *testing.T) {
+	client, serverConn := net.Pipe()
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- handleMemcache(context.Background(), newMemcacheServer(serverConn), connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	reader := bufio.NewReader(client)
+	go func() {
+		_, _ = client.Write([]byte("get " + strings.Repeat("k", maxMemcacheLine) + "\r\nversion\r\n"))
+	}()
+	// the cut line still gets a reply, and the next line is its own command
+	_, err := reader.ReadString('\n')
+	require.NoError(t, err)
+	line, err := reader.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "VERSION 1.6.22\r\n", line)
+	require.NoError(t, client.Close())
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	events := waitProduced(t, hp).decoded.([]parsedMemcache)
+	require.Equal(t, "get", events[0].Command)
+	require.True(t, events[0].Truncated)
+	require.Len(t, events[0].Payload, maxMemcacheLine)
+	require.Equal(t, "version", events[2].Command)
+	require.False(t, events[2].Truncated)
 }

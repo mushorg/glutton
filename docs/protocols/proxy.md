@@ -4,4 +4,4 @@ Transport: TCP/UDP. Shared encodings and frame fields are described in [Logging 
 
 **`decoded`:** Per-direction entries: `direction`, `payload`, `payload_hash`, `bytes`, `truncated`
 
-Only when `capture_traffic.enabled` is true. Samples are capped by `max_tcp_payload`; `truncated` is whether more bytes were forwarded than captured. `proxy_udp` emits one event per flow when the flow idles out or closes.
+Only when `capture_traffic.enabled` is true. Samples are capped by `max_tcp_payload`; `truncated` is whether more bytes were forwarded than captured. `proxy_udp` emits one event per flow when the flow idles out or closes. At most 1024 flows are live at once; a datagram that would open another is dropped (not forwarded, no event) until a flow ends.

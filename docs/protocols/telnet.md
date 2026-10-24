@@ -14,6 +14,7 @@ Transport: TCP. Shared encodings and frame fields are described in [Logging and 
 | `path` | `wget` / `curl` reads | The http(s) URL from the command line. |
 | `payload_hash` | `wget` / `curl` reads | SHA-256 of the fetched sample, set when the fetch succeeds. |
 | `offset_ms` | all | Milliseconds since the connection was accepted (omitted when 0). Shows how long a bot waits between a write and its next command. |
+| `truncated` | reads | The line was longer than 64 KiB and `message` holds its first 64 KiB (the rest is dropped; the next line is read normally), or this is the last read kept when the session hit its frame limit. |
 | `variant` / `visit` | ELF header writes | Architecture of the visit (`arm`, `mips`, `mipsel`) and the source's visit number. Empty on all other frames. |
 
 ## Behaviour
@@ -34,7 +35,9 @@ Transport: TCP. Shared encodings and frame fields are described in [Logging and 
 - `/bin/busybox cat /bin/echo`
 - `dd bs=52 count=1 if=.s`
 
-**Sample downloads.** `wget` / `curl` lines with an http(s) URL set `path`; the sample is fetched in the background (up to 10 MiB), stored under `samples/`, and its SHA-256 set as `payload_hash`.
+**Sample downloads.** `wget` / `curl` lines with an http(s) URL set `path`; the sample is fetched in the background (up to 10 MiB), stored under `samples/`, and its SHA-256 set as `payload_hash`. At most 8 downloads run per connection and 32 across the sensor at once; a `wget` / `curl` beyond either limit keeps its `path` but is not fetched, so it has no `payload_hash`.
+
+**Session limit.** A connection keeps at most about 1000 frames; then the event is produced with `endReason` `max_frames`.
 
 ## Returning sources
 

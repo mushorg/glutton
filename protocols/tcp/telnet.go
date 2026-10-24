@@ -49,6 +49,20 @@ const busyboxPingUsage = "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) multi-call b
 // maxTelnetSample caps bytes fetched from wget/curl URLs.
 const maxTelnetSample = 10 << 20
 
+const (
+	// maxTelnetLine caps one recorded line; long echo -ne droppers fit.
+	maxTelnetLine = 64 << 10
+	// maxTelnetFrames caps the frames kept per connection; the session ends
+	// with max_frames once it is reached.
+	maxTelnetFrames = 1000
+	// maxTelnetSampleFetches caps downloads per connection.
+	maxTelnetSampleFetches = 8
+)
+
+// telnetFetchSlots bounds sample downloads in flight across all connections
+// (each may buffer maxTelnetSample); a download beyond it is skipped.
+var telnetFetchSlots = make(chan struct{}, 32)
+
 // telnetShPrompt is written after commands once `sh` has switched the
 // session into the BusyBox shell. Same bytes as the pre-sh prompt: this fleet
 // answers `> ` for enable/linuxshell/system/shell and stalls on anything else
@@ -301,6 +315,7 @@ type parsedTelnet struct {
 	Variant     string `json:"variant,omitempty"`   // architecture variant, on writes that depend on it
 	Visit       int    `json:"visit,omitempty"`     // source's visit number, on writes that depend on it
 	OffsetMs    int64  `json:"offset_ms,omitempty"` // milliseconds since the connection was accepted
+	Truncated   bool   `json:"truncated,omitempty"` // line cut at maxTelnetLine, or last read kept at maxTelnetFrames
 }
 
 type telnetServer struct {
@@ -314,6 +329,7 @@ type telnetServer struct {
 	sampleWG sync.WaitGroup
 	sampleMu sync.Mutex
 	samples  map[int]string // event index -> sample hash
+	fetches  int            // downloads started on this connection
 
 	// Recall: the architecture is picked once per connection.
 	srcIP net.IP
@@ -565,7 +581,8 @@ func (s *telnetServer) readBinary() error {
 
 // read reads a telnet message from a connection
 func (s *telnetServer) read() (string, error) {
-	msg, err := s.reader.ReadString('\n')
+	line, truncated, err := helpers.ReadLine(s.reader, maxTelnetLine)
+	msg := string(line)
 	if len(msg) > 0 {
 		cleaned, negotiation := stripTelnetIAC([]byte(msg))
 		if len(negotiation) > 0 {
@@ -579,7 +596,7 @@ func (s *telnetServer) read() (string, error) {
 			default:
 				cmd = telnetShellCommand(string(cleaned))
 			}
-			s.add(parsedTelnet{Direction: "read", Command: cmd, Message: string(cleaned)})
+			s.add(parsedTelnet{Direction: "read", Command: cmd, Message: string(cleaned), Truncated: truncated})
 		}
 		return string(cleaned), err
 	}
@@ -623,8 +640,20 @@ func (s *telnetServer) fetchSample(url string, logger interfaces.Logger) (string
 }
 
 func (s *telnetServer) startSampleFetch(eventIdx int, url string, logger interfaces.Logger) {
+	if s.fetches >= maxTelnetSampleFetches {
+		logger.Debug("Skipping sample fetch, per-connection limit reached", slog.String("handler", "telnet"), slog.String("source", url))
+		return
+	}
+	select {
+	case telnetFetchSlots <- struct{}{}:
+	default:
+		logger.Debug("Skipping sample fetch, too many in flight", slog.String("handler", "telnet"), slog.String("source", url))
+		return
+	}
+	s.fetches++
 	s.sampleWG.Add(1)
 	go func() {
+		defer func() { <-telnetFetchSlots }()
 		defer s.sampleWG.Done()
 		hash, err := s.fetchSample(url, logger)
 		if err != nil {
@@ -751,6 +780,13 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 	s.step = "shell"
 
 	for {
+		if len(s.events) >= maxTelnetFrames {
+			if idx := s.lastReadEventIndex(); idx >= 0 {
+				s.events[idx].Truncated = true
+			}
+			endReason = connection.EndMaxFrames
+			return nil
+		}
 		if err := h.UpdateConnectionTimeout(ctx, s.conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "telnet"), producer.ErrAttr(err))
 			endReason = connection.EndTimeout

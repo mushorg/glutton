@@ -58,6 +58,13 @@ type udpFlowTable struct {
 
 var proxyUDPFlows = &udpFlowTable{flows: make(map[string]*udpFlow)}
 
+// maxProxyUDPFlows bounds live flows. Each flow holds an upstream socket, a
+// reader goroutine and its buffers until it idles out, and UDP sources are
+// cheap to spoof, so datagrams that would open a flow beyond this are dropped.
+var maxProxyUDPFlows = 1024
+
+var errProxyUDPFlowLimit = errors.New("proxy_udp flow limit reached")
+
 func flowKey(srcAddr, dstAddr *net.UDPAddr) string {
 	return srcAddr.String() + "->" + dstAddr.String()
 }
@@ -97,6 +104,12 @@ func (t *udpFlowTable) get(key string) *udpFlow {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.flows[key]
+}
+
+func (t *udpFlowTable) full() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.flows) >= maxProxyUDPFlows
 }
 
 func (t *udpFlowTable) remove(key string, expected *udpFlow) {
@@ -238,6 +251,9 @@ func getOrCreateFlow(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, md conn
 	if existing := proxyUDPFlows.get(key); existing != nil {
 		return existing, nil
 	}
+	if proxyUDPFlows.full() {
+		return nil, errProxyUDPFlowLimit
+	}
 
 	destAddr := md.Rule.ProxyTarget.DialAddress
 	conn, err := dialProxyUDP(ctx, destAddr)
@@ -263,6 +279,11 @@ func getOrCreateFlow(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, md conn
 		proxyUDPFlows.mu.Unlock()
 		_ = conn.Close()
 		return existing, nil
+	}
+	if len(proxyUDPFlows.flows) >= maxProxyUDPFlows {
+		proxyUDPFlows.mu.Unlock()
+		_ = conn.Close()
+		return nil, errProxyUDPFlowLimit
 	}
 	proxyUDPFlows.flows[key] = flow
 	proxyUDPFlows.mu.Unlock()
@@ -300,6 +321,14 @@ func HandleProxyUDP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []b
 	}
 
 	flow, err := getOrCreateFlow(ctx, srcAddr, dstAddr, md, logger, h)
+	if errors.Is(err, errProxyUDPFlowLimit) {
+		logger.Debug("dropping proxy_udp datagram", proxyUDPLogAttrs(
+			slog.String("function", "HandleProxyUDP"),
+			slog.String("source", srcAddr.String()),
+			producer.ErrAttr(err),
+		)...)
+		return nil
+	}
 	if err != nil {
 		logger.Error("failed to connect to the target", proxyUDPLogAttrs(
 			slog.String("function", "HandleProxyUDP"),

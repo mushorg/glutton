@@ -27,13 +27,20 @@ type parsedMemcache struct {
 	Command   string `json:"command,omitempty"`   // verb for client command frames (stats, get, set, ...)
 	Status    string `json:"status,omitempty"`    // STORED / END / ERROR / CLIENT_ERROR / VERSION on writes
 	Payload   []byte `json:"payload,omitempty"`   // raw bytes as seen on the wire
+	Truncated bool   `json:"truncated,omitempty"` // command line cut at maxMemcacheLine
 }
+
+// maxMemcacheLine caps one command line; data chunks are capped separately
+// by maxMemcacheBody.
+const maxMemcacheLine = 8 << 10
 
 type memcacheServer struct {
 	events  []parsedMemcache
 	conn    net.Conn
 	bufin   *bufio.Reader
 	dataMap map[string]string
+	// lineTruncated is whether the last command line hit maxMemcacheLine.
+	lineTruncated bool
 }
 
 func newMemcacheServer(conn net.Conn) *memcacheServer {
@@ -71,7 +78,9 @@ func (s *memcacheServer) write(data []byte) error {
 }
 
 func (s *memcacheServer) readLine() (string, error) {
-	return s.bufin.ReadString('\n')
+	line, truncated, err := helpers.ReadLine(s.bufin, maxMemcacheLine)
+	s.lineTruncated = truncated
+	return string(line), err
 }
 
 func (s *memcacheServer) recordRead(command string, payload []byte) {
@@ -79,6 +88,7 @@ func (s *memcacheServer) recordRead(command string, payload []byte) {
 		Direction: "read",
 		Command:   command,
 		Payload:   payload,
+		Truncated: s.lineTruncated,
 	})
 }
 

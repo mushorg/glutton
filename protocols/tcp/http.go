@@ -169,6 +169,7 @@ func newHTTPServer(conn net.Conn) *httpServer {
 				protocol:      "http",
 				payload:       httpPayload,
 				stamp:         stampHTTP,
+				size:          func(f parsedHTTP) int { return len(f.Payload) },
 				groupBySource: true,
 			},
 			remote: conn.RemoteAddr(),

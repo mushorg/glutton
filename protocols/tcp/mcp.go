@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,7 +27,12 @@ const (
 	mcpServerName  = "mcp"
 	mcpServerVer   = "1.0.0"
 	mcpProtoVer    = "2025-06-18"
+	// maxHTTPHeader caps the request line plus headers read by readHTTPMessage
+	// (shared with the http handler).
+	maxHTTPHeader = 64 << 10
 )
+
+var errHTTPHeaderTooLarge = errors.New("http header block too large")
 
 var mcpContentLenRE = regexp.MustCompile(`(?i)Content-Length:\s*(\d+)`)
 
@@ -67,6 +73,7 @@ func newMCPServer(conn net.Conn) *mcpServer {
 				protocol: "mcp",
 				payload:  mcpPayload,
 				stamp:    stampMCP,
+				size:     func(f parsedMCP) int { return len(f.Payload) },
 			},
 			remote: conn.RemoteAddr(),
 		},
@@ -136,9 +143,10 @@ func (s *mcpServer) recordRead(command, path string, payload []byte) {
 func readHTTPMessage(bufin *bufio.Reader, maxBody int) ([]byte, error) {
 	raw := make([]byte, 0, 4096)
 	for {
-		line, err := bufin.ReadBytes('\n')
-		if len(line) > 0 {
-			raw = append(raw, line...)
+		line, truncated, err := helpers.ReadLine(bufin, maxHTTPHeader-len(raw))
+		raw = append(raw, line...)
+		if truncated {
+			return raw, errHTTPHeaderTooLarge
 		}
 		if err != nil {
 			if len(raw) > 0 {

@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/mushorg/glutton/protocols/helpers"
 )
 
 // package level regex to match conlen header in HTTP requests
@@ -19,14 +21,20 @@ var contentLenRE = regexp.MustCompile(`(?i)Content-Length:\s*(\d+)`)
 // MaxHTTPBody is the abuse cap on Content-Length for Spicy HTTP reads.
 const MaxHTTPBody = 1 << 20 // 1 MiB
 
+// MaxHTTPHeader caps the request line plus headers read by ReadHTTPMessage.
+const MaxHTTPHeader = 64 << 10
+
+var errHTTPHeaderTooLarge = errors.New("HTTP header block too large")
+
 // ReadHTTPMessage reads one HTTP request (headers + Content-Length body) from r.
 // Partial bytes are returned alongside any error so the caller can still capture them.
 func ReadHTTPMessage(r *bufio.Reader, maxBody int) ([]byte, error) {
 	raw := make([]byte, 0, 4096)
 	for {
-		line, err := r.ReadBytes('\n')
-		if len(line) > 0 {
-			raw = append(raw, line...)
+		line, truncated, err := helpers.ReadLine(r, MaxHTTPHeader-len(raw))
+		raw = append(raw, line...)
+		if truncated {
+			return raw, errHTTPHeaderTooLarge
 		}
 		if err != nil {
 			if len(raw) > 0 {

@@ -61,10 +61,10 @@ func readHTTPResponse(t *testing.T, client net.Conn) (status int, headers http.H
 
 func withMCPSessionIdle(t *testing.T, idle time.Duration) {
 	t.Helper()
-	prev := sessionIdle
-	sessionIdle = idle
+	prev := sessionIdle.Load()
+	sessionIdle.Store(int64(idle))
 	t.Cleanup(func() {
-		sessionIdle = prev
+		sessionIdle.Store(prev)
 		mcpSessions.reset()
 	})
 }
@@ -315,4 +315,19 @@ func TestPrependConn(t *testing.T) {
 	got, err := io.ReadAll(pc)
 	require.NoError(t, err)
 	require.Equal(t, "helloworld", string(got))
+}
+
+func TestReadHTTPMessageCapsHeaders(t *testing.T) {
+	for name, headers := range map[string]string{
+		"one long line": "X-Long: " + strings.Repeat("a", maxHTTPHeader) + "\r\n",
+		"many lines":    strings.Repeat("X-Many: "+strings.Repeat("b", 100)+"\r\n", maxHTTPHeader/100),
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := bufio.NewReader(strings.NewReader("GET / HTTP/1.1\r\n" + headers + "\r\n"))
+			raw, err := readHTTPMessage(r, maxHTTPBody)
+			require.ErrorIs(t, err, errHTTPHeaderTooLarge)
+			require.LessOrEqual(t, len(raw), maxHTTPHeader)
+			require.True(t, bytes.HasPrefix(raw, []byte("GET / HTTP/1.1\r\n")))
+		})
+	}
 }

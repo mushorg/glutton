@@ -3,6 +3,7 @@ package tcp
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -31,7 +32,8 @@ const (
 	// 4xx
 	StatusCannotOpenDataConnection = 425 // RFC 959, 4.2.1
 	// 5xx
-	StatusActionNotTaken = 550 // RFC 959, 4.2.1
+	StatusSyntaxErrorInArgs = 501 // RFC 959, 4.2.1
+	StatusActionNotTaken    = 550 // RFC 959, 4.2.1
 )
 
 type parsedFTP struct {
@@ -43,11 +45,21 @@ type parsedFTP struct {
 	Status      string `json:"status,omitempty"`
 	Payload     []byte `json:"payload,omitempty"`
 	PayloadHash string `json:"payload_hash,omitempty"`
+	Truncated   bool   `json:"truncated,omitempty"` // command line cut at maxFTPLine
 }
+
+const (
+	// maxFTPLine caps one command line (RFC 959 servers allow far less).
+	maxFTPLine = 8 << 10
+	// maxFTPFrames caps the frames kept per connection; the session ends with
+	// max_frames once it is reached.
+	maxFTPFrames = 1000
+)
 
 type ftpServer struct {
 	events []parsedFTP
 	conn   net.Conn
+	reader *bufio.Reader
 }
 
 type ftpResponse struct {
@@ -75,7 +87,8 @@ func ftpArg(msg string) string {
 }
 
 func (s *ftpServer) read(_ interfaces.Logger, _ interfaces.Honeypot) (string, error) {
-	msg, err := bufio.NewReader(s.conn).ReadString('\n')
+	line, truncated, err := helpers.ReadLine(s.reader, maxFTPLine)
+	msg := string(line)
 	if err != nil {
 		return msg, err
 	}
@@ -84,7 +97,8 @@ func (s *ftpServer) read(_ interfaces.Logger, _ interfaces.Honeypot) (string, er
 		Direction: "read",
 		Command:   cmd,
 		Path:      path,
-		Payload:   []byte(msg),
+		Payload:   line,
+		Truncated: truncated,
 	}
 	switch cmd {
 	case "USER":
@@ -111,12 +125,32 @@ func (s *ftpServer) write(resp ftpResponse) error {
 
 }
 
-func (s *ftpServer) ftpSTOR(ip string, port int, path string) (ftpResponse, string) {
+// parseFTPPort parses a PORT argument (h1,h2,h3,h4,p1,p2) into the client's
+// data address.
+func parseFTPPort(arg string) (string, error) {
+	parts := strings.Split(arg, ",")
+	if len(parts) != 6 {
+		return "", errors.New("PORT needs six comma-separated numbers")
+	}
+	var b [6]int
+	for i, p := range parts {
+		v, err := strconv.Atoi(strings.TrimSpace(p))
+		if err != nil || v < 0 || v > 255 {
+			return "", fmt.Errorf("PORT field %q is not a byte", p)
+		}
+		b[i] = v
+	}
+	ip := fmt.Sprintf("%d.%d.%d.%d", b[0], b[1], b[2], b[3])
+	return net.JoinHostPort(ip, strconv.Itoa(b[4]<<8|b[5])), nil
+}
+
+func (s *ftpServer) ftpSTOR(addr string, path string) (ftpResponse, string) {
 	dialer := &net.Dialer{Timeout: 2 * time.Second}
-	conn, err := dialer.Dial("tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
+	conn, err := dialer.Dial("tcp", addr)
 	if err != nil {
 		return ftpResponse{StatusCannotOpenDataConnection, "Failed to establish connection."}, ""
 	}
+	defer conn.Close()
 	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		return ftpResponse{StatusActionNotTaken, "Failed to establish connection."}, ""
 	}
@@ -126,6 +160,7 @@ func (s *ftpServer) ftpSTOR(ip string, port int, path string) (ftpResponse, stri
 		return ftpResponse{StatusActionNotTaken, "Failed to read file."}, ""
 	}
 
+	buffer = buffer[:n]
 	fileHash, err := helpers.Store(buffer, filepath.Join("payloads", "ftp"))
 	if err != nil {
 		return ftpResponse{StatusActionNotTaken, "Failed to store file."}, ""
@@ -138,17 +173,14 @@ func (s *ftpServer) ftpSTOR(ip string, port int, path string) (ftpResponse, stri
 		PayloadHash: fileHash,
 		Payload:     buffer,
 	})
-
-	if err := conn.Close(); err != nil {
-		return ftpResponse{StatusActionNotTaken, "Failed to close connection."}, ""
-	}
 	return ftpResponse{StatusClosingDataConn, "File received."}, fileHash
 }
 
 // HandleFTP takes a net.Conn and does basic FTP communication
 func HandleFTP(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	server := ftpServer{
-		conn: conn,
+		conn:   conn,
+		reader: bufio.NewReader(conn),
 	}
 	endReason := connection.EndHandlerClose
 	defer func() {
@@ -167,9 +199,13 @@ func HandleFTP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		endReason = connection.EndWriteError
 		return err
 	}
-	var portParam string
+	var dataAddr string // from the last valid PORT
 loop:
 	for {
+		if len(server.events) >= maxFTPFrames {
+			endReason = connection.EndMaxFrames
+			break
+		}
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "ftp"), producer.ErrAttr(err))
 			endReason = connection.EndTimeout
@@ -205,24 +241,15 @@ loop:
 		case "PASS":
 			resp = ftpResponse{StatusUserLoggedIn, "Ok."}
 		case "STOR":
-			parts := strings.Split(portParam, ",")
-			ip := strings.Join(parts[:4], ".")
-
-			portByte1, err := strconv.Atoi(parts[4])
-			if err != nil {
-				return err
+			if dataAddr == "" {
+				resp = ftpResponse{StatusCannotOpenDataConnection, "Use PORT or PASV first."}
+				break
 			}
-			portByte2, err := strconv.Atoi(strings.TrimSpace(parts[5]))
-			if err != nil {
-				return err
-			}
-
-			port := portByte1<<8 + portByte2
-			if err := server.write(ftpResponse{StatusFileStatusOK, fmt.Sprintf("Connecting to port %d\r\n", port)}); err != nil {
+			if err := server.write(ftpResponse{StatusFileStatusOK, "Ok to send data."}); err != nil {
 				endReason = connection.EndWriteError
 				return err
 			}
-			resp, filehash = server.ftpSTOR(ip, port, path)
+			resp, filehash = server.ftpSTOR(dataAddr, path)
 			if filehash != "" {
 				logger.Info(
 					"FTP payload receievd",
@@ -240,7 +267,13 @@ loop:
 			}
 			break loop
 		case "PORT":
-			portParam = msg[5:]
+			addr, err := parseFTPPort(ftpArg(msg))
+			if err != nil {
+				dataAddr = ""
+				resp = ftpResponse{StatusSyntaxErrorInArgs, "Illegal PORT command."}
+				break
+			}
+			dataAddr = addr
 			resp = ftpResponse{StatusOK, "PORT command successful."}
 		default:
 			resp = ftpResponse{StatusOK, "Ok."}

@@ -28,8 +28,10 @@ The handler speaks keep-alive HTTP and groups frames across TCP connections into
 - Every response sets a `session` cookie. Frames that share that cookie (per source host) are grouped into one event, produced when the session idles out (`conn_timeout`).
 - Requests without the cookie (most scanners) join the source IP's latest live session, across connections and destination ports.
 - Because one event can span several connections, the top-level `dstPort`/`srcPort` are those of the first connection; each read frame carries its own `dest_port`/`src_port`.
-- A source session stops accepting new cookieless connections after 500 frames or one hour.
+- A session holds at most 500 frames, 8 MiB of payload, or one hour. At the limit the next frame, even on the same keep-alive connection, starts a new event under the same `session_id`; the full one is produced once its last connection ends.
+- At most 1024 sessions are tracked at once. When full, the session idle the longest is produced early with `endReason` `evicted`; if every session has an open connection, the new connection produces its own event when it closes.
 - The idle session table is shared with [`mcp`](mcp.md).
+- The request line plus headers may be at most 64 KiB (bodies at most 1 MiB). A larger header block is recorded up to the cap as an unparsed read and ends the connection with `endReason` `read_error`.
 
 ### Emulated applications
 
@@ -153,6 +155,7 @@ The reply bodies are best recollection of a real server, not captures. A read th
 
 Keep-alive HTTP parsed with Spicy. `command`, `query`, `parameters`, and `status` mean the same as in the [Go handler](#frame-fields). Differences from the Go handler:
 
+- **Header cap.** The request line plus headers may be at most 64 KiB, as in the Go handler.
 - **One event per connection.** There is no cross-connection `session` cookie grouping, so no `session_id`, `dest_port`, or `src_port` frame fields.
 - **No header-derived fields.** `host` (the sensor address), `user_agent`, and other request headers are not decoded; `payload` still holds the raw wire request/response.
 - **Selenium Grid 4:** same paths, replies, and `browser`/`binary`/`args` fields as the [Go handler](#selenium-grid-4).

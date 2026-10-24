@@ -141,3 +141,41 @@ func TestHandleProxyUDPReusesFlow(t *testing.T) {
 		return len(h.produced) == 1
 	}, 2*time.Second, 20*time.Millisecond)
 }
+
+func TestHandleProxyUDPDropsBeyondFlowLimit(t *testing.T) {
+	setProxyUDPConfig(t, false, 2)
+	prevMax := maxProxyUDPFlows
+	maxProxyUDPFlows = 1
+	t.Cleanup(func() { maxProxyUDPFlows = prevMax })
+	upstream := startUDPEcho(t)
+	h := &recordingHoneypot{}
+	dst := &net.UDPAddr{IP: net.ParseIP("198.51.100.1"), Port: 443}
+	first := &net.UDPAddr{IP: net.ParseIP("203.0.113.12"), Port: 50002}
+	second := &net.UDPAddr{IP: net.ParseIP("203.0.113.13"), Port: 50003}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	md := proxyUDPMetadata(upstream)
+
+	require.NoError(t, HandleProxyUDP(ctx, first, dst, []byte("one"), md, testLogger{}, h))
+	require.NoError(t, HandleProxyUDP(ctx, second, dst, []byte("two"), md, testLogger{}, h))
+	require.Nil(t, proxyUDPFlows.get(flowKey(second, dst)))
+	// the existing flow keeps forwarding at the limit
+	require.NoError(t, HandleProxyUDP(ctx, first, dst, []byte("three"), md, testLogger{}, h))
+
+	require.Eventually(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.replies) >= 2
+	}, 2*time.Second, 20*time.Millisecond)
+
+	cancel()
+	require.Eventually(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.produced) == 1
+	}, 2*time.Second, 20*time.Millisecond)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	require.Len(t, h.replies, 2)
+}

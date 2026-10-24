@@ -30,10 +30,10 @@ func TestFormatRequest(t *testing.T) {
 
 func withHTTPSessionIdle(t *testing.T, idle time.Duration) {
 	t.Helper()
-	prev := sessionIdle
-	sessionIdle = idle
+	prev := sessionIdle.Load()
+	sessionIdle.Store(int64(idle))
 	t.Cleanup(func() {
-		sessionIdle = prev
+		sessionIdle.Store(prev)
 		httpSessions.reset()
 		mcpSessions.reset()
 	})
@@ -486,7 +486,7 @@ func TestHandleHTTPSourceSessionRollsOverWhenFull(t *testing.T) {
 	second.ensure()
 	require.Same(t, first.session, second.session)
 
-	for i := 0; i < maxSourceSessionFrames; i++ {
+	for i := 0; i < maxSessionFrames; i++ {
 		first.record(parsedHTTP{Direction: "read"})
 	}
 	third := tracker()
@@ -494,6 +494,41 @@ func TestHandleHTTPSourceSessionRollsOverWhenFull(t *testing.T) {
 	require.NotSame(t, first.session, third.session)
 
 	for _, tr := range []*sessionTracker[parsedHTTP]{first, second, third} {
+		tr.session.endNow()
+	}
+}
+
+func TestHandleHTTPCookieSessionRollsOverWhenFull(t *testing.T) {
+	withHTTPSessionIdle(t, time.Minute)
+
+	tracker := func() *sessionTracker[parsedHTTP] {
+		return &sessionTracker[parsedHTTP]{
+			srcHost: "94.26.0.104",
+			table:   httpSessions,
+			spec:    sessionSpec[parsedHTTP]{protocol: "http", payload: httpPayload, stamp: stampHTTP, groupBySource: true},
+		}
+	}
+	first := tracker()
+	first.bind("replayed")
+	second := tracker()
+	second.bind("replayed")
+	require.Same(t, first.session, second.session)
+
+	for i := 0; i < maxSessionFrames; i++ {
+		first.record(parsedHTTP{Direction: "read"})
+	}
+	third := tracker()
+	third.bind("replayed")
+	require.NotSame(t, first.session, third.session)
+	require.Equal(t, "replayed", third.sessionID)
+
+	// the full session ending must not drop its replacement from the table
+	first.session.endNow()
+	fourth := tracker()
+	fourth.bind("replayed")
+	require.Same(t, third.session, fourth.session)
+
+	for _, tr := range []*sessionTracker[parsedHTTP]{second, third, fourth} {
 		tr.session.endNow()
 	}
 }
@@ -866,8 +901,9 @@ func TestHandleHTTPPlexUnauthorized(t *testing.T) {
 	client, serverConn := net.Pipe()
 	defer client.Close()
 	hp := newFakeHoneypot()
+	done := make(chan error, 1)
 	go func() {
-		_ = HandleHTTP(context.Background(), serverConn, connection.Metadata{TargetPort: plex2shell.Port}, &recordingLogger{}, hp)
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{TargetPort: plex2shell.Port}, &recordingLogger{}, hp)
 	}()
 	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
 	_, err := client.Write(httpTestRequest("GET", "/library/sections", "", nil))
@@ -875,4 +911,9 @@ func TestHandleHTTPPlexUnauthorized(t *testing.T) {
 	resp, err := http.ReadResponse(bufio.NewReader(client), nil)
 	require.NoError(t, err)
 	require.Equal(t, 401, resp.StatusCode)
+
+	// let the handler and its session finish before cleanup touches config
+	require.NoError(t, client.Close())
+	<-done
+	waitProduced(t, hp)
 }

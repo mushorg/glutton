@@ -165,13 +165,23 @@ func Parse(proto string, data []byte) (*ParsedData, error) {
 		return nil, errors.New("input data is empty")
 	}
 
+	// one deadline covers handing the command over and waiting for the reply:
+	// the worker is single-threaded, so while a stalled parse holds it (or
+	// after Cleanup) an unguarded send would block the caller forever
+	timeout := time.NewTimer(parseTimeout)
+	defer timeout.Stop()
+
 	resp := make(chan any, 1)
-	cmdCh <- workerCmd{kind: cmdParse, parser: name, data: data, replyChan: resp}
+	select {
+	case cmdCh <- workerCmd{kind: cmdParse, parser: name, data: data, replyChan: resp}:
+	case <-timeout.C: // worker busy or gone; nothing was queued
+		return nil, fmt.Errorf("Spicy worker busy, parse timed-out after %s", parseTimeout)
+	}
 
 	var raw any
 	select {
 	case raw = <-resp: // normal path
-	case <-time.After(parseTimeout): // worker stalled
+	case <-timeout.C: // worker stalled
 		// drain resp to free C memory even after we have returned
 		go func() {
 			if r := <-resp; r != nil {

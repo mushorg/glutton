@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -671,4 +672,145 @@ func TestHandleTelnetFrameOffsets(t *testing.T) {
 	for i, ev := range events {
 		require.Equal(t, int64(i+1)*250, ev.OffsetMs, "frame %d", i)
 	}
+}
+
+// startTelnetDrained logs in from a fresh recall store and discards every
+// later reply, so tests can send many lines without reading each prompt.
+func startTelnetDrained(t *testing.T, server *telnetServer, client net.Conn) (*fakeHoneypot, chan error) {
+	t.Helper()
+	orig := telnetRecall
+	telnetRecall = recall.NewWithClock(recall.Config{Enabled: true, Gap: time.Hour}, time.Now)
+	t.Cleanup(func() { telnetRecall = orig })
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- handleTelnet(context.Background(), server, connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+	reader := bufio.NewReader(client)
+	telnetExpect(t, client, reader, "\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27Username: ")
+	telnetSend(t, client, "root\r\n")
+	telnetExpect(t, client, reader, "Password: ")
+	telnetSend(t, client, "xc3511\r\n")
+	telnetExpect(t, client, reader, telnetArches[0].greeting)
+	go func() { _, _ = io.Copy(io.Discard, reader) }()
+	return hp, done
+}
+
+func waitTelnetDone(t *testing.T, done chan error) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+}
+
+func TestHandleTelnetCapsLongLine(t *testing.T) {
+	client, serverConn := net.Pipe()
+	defer client.Close()
+	hp, done := startTelnetDrained(t, newTelnetServer(serverConn), client)
+
+	telnetSend(t, client, "echo "+strings.Repeat("a", maxTelnetLine)+"\r\n")
+	telnetSend(t, client, "enable\r\n")
+	require.NoError(t, client.Close())
+	waitTelnetDone(t, done)
+
+	events := waitProduced(t, hp).decoded.([]parsedTelnet)
+	var long, next *parsedTelnet
+	for i := range events {
+		ev := &events[i]
+		if ev.Direction != "read" {
+			continue
+		}
+		switch ev.Command {
+		case "echo":
+			long = ev
+		case "enable":
+			next = ev
+		}
+	}
+	require.NotNil(t, long)
+	require.True(t, long.Truncated)
+	require.Len(t, long.Message, maxTelnetLine)
+	require.NotNil(t, next, "line after the long one is read on its own")
+	require.Equal(t, "enable\r\n", next.Message)
+	require.False(t, next.Truncated)
+}
+
+func TestHandleTelnetEndsAtFrameLimit(t *testing.T) {
+	client, serverConn := net.Pipe()
+	defer client.Close()
+	hp, done := startTelnetDrained(t, newTelnetServer(serverConn), client)
+
+	go func() {
+		for i := 0; i < maxTelnetFrames; i++ {
+			if _, err := client.Write([]byte("enable\r\n")); err != nil {
+				return
+			}
+		}
+	}()
+	waitTelnetDone(t, done)
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, connection.EndMaxFrames, produced.endReason)
+	events := produced.decoded.([]parsedTelnet)
+	require.GreaterOrEqual(t, len(events), maxTelnetFrames)
+	require.Less(t, len(events), maxTelnetFrames+4)
+	var lastRead parsedTelnet
+	for _, ev := range events {
+		if ev.Direction == "read" {
+			lastRead = ev
+		}
+	}
+	require.True(t, lastRead.Truncated)
+}
+
+func TestHandleTelnetLimitsSampleFetches(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("sample " + r.URL.Path))
+	}))
+	defer ts.Close()
+	prevWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(t.TempDir()))
+	t.Cleanup(func() { _ = os.Chdir(prevWD) })
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+	server := newTelnetServer(serverConn)
+	server.client = ts.Client()
+	hp, done := startTelnetDrained(t, server, client)
+
+	for i := 0; i < maxTelnetSampleFetches+3; i++ {
+		telnetSend(t, client, "wget "+ts.URL+"/bin"+strconv.Itoa(i)+"\r\n")
+	}
+	require.NoError(t, client.Close())
+	waitTelnetDone(t, done)
+
+	hashed := 0
+	for _, ev := range waitProduced(t, hp).decoded.([]parsedTelnet) {
+		if ev.PayloadHash != "" {
+			hashed++
+		}
+	}
+	require.Equal(t, maxTelnetSampleFetches, hashed)
+}
+
+func TestTelnetSampleFetchSkippedWhenSlotsFull(t *testing.T) {
+	for i := 0; i < cap(telnetFetchSlots); i++ {
+		telnetFetchSlots <- struct{}{}
+	}
+	t.Cleanup(func() {
+		for i := 0; i < cap(telnetFetchSlots); i++ {
+			<-telnetFetchSlots
+		}
+	})
+
+	logger := &recordingLogger{}
+	server := &telnetServer{samples: map[int]string{}}
+	server.startSampleFetch(0, "http://192.0.2.1/bin", logger)
+	server.sampleWG.Wait()
+	require.Zero(t, server.fetches)
+	require.Contains(t, logger.debugs, "Skipping sample fetch, too many in flight")
 }
