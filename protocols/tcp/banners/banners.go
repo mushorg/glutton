@@ -374,6 +374,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	pjlReply,
 	weblogicT3Reply,
 	zookeeperReply,
+	nomachineReply,
 	epmdReply,
 	saprouterReply,
 	xiongmaiReply,
@@ -428,6 +429,35 @@ func zookeeperReply(data []byte) (Response, bool) {
 		return Response{Name: "zookeeper-srvr", Data: zookeeperSrvr, Close: true}, true
 	}
 	return Response{}, false
+}
+
+// nxdVersion is the NoMachine 9.7.3 nxd reply to a client version line.
+// nmap match: nomachine-nx m|^NXD-([\d.]+)\n| p/NoMachine NX Server remote desktop/ v/$1/
+var nxdVersion = []byte("NXD-9.7.3\n")
+
+// nomachineReply answers the NoMachine client version line "NXSH-<version>\n"
+// (nmap's NoMachine probe sends "NXSH-5.6.7\n" to tcp/4000) with the server's
+// version line. Only a bare dotted version is matched, so other protocols on
+// any port stay out of this signature.
+func nomachineReply(data []byte) (Response, bool) {
+	version, ok := bytes.CutPrefix(data, []byte("NXSH-"))
+	if !ok {
+		return Response{}, false
+	}
+	version, ok = bytes.CutSuffix(version, []byte("\n"))
+	if !ok {
+		return Response{}, false
+	}
+	version = bytes.TrimSuffix(version, []byte("\r"))
+	if len(version) == 0 || version[0] < '0' || version[0] > '9' {
+		return Response{}, false
+	}
+	for _, b := range version {
+		if (b < '0' || b > '9') && b != '.' {
+			return Response{}, false
+		}
+	}
+	return Response{Name: "nomachine-nx", Data: nxdVersion}, true
 }
 
 // pjlUEL is the Universal Exit Language escape that prefixes PJL jobs.

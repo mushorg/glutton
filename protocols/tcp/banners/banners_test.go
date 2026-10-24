@@ -175,6 +175,22 @@ func TestForPayload(t *testing.T) {
 	}
 }
 
+func TestForPayloadNoMachine(t *testing.T) {
+	// nmap NoMachine probe, seen on tcp/4000 from 207.90.244.13 and .27 (2026-10-24)
+	for _, data := range []string{"NXSH-5.6.7\n", "NXSH-9.8.2\r\n", "NXSH-8\n"} {
+		resp, ok := ForPayload([]byte(data))
+		require.True(t, ok, "%q", data)
+		require.Equal(t, "nomachine-nx", resp.Name)
+		require.Equal(t, "NXD-9.7.3\n", string(resp.Data))
+		require.False(t, resp.Close)
+	}
+
+	for _, data := range []string{"NXSH-\n", "NXSH-5.6.7", "NXSH-.5\n", "NXSH-5.6.7 x\n", "NXSH-5.6.7\nNXSH-1\n", "NXSHX\n"} {
+		_, ok := ForPayload([]byte(data))
+		require.False(t, ok, "%q", data)
+	}
+}
+
 func TestForPayloadPJL(t *testing.T) {
 	// Shodan, Ochi event 51e8cbb7-c5c1-43ce-bfa6-5f7f0e3f1fb0 (tcp/9100)
 	resp, ok := ForPayload([]byte("@PJL INFO STATUS\n"))
