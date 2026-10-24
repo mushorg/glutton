@@ -99,35 +99,8 @@ func UntrustedDomain(server string, legacy bool) LoginError {
 // BuildLoginError builds the tabular result of a failed login: ERROR then a
 // DONE with the error bit.
 func BuildLoginError(e LoginError) []byte {
-	le := binary.LittleEndian
-	msg := ntlm.EncodeUTF16LE(e.Message)
-	server := ntlm.EncodeUTF16LE(e.Server)
-
-	var body []byte
-	body = le.AppendUint32(body, e.Number)
-	body = append(body, e.State, e.Class)
-	body = le.AppendUint16(body, uint16(len(msg)/2))
-	body = append(body, msg...)
-	body = append(body, byte(len(server)/2))
-	body = append(body, server...)
-	body = append(body, 0) // ProcName
-	if e.Legacy {
-		body = le.AppendUint16(body, 1)
-	} else {
-		body = le.AppendUint32(body, 1)
-	}
-
-	out := []byte{tokenError}
-	out = le.AppendUint16(out, uint16(len(body)))
-	out = append(out, body...)
-
-	out = append(out, tokenDone)
-	out = le.AppendUint16(out, doneError)
-	out = le.AppendUint16(out, 0) // CurCmd
-	if e.Legacy {
-		out = le.AppendUint32(out, 0)
-	} else {
-		out = le.AppendUint64(out, 0)
-	}
-	return packet(TypeTabular, out)
+	w := &tokenWriter{legacy: e.Legacy}
+	w.message(tokenError, e.Number, e.State, e.Class, e.Message, e.Server)
+	w.done(tokenDone, doneError, 0, 0)
+	return packet(TypeTabular, w.b)
 }

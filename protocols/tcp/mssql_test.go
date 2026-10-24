@@ -6,13 +6,17 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"net"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/helpers/ntlm"
+	"github.com/mushorg/glutton/protocols/recall"
 	"github.com/mushorg/glutton/protocols/tcp/mssql"
 	"github.com/mushorg/glutton/protocols/tcp/rdp"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,7 +47,22 @@ func fixMSSQLChallenge(t *testing.T) {
 	t.Cleanup(func() { mssqlNow, mssqlServerChallenge = prevNow, prevChallenge })
 }
 
+// useMSSQLRecall swaps mssqlRecall for store for the duration of the test.
+func useMSSQLRecall(t *testing.T, store *recall.Store) {
+	t.Helper()
+	old := mssqlRecall
+	mssqlRecall = store
+	t.Cleanup(func() { mssqlRecall = old })
+}
+
 func startMSSQL(t *testing.T) (net.Conn, *fakeHoneypot, chan error) {
+	t.Helper()
+	useMSSQLRecall(t, recall.New(recall.DefaultConfig()))
+	return startMSSQLSession(t)
+}
+
+// startMSSQLSession starts one more session against the current mssqlRecall.
+func startMSSQLSession(t *testing.T) (net.Conn, *fakeHoneypot, chan error) {
 	t.Helper()
 	fixMSSQLChallenge(t)
 	client, serverConn := net.Pipe()
@@ -224,7 +243,7 @@ func TestHandleMSSQLNTLMAuthenticateLoginFailed(t *testing.T) {
 		NTLMType: ntlm.MsgAuthenticate, NTLMDomain: "CORP", NTLMUser: "svc_sql",
 		NTLMWorkstation: "KALI", NTLMVersion: "NTLMv2",
 	}, events[2])
-	require.Equal(t, parsedMSSQL{Direction: "write", Status: "login-failed", Payload: want, ErrorNumber: mssql.ErrLoginFailed}, events[3])
+	require.Equal(t, parsedMSSQL{Direction: "write", Status: "login-failed", Payload: want, ErrorNumber: mssql.ErrLoginFailed, Visit: 1}, events[3])
 }
 
 func TestHandleMSSQLSQLAuthLoginFailedRecordsPassword(t *testing.T) {
@@ -322,4 +341,239 @@ func TestHandleMSSQLQueryBeforeLoginEndsSession(t *testing.T) {
 	require.Equal(t, []parsedMSSQL{
 		{Direction: "read", Command: "sql_batch", Payload: batch},
 	}, produced.decoded.([]parsedMSSQL))
+}
+
+// SQL Server sa brute forcer from Ochi event
+// 6d407890-15ba-4288-beca-3dd90aa09bd4: PRELOGIN (8.0.341.0, encryption off),
+// then a TDS 7.1 SQL-auth LOGIN7 sa/15091970 (OLEDB, client ID
+// 08:00:27:ff:ff:ff). The tool opens one connection per guess. Ochi scrubbed
+// the 15-character sensor address in ServerName to 1.2.3.4 without fixing the
+// lengths, so it is replaced by a placeholder of the original length.
+var (
+	bruteMSSQLPrelogin = mustDecodeHex("120100340000000000001500060100" + "1b00010200" +
+		"1c000c0300280004ff080001550000004d5353514c536572766572" + "00280c0000")
+	bruteMSSQLLogin7 = mustDecodeHex("100100c200000100ba0000000100007100100000000000072c06000000000000" +
+		"e003100820feffff0408000056000a006a0002006e0008007e000a0092000f00" +
+		"00000000b0000500b0000000b0000000080027ffffff00000000a00000006c00" +
+		"35003400740039007500700074007100730073006100b6a5f6a5a6a536a5b6a5" +
+		"36a5d6a5a6a56f0076006d0067006a006a006300700030003400310039003200" +
+		"2e0030002e0032002e00310030002c0031003400330033004f004c0045004400" +
+		"4200")
+)
+
+// bruteMSSQLLogin7Read is the decoded read frame of bruteMSSQLLogin7.
+func bruteMSSQLLogin7Read() parsedMSSQL {
+	return parsedMSSQL{
+		Direction: "read", Command: "login7", Payload: bruteMSSQLLogin7,
+		TDSVersion: "0x71000001", Username: "sa", Password: "15091970",
+		Hostname: "l54t9uptqs", AppName: "ovmgjjcp04", ServerName: "192.0.2.10,1433",
+		ClientInterface: "OLEDB", ClientID: "08:00:27:ff:ff:ff",
+	}
+}
+
+// bruteMSSQLLogin sends the captured PRELOGIN and LOGIN7 and returns the
+// login reply.
+func bruteMSSQLLogin(t *testing.T, client net.Conn) mssql.Message {
+	t.Helper()
+	writeTDS(t, client, bruteMSSQLPrelogin)
+	readTDS(t, client)
+	writeTDS(t, client, bruteMSSQLLogin7)
+	return readTDS(t, client)
+}
+
+// sqlBatch74 frames query as a TDS 7.2+ SQL_BATCH with an ALL_HEADERS
+// transaction descriptor, in 4096-byte packets.
+func sqlBatch74(query string) []byte {
+	body := binary.LittleEndian.AppendUint32(nil, 22)
+	body = binary.LittleEndian.AppendUint32(body, 18)
+	body = binary.LittleEndian.AppendUint16(body, 2)
+	body = append(body, make([]byte, 8)...)
+	body = binary.LittleEndian.AppendUint32(body, 1)
+	body = append(body, ntlm.EncodeUTF16LE(query)...)
+	const chunk = 4096 - mssql.HeaderLen
+	var out []byte
+	for len(body) > chunk {
+		pkt := tdsPacket(mssql.TypeSQLBatch, body[:chunk])
+		pkt[1] = 0x00
+		out = append(out, pkt...)
+		body = body[chunk:]
+	}
+	return append(out, tdsPacket(mssql.TypeSQLBatch, body)...)
+}
+
+func setMSSQLViper(t *testing.T, key string, value any) {
+	t.Helper()
+	viper.Set(key, value)
+	t.Cleanup(func() { viper.Set(key, nil) })
+}
+
+func TestHandleMSSQLBruteForceAcceptedAfterFailures(t *testing.T) {
+	useMSSQLRecall(t, recall.New(recall.DefaultConfig()))
+	computer, _ := rdp.Identity()
+	failed := mssql.BuildLoginError(mssql.LoginFailed("sa", computer, true))
+
+	// one guess per connection, as the tool does: the first three fail
+	for range mssqlAcceptAfter {
+		client, hp, done := startMSSQLSession(t)
+		require.Equal(t, failed, bruteMSSQLLogin(t, client).Raw)
+		waitHandlerDone(t, done)
+		events := waitProduced(t, hp).decoded.([]parsedMSSQL)
+		require.Len(t, events, 4)
+		require.Equal(t, parsedMSSQL{Direction: "write", Status: "login-failed", Payload: failed, ErrorNumber: mssql.ErrLoginFailed, Visit: 1}, events[3])
+	}
+
+	client, hp, done := startMSSQLSession(t)
+	ack := mssql.BuildLoginAck(mssql.LoginAckOptions{TDSVersion: 0x71000001, PacketSize: 4096, Server: computer})
+	require.Equal(t, ack, bruteMSSQLLogin(t, client).Raw)
+
+	opts := mssql.QueryOptions{TDSVersion: 0x71000001, Server: computer}
+	version := tdsPacket(mssql.TypeSQLBatch, ntlm.EncodeUTF16LE("select @@version"))
+	writeTDS(t, client, version)
+	versionResp, status := mssql.BuildBatchReply("select @@version", opts)
+	require.Equal(t, mssql.StatusResult, status)
+	require.Equal(t, versionResp, readTDS(t, client).Raw)
+
+	const enable = "EXEC sp_configure 'show advanced options',1;RECONFIGURE;EXEC sp_configure 'xp_cmdshell',1;RECONFIGURE;"
+	configure := tdsPacket(mssql.TypeSQLBatch, ntlm.EncodeUTF16LE(enable))
+	writeTDS(t, client, configure)
+	configureResp, _ := mssql.BuildBatchReply(enable, opts)
+	require.Equal(t, configureResp, readTDS(t, client).Raw)
+
+	const cmd = "exec master..xp_cmdshell 'whoami'"
+	shell := tdsPacket(mssql.TypeSQLBatch, ntlm.EncodeUTF16LE(cmd))
+	writeTDS(t, client, shell)
+	shellResp, _ := mssql.BuildBatchReply(cmd, opts)
+	require.Equal(t, shellResp, readTDS(t, client).Raw)
+
+	_, events := finishMSSQL(t, client, hp, done)
+	require.Equal(t, []parsedMSSQL{
+		{Direction: "read", Command: "prelogin", Payload: bruteMSSQLPrelogin, ClientVersion: "8.0.341.0", Encryption: "off", Instance: "MSSQLServer", ThreadID: 671875072},
+		{Direction: "write", Status: "prelogin", Payload: mssql.BuildPreloginResponse()},
+		bruteMSSQLLogin7Read(),
+		{Direction: "write", Status: "login-ok", Payload: ack, Visit: 1},
+		{Direction: "read", Command: "sql_batch", Payload: version, Query: "select @@version"},
+		{Direction: "write", Status: "result", Payload: versionResp},
+		{Direction: "read", Command: "sql_batch", Payload: configure, Query: enable},
+		{Direction: "write", Status: "done", Payload: configureResp},
+		{Direction: "read", Command: "sql_batch", Payload: shell, Query: cmd},
+		{Direction: "write", Status: "result", Payload: shellResp},
+	}, events)
+}
+
+func TestHandleMSSQLAcceptLoginsDisabled(t *testing.T) {
+	useMSSQLRecall(t, recall.New(recall.DefaultConfig()))
+	setMSSQLViper(t, "mssql.accept_logins", false)
+	setMSSQLViper(t, "mssql.accept_after", 0)
+
+	client, _, done := startMSSQLSession(t)
+	resp := bruteMSSQLLogin(t, client)
+	require.Equal(t, byte(0xaa), resp.Data[0], "ERROR token")
+	waitHandlerDone(t, done)
+}
+
+func TestHandleMSSQLAcceptWithRecallDisabled(t *testing.T) {
+	useMSSQLRecall(t, recall.New(recall.Config{}))
+	setMSSQLViper(t, "mssql.accept_after", 0)
+
+	client, hp, done := startMSSQLSession(t)
+	resp := bruteMSSQLLogin(t, client)
+	require.Equal(t, byte(0xe3), resp.Data[0], "ENVCHANGE starts the LOGINACK stream")
+	_, events := finishMSSQL(t, client, hp, done)
+	require.Equal(t, "login-ok", events[3].Status)
+}
+
+func TestHandleMSSQLRPCAndAttention(t *testing.T) {
+	setMSSQLViper(t, "mssql.accept_after", 0)
+	client, hp, done := startMSSQL(t)
+	computer, _ := rdp.Identity()
+
+	writeTDS(t, client, sqlAuthLogin7("sa", "sa"))
+	ack := readTDS(t, client)
+	require.Equal(t, mssql.BuildLoginAck(mssql.LoginAckOptions{TDSVersion: 0x74000004, Database: "master", Server: computer}), ack.Raw)
+
+	// sp_executesql by ProcID with an NVARCHAR(4000) statement
+	stmt := ntlm.EncodeUTF16LE("SELECT @@SERVERNAME")
+	body := binary.LittleEndian.AppendUint32(nil, 22)
+	body = binary.LittleEndian.AppendUint32(body, 18)
+	body = binary.LittleEndian.AppendUint16(body, 2)
+	body = append(body, make([]byte, 8)...)
+	body = binary.LittleEndian.AppendUint32(body, 1)
+	body = append(body, 0xff, 0xff, 10, 0, 0, 0) // ProcID sp_executesql, OptionFlags
+	body = append(body, 0, 0, 0xe7, 0x40, 0x1f, 0x09, 0x04, 0xd0, 0x00, 0x34)
+	body = binary.LittleEndian.AppendUint16(body, uint16(len(stmt)))
+	body = append(body, stmt...)
+	rpc := tdsPacket(mssql.TypeRPC, body)
+	writeTDS(t, client, rpc)
+	opts := mssql.QueryOptions{TDSVersion: 0x74000004, Server: computer}
+	rpcResp, status := mssql.BuildRPCReply("SELECT @@SERVERNAME", opts)
+	require.Equal(t, mssql.StatusResult, status)
+	require.Equal(t, rpcResp, readTDS(t, client).Raw)
+
+	attn := tdsPacket(mssql.TypeAttention, nil)
+	writeTDS(t, client, attn)
+	require.Equal(t, mssql.BuildAttentionAck(0x74000004), readTDS(t, client).Raw)
+
+	_, events := finishMSSQL(t, client, hp, done)
+	require.Len(t, events, 6)
+	require.Equal(t, parsedMSSQL{Direction: "read", Command: "sp_executesql", Payload: rpc, Query: "SELECT @@SERVERNAME"}, events[2])
+	require.Equal(t, parsedMSSQL{Direction: "write", Status: "result", Payload: rpcResp}, events[3])
+	require.Equal(t, parsedMSSQL{Direction: "read", Command: "attention", Payload: attn}, events[4])
+	require.Equal(t, parsedMSSQL{Direction: "write", Status: "attention", Payload: mssql.BuildAttentionAck(0x74000004)}, events[5])
+}
+
+func TestHandleMSSQLStoresLongQuery(t *testing.T) {
+	setMSSQLViper(t, "mssql.accept_after", 0)
+	var stored []byte
+	prev := mssqlStore
+	mssqlStore = func(data []byte, folder string) (string, error) {
+		require.Equal(t, filepath.Join("payloads", "mssql"), folder)
+		stored = data
+		return "hash", nil
+	}
+	t.Cleanup(func() { mssqlStore = prev })
+	client, hp, done := startMSSQL(t)
+
+	writeTDS(t, client, sqlAuthLogin7("sa", "sa"))
+	readTDS(t, client)
+	query := "CREATE ASSEMBLY x FROM 0x4D5A" + strings.Repeat("00", maxMSSQLMessageLen/2)
+	writeTDS(t, client, sqlBatch74(query))
+	readTDS(t, client)
+
+	_, events := finishMSSQL(t, client, hp, done)
+	require.Equal(t, []byte(query), stored)
+	read := events[2]
+	require.Equal(t, "hash", read.PayloadHash)
+	require.True(t, read.Truncated)
+	require.Equal(t, query[:maxMSSQLQuery], read.Query)
+	require.Len(t, read.Payload, maxMSSQLMessageLen, "recorded payload is capped")
+}
+
+func TestHandleMSSQLLoginAfterLoginEndsSession(t *testing.T) {
+	setMSSQLViper(t, "mssql.accept_after", 0)
+	client, hp, done := startMSSQL(t)
+
+	writeTDS(t, client, sqlAuthLogin7("sa", "sa"))
+	readTDS(t, client)
+	writeTDS(t, client, nmapMSSQLPrelogin)
+	waitHandlerDone(t, done)
+	events := waitProduced(t, hp).decoded.([]parsedMSSQL)
+	require.Len(t, events, 3)
+	require.Equal(t, "prelogin", events[2].Command)
+}
+
+func TestHandleMSSQLRequestCap(t *testing.T) {
+	setMSSQLViper(t, "mssql.accept_after", 0)
+	client, hp, done := startMSSQL(t)
+
+	writeTDS(t, client, sqlAuthLogin7("sa", "sa"))
+	readTDS(t, client)
+	batch := sqlBatch74("select 1")
+	for range maxMSSQLRequests {
+		writeTDS(t, client, batch)
+		readTDS(t, client)
+	}
+	waitHandlerDone(t, done)
+	produced := waitProduced(t, hp)
+	require.Equal(t, connection.EndMaxFrames, produced.endReason)
+	require.Len(t, produced.decoded.([]parsedMSSQL), 2+2*maxMSSQLRequests)
 }

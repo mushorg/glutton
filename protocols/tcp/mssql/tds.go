@@ -1,6 +1,7 @@
 // Package mssql parses Microsoft SQL Server TDS messages (MS-TDS) and builds
 // the replies the mssql handler sends: the PRELOGIN response, an SSPI token
-// carrying an NTLM CHALLENGE, and the login-failed ERROR/DONE pair.
+// carrying an NTLM CHALLENGE, the login-failed ERROR/DONE pair, and after an
+// accepted login the LOGINACK and canned replies to SQL batches and RPCs.
 package mssql
 
 import (
