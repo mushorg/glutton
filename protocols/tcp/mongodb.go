@@ -17,7 +17,13 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/mongodb"
 )
 
-const maxMongoMessages = 64
+const (
+	maxMongoMessages = 64
+	// maxMongoMessageLength bounds the attacker-declared message size we
+	// allocate for. Real servers accept 48 MiB, but handshakes and commands
+	// sent to a honeypot are tiny.
+	maxMongoMessageLength = 1024 * 1024
+)
 
 var opCodeNames = map[int32]string{
 	mongodb.OpReply:       "OP_REPLY",
@@ -56,7 +62,7 @@ func (s *mongoDBServer) read() ([]byte, error) {
 		return nil, err
 	}
 
-	if header.MessageLength <= 0 || header.MessageLength > 48*1024*1024 {
+	if header.MessageLength < 16 || header.MessageLength > maxMongoMessageLength {
 		return nil, fmt.Errorf("invalid MongoDB message length: %d", header.MessageLength)
 	}
 

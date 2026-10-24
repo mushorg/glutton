@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"testing"
@@ -166,6 +167,41 @@ func TestHandleMongoDBEarlyDisconnect(t *testing.T) {
 	events, ok := produced.decoded.([]parsedMongoDB)
 	require.True(t, ok)
 	require.Empty(t, events)
+}
+
+func TestHandleMongoDBInvalidMessageLength(t *testing.T) {
+	for name, length := range map[string]uint32{
+		"shorter than header": 1,                // used to panic slicing fullMessage[16:]
+		"real server max":     48 * 1024 * 1024, // valid for mongod, rejected here before allocating
+	} {
+		t.Run(name, func(t *testing.T) {
+			client, serverConn := net.Pipe()
+			defer client.Close()
+
+			hp := newFakeHoneypot()
+			logger := &recordingLogger{}
+			done := make(chan error, 1)
+			go func() {
+				done <- HandleMongoDB(context.Background(), serverConn, connection.Metadata{}, logger, hp)
+			}()
+
+			header := make([]byte, 16)
+			binary.LittleEndian.PutUint32(header[0:4], length)
+			_, err := client.Write(header)
+			require.NoError(t, err)
+
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-time.After(2 * time.Second):
+				t.Fatal("handler did not finish")
+			}
+
+			produced := waitProduced(t, hp)
+			require.Equal(t, "mongodb", produced.protocol)
+			require.True(t, logger.hasAttr("error", fmt.Sprintf("invalid MongoDB message length: %d", length)))
+		})
+	}
 }
 
 func TestHandleMongoDBOpQueryUnknownCommandUsesOpReply(t *testing.T) {
