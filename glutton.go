@@ -333,8 +333,10 @@ func (g *Glutton) tcpListen() {
 		// handler (or TLS termination, or a proxy) makes is charged.
 		conn = g.GuardConn(conn)
 
-		g.ctx = context.WithValue(g.ctx, ctxTimeout("timeout"), int64(viper.GetInt("conn_timeout")))
-		if err := g.UpdateConnectionTimeout(g.ctx, conn); err != nil {
+		// derive per connection; reassigning g.ctx would chain one node per
+		// accepted conn onto it forever
+		connCtx := context.WithValue(g.ctx, ctxTimeout("timeout"), int64(viper.GetInt("conn_timeout")))
+		if err := g.UpdateConnectionTimeout(connCtx, conn); err != nil {
 			g.Logger.Error("Failed to set connection timeout", producer.ErrAttr(err))
 		}
 
@@ -349,7 +351,7 @@ func (g *Glutton) tcpListen() {
 		if hfunc, ok := g.tcpProtocolHandlers[handlerName]; ok {
 			go func() {
 				defer g.recoverPanic("tcp", handlerName)
-				if err := hfunc(g.ctx, conn, md); err != nil {
+				if err := hfunc(connCtx, conn, md); err != nil {
 					g.Logger.Error("Failed to handle ", producer.ErrAttr(err), slog.String("handler", handlerName))
 				}
 			}()

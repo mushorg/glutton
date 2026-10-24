@@ -277,3 +277,18 @@ func TestLogHTTPRedactsCredentials(t *testing.T) {
 	require.NotContains(t, err.Error(), "s3cr3t")
 	require.Contains(t, err.Error(), "401")
 }
+
+func TestLogHPFeedsDropsWhenNotDrained(t *testing.T) {
+	// no publisher reads the channel, as after a broker disconnect
+	p := &Producer{hpfChannel: make(chan []byte, 1)}
+	require.NoError(t, p.logHPFeeds(&Event{Transport: "tcp"}))
+
+	done := make(chan error, 1)
+	go func() { done <- p.logHPFeeds(&Event{Transport: "tcp"}) }()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, errHPFeedsBacklog)
+	case <-time.After(time.Second):
+		t.Fatal("logHPFeeds blocked on a full channel")
+	}
+}

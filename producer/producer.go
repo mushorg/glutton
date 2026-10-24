@@ -21,7 +21,14 @@ import (
 const (
 	httpTimeout = 10 * time.Second
 	tlsTimeout  = 5 * time.Second
+	// hpfBacklog is how many encoded events may wait for the hpfeeds publisher.
+	hpfBacklog = 256
 )
+
+// errHPFeedsBacklog is returned when the hpfeeds publisher is not draining
+// (e.g. the broker disconnected), so the event is dropped instead of blocking
+// the handler forever.
+var errHPFeedsBacklog = errors.New("hpfeeds backlog full, event dropped")
 
 // Producer for the producer
 type Producer struct {
@@ -96,7 +103,7 @@ func New(sensorID, sensorVersion string) (*Producer, error) {
 		if err := producer.hpfClient.Connect(); err != nil {
 			return producer, err
 		}
-		producer.hpfChannel = make(chan []byte)
+		producer.hpfChannel = make(chan []byte, hpfBacklog)
 		producer.hpfClient.Publish(viper.GetString("producers.hpfeeds.channel"), producer.hpfChannel)
 	}
 	return producer, nil
@@ -146,8 +153,12 @@ func (p *Producer) logHPFeeds(event *Event) error {
 	if err := gob.NewEncoder(&buf).Encode(event); err != nil {
 		return err
 	}
-	p.hpfChannel <- buf.Bytes()
-	return nil
+	select {
+	case p.hpfChannel <- buf.Bytes():
+		return nil
+	default:
+		return errHPFeedsBacklog
+	}
 }
 
 // Check if a ip is private.
