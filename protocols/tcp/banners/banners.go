@@ -276,6 +276,10 @@ func ForPort(port uint16) (Response, bool) {
 		// Xiongmai macGuarder: "OpenTelnet:OpenOnce" is matched in
 		// ForPayload; the client's challenge answer is recorded unanswered
 		return Response{Name: "xiongmai-9530", NoReply: true}, true
+	case 4369:
+		// epmd closes a connection whose request it cannot parse;
+		// NAMES_REQ and PORT_PLEASE2_REQ are matched in ForPayload
+		return Response{Name: "epmd", Silent: true}, true
 	case 5938:
 		// TeamViewer greets a silent client (nmap -sV); CMD_PING is matched
 		// in ForPayload
@@ -361,6 +365,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	pjlReply,
 	weblogicT3Reply,
 	zookeeperReply,
+	epmdReply,
 	xiongmaiReply,
 	func(data []byte) (Response, bool) {
 		order, ok := isX11Setup(data)

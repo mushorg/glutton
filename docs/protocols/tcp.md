@@ -46,6 +46,8 @@ Writes set `status` to the response name or `random`.
 | WebLogic T3 hello (`t3 <version>\nAS:..\nHL:..\n\n`) | `weblogic-t3` | Replies `HELO:12.2.1.4.0.false\nAS:2048\nHL:19\n\n` (format from public T3 tooling, unverified); later T3 frames are recorded |
 | ZooKeeper four-letter command `srvr` (also `stat`/`stats`, which nmap's `stats\r\n` probe reaches; bare command only) | `zookeeper-srvr` | ZooKeeper 3.6.3 standalone `srvr` block (`Zookeeper version:` … `Node count: 5`, bare LF; version and build strings unverified); the connection closes after the reply |
 | Xiongmai/HiSilicon DVR backdoor `OpenTelnet:OpenOnce` (bare, as Shodan sends it, or with the public PoC's 1-byte length prefix; trailing NUL/CR/LF allowed) | `xiongmai-randnum` | `randNum:` + 8 random decimal digits, the macGuarder/dvrHelper challenge (no terminator); the challenge is never verified, see port 9530 |
+| Erlang epmd `NAMES_REQ` (exactly `00 01 6e`, nmap's `epmd` probe; Shodan sends it to tcp/4369) | `epmd-names` | RabbitMQ broker's epmd: port `00 00 11 11` then `name rabbit at port 25672\n`; the connection closes after the reply |
+| Erlang epmd `PORT_PLEASE2_REQ` (`00 <len> 7a <node name>`, length covering the rest) | `epmd-port2` | `PORT2_RESP` for `rabbit` (port 25672, normal node, TCP, distribution versions 6..5, no extra) or result `1` (not found) for any other name; the connection closes after the reply |
 | `MGLNDD_<ip>_<port>` scanner probe | `mglndd` | None |
 
 ### Port responses
@@ -58,6 +60,7 @@ Writes set `status` to the response name or `random`.
 | 139 | `netbios-session` | |
 | 389 | `ldap` | Sends nothing, as an LDAP server does with input it cannot parse |
 | 1433 | `mssql-prelogin` | Only on sensors without the `mssql` rule, and only for the first message; the next one (a LOGIN7) ends the session instead of getting the PRELOGIN reply again. A TDS PRELOGIN on any port goes to the [`mssql`](mssql.md) handler |
+| 4369 | `epmd` | Sends nothing and closes, as epmd does with a request it cannot parse; `NAMES_REQ` and `PORT_PLEASE2_REQ` get `epmd-names` / `epmd-port2` |
 | 1911 | `niagara-fox` | Sends nothing and hangs up on bytes that are not a Fox hello (including Fox messages after the hello), as a Niagara station does before a session is open |
 | 4444 | `cmd-shell` | See [Server-first banners](#server-first-banners) |
 | 4899 | `radmin` | |
