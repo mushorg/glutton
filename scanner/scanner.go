@@ -28,7 +28,7 @@ var (
 			"144.86.173.0/24",
 		},
 		"rwth": {
-			"137.226.113.56/26",
+			"137.226.113.0/26",
 		},
 	}
 )
@@ -115,4 +115,23 @@ var payloadFleets = map[string]map[string]string{
 // ClassifyPayload returns the fleet label for a handler and payload hash, or "".
 func ClassifyPayload(handler, payloadHash string) string {
 	return payloadFleets[handler][payloadHash]
+}
+
+// tlsFleets labels scanner fleets by the JA4 of the ClientHello the sensor
+// terminated, keyed by handler, for fleets whose payload varies per target.
+// JA4 sorts ciphers and extensions, so it survives the reordering that breaks
+// JA3. These are behavioral labels, not attributions.
+var tlsFleets = map[string]map[string]string{
+	// SOCKS4 CONNECT to Cloudflare edge IPs on 443 from 149.86.227.0/24, then
+	// TLS 1.2 (SNI just-play1.top, www.detikindonesia.co.id) carrying one
+	// GET /qwe or bodiless POST /xmlrpc.php per connection with randomized
+	// user agent and sec-ch-ua (Ochi stream 2026-10-24, 133 sessions in 26s).
+	"socks": {
+		"t12d320800_a6df2e0e78d0_36cef8aed422": "socks-https-flood",
+	},
+}
+
+// ClassifyTLS returns the fleet label for a handler and JA4 fingerprint, or "".
+func ClassifyTLS(handler, ja4 string) string {
+	return tlsFleets[handler][ja4]
 }

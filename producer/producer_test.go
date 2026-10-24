@@ -241,6 +241,27 @@ func TestMakeEventTCPFleet(t *testing.T) {
 	require.Empty(t, ev.Scanner)
 }
 
+func TestMakeEventTCPTLSFleet(t *testing.T) {
+	p, err := New("sensor-1", "v9.9.9")
+	require.NoError(t, err)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	conn, err := net.Dial(ln.Addr().Network(), ln.Addr().String())
+	require.NoError(t, err)
+	defer conn.Close()
+
+	md := connection.Metadata{TLS: &connection.TLSInfo{JA4: "t12d320800_a6df2e0e78d0_36cef8aed422"}}
+	ev, err := p.makeEventTCP("socks", conn, md, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "socks-https-flood", ev.Scanner)
+
+	// The JA4 label applies only to the handler it was seen on.
+	ev, err = p.makeEventTCP("http", conn, md, nil, nil)
+	require.NoError(t, err)
+	require.Empty(t, ev.Scanner)
+}
+
 func TestLogHTTPRedactsCredentials(t *testing.T) {
 	p, err := New("test", "v0.0.0")
 	require.NoError(t, err)
