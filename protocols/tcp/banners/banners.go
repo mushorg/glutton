@@ -41,6 +41,9 @@ type Response struct {
 	// the catch-all ends the session on the next one instead of replaying it
 	// (a TDS PRELOGIN reply sent back to a LOGIN7 fingerprints the sensor).
 	Once bool
+	// Password is a credential guess parsed from the client bytes (a KMP
+	// login PIN), recorded in plaintext on the read frame.
+	Password string
 }
 
 // now is replaced in tests for a stable HTTP Date header.
@@ -338,6 +341,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	},
 	bitcoinReply,
 	litecoinReply,
+	kamstrupReply,
 	func(data []byte) (Response, bool) {
 		if !isFoxHello(data) {
 			return Response{}, false

@@ -2,7 +2,7 @@
 
 Transport: TCP. Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `status`, `payload`, `payload_hash`, `shellcode` (heuristic indicators matched in a read payload, when any), and on `tls-clienthello` / `tls-alert` reads `tls_version`, `cipher_suites`, `extensions`, `groups`, `sni`, `alpn`, `ja3`, `ja3n`, `ja4`, `ja4_r`. A completed or partial TLS termination adds a `write` with `status` `tls-handshake` holding the server flight (and any fatal alert). When a handshake write failed, that frame also has `error` (`reply over budget` when the `tcp_reply_limit` guard dropped it, otherwise `write failed`) and may have no `payload`.
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `status`, `payload`, `payload_hash`, `shellcode` (heuristic indicators matched in a read payload, when any), `password` (a credential guess a signature parsed from the read, in plaintext: the KMP login PIN), and on `tls-clienthello` / `tls-alert` reads `tls_version`, `cipher_suites`, `extensions`, `groups`, `sni`, `alpn`, `ja3`, `ja3n`, `ja4`, `ja4_r`. A completed or partial TLS termination adds a `write` with `status` `tls-handshake` holding the server flight (and any fatal alert). When a handshake write failed, that frame also has `error` (`reply over budget` when the `tcp_reply_limit` guard dropped it, otherwise `write failed`) and may have no `payload`.
 
 ## Session flow
 
@@ -49,6 +49,9 @@ Writes set `status` to the response name or `random`.
 | Erlang epmd `NAMES_REQ` (exactly `00 01 6e`, nmap's `epmd` probe; Shodan sends it to tcp/4369) | `epmd-names` | RabbitMQ broker's epmd: port `00 00 11 11` then `name rabbit at port 25672\n`; the connection closes after the reply |
 | Erlang epmd `PORT_PLEASE2_REQ` (`00 <len> 7a <node name>`, length covering the rest) | `epmd-port2` | `PORT2_RESP` for `rabbit` (port 25672, normal node, TCP, distribution versions 6..5, no extra) or result `1` (not found) for any other name; the connection closes after the reply |
 | SAProuter message without its NI length prefix (`ROUTER_ADM\0`, `NI_ROUTE\0`, `NI_PING\0`; Shodan sends a bare 35-byte `ROUTER_ADM` info request to tcp/3299) | `saprouter-too-big` | `NI_RTERR` "Network packet too big" (rc -93) quoting the first 4 bytes as the rejected NI length (`NiBufIIn: message length 1380930900 exceeds max (10024)` for `ROUT`), with the current time and a per-run host in `SAProuter 40.4 (SP3) on '<host>'`; the connection closes after the reply |
+| Kamstrup Meter Protocol GetRegister (KMP, tcp/1025: `80`, address `3f`, CID `10`, count, BE u16 register IDs, CRC-16/CCITT, `0d`, with `06 0d 1b 40 80` stuffed as `1b <b^ff>`; the read must be only complete CRC-valid frames, several may be pipelined; Shodan reads registers 1, 2, 13, 14, 1054, 1055) | `kamstrup-getregister` | One `40 3f 10` reply per frame with unit, length, SiEx and value for each known register (energy import/export in kWh at 0.1 and 0.0001 resolution, voltage L1/L2); import grows from a per-run base with a per-run load, voltage jitters 226..235 V; unknown registers are left out |
+| KMP login (CID `92`, BE u16 PIN) | `kamstrup-login` | `40 3f 92 01` (denied); the PIN is recorded as `password` on the read |
+| A CRC-valid KMP frame for another address or command | `kamstrup` | None, the connection stays open |
 | `MGLNDD_<ip>_<port>` scanner probe | `mglndd` | None |
 
 ### Port responses
@@ -74,7 +77,7 @@ Writes set `status` to the response name or `random`.
 | 9530 | `xiongmai-9530` | Xiongmai macGuarder/dvrHelper backdoor port. `OpenTelnet:OpenOnce` gets `xiongmai-randnum`; anything else, including the client's challenge answer, is recorded without a reply and the connection stays open (a real device's failure string is not public) |
 | 21379 | `opc-tunneller` | MatrikonOPC Tunneller default port. Sends nothing but keeps the connection open, so the client hello and its follow-up frames are recorded; the real server's reply framing is not public |
 
-Silent responses (`mglndd`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin or Litecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 21379 (`opc-tunneller`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
+Silent responses (`mglndd`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin or Litecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 21379 (`opc-tunneller`), a KMP frame the meter does not answer (`kamstrup`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
 
 ## TLS ClientHello
 

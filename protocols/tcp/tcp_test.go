@@ -1099,3 +1099,20 @@ func TestHandleTCPEarlyDisconnectStillProduces(t *testing.T) {
 		require.NotEqual(t, "read", event.Direction)
 	}
 }
+
+func TestHandleTCPKamstrupLogin(t *testing.T) {
+	client, hp, done := startCatchAll(t, 1025)
+
+	// KMP login with the Metertool default PIN 12345 (synthetic)
+	login := []byte{0x80, 0x3f, 0x92, 0x30, 0x39, 0x4c, 0xb1, 0x0d}
+	_, err := client.Write(login)
+	require.NoError(t, err)
+	reply := readAll(t, client, 7)
+	require.Equal(t, []byte{0x40, 0x3f, 0x92, 0x01, 0x87, 0x3c, 0x0d}, reply)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Command: "kamstrup-login", Payload: login, PayloadHash: helpers.SHA256Hex(login), Password: "12345"},
+		{Direction: "write", Status: "kamstrup-login", Payload: reply, PayloadHash: helpers.SHA256Hex(reply)},
+	}, events)
+}

@@ -31,6 +31,7 @@ type parsedTCP struct {
 	PayloadHash string   `json:"payload_hash,omitempty"`
 	Shellcode   []string `json:"shellcode,omitempty"` // shellcode heuristics that matched the read payload
 	Error       string   `json:"error,omitempty"`     // why a write failed (tls-handshake writes): "reply over budget" or "write failed"
+	Password    string   `json:"password,omitempty"`  // credential guess parsed by a payload signature (KMP login PIN)
 	// TLS ClientHello fingerprint fields (tls_version, ja3, ja4, ...) on a
 	// tls-clienthello or tls-alert read, flattened into the frame.
 	*helpers.ClientHello
@@ -392,6 +393,9 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			hello, _ = helpers.ParseClientHello(data)
 		}
 		server.captureRead(data, payloadHash, command, hello)
+		if matched && sigResp.Password != "" {
+			server.events[len(server.events)-1].Password = sigResp.Password
+		}
 
 		resp := sigResp
 		switch {
