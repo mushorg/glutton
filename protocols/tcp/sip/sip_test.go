@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ghettovoice/gosip/log"
 	gosip "github.com/ghettovoice/gosip/sip"
@@ -28,8 +29,11 @@ func withAuth(data []byte, header string) []byte {
 	return []byte(strings.Replace(string(data), "User-Agent: pplsip\r\n", "User-Agent: pplsip\r\n"+header+"\r\n", 1))
 }
 
+// testNow is the clock test responders stamp into digest nonces.
+func testNow() time.Time { return time.Unix(1761350400, 0) }
+
 func testResponder() *Responder {
-	return &Responder{Token: func() string { return "0123456789abcdef" }}
+	return &Responder{Token: func() string { return "0123456789abcdef" }, Now: testNow}
 }
 
 func TestReplyInviteAnswered(t *testing.T) {
@@ -470,7 +474,7 @@ func TestReplyVariants(t *testing.T) {
 			}
 			require.Equal(t, c.want, got)
 			if c.want[0] == 401 {
-				require.Contains(t, resps[0].String(), `WWW-Authenticate: Digest realm="asterisk",nonce="0123456789abcdef",algorithm=MD5,qop="auth"`+"\r\n")
+				require.Contains(t, resps[0].String(), `WWW-Authenticate: Digest realm="asterisk",nonce="1761350400/aab6286c0303e819fe6038a1b16143f3",opaque="0123456789abcdef",algorithm=md5,qop="auth"`+"\r\n")
 			}
 		})
 	}
@@ -632,4 +636,146 @@ func TestReplyRegisterChallenge(t *testing.T) {
 	// INVITE is not affected
 	resps := testResponder().Reply(parseRequest(t, pplsipInvite), nil, nil, Answer)
 	require.Len(t, resps, 3)
+}
+
+// read frame 1 of a 2026-10-24 Ochi capture: a UA-less REGISTER sweep
+// (23.94.174.242) probing extension 809
+var sweepRegister = []byte("REGISTER sip:1.2.3.4 SIP/2.0\r\nVia: SIP/2.0/UDP 172.26.196.11:59133;branch=z9hG4bK673996722\r\nMax-Forwards: 70\r\nFrom: <sip:809@1.2.3.4>;tag=411687874\r\nTo: <sip:809@1.2.3.4>\r\nCall-ID: 482170477-788816360-1652260690\r\nCSeq: 1 REGISTER\r\nContact: <sip:809@172.26.196.11:59133>\r\nContent-Length: 0\r\n\r\n")
+
+// read frame 1 of a 2026-10-24 Ochi capture: the minimal OPTIONS liveness
+// probe sent from many networks
+var minimalOptions = []byte("OPTIONS sip:1@1 SIP/2.0\r\nVia: SIP/2.0/UDP 1:5060;branch=c\r\nFrom: <sip:1@1>;tag=1\r\nTo: <sip:1@1>\r\nCall-ID: 1\r\nCSeq: 1 OPTIONS\r\nContent-Length: 0\r\n\r\n")
+
+func setExtensions(t *testing.T, list string) {
+	t.Helper()
+	ExtensionsSet = &list
+	t.Cleanup(func() { ExtensionsSet = nil })
+}
+
+func registerFor(ext string) []byte {
+	return []byte(strings.ReplaceAll(string(sweepRegister), "809@", ext+"@"))
+}
+
+func TestKnownExtension(t *testing.T) {
+	require.True(t, KnownExtension("965"), "no list: every extension is known")
+	setExtensions(t, "100-120, 200,admin 1000-1010")
+	for _, user := range []string{"100", "110", "120", "200", "admin", "1005"} {
+		require.True(t, KnownExtension(user), user)
+	}
+	for _, user := range []string{"99", "121", "201", "965", "1", "root", "!12129612050", "100-120"} {
+		require.False(t, KnownExtension(user), user)
+	}
+}
+
+func statusCodes(resps []gosip.Response) []int {
+	var got []int
+	for _, r := range resps {
+		got = append(got, int(r.StatusCode()))
+	}
+	return got
+}
+
+func TestReplyUnknownExtension(t *testing.T) {
+	r := testResponder()
+	// off by default: every extension registers
+	require.Equal(t, []int{200}, statusCodes(r.Reply(parseRequest(t, registerFor("965")), nil, nil, Answer)))
+	require.Equal(t, []int{200}, statusCodes(r.Reply(parseRequest(t, minimalOptions), nil, nil, Answer)))
+
+	setExtensions(t, "100-120,200")
+	cases := []struct {
+		name    string
+		data    []byte
+		variant Variant
+		want    []int
+	}{
+		{"known register", registerFor("100"), Answer, []int{200}},
+		{"known register auth variant", registerFor("110"), Auth, []int{401}},
+		{"unknown register", registerFor("965"), Answer, []int{404}},
+		{"unknown register auth variant", registerFor("965"), Auth, []int{404}},
+		{"unknown options user", minimalOptions, Answer, []int{404}},
+		{"known options user", []byte(strings.ReplaceAll(string(minimalOptions), "sip:1@1 ", "sip:200@1.2.3.4 ")), Answer, []int{200}},
+		{"options without user", []byte(strings.ReplaceAll(string(minimalOptions), "sip:1@1 ", "sip:1.2.3.4 ")), Answer, []int{200}},
+		{"invite dial string unaffected", pplsipInvite, Answer, []int{100, 180, 200}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resps := r.Reply(parseRequest(t, c.data), nil, nil, c.variant)
+			require.Equal(t, c.want, statusCodes(resps))
+			if c.want[0] == 404 {
+				require.Equal(t, "Not Found", resps[0].Reason())
+				to, _ := resps[0].To()
+				require.True(t, to.Params.Has("tag"))
+			}
+		})
+	}
+
+	// with sip.register_challenge on, known extensions are challenged and
+	// unknown ones still get 404
+	on := true
+	RegisterChallengeSet = &on
+	t.Cleanup(func() { RegisterChallengeSet = nil })
+	require.Equal(t, []int{401}, statusCodes(r.Reply(parseRequest(t, registerFor("100")), nil, nil, Answer)))
+	require.Equal(t, []int{404}, statusCodes(r.Reply(parseRequest(t, registerFor("965")), nil, nil, Answer)))
+}
+
+// read frame 1 of a 2026-10-24 Ochi capture: the dial fleet (153.75.83.88)
+// with SQL injection in its users, a forged User-Agent and a Zoiper SDP
+var fleetInvite = []byte("INVITE sip:+3908351673002@1.2.3.4:7666 SIP/2.0\r\nVia: SIP/2.0/UDP 153.75.83.88:24262;branch=z9hG4bK-524287-1---ad98d9194f20b265;rport\r\nMax-Forwards: 70\r\nFrom: \"15714881666\" <sip:')or('x'='x@1.2.3.4>;tag=c586bd73\r\nTo: <sip:+3908351673002@1.2.3.4>\r\nCall-ID: Htieaz075Awe3IcNWwkXHZ..\r\nCSeq: 101 INVITE\r\nContact: <sip:')or('x'='x@153.75.83.88:24262;transport=UDP>\r\nUser-Agent: Yealink SIP-T46S\r\nAllow: INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, SUBSCRIBE, INFO\r\nSupported: replaces, timer, 100rel, norefersub\r\nP-Preferred-Identity: <sip:')or('x'='x@1.2.3.4>\r\nAllow-Events: presence, kpml, talk\r\nContent-Type: application/sdp\r\nContent-Length: 296\r\n\r\nv=0\r\no=Z 0 0 IN IP4 153.75.83.88\r\ns=Zoiper\r\nc=IN IP4 153.75.83.88\r\nt=0 0\r\nm=audio 10991 RTP/AVP 0 8 18 9 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:18 G729/8000\r\na=fmtp:18 annexb=no\r\na=rtpmap:9 G722/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-16\r\na=ptime:20\r\na=sendrecv\r\n")
+
+func TestToolFleetTells(t *testing.T) {
+	fleet := string(fleetInvite)
+	require.Equal(t, "sqli-from", Tool(parseRequest(t, fleetInvite)))
+	require.Equal(t, "sqli-from", Describe(parseRequest(t, fleetInvite)).Tool)
+
+	// the injection in any one of the three headers is enough
+	clean := strings.ReplaceAll(fleet, "')or('x'='x", "15714881666")
+	for _, header := range []string{"From: \"15714881666\" <sip:", "Contact: <sip:", "P-Preferred-Identity: <sip:"} {
+		data := strings.Replace(clean, header+"15714881666", header+"')OR('x'='x", 1)
+		require.Equal(t, "sqli-from", Tool(parseRequest(t, []byte(data))), header)
+	}
+
+	// without the injection the Zoiper SDP behind a phone User-Agent remains
+	require.Equal(t, "zoiper-fleet", Tool(parseRequest(t, []byte(clean))))
+	// a real Zoiper says so in its User-Agent
+	realZoiper := strings.Replace(clean, "User-Agent: Yealink SIP-T46S", "User-Agent: Zoiper rev.12345", 1)
+	require.Equal(t, "", Tool(parseRequest(t, []byte(realZoiper))))
+	// a known tool User-Agent wins over the fleet tells
+	pplsip := strings.Replace(fleet, "User-Agent: Yealink SIP-T46S", "User-Agent: pplsip", 1)
+	require.Equal(t, "pplsip", Tool(parseRequest(t, []byte(pplsip))))
+}
+
+func TestToolSippts(t *testing.T) {
+	require.Equal(t, "sippts", Tool(parseRequest(t, sweepRegister)))
+
+	withUA := strings.Replace(string(sweepRegister), "Content-Length: 0\r\n", "User-Agent: MicroSIP/3.21.3\r\nContent-Length: 0\r\n", 1)
+	require.Equal(t, "", Tool(parseRequest(t, []byte(withUA))), "a User-Agent rules out the UA-less sippts tell")
+	otherCallID := strings.Replace(string(sweepRegister), "Call-ID: 482170477-788816360-1652260690", "Call-ID: abc@host", 1)
+	require.Equal(t, "", Tool(parseRequest(t, []byte(otherCallID))))
+	otherBranch := strings.Replace(string(sweepRegister), "branch=z9hG4bK673996722", "branch=z9hG4bK-67399a", 1)
+	require.Equal(t, "", Tool(parseRequest(t, []byte(otherBranch))))
+	// the minimal OPTIONS probe carries none of the tells
+	require.Equal(t, "", Tool(parseRequest(t, minimalOptions)))
+}
+
+func TestCalledNumberRefer(t *testing.T) {
+	refer := func(referTo string) gosip.Request {
+		data := strings.Replace(string(pplsipInvite), "INVITE sip:", "REFER sip:", 1)
+		data = strings.Replace(data, "CSeq: 1 INVITE", "CSeq: 2 REFER", 1)
+		if referTo != "" {
+			data = strings.Replace(data, "User-Agent: pplsip\r\n", "User-Agent: pplsip\r\nRefer-To: "+referTo+"\r\n", 1)
+		}
+		return parseRequest(t, []byte(data))
+	}
+	cases := []struct{ referTo, want string }{
+		{"<sip:0044203769291@1.2.3.4;user=phone>", "0044203769291"},
+		{"sip:+44-20-3769-291@1.2.3.4", "+44203769291"},
+		{`"x" <sip:900970597692790@1.2.3.4?Replaces=abc%3Bto-tag%3D1>`, "900970597692790"},
+		{"<sip:admin@1.2.3.4>", ""},
+		{"<sip:1.2.3.4>", ""},
+		// without Refer-To the Request-URI is the number, as for other methods
+		{"", "14500972598112101"},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.want, CalledNumber(refer(c.referTo)), c.referTo)
+	}
 }

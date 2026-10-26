@@ -176,7 +176,7 @@ var pplsipInviteRead1 = []byte("INVITE sip:14500972598112101@1.2.3.4 SIP/2.0\r\n
 func stubSIPResponder(t *testing.T) {
 	t.Helper()
 	orig := sipResponder
-	sipResponder = &sipproto.Responder{Token: func() string { return "feedface" }}
+	sipResponder = &sipproto.Responder{Token: func() string { return "feedface" }, Now: func() time.Time { return time.Unix(1761350400, 0) }}
 	t.Cleanup(func() { sipResponder = orig })
 	stubSIPRecall(t)
 }
@@ -291,7 +291,7 @@ func TestHandleSIPRegisterWithCredentialsAccepted(t *testing.T) {
 	h := &recordingHoneypot{}
 	src := &net.UDPAddr{IP: net.ParseIP("185.243.5.243"), Port: 49618}
 	dst := &net.UDPAddr{IP: net.ParseIP("1.2.3.4"), Port: 5060}
-	digest := `Authorization: Digest username="100",realm="asterisk",nonce="feedface",uri="sip:1.2.3.4:5060",response="d41d8cd98f00b204e9800998ecf8427e"`
+	digest := `Authorization: Digest username="100",realm="asterisk",nonce="1761350400/f2bfc5f195fd940b70b5121ef023596e",uri="sip:1.2.3.4:5060",response="d41d8cd98f00b204e9800998ecf8427e"`
 	req := []byte(strings.Replace(string(voipRegisterRead1), "User-Agent: VOIP\r\n", "User-Agent: VOIP\r\n"+digest+"\r\n", 1))
 
 	err := HandleSIP(context.Background(), src, dst, req, connection.Metadata{}, testLogger{}, h)
@@ -306,7 +306,7 @@ func TestHandleSIPRegisterWithCredentialsAccepted(t *testing.T) {
 	// the honeypot issued the nonce, so the digest response and its parameters
 	// are recorded to crack the guessed password offline
 	require.Equal(t, "asterisk", events[0].Realm)
-	require.Equal(t, "feedface", events[0].Nonce)
+	require.Equal(t, "1761350400/f2bfc5f195fd940b70b5121ef023596e", events[0].Nonce)
 	require.Equal(t, "sip:1.2.3.4:5060", events[0].DigestURI)
 	require.Equal(t, "d41d8cd98f00b204e9800998ecf8427e", events[0].DigestResponse)
 	decoded, err := json.Marshal(events)
@@ -1405,9 +1405,9 @@ func TestHandleSIPRegisterChallengeRetryOneEvent(t *testing.T) {
 	require.Empty(t, h.produced, "the challenged REGISTER waits for its retry")
 	require.Len(t, h.replies, 1)
 	require.True(t, strings.HasPrefix(string(h.replies[0]), "SIP/2.0 401 Unauthorized\r\n"))
-	require.Contains(t, string(h.replies[0]), `WWW-Authenticate: Digest realm="asterisk",nonce="feedface"`)
+	require.Contains(t, string(h.replies[0]), `WWW-Authenticate: Digest realm="asterisk",nonce="1761350400/f2bfc5f195fd940b70b5121ef023596e",opaque="feedface",algorithm=md5,qop="auth"`+"\r\n")
 
-	digest := `Authorization: Digest username="100",realm="asterisk",nonce="feedface",uri="sip:1.2.3.4:5060",response="d41d8cd98f00b204e9800998ecf8427e"`
+	digest := `Authorization: Digest username="100",realm="asterisk",nonce="1761350400/f2bfc5f195fd940b70b5121ef023596e",uri="sip:1.2.3.4:5060",response="d41d8cd98f00b204e9800998ecf8427e"`
 	retry := strings.Replace(string(voipRegisterRead1), "CSeq: 1 REGISTER\r\n", "CSeq: 2 REGISTER\r\n"+digest+"\r\n", 1)
 	sendSIP(t, h, src, []byte(retry))
 
@@ -1424,7 +1424,7 @@ func TestHandleSIPRegisterChallengeRetryOneEvent(t *testing.T) {
 	require.Equal(t, "REGISTER", events[0].Command)
 	require.Equal(t, "401", events[1].Status)
 	require.Equal(t, "100", events[2].Username)
-	require.Equal(t, "feedface", events[2].Nonce)
+	require.Equal(t, "1761350400/f2bfc5f195fd940b70b5121ef023596e", events[2].Nonce)
 	require.Equal(t, "d41d8cd98f00b204e9800998ecf8427e", events[2].DigestResponse)
 	require.Equal(t, "200", events[3].Status)
 	require.Equal(t, "answer", events[3].Variant)
@@ -1463,4 +1463,189 @@ func TestHandleSIPRegisterNoChallengeByDefault(t *testing.T) {
 	events := h.produced[0].decoded.([]parsedSIP)
 	require.Len(t, events, 2)
 	require.Equal(t, "200", events[1].Status)
+}
+
+// read frame 1 of a 2026-10-24 Ochi capture: a UA-less REGISTER sweep
+// (23.94.174.242) probing extension 965
+var sweepRegister965 = []byte("REGISTER sip:1.2.3.4 SIP/2.0\r\nVia: SIP/2.0/UDP 172.26.196.11:63100;branch=z9hG4bK673996722\r\nMax-Forwards: 70\r\nFrom: <sip:965@1.2.3.4>;tag=411687874\r\nTo: <sip:965@1.2.3.4>\r\nCall-ID: 1588155924-1274115950-480759545\r\nCSeq: 1 REGISTER\r\nContact: <sip:965@172.26.196.11:63100>\r\nContent-Length: 0\r\n\r\n")
+
+func setSIPExtensions(t *testing.T, list string) {
+	t.Helper()
+	sipproto.ExtensionsSet = &list
+	t.Cleanup(func() { sipproto.ExtensionsSet = nil })
+}
+
+// with sip.extensions set, a REGISTER for an unknown extension is answered
+// 404 at once and produced on its own, while a known one is challenged and
+// waits for its credentialed retry
+func TestHandleSIPRegisterUnknownExtension(t *testing.T) {
+	stubSIPResponder(t)
+	stubSIPDialogs(t)
+	enableRegisterChallenge()
+	setSIPExtensions(t, "100-120")
+	h := &recordingHoneypot{}
+	src := &net.UDPAddr{IP: net.ParseIP("23.94.174.242"), Port: 63100}
+
+	sendSIP(t, h, src, sweepRegister965)
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndHandlerClose, h.produced[0].endReason)
+	events := h.produced[0].decoded.([]parsedSIP)
+	require.Len(t, events, 2)
+	require.Equal(t, "REGISTER", events[0].Command)
+	require.Equal(t, "write", events[1].Direction)
+	require.Equal(t, "404", events[1].Status)
+	require.True(t, strings.HasPrefix(string(h.replies[0]), "SIP/2.0 404 Not Found\r\n"))
+
+	known := strings.ReplaceAll(string(sweepRegister965), "965@", "110@")
+	known = strings.Replace(known, "Call-ID: 1588155924", "Call-ID: 2588155924", 1)
+	sendSIP(t, h, src, []byte(known))
+	require.Len(t, h.produced, 1, "the challenged REGISTER waits for its retry")
+	require.True(t, strings.HasPrefix(string(h.replies[1]), "SIP/2.0 401 Unauthorized\r\n"))
+}
+
+// droppingHoneypot records replies but reports each one as dropped by the
+// reply budget, as Glutton.ReplyUDPSent does over udp_reply_limit.
+type droppingHoneypot struct {
+	recordingHoneypot
+}
+
+func (h *droppingHoneypot) ReplyUDPSent(srcAddr, dstAddr *net.UDPAddr, payload []byte) (bool, error) {
+	return false, nil
+}
+
+func TestHandleSIPMarksDroppedReplies(t *testing.T) {
+	stubSIPResponder(t)
+	stubSIPDialogs(t)
+	src := &net.UDPAddr{IP: net.ParseIP("185.65.150.143"), Port: 44360}
+
+	h := &droppingHoneypot{}
+	require.NoError(t, HandleSIP(context.Background(), src, pplsipDst, sipOptions(), connection.Metadata{}, testLogger{}, h))
+	require.Len(t, h.produced, 1)
+	events := h.produced[0].decoded.([]parsedSIP)
+	require.Len(t, events, 2)
+	require.False(t, events[0].Dropped, "read frames are never dropped")
+	require.Equal(t, "200", events[1].Status)
+	require.True(t, events[1].Dropped)
+	require.Equal(t, connection.EndHandlerClose, h.produced[0].endReason, "a dropped reply is not a write error")
+
+	// dialog writes (100 Trying) are flagged too
+	require.NoError(t, HandleSIP(context.Background(), src, pplsipDst, pplsipInviteRead1, connection.Metadata{}, testLogger{}, h))
+	sipDialogs.get(sipDialogKey(src, pplsipCallID)).finish(connection.EndTimeout)
+	require.Len(t, h.produced, 2)
+	events = h.produced[1].decoded.([]parsedSIP)
+	require.Equal(t, "100", events[1].Status)
+	require.True(t, events[1].Dropped)
+
+	// a honeypot without ReplyUDPSent reports every reply as sent
+	plain := &recordingHoneypot{}
+	require.NoError(t, HandleSIP(context.Background(), src, pplsipDst, sipOptions(), connection.Metadata{}, testLogger{}, plain))
+	events = plain.produced[0].decoded.([]parsedSIP)
+	require.False(t, events[1].Dropped)
+}
+
+func withHeader(data []byte, header string) []byte {
+	return []byte(strings.Replace(string(data), "User-Agent: pplsip\r\n", "User-Agent: pplsip\r\n"+header+"\r\n", 1))
+}
+
+// a transfer inside an answered call is accepted and reported done, and a
+// re-INVITE keeps the session, all in the call's one event
+func TestHandleSIPDialogReferAndReInvite(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+
+	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
+	timers.fire(t, sipRing)
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("ACK", 1, pplsipCallID))
+	require.Len(t, h.replies, 3)
+	answer := string(h.replies[2])
+
+	refer := withHeader(pplsipInDialog("REFER", 2, pplsipCallID), "Refer-To: <sip:0044203769291@1.2.3.4;user=phone>")
+	sendSIP(t, h, pplsipSrc, refer)
+	require.Len(t, h.replies, 5)
+	require.True(t, strings.HasPrefix(string(h.replies[3]), "SIP/2.0 202 Accepted\r\n"))
+	require.Contains(t, string(h.replies[3]), "To: <sip:14500972598112101@1.2.3.4>;tag=feedface\r\n")
+	trying := string(h.replies[4])
+	require.True(t, strings.HasPrefix(trying, "NOTIFY sip:14500163172166221:5060@212.129.10.158:65145 SIP/2.0\r\n"), trying)
+	require.Contains(t, trying, "From: <sip:14500972598112101@1.2.3.4>;tag=feedface\r\n")
+	require.Contains(t, trying, "To: <sip:14500163172166221:5060@1.2.3.4>;tag=414451770\r\n")
+	require.Contains(t, trying, "Event: refer\r\n")
+	require.Contains(t, trying, "Subscription-State: active;expires=60\r\n")
+	require.Contains(t, trying, "Content-Type: message/sipfrag;version=2.0\r\n")
+	require.True(t, strings.HasSuffix(trying, "\r\n\r\nSIP/2.0 100 Trying\r\n"), trying)
+	require.Contains(t, timers.pending(), sipRing, "the transfer completes after a ring delay")
+
+	// the caller's 200 to the NOTIFY joins the call
+	notifyOK := "SIP/2.0 200 OK\r\nVia: SIP/2.0/UDP 1.2.3.4:5060;rport;branch=z9hG4bKPjfeedface\r\n" +
+		"From: <sip:14500972598112101@1.2.3.4>;tag=feedface\r\nTo: <sip:14500163172166221:5060@1.2.3.4>;tag=414451770\r\n" +
+		"Call-ID: " + pplsipCallID + "\r\nCSeq: 1 NOTIFY\r\nContent-Length: 0\r\n\r\n"
+	sendSIP(t, h, pplsipSrc, []byte(notifyOK))
+	require.Len(t, h.replies, 5)
+
+	timers.fire(t, sipRing)
+	require.Len(t, h.replies, 6)
+	done := string(h.replies[5])
+	require.True(t, strings.HasPrefix(done, "NOTIFY "), done)
+	require.Contains(t, done, "Subscription-State: terminated;reason=noresource\r\n")
+	require.True(t, strings.HasSuffix(done, "\r\n\r\nSIP/2.0 200 OK\r\n"), done)
+	require.Equal(t, cseqNumber(t, trying)+1, cseqNumber(t, done), "the honeypot's own CSeq increases")
+
+	// a re-INVITE keeps the session: 200 OK with the same SDP answer
+	reInvite := strings.Replace(string(pplsipInviteRead1), "To: <sip:14500972598112101@1.2.3.4>\r\n", "To: <sip:14500972598112101@1.2.3.4>;tag=feedface\r\n", 1)
+	reInvite = strings.Replace(reInvite, "CSeq: 1 INVITE", "CSeq: 3 INVITE", 1)
+	reInvite = strings.Replace(reInvite, "branch=z9hG4bK951917159", "branch=z9hG4bK951917160", 1)
+	sendSIP(t, h, pplsipSrc, []byte(reInvite))
+	require.Len(t, h.replies, 7)
+	reOK := string(h.replies[6])
+	require.True(t, strings.HasPrefix(reOK, "SIP/2.0 200 OK\r\n"), reOK)
+	require.Contains(t, reOK, "CSeq: 3 INVITE\r\n")
+	_, answerSDP, _ := strings.Cut(answer, "\r\n\r\n")
+	_, reSDP, _ := strings.Cut(reOK, "\r\n\r\n")
+	require.Equal(t, answerSDP, reSDP)
+	require.Contains(t, reOK, "Contact: <sip:14500972598112101@1.2.3.4:5060>\r\n")
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("ACK", 3, pplsipCallID))
+	require.Len(t, h.replies, 7)
+
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("BYE", 4, pplsipCallID))
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndClientClose, h.produced[0].endReason)
+	events := h.produced[0].decoded.([]parsedSIP)
+	var got []string
+	for _, e := range events {
+		got = append(got, e.Direction+" "+e.Command+e.Status)
+	}
+	require.Equal(t, []string{
+		"read INVITE", "write 100", "write 180", "write 200", "read ACK",
+		"read REFER", "write 202", "write NOTIFY", "read 200", "write NOTIFY",
+		"read INVITE", "write 200", "read ACK", "read BYE", "write 200",
+	}, got)
+	require.Equal(t, "0044203769291", events[5].CalledNumber, "REFER records the transfer target")
+}
+
+func cseqNumber(t *testing.T, msg string) int {
+	t.Helper()
+	_, rest, ok := strings.Cut(msg, "CSeq: ")
+	require.True(t, ok)
+	n, err := strconv.Atoi(strings.Fields(rest)[0])
+	require.NoError(t, err)
+	return n
+}
+
+func TestHandleSIPDialogReferEdgeCases(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+
+	// REFER while the call still rings is challenged as before
+	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
+	sendSIP(t, h, pplsipSrc, withHeader(pplsipInDialog("REFER", 2, pplsipCallID), "Refer-To: <sip:0044203769291@1.2.3.4>"))
+	require.True(t, strings.HasPrefix(string(h.replies[2]), "SIP/2.0 401 Unauthorized\r\n"))
+
+	// REFER without Refer-To in the answered call gets 400
+	timers.fire(t, sipRing)
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("ACK", 1, pplsipCallID))
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("REFER", 3, pplsipCallID))
+	last := string(h.replies[len(h.replies)-1])
+	require.True(t, strings.HasPrefix(last, "SIP/2.0 400 Bad Request\r\n"), last)
+	require.NotContains(t, timers.pending(), sipRing)
 }

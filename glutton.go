@@ -511,8 +511,15 @@ func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md c
 // reported as sent: srcAddr may be a spoofed victim, and an error per dropped
 // packet would turn the flood into a log flood.
 func (g *Glutton) ReplyUDP(srcAddr, dstAddr *net.UDPAddr, payload []byte) error {
+	_, err := g.ReplyUDPSent(srcAddr, dstAddr, payload)
+	return err
+}
+
+// ReplyUDPSent is ReplyUDP that also reports whether the reply left: false
+// with a nil error means the udp_reply_limit budget dropped it.
+func (g *Glutton) ReplyUDPSent(srcAddr, dstAddr *net.UDPAddr, payload []byte) (bool, error) {
 	if srcAddr == nil || dstAddr == nil {
-		return fmt.Errorf("nil udp address")
+		return false, fmt.Errorf("nil udp address")
 	}
 	if d := g.udpGuard.Allow(srcAddr.IP, len(payload)); !d.Allowed {
 		if d.First && g.Logger != nil {
@@ -523,15 +530,17 @@ func (g *Glutton) ReplyUDP(srcAddr, dstAddr *net.UDPAddr, payload []byte) error 
 				slog.Int("bytes", len(payload)),
 				slog.String("reporter", "glutton"))
 		}
-		return nil
+		return false, nil
 	}
 	conn, err := tproxy.DialUDP("udp4", dstAddr, srcAddr)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer conn.Close()
-	_, err = conn.Write(payload)
-	return err
+	if _, err := conn.Write(payload); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // GuardConn charges writes on conn against the tcp_reply_limit budget for its

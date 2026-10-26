@@ -68,6 +68,7 @@ openvpn:
 sip:
   reject_invites: 2   # new INVITE calls in a source IP's first visit (see recall) answered 404 before calls ring; later visits never; 0 disables.
   register_challenge: false  # answer an unauthenticated REGISTER with a 401 digest challenge (any credentials are then accepted) so scanners reveal the username and digest they guess with.
+  extensions: ""      # extensions that exist (e.g. "100-120,200,1000-1010"); REGISTER/OPTIONS for others get 404 so enumerators find these. Empty answers every extension alike.
   record_media: true  # UDP: record the RTP a caller sends to an answered call's SDP port (WAV files in payloads/rtp, DTMF in decoded).
 
 smtp:

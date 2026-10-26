@@ -28,3 +28,14 @@ type Honeypot interface {
 	UpdateConnectionTimeout(ctx context.Context, conn net.Conn) error
 	MetadataByConnection(net.Conn) (connection.Metadata, error)
 }
+
+// UDPReplyReporter is implemented by a Honeypot that can tell whether a UDP
+// reply left. ReplyUDP reports a reply dropped over the udp_reply_limit
+// budget as sent, so handlers do not turn a flood into a log flood; a
+// handler that records its writes uses ReplyUDPSent to flag the dropped ones
+// instead of showing a reply the client never got.
+type UDPReplyReporter interface {
+	// ReplyUDPSent sends like ReplyUDP and reports false, with a nil error,
+	// when the reply budget dropped the payload.
+	ReplyUDPSent(srcAddr, dstAddr *net.UDPAddr, payload []byte) (sent bool, err error)
+}

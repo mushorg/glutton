@@ -213,8 +213,12 @@ func TestHandleSIPTCPRegisterThenCall(t *testing.T) {
 		if method != "REGISTER" {
 			f.CalledNumber = "14500972598112101"
 		}
-		if ua == "pplsip" {
+		switch {
+		case ua == "pplsip":
 			f.Tool = "pplsip"
+		case ua == "" && f.CallID == call.CallID:
+			// UA-less in-dialog requests keep sippts' Call-ID and branch habit
+			f.Tool = "sippts"
 		}
 		return f
 	}

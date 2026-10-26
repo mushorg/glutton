@@ -6,12 +6,15 @@ package sip
 
 import (
 	"bytes"
+	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	gosip "github.com/ghettovoice/gosip/sip"
 )
@@ -33,9 +36,11 @@ const (
 )
 
 // Responder builds replies to SIP requests. Token returns the random value
-// used for To tags and digest nonces; replace it in tests for stable output.
+// used for To tags and digest nonces, Now the clock stamped into nonces;
+// replace them in tests for stable output. A nil Now is time.Now.
 type Responder struct {
 	Token func() string
+	Now   func() time.Time
 }
 
 // NewResponder returns a Responder backed by crypto/rand.
@@ -121,8 +126,12 @@ func (r *Responder) Challenge(req gosip.Request, src net.Addr) gosip.Response {
 	return annotate(req, src, r.challenge(req))[0]
 }
 
+// challenge builds the 401 chan_pjsip sends: res_pjsip_authenticator_digest
+// makes the nonce "<unix seconds>/<md5 hex>" and leaves the opaque to
+// pjsip_auth_srv_challenge, which draws 16 hex digits and prints the
+// parameters in this order with algorithm=md5 (pjsip_MD5_STR) unquoted.
 func (r *Responder) challenge(req gosip.Request) gosip.Response {
-	challenge := `Digest realm="` + realm + `",nonce="` + r.Token() + `",algorithm=MD5,qop="auth"`
+	challenge := `Digest realm="` + realm + `",nonce="` + r.nonce() + `",opaque="` + r.Token() + `",algorithm=md5,qop="auth"`
 	return r.response(req, 401, "Unauthorized", r.Token(),
 		&gosip.GenericHeader{HeaderName: "WWW-Authenticate", Contents: challenge},
 	)
@@ -147,6 +156,20 @@ func (r *Responder) Final(req gosip.Request, src net.Addr, code gosip.StatusCode
 		tag = r.Token()
 	}
 	return annotate(req, src, r.response(req, code, reason, tag))[0]
+}
+
+// nonce returns an Asterisk-style digest nonce: the unix time, a slash and
+// the MD5 hex of the time, a random token and the realm (Asterisk hashes
+// the source address and its entity ID instead; neither is visible to the
+// client, so the shape is what counts).
+func (r *Responder) nonce() string {
+	now := time.Now
+	if r.Now != nil {
+		now = r.Now
+	}
+	ts := strconv.FormatInt(now().Unix(), 10)
+	sum := md5.Sum([]byte(ts + ":" + r.Token() + ":" + realm))
+	return ts + "/" + hex.EncodeToString(sum[:])
 }
 
 // annotate sets the top Via of each response from src (see sourceVia).
@@ -216,6 +239,11 @@ func sourceVia(req gosip.Request, src net.Addr) ([]gosip.Header, bool) {
 // and 403 Forbidden once they carry credentials. v changes the REGISTER and
 // INVITE outcomes (see Variant).
 func (r *Responder) reply(req gosip.Request, local net.Addr, v Variant) []gosip.Response {
+	if UnknownExtension(req) {
+		// a PBX that tells unknown extensions apart (chan_sip with
+		// alwaysauthreject=no) lets enumerators like svwar see which exist
+		return []gosip.Response{r.response(req, 404, "Not Found", r.Token())}
+	}
 	switch req.Method() {
 	case gosip.ACK:
 		return nil
@@ -261,6 +289,28 @@ func (r *Responder) reply(req gosip.Request, local net.Addr, v Variant) []gosip.
 			&gosip.GenericHeader{HeaderName: "Allow", Contents: allowList},
 		)}
 	}
+}
+
+// UnknownExtension reports whether req targets an extension outside
+// sip.extensions (see KnownExtension): the To user of a REGISTER, or the
+// Request-URI user of an OPTIONS. Other methods and requests without a user
+// are never unknown, so INVITE dial strings are answered as before.
+func UnknownExtension(req gosip.Request) bool {
+	var user gosip.MaybeString
+	switch req.Method() {
+	case gosip.REGISTER:
+		if to, ok := req.To(); ok && to.Address != nil {
+			user = to.Address.User()
+		}
+	case gosip.OPTIONS:
+		if uri := req.Recipient(); uri != nil {
+			user = uri.User()
+		}
+	}
+	if user == nil || user.String() == "" {
+		return false
+	}
+	return !KnownExtension(user.String())
 }
 
 // register grants the binding: Contact headers are echoed with the granted
@@ -578,9 +628,11 @@ var sipTools = []struct{ match, name string }{
 }
 
 // Tool classifies the SIP tool behind req from its User-Agent and, failing
-// that, a header habit, returning "" when nothing matches. The name is the
-// tool family (SIPVicious, sipcli, sipsak, pplsip, VaxSIPUserAgent, ...). It
-// is a triage hint, not proof: a scanner can forge any User-Agent.
+// that, a header or body habit, returning "" when nothing matches. The name
+// is the tool family (SIPVicious, sipcli, sipsak, pplsip, VaxSIPUserAgent,
+// ...) or, for a fleet that forges its User-Agent, its tell (sqli-from,
+// zoiper-fleet, sippts). User-Agent matches win. It is a triage hint, not
+// proof: a scanner can forge any header.
 func Tool(req gosip.Request) string {
 	ua := ""
 	if hs := req.GetHeaders("User-Agent"); len(hs) > 0 {
@@ -595,6 +647,60 @@ func Tool(req gosip.Request) string {
 	// sets one, a tell that survives a changed User-Agent.
 	if fromToHost(req) == "1.1.1.1" {
 		return "sipvicious"
+	}
+	// a dial fleet puts SQL injection (`')or('x'='x`) in the From, Contact
+	// and P-Preferred-Identity users, aimed at PBX or billing lookups
+	for _, name := range []string{"From", "Contact", "P-Preferred-Identity"} {
+		for _, h := range req.GetHeaders(name) {
+			v := strings.ToLower(h.Value())
+			if strings.Contains(v, "'or(") || strings.Contains(v, "')or('") {
+				return "sqli-from"
+			}
+		}
+	}
+	// the same fleet forges a new phone User-Agent per call, but its SDP
+	// still names the Zoiper stack it is built on
+	if sdpSessionName(string(req.Body())) == "zoiper" && !strings.Contains(ua, "zoiper") {
+		return "zoiper-fleet"
+	}
+	// sippts (whose default User-Agent is pplsip) with the User-Agent left
+	// out: numeric "N-N-N" Call-ID and a digits-only Via branch
+	if len(req.GetHeaders("User-Agent")) == 0 && sipptsCallID.MatchString(callIDValue(req)) && sipptsBranch.MatchString(viaBranch(req)) {
+		return "sippts"
+	}
+	return ""
+}
+
+var (
+	sipptsCallID = regexp.MustCompile(`^\d+-\d+-\d+$`)
+	sipptsBranch = regexp.MustCompile(`^z9hG4bK\d+$`)
+)
+
+// sdpSessionName returns the lowercased s= line of an SDP body, or "".
+func sdpSessionName(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if name, ok := strings.CutPrefix(strings.TrimSpace(line), "s="); ok {
+			return strings.ToLower(strings.TrimSpace(name))
+		}
+	}
+	return ""
+}
+
+func callIDValue(req gosip.Request) string {
+	if callID, ok := req.CallID(); ok {
+		return callID.Value()
+	}
+	return ""
+}
+
+// viaBranch returns the branch parameter of the top Via hop, or "".
+func viaBranch(req gosip.Request) string {
+	hop, ok := req.ViaHop()
+	if !ok || hop.Params == nil {
+		return ""
+	}
+	if branch, ok := hop.Params.Get("branch"); ok && branch != nil {
+		return branch.String()
 	}
 	return ""
 }
@@ -630,14 +736,20 @@ type Info struct {
 	Digest Digest
 }
 
-// CalledNumber returns the number req dials: the Request-URI user, else the
-// To user, with URI parameters and visual separators ("-.() ") removed and a
-// leading "+" kept. It is "" for REGISTER (whose To is the binding being
+// CalledNumber returns the number req dials: the Refer-To user of a REFER,
+// else the Request-URI user, else the To user, with URI parameters and
+// visual separators ("-.() ") removed and a leading "+" kept. It is "" for REGISTER (whose To is the binding being
 // registered, not a call target) and for users that are not made of digits,
 // "*" and "#" (names like "asterisk" or "admin").
 func CalledNumber(req gosip.Request) string {
-	if req.Method() == gosip.REGISTER {
+	switch req.Method() {
+	case gosip.REGISTER:
 		return ""
+	case gosip.REFER:
+		// a transfer dials the Refer-To target, not the party it is sent to
+		if hs := req.GetHeaders("Refer-To"); len(hs) > 0 {
+			return normalizeNumber(uriUser(hs[0].Value()))
+		}
 	}
 	user := ""
 	if uri := req.Recipient(); uri != nil && uri.User() != nil {
@@ -649,6 +761,23 @@ func CalledNumber(req gosip.Request) string {
 		}
 	}
 	return normalizeNumber(user)
+}
+
+// uriUser returns the user part of a name-addr or bare URI header value
+// ("<sip:0044123@host;user=phone>?Replaces=..."), or "".
+func uriUser(value string) string {
+	if _, inner, ok := strings.Cut(value, "<"); ok {
+		value, _, _ = strings.Cut(inner, ">")
+	}
+	_, rest, ok := strings.Cut(strings.TrimSpace(value), ":")
+	if !ok {
+		return ""
+	}
+	user, _, hasHost := strings.Cut(rest, "@")
+	if !hasHost {
+		return ""
+	}
+	return user
 }
 
 // normalizeNumber reduces a URI user part to a dialed number, or "".
@@ -808,12 +937,26 @@ func isMethod(s string) bool {
 const ackTimeoutReason = `SIP ;cause=408 ;text="Request Timeout"`
 
 // AckTimeoutBye builds the BYE that tears down a call whose 200 OK (ok, our
-// answer to invite) was never ACKed, as pjsip does after 64*T1. It goes to
-// the caller's Contact, with From/To swapped from the caller's view, a new
-// CSeq and Via branch, and the Via sent-by the caller addressed the
-// honeypot at (or local, as for Reply) over transport ("UDP", "TCP" or
-// "TLS"). It returns nil when invite or ok lacks dialog headers.
+// answer to invite) was never ACKed, as pjsip does after 64*T1 (see
+// InDialogRequest for its addressing). It returns nil when invite or ok
+// lacks dialog headers.
 func (r *Responder) AckTimeoutBye(invite gosip.Request, ok gosip.Response, local net.Addr, transport string) gosip.Request {
+	return r.InDialogRequest(gosip.BYE, invite, ok, local, transport, 0, "",
+		&gosip.GenericHeader{HeaderName: "Reason", Contents: ackTimeoutReason},
+	)
+}
+
+// InDialogRequest builds a request the honeypot sends inside the call that
+// ok (our answer to invite) set up. It goes to the caller's Contact, with
+// From/To swapped from the caller's view, a new Via branch, and the Via
+// sent-by the caller addressed the honeypot at (or local, as for Reply) over
+// transport ("UDP", "TCP" or "TLS"). seq is its CSeq number, 0 for a random
+// one. extra headers come before User-Agent; a non-empty body is sent as is
+// (extra must then carry its Content-Type). It returns nil when invite or
+// ok lacks dialog headers. Only the Request-URI names the Contact: the UDP
+// handler sends it to the packet source, never to an address the caller
+// supplied.
+func (r *Responder) InDialogRequest(method gosip.RequestMethod, invite gosip.Request, ok gosip.Response, local net.Addr, transport string, seq uint32, body string, extra ...gosip.Header) gosip.Request {
 	from, hasFrom := invite.From()
 	to, hasTo := ok.To()
 	callID, hasCallID := invite.CallID()
@@ -846,20 +989,61 @@ func (r *Responder) AckTimeoutBye(invite gosip.Request, ok gosip.Response, local
 	maxForwards := gosip.MaxForwards(70)
 	localFrom := &gosip.FromHeader{DisplayName: to.DisplayName, Address: to.Address.Clone(), Params: cloneParams(to.Params)}
 	remoteTo := &gosip.ToHeader{DisplayName: from.DisplayName, Address: from.Address.Clone(), Params: cloneParams(from.Params)}
-	cseq := &gosip.CSeq{SeqNo: uint32(tokenValue(r.Token())%0xffff) + 1, MethodName: gosip.BYE}
+	if seq == 0 {
+		seq = uint32(tokenValue(r.Token())%0xffff) + 1
+	}
+	cseq := &gosip.CSeq{SeqNo: seq, MethodName: method}
 
-	bye := gosip.NewRequest("", gosip.BYE, target.Clone(), invite.SipVersion(), []gosip.Header{
-		via,
-		&maxForwards,
-		localFrom,
-		remoteTo,
-		callID,
-		cseq,
-		&gosip.GenericHeader{HeaderName: "Reason", Contents: ackTimeoutReason},
-		&gosip.GenericHeader{HeaderName: "User-Agent", Contents: serverAgent},
-	}, "", invite.Fields())
-	bye.SetBody("", true)
-	return bye
+	headers := []gosip.Header{via, &maxForwards, localFrom, remoteTo, callID, cseq}
+	headers = append(headers, extra...)
+	headers = append(headers, &gosip.GenericHeader{HeaderName: "User-Agent", Contents: serverAgent})
+	req := gosip.NewRequest("", method, target.Clone(), invite.SipVersion(), headers, "", invite.Fields())
+	req.SetBody(body, true)
+	return req
+}
+
+// referExpires is the Subscription-State expiry of the implicit refer
+// subscription while the transfer is pending.
+const referExpires = 60
+
+// ReferNotify builds the NOTIFY that reports a REFER's progress inside the
+// call ok answered (RFC 3515 §2.4.5): a message/sipfrag body with the
+// transfer's status line, "100 Trying" while it is pending and "200 OK"
+// once it is done, which also terminates the subscription. Asterisk
+// (res_pjsip_refer) sends these after accepting a blind transfer. seq is the
+// CSeq number, as for InDialogRequest.
+func (r *Responder) ReferNotify(invite gosip.Request, ok gosip.Response, local net.Addr, transport string, seq uint32, done bool) gosip.Request {
+	state, frag := "active;expires="+strconv.Itoa(referExpires), "SIP/2.0 100 Trying\r\n"
+	if done {
+		state, frag = "terminated;reason=noresource", "SIP/2.0 200 OK\r\n"
+	}
+	contentType := gosip.ContentType("message/sipfrag;version=2.0")
+	return r.InDialogRequest(gosip.NOTIFY, invite, ok, local, transport, seq, frag,
+		&gosip.GenericHeader{HeaderName: "Event", Contents: "refer"},
+		&gosip.GenericHeader{HeaderName: "Subscription-State", Contents: state},
+		&contentType,
+	)
+}
+
+// ReInviteOK answers a re-INVITE inside the call that ok (our 200 to the
+// first INVITE) set up: 200 OK with the same Contact and SDP answer, so the
+// session stays as it was. Via is annotated for src like Reply.
+func (r *Responder) ReInviteOK(req gosip.Request, src net.Addr, ok gosip.Response) gosip.Response {
+	var extra []gosip.Header
+	for _, name := range []string{"Contact", "Allow", "Supported", "Content-Type"} {
+		for _, h := range ok.GetHeaders(name) {
+			extra = append(extra, h.Clone())
+		}
+	}
+	tag := ""
+	if to, hasTo := ok.To(); hasTo && to.Params != nil {
+		if t, hasTag := to.Params.Get("tag"); hasTag && t != nil {
+			tag = t.String()
+		}
+	}
+	res := r.response(req, 200, "OK", tag, extra...)
+	res.SetBody(ok.Body(), true)
+	return annotate(req, src, res)[0]
 }
 
 func cloneParams(p gosip.Params) gosip.Params {

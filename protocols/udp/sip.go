@@ -47,6 +47,7 @@ type parsedSIP struct {
 	CNonce         string `json:"cnonce,omitempty"`
 	Payload        []byte `json:"payload,omitempty"`
 	Truncated      bool   `json:"truncated,omitempty"`
+	Dropped        bool   `json:"dropped,omitempty"` // write the udp_reply_limit budget kept from leaving
 	Variant        string `json:"variant,omitempty"` // response variant on writes
 	Visit          int    `json:"visit,omitempty"`   // source's visit number on writes
 
@@ -117,6 +118,16 @@ func noteSIPVisit(ip net.IP, v sipproto.Visit, events []parsedSIP) {
 		}
 	}
 	v.Note(ip, reads)
+}
+
+// replySIP sends a SIP datagram to src and reports whether it left. A reply
+// the udp_reply_limit budget dropped is no error, but its write frame must
+// not read as sent; honeypots that cannot tell report every reply as sent.
+func replySIP(h interfaces.Honeypot, src, dst *net.UDPAddr, data []byte) (bool, error) {
+	if r, ok := h.(interfaces.UDPReplyReporter); ok {
+		return r.ReplyUDPSent(src, dst, data)
+	}
+	return true, h.ReplyUDP(src, dst, data)
 }
 
 // sipResponder builds the UDP SIP replies; tests swap it for deterministic tags and nonces.
@@ -194,13 +205,14 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 
 // opensSIPDialog reports whether req starts a dialog: an INVITE, or a REGISTER
 // that is challenged (sip.register_challenge) so its credentialed retry joins
-// the same event.
+// the same event. A REGISTER for an unknown extension gets a 404 instead and
+// is an event of its own.
 func opensSIPDialog(req sip.Request) bool {
 	switch req.Method() {
 	case sip.INVITE:
 		return true
 	case sip.REGISTER:
-		return sipproto.RegisterChallenge() && sipproto.Credentials(req) == ""
+		return sipproto.RegisterChallenge() && sipproto.Credentials(req) == "" && !sipproto.UnknownExtension(req)
 	}
 	return false
 }
@@ -234,8 +246,11 @@ func handleSIPDatagram(srcAddr, dstAddr *net.UDPAddr, msg sip.Message, frame par
 
 	for _, resp := range sipResponder.Reply(req, srcAddr, dstAddr, visit.Variant) {
 		respBytes := []byte(resp.String())
-		events = append(events, sipTag(visit, sipDecoded("write", resp, respBytes)))
-		if err := h.ReplyUDP(srcAddr, dstAddr, respBytes); err != nil {
+		frame := sipTag(visit, sipDecoded("write", resp, respBytes))
+		sent, err := replySIP(h, srcAddr, dstAddr, respBytes)
+		frame.Dropped = !sent && err == nil
+		events = append(events, frame)
+		if err != nil {
 			logger.Error("Failed to send SIP reply", slog.String("protocol", "sip"), producer.ErrAttr(err))
 			endReason = connection.EndWriteError
 			return err

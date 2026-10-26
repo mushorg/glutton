@@ -3,6 +3,8 @@ package sip
 import (
 	"log/slog"
 	"net"
+	"strconv"
+	"strings"
 
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/recall"
@@ -164,4 +166,53 @@ func RegisterChallenge() bool {
 		return *RegisterChallengeSet
 	}
 	return viper.GetBool("sip.register_challenge")
+}
+
+// ExtensionsSet overrides sip.extensions in tests when non-nil.
+var ExtensionsSet *string
+
+// extensions returns the sip.extensions entries: single extensions ("200",
+// "admin") and numeric ranges ("100-120"), comma or space separated. Empty
+// means the leak is off.
+func extensions() []string {
+	var raw []string
+	if ExtensionsSet != nil {
+		raw = []string{*ExtensionsSet}
+	} else {
+		raw = viper.GetStringSlice("sip.extensions")
+	}
+	var out []string
+	for _, r := range raw {
+		out = append(out, strings.FieldsFunc(r, func(c rune) bool { return c == ',' || c == ' ' })...)
+	}
+	return out
+}
+
+// KnownExtension reports whether user is one of the sip.extensions entries.
+// It is true for every user when sip.extensions is empty (the default), so
+// REGISTER and OPTIONS answer every extension alike, as chan_pjsip's
+// artificial endpoint does.
+func KnownExtension(user string) bool {
+	entries := extensions()
+	if len(entries) == 0 {
+		return true
+	}
+	n, numErr := strconv.ParseUint(user, 10, 64)
+	for _, e := range entries {
+		if lo, hi, ok := strings.Cut(e, "-"); ok {
+			l, errLo := strconv.ParseUint(lo, 10, 64)
+			h, errHi := strconv.ParseUint(hi, 10, 64)
+			if errLo == nil && errHi == nil {
+				// a range matches numbers only, not its own spelling
+				if numErr == nil && l <= n && n <= h {
+					return true
+				}
+				continue
+			}
+		}
+		if e == user {
+			return true
+		}
+	}
+	return false
 }

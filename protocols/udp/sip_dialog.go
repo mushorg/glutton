@@ -163,6 +163,11 @@ type sipDialog struct {
 	resend     sipTimer
 	interval   time.Duration
 	waited     time.Duration
+
+	// requests the honeypot sends in the call (REFER progress NOTIFYs)
+	localSeq uint32 // CSeq of the last one; 0 before the first
+	refer    sipTimer
+	referGen uint64
 }
 
 func newSIPDialog(ctx context.Context, key string, table *sipDialogTable, src, dst *net.UDPAddr, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) *sipDialog {
@@ -238,10 +243,17 @@ func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
 			}
 			return "", nil
 		}
+		if d.answeredLocked() && d.tag != "" && sipToTag(req) == d.tag {
+			return d.reInviteLocked(seq, req)
+		}
 		return d.inviteLocked(seq, req)
 	case sip.CANCEL:
 		if d.pendingFinal != nil {
 			return d.cancelLocked(req)
+		}
+	case sip.REFER:
+		if d.answeredLocked() {
+			return d.referLocked(req)
 		}
 	}
 
@@ -323,6 +335,93 @@ func (d *sipDialog) cancelLocked(req sip.Request) (string, error) {
 	return d.sendFinalLocked(terminated, connection.EndClientClose)
 }
 
+// answeredLocked reports whether the call was answered (a 2xx went out),
+// ACKed or not.
+func (d *sipDialog) answeredLocked() bool {
+	return d.final != nil && d.final.IsSuccess()
+}
+
+// reInviteLocked answers a re-INVITE in the answered call (To tag ours) with
+// 200 OK and the same SDP answer, resent until ACKed like the first 200,
+// instead of ringing it as a new call.
+func (d *sipDialog) reInviteLocked(seq uint32, req sip.Request) (string, error) {
+	d.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", "re-INVITE"))
+	ok := sipResponder.ReInviteOK(req, d.src, d.final)
+	d.invite, d.inviteSeq = req, seq
+	return d.sendFinalLocked(ok, connection.EndTimeout)
+}
+
+// referLocked accepts a transfer in the answered call: 202 Accepted, a
+// NOTIFY with "100 Trying" at once and one with "200 OK" after
+// sipRingDelay, as if the transfer target answered. Nothing is dialed; the
+// Refer-To number is only recorded (called_number on the read frame). A
+// REFER without Refer-To gets 400, as Asterisk answers it.
+func (d *sipDialog) referLocked(req sip.Request) (string, error) {
+	d.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
+	if len(req.GetHeaders("Refer-To")) == 0 {
+		bad := sipResponder.Final(req, d.src, 400, "Bad Request", d.tag)
+		if err := d.writeLocked([]byte(bad.String()), bad); err != nil {
+			return connection.EndWriteError, err
+		}
+		return "", nil
+	}
+	accepted := sipResponder.Final(req, d.src, 202, "Accepted", d.tag)
+	if err := d.writeLocked([]byte(accepted.String()), accepted); err != nil {
+		return connection.EndWriteError, err
+	}
+	if err := d.notifyReferLocked(false); err != nil {
+		return connection.EndWriteError, err
+	}
+	d.stopReferLocked()
+	d.referGen++
+	gen := d.referGen
+	d.refer = sipAfterFunc(sipRingDelay(), func() { d.referDone(gen) })
+	return "", nil
+}
+
+// notifyReferLocked sends the REFER progress NOTIFY (see
+// sipproto.Responder.ReferNotify) to the packet source.
+func (d *sipDialog) notifyReferLocked(done bool) error {
+	if d.localSeq == 0 {
+		d.localSeq = rand.Uint32N(0x7fff)
+	}
+	d.localSeq++
+	notify := sipResponder.ReferNotify(d.invite, d.final, d.dst, "UDP", d.localSeq, done)
+	if notify == nil {
+		return nil
+	}
+	return d.writeLocked([]byte(notify.String()), notify)
+}
+
+// referDone fires when the pretend transfer target answers and sends the
+// final NOTIFY. gen ties it to the REFER that started it.
+func (d *sipDialog) referDone(gen uint64) {
+	d.mu.Lock()
+	if d.produced || gen != d.referGen {
+		d.mu.Unlock()
+		return
+	}
+	d.refer = nil
+	endReason := ""
+	if err := d.notifyReferLocked(true); err != nil {
+		endReason = connection.EndWriteError
+	} else if len(d.events) >= maxSIPDialogFrames {
+		endReason = connection.EndMaxFrames
+	}
+	d.mu.Unlock()
+
+	if endReason != "" {
+		d.finish(endReason)
+	}
+}
+
+func (d *sipDialog) stopReferLocked() {
+	if d.refer != nil {
+		d.refer.Stop()
+		d.refer = nil
+	}
+}
+
 // answer fires when ringing ends and sends the final response. gen ties it
 // to the INVITE that started the ringing.
 func (d *sipDialog) answer(gen uint64) {
@@ -386,8 +485,8 @@ func isAuthChallenge(res sip.Response) bool {
 	return code == 401 || code == 407
 }
 
-func sipToTag(res sip.Response) string {
-	if to, ok := res.To(); ok && to.Params != nil {
+func sipToTag(msg sip.Message) string {
+	if to, ok := msg.To(); ok && to.Params != nil {
 		if tag, ok := to.Params.Get("tag"); ok && tag != nil {
 			return tag.String()
 		}
@@ -401,8 +500,11 @@ func (d *sipDialog) writeLocked(data []byte, msg sip.Message) error {
 	if msg == nil {
 		msg, _ = parseSIP(data, true)
 	}
-	d.events = append(d.events, sipTag(d.visit, sipDecoded("write", msg, data)))
-	if err := d.h.ReplyUDP(d.src, d.dst, data); err != nil {
+	frame := sipTag(d.visit, sipDecoded("write", msg, data))
+	sent, err := replySIP(d.h, d.src, d.dst, data)
+	frame.Dropped = !sent && err == nil
+	d.events = append(d.events, frame)
+	if err != nil {
 		d.logger.Error("Failed to send SIP reply", slog.String("protocol", "sip"), producer.ErrAttr(err))
 		return err
 	}
@@ -475,6 +577,7 @@ func (d *sipDialog) finish(endReason string) {
 	}
 	d.stopResendLocked()
 	d.stopRingLocked()
+	d.stopReferLocked()
 	if d.stopCtx != nil {
 		d.stopCtx()
 	}

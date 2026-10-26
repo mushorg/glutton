@@ -22,10 +22,11 @@ connection.
 | `username` | reads | Digest `Authorization` username. |
 | `realm` / `nonce` / `digest_uri` / `digest_response` / `algorithm` / `qop` / `nc` / `cnonce` | reads | Digest `Authorization` (or `Proxy-Authorization`) fields (see [Digest credentials](#digest-credentials)). |
 | `tool` | reads | Fingerprinted scanner/dialer behind the request (see [Tool fingerprint](#tool-fingerprint)). |
-| `called_number` | non-REGISTER requests | Normalized dialed number (see below). |
+| `called_number` | non-REGISTER requests | Normalized dialed number (see below); for REFER the transfer target. |
 | `variant` / `visit` | writes | Response variant and the source IP's visit number (see [Returning sources](#returning-sources)). |
 | `payload` | messages | Raw bytes as received or sent. |
 | `truncated` | all | UDP: the datagram exceeded 4096 bytes. TCP: the message body exceeded 4096 bytes. Media: see [Call media](#call-media-udp). |
+| `dropped` | UDP writes | The `udp_reply_limit` budget kept this reply from leaving; the client never received it. |
 | `ssrc` | media | RTP SSRC (hex). |
 | `codec` | media | Answered encoding name (e.g. `PCMU`), or `pt<N>`. |
 | `packets` / `lost` | media | Packets received / gaps in the sequence numbers. |
@@ -33,13 +34,21 @@ connection.
 | `dtmf` | media | RFC 4733 telephone-event digits `0-9*#A-D` in order, one per event. |
 | `payload_hash` | media | Hash of the stored WAV file. |
 
-**`called_number`** is the Request-URI user (else the `To` user) with URI
+**`called_number`** is the Request-URI user (else the `To` user; for a REFER
+the `Refer-To` user) with URI
 parameters and the separators `-.() ` removed and a leading `+` kept. It is set
 only when the rest is digits, `*` and `#`. For example,
 `sip:+44 (20) 7946-0000@host` gives `+442079460000`, and `sip:asterisk@host`
 gives none.
 
 ## Digest credentials
+
+The challenge has the shape chan_pjsip sends (`res_pjsip_authenticator_digest`
+and pjsip's `pjsip_auth_srv_challenge`): a nonce of the unix time, a slash and
+32 hex digits, a 16-hex-digit `opaque`, and lowercase `algorithm=md5`:
+`WWW-Authenticate: Digest realm="asterisk",nonce="1761350400/aab6286c0303e819fe6038a1b16143f3",opaque="0123456789abcdef",algorithm=md5,qop="auth"`.
+Events from older sensors show a 16-hex-digit nonce, no `opaque` and
+`algorithm=MD5`.
 
 When the `auth` variant challenges a REGISTER or INVITE, the client re-sends it
 with a digest `Authorization` (or `Proxy-Authorization`) header computed from a
@@ -57,8 +66,17 @@ schemes (Basic, …) are left in `payload` only.
 the `User-Agent` (SIPVicious — both the classic `friendly-scanner` and the
 rewrite — `sipcli`, `sipsak`, `pplsip`, `zxcvfdf` (the `zxcvfdf11` dial-prefix
 tester), `VaxSIPUserAgent`, `sundayddr` and others) and, failing that, on a header habit (SIPVicious defaults its `From`/`To`
-domain to `1.1.1.1`, a tell that survives a changed `User-Agent`). It is a
-triage hint, not proof: a scanner can forge any `User-Agent`.
+domain to `1.1.1.1`, a tell that survives a changed `User-Agent`). Fleets that
+forge their `User-Agent` are named by their tell instead:
+
+| `tool` | Tell |
+| --- | --- |
+| `sqli-from` | SQL injection (`')or('x'='x`) in the `From`, `Contact` or `P-Preferred-Identity` user. |
+| `zoiper-fleet` | SDP `s=Zoiper` behind a `User-Agent` that does not say Zoiper (a phone model that changes every call). |
+| `sippts` | No `User-Agent`, a numeric `N-N-N` `Call-ID` and a digits-only Via branch (`z9hG4bK<digits>`), sippts' habits with its default `pplsip` agent removed. |
+
+`User-Agent` matches win over these. It is a triage hint, not proof: a scanner
+can forge any header.
 
 ## Responses
 
@@ -70,6 +88,9 @@ This is the default (`answer` variant) behavior. Other variants change it; see
 | OPTIONS, REGISTER (with or without credentials), BYE | `200` |
 | INVITE | `100`, `180`, then after a 2–6 s ringing delay `200` with an SDP answer |
 | SUBSCRIBE, MESSAGE, NOTIFY, PUBLISH, REFER, UPDATE, INFO | `401` challenge, then `403` after credentials |
+| REFER inside an answered UDP call | `202`, then `NOTIFY` (`message/sipfrag` `SIP/2.0 100 Trying`) and, after a ringing delay, `NOTIFY` `SIP/2.0 200 OK` (see [UDP dialogs](#udp-dialogs)) |
+| re-INVITE inside an answered UDP call | `200` with the same SDP answer |
+| REGISTER or OPTIONS for an extension outside `sip.extensions` (when set) | `404 Not Found` |
 | CANCEL, PRACK | `481` |
 | CANCEL while the INVITE is still ringing | `200`, and the INVITE gets `487 Request Terminated` |
 | anything else | `501` |
@@ -93,6 +114,14 @@ INVITE does, so the retry (same `call_id`, higher CSeq) lands in the same event
 (`read` REGISTER, `write` 401, `read` REGISTER with `username`, `write` 200,
 `endReason` `handler_close`); a scanner that never retries is produced when the
 dialog idles out (`timeout`).
+
+**Extension leak.** With `sip.extensions` set (default empty), REGISTER (by its
+`To` user) and OPTIONS (by its Request-URI user) for an extension outside the
+list get `404 Not Found`; listed extensions get the answers above. Asterisk's
+chan_pjsip answers every extension alike, so enumerators such as svwar, which
+compare a known-bad extension's reply with the others, stop there; this makes
+the PBX look like chan_sip with `alwaysauthreject=no`, so they find the listed
+extensions and go on to crack them. INVITE dial strings are not affected.
 
 **Contact and Via port.** The `Contact` of the `180`, `183` and `200`, and the
 `Via` of the honeypot's own BYE, name the port the INVITE arrived on (falling
@@ -121,6 +150,17 @@ so a call is one event.
 - The ACK to a `404` or `487` produces the dialog with `client_close`. After
   64*T1, an unACKed `404` ends with `timeout` and an unACKed `487` with
   `client_close`, without a BYE.
+- A re-INVITE (To tag ours) after the `200` gets `200` with the same SDP
+  answer, resent until ACKed, instead of ringing as a new call.
+- A REFER after the `200` (a transfer, as sippts `sipinvite` and toll-fraud
+  callers try) gets `202 Accepted` and a `NOTIFY` (`Event: refer`,
+  `message/sipfrag` `SIP/2.0 100 Trying`); after a 2–6 s delay a second
+  `NOTIFY` reports `SIP/2.0 200 OK` and ends the subscription. The NOTIFYs are
+  `write` frames with `command` `NOTIFY`, sent to the caller's source address;
+  the caller's `200` to them joins the event as a `read` frame with `status`.
+  Nothing is dialed: the target is only recorded in the REFER frame's
+  `called_number`. A REFER without `Refer-To` gets `400`; a REFER before the
+  call is answered gets the `401` above.
 - If no ACK to the `200` arrives within 64*T1 (32 s), the honeypot hangs up like
   Asterisk/pjsip. It sends a `write` frame whose `command` is `BYE`
   (`Reason: SIP ;cause=408 ;text="Request Timeout"`, sent to the caller's source
@@ -243,6 +283,11 @@ re-INVITE answered on the same connection. The differences:
   whose `Via` names `TCP` or `TLS`; the connection stays open.
 - Up to 16 calls per connection are tracked; later INVITEs get `100`, `180` and
   `200` at once.
+- REFER and re-INVITE inside an answered call are not handled as on UDP: REFER
+  gets the `401`/`403` of the [Responses](#responses) table, and a re-INVITE
+  rings as a new call.
+- Write frames have no `dropped`: the TCP reply budget (`tcp_reply_limit`)
+  fails the write and ends the connection instead.
 
 **Limits.** A connection ends with `max_frames` at 64 frames. Caller RTP of a TCP
 or TLS call is not recorded; it goes to the `udp` catch-all.

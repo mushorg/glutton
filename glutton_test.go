@@ -140,6 +140,9 @@ func TestReplyUDPDropsOverBudget(t *testing.T) {
 	// Over budget: dropped before any socket is opened, and not reported as
 	// a send error.
 	require.NoError(t, g.ReplyUDP(src, dst, make([]byte, 65)))
+	sent, err := g.ReplyUDPSent(src, dst, make([]byte, 65))
+	require.NoError(t, err)
+	require.False(t, sent, "a dropped reply is reported as not sent")
 }
 
 func TestGuardConnFailsWritesOverBudget(t *testing.T) {
