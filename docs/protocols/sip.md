@@ -18,7 +18,7 @@ connection.
 | `status` | writes | Response code (`100`, `180`, `200`, `401`, …). |
 | `from` / `to` | messages | `From` / `To` headers. |
 | `call_id` | messages, media | `Call-ID`; also on media summary frames. |
-| `user_agent` | messages | Client `User-Agent` on reads, the honeypot `Server` header on writes. |
+| `user_agent` | messages | Client `User-Agent` on reads (every header, joined with `, `, when a client sends more than one), the honeypot `Server` header on writes. |
 | `username` | reads | Digest `Authorization` username. |
 | `realm` / `nonce` / `digest_uri` / `digest_response` / `algorithm` / `qop` / `nc` / `cnonce` | reads | Digest `Authorization` (or `Proxy-Authorization`) fields (see [Digest credentials](#digest-credentials)). |
 | `tool` | reads | Fingerprinted scanner/dialer behind the request (see [Tool fingerprint](#tool-fingerprint)). |
@@ -65,15 +65,22 @@ schemes (Basic, …) are left in `payload` only.
 `tool` names the scanning or war-dialing tool behind a request, matched first on
 the `User-Agent` (SIPVicious — both the classic `friendly-scanner` and the
 rewrite — `sipcli`, `sipsak`, `pplsip`, `zxcvfdf` (the `zxcvfdf11` dial-prefix
-tester), `VaxSIPUserAgent`, `sundayddr` and others) and, failing that, on a header habit (SIPVicious defaults its `From`/`To`
-domain to `1.1.1.1`, a tell that survives a changed `User-Agent`). Fleets that
-forge their `User-Agent` are named by their tell instead:
+tester), `VaxSIPUserAgent`, `sundayddr`, `SipSlaughter`, `Architect-TCP` and
+others, plus `voip` for a `User-Agent` of exactly `VOIP`) in any of the
+request's `User-Agent` headers. Failing that, it matches on a header habit that
+survives a changed `User-Agent`: SIPVicious defaults its `From`/`To` domain to
+`1.1.1.1`, builds its Via branch as `z9hG4bK-<decimal>` (with `rport`) and its
+`From` tag as the hex of `<data>\x01<decimal>` (svhelper `createTag`), and
+SipSlaughter reuses one `mrb-<hex>-<hex>` token in its `Call-ID`
+(`…@pbx`), Via branch and `From` tag. Fleets that forge their `User-Agent` are
+named by their tell instead:
 
 | `tool` | Tell |
 | --- | --- |
 | `sqli-from` | SQL injection (`')or('x'='x`) in the `From`, `Contact` or `P-Preferred-Identity` user. |
 | `zoiper-fleet` | SDP `s=Zoiper` behind a `User-Agent` that does not say Zoiper (a phone model that changes every call). |
 | `sippts` | No `User-Agent`, a numeric `N-N-N` `Call-ID` and a digits-only Via branch (`z9hG4bK<digits>`), sippts' habits with its default `pplsip` agent removed. |
+| `pjsip-python` | No `User-Agent` and pjsip's `z9hG4bKPj` Via branch: a script on the pjsip Python bindings (real pjsip phones and Asterisk send a `User-Agent`). |
 
 `User-Agent` matches win over these. It is a triage hint, not proof: a scanner
 can forge any header.
@@ -85,8 +92,8 @@ This is the default (`answer` variant) behavior. Other variants change it; see
 
 | Request | Reply |
 | --- | --- |
-| OPTIONS, REGISTER (with or without credentials), BYE | `200` |
-| INVITE | `100`, `180`, then after a 2–6 s ringing delay `200` with an SDP answer |
+| OPTIONS, REGISTER (with or without credentials), BYE | `200` (OPTIONS with `Accept-Encoding: identity` and `Accept-Language: en`, as chan_pjsip) |
+| INVITE | `100`, `180`, then after a 2–6 s ringing delay `200` with an SDP answer (see below) |
 | SUBSCRIBE, MESSAGE, NOTIFY, PUBLISH, REFER, UPDATE, INFO | `401` challenge, then `403` after credentials |
 | REFER inside an answered UDP call | `202`, then `NOTIFY` (`message/sipfrag` `SIP/2.0 100 Trying`) and, after a ringing delay, `NOTIFY` `SIP/2.0 200 OK` (see [UDP dialogs](#udp-dialogs)) |
 | re-INVITE inside an answered UDP call | `200` with the same SDP answer |
@@ -97,6 +104,17 @@ This is the default (`answer` variant) behavior. Other variants change it; see
 
 Answering INVITE makes toll-fraud scanners go on to dial, so their numbers show
 up in `path`.
+
+**SDP answer.** The answer has one `m=` line per offered one, in order (RFC 3264
+section 6). The first `RTP/AVP` audio stream offering PCMU (else PCMA) is
+accepted on an even port in 10000–19998, with the offer's `telephone-event`
+if any. Every other stream (video, SRTP `RTP/SAVP`, a second audio stream, an
+audio stream with neither codec) is rejected with port `0`. An offer without
+any `m=` line, as SipSlaughter sends, is answered without one, and an INVITE
+without SDP gets a PCMU offer. The status stays `200` either way, where a real
+Asterisk would send `488`, so toll-fraud tools keep dialing; a call with no
+accepted audio stream records no media. Events from older sensors answer every
+offer with `m=audio … RTP/AVP 0`.
 
 **Rejected first INVITEs.** The first `sip.reject_invites` (default 2) new INVITE
 calls in a source IP's first visit get `100` then `404 Not Found` instead, so the

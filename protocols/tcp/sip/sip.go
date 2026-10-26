@@ -252,6 +252,9 @@ func (r *Responder) reply(req gosip.Request, local net.Addr, v Variant) []gosip.
 			&gosip.GenericHeader{HeaderName: "Allow", Contents: allowList},
 			&gosip.GenericHeader{HeaderName: "Accept", Contents: "application/sdp"},
 			&gosip.GenericHeader{HeaderName: "Supported", Contents: supported},
+			// chan_pjsip's send_options_response adds these to every OPTIONS 200
+			&gosip.GenericHeader{HeaderName: "Accept-Encoding", Contents: "identity"},
+			&gosip.GenericHeader{HeaderName: "Accept-Language", Contents: "en"},
 		)}
 	case gosip.REGISTER:
 		if (v == Auth || RegisterChallenge()) && Credentials(req) == "" {
@@ -475,53 +478,84 @@ func sessionID(token string) int {
 	return int(tokenValue(token) % 1000000)
 }
 
-// offeredFormats returns the audio payload types offered in an SDP body and
-// the payload type of telephone-event, if offered.
-func offeredFormats(offer string) (formats []string, dtmf string) {
+// sdpMedia is one m= section of an SDP offer.
+type sdpMedia struct {
+	kind, proto string
+	formats     []string
+	dtmf        string // telephone-event payload type of the section, if offered
+}
+
+// offeredMedia returns the m= sections of an SDP body in order.
+func offeredMedia(offer string) []sdpMedia {
+	var media []sdpMedia
 	for _, line := range strings.Split(offer, "\n") {
 		line = strings.TrimSpace(line)
-		if fields := strings.Fields(line); strings.HasPrefix(line, "m=audio ") && len(fields) > 3 {
-			formats = fields[3:]
+		if rest, ok := strings.CutPrefix(line, "m="); ok {
+			if fields := strings.Fields(rest); len(fields) >= 3 {
+				media = append(media, sdpMedia{kind: fields[0], proto: fields[2], formats: fields[3:]})
+			}
+			continue
 		}
-		if rest, ok := strings.CutPrefix(line, "a=rtpmap:"); ok {
+		if rest, ok := strings.CutPrefix(line, "a=rtpmap:"); ok && len(media) > 0 {
 			if pt, enc, ok := strings.Cut(rest, " "); ok && strings.HasPrefix(strings.ToLower(enc), "telephone-event/") {
-				dtmf = pt
+				media[len(media)-1].dtmf = pt
 			}
 		}
 	}
-	return formats, dtmf
+	return media
 }
 
-// sdpAnswer accepts PCMU, else PCMA, as Asterisk's default allow list does.
-func sdpAnswer(offer, host string, port, session int) string {
-	formats, dtmf := offeredFormats(offer)
-	codec, name := "0", "PCMU"
+// audioCodec picks PCMU, else PCMA, from offered payload types, as
+// Asterisk's default allow list does; "" when neither is offered.
+func audioCodec(formats []string) (codec, name string) {
 	for _, f := range formats {
 		if f == "0" {
-			codec, name = "0", "PCMU"
-			break
+			return "0", "PCMU"
 		}
 		if f == "8" {
 			codec, name = "8", "PCMA"
 		}
 	}
-	media := codec
-	if dtmf != "" {
-		media += " " + dtmf
-	}
+	return codec, name
+}
+
+// sdpAnswer answers the m= sections of offer in order (RFC 3264 section 6):
+// the first RTP/AVP audio section offering PCMU or PCMA is accepted on port,
+// and every other section is rejected with port 0. An offer without m= lines
+// is answered without any, and an empty offer (INVITE without SDP) gets a
+// PCMU offer.
+func sdpAnswer(offer, host string, port, session int) string {
 	lines := []string{
 		"v=0",
 		fmt.Sprintf("o=- %d %d IN IP4 %s", session, session+2, host),
 		"s=Asterisk",
 		"c=IN IP4 " + host,
 		"t=0 0",
-		fmt.Sprintf("m=audio %d RTP/AVP %s", port, media),
-		fmt.Sprintf("a=rtpmap:%s %s/8000", codec, name),
 	}
-	if dtmf != "" {
-		lines = append(lines, "a=rtpmap:"+dtmf+" telephone-event/8000", "a=fmtp:"+dtmf+" 0-16")
+	media := offeredMedia(offer)
+	if len(media) == 0 && strings.TrimSpace(offer) == "" {
+		media = []sdpMedia{{kind: "audio", proto: "RTP/AVP", formats: []string{"0"}}}
 	}
-	lines = append(lines, "a=ptime:20", "a=maxptime:150", "a=sendrecv")
+	accepted := false
+	for _, m := range media {
+		codec, name := audioCodec(m.formats)
+		if accepted || m.kind != "audio" || m.proto != "RTP/AVP" || codec == "" {
+			lines = append(lines, "m="+strings.Join(append([]string{m.kind, "0", m.proto}, m.formats...), " "))
+			continue
+		}
+		accepted = true
+		formats := codec
+		if m.dtmf != "" {
+			formats += " " + m.dtmf
+		}
+		lines = append(lines,
+			fmt.Sprintf("m=audio %d RTP/AVP %s", port, formats),
+			fmt.Sprintf("a=rtpmap:%s %s/8000", codec, name))
+		if m.dtmf != "" {
+			lines = append(lines, "a=rtpmap:"+m.dtmf+" telephone-event/8000", "a=fmtp:"+m.dtmf+" 0-16")
+		}
+		lines = append(lines, "a=ptime:20", "a=maxptime:150", "a=sendrecv")
+	}
 	return strings.Join(lines, "\r\n") + "\r\n"
 }
 
@@ -625,28 +659,52 @@ var sipTools = []struct{ match, name string }{
 	{"warvox", "warvox"},
 	{"iwar", "iwar"},
 	{"smap", "smap"},
+	{"sipslaughter", "sipslaughter"},
+	{"architect-tcp", "architect-tcp"},
+}
+
+// sipToolsExact maps a whole lowercased User-Agent to a tool family, for
+// names too generic to match as a substring.
+var sipToolsExact = map[string]string{
+	"voip": "voip",
 }
 
 // Tool classifies the SIP tool behind req from its User-Agent and, failing
 // that, a header or body habit, returning "" when nothing matches. The name
 // is the tool family (SIPVicious, sipcli, sipsak, pplsip, VaxSIPUserAgent,
-// ...) or, for a fleet that forges its User-Agent, its tell (sqli-from,
-// zoiper-fleet, sippts). User-Agent matches win. It is a triage hint, not
+// SipSlaughter, ...) or, for a fleet that forges its User-Agent, its tell
+// (sqli-from, zoiper-fleet, sippts, pjsip-python). User-Agent matches, in any
+// of the request's User-Agent headers, win. It is a triage hint, not
 // proof: a scanner can forge any header.
 func Tool(req gosip.Request) string {
-	ua := ""
-	if hs := req.GetHeaders("User-Agent"); len(hs) > 0 {
-		ua = strings.ToLower(hs[0].Value())
-	}
-	for _, t := range sipTools {
-		if strings.Contains(ua, t.match) {
-			return t.name
+	uas := req.GetHeaders("User-Agent")
+	for _, h := range uas {
+		ua := strings.ToLower(strings.TrimSpace(h.Value()))
+		if name, ok := sipToolsExact[ua]; ok {
+			return name
+		}
+		for _, t := range sipTools {
+			if strings.Contains(ua, t.match) {
+				return t.name
+			}
 		}
 	}
+	ua := ""
+	if len(uas) > 0 {
+		ua = strings.ToLower(uas[0].Value())
+	}
 	// SIPVicious defaults the From and To domain to 1.1.1.1 unless its caller
-	// sets one, a tell that survives a changed User-Agent.
-	if fromToHost(req) == "1.1.1.1" {
+	// sets one, and its svhelper builds the Via branch as z9hG4bK-<decimal>
+	// (with rport) and the From tag as the hex of <data>\x01<decimal>; these
+	// tells survive a changed User-Agent.
+	if fromToHost(req) == "1.1.1.1" || sipviciousTag(fromTag(req)) ||
+		(sipviciousBranch.MatchString(viaBranch(req)) && viaHasParam(req, "rport")) {
 		return "sipvicious"
+	}
+	// SipSlaughter reuses one mrb-<hex>-<hex> token in its Call-ID, Via
+	// branch and From tag, whatever User-Agent it sends
+	if sipslaughterCallID.MatchString(callIDValue(req)) {
+		return "sipslaughter"
 	}
 	// a dial fleet puts SQL injection (`')or('x'='x`) in the From, Contact
 	// and P-Preferred-Identity users, aimed at PBX or billing lookups
@@ -665,16 +723,60 @@ func Tool(req gosip.Request) string {
 	}
 	// sippts (whose default User-Agent is pplsip) with the User-Agent left
 	// out: numeric "N-N-N" Call-ID and a digits-only Via branch
-	if len(req.GetHeaders("User-Agent")) == 0 && sipptsCallID.MatchString(callIDValue(req)) && sipptsBranch.MatchString(viaBranch(req)) {
+	if len(uas) == 0 && sipptsCallID.MatchString(callIDValue(req)) && sipptsBranch.MatchString(viaBranch(req)) {
 		return "sippts"
+	}
+	// a script on the pjsip Python bindings: pjsip's z9hG4bKPj branch with
+	// no User-Agent (real pjsip phones and Asterisk send one)
+	if len(uas) == 0 && strings.HasPrefix(viaBranch(req), "z9hG4bKPj") {
+		return "pjsip-python"
 	}
 	return ""
 }
 
 var (
-	sipptsCallID = regexp.MustCompile(`^\d+-\d+-\d+$`)
-	sipptsBranch = regexp.MustCompile(`^z9hG4bK\d+$`)
+	sipptsCallID       = regexp.MustCompile(`^\d+-\d+-\d+$`)
+	sipptsBranch       = regexp.MustCompile(`^z9hG4bK\d+$`)
+	sipviciousBranch   = regexp.MustCompile(`^z9hG4bK-\d+$`)
+	sipslaughterCallID = regexp.MustCompile(`^mrb-[0-9a-f]+-[0-9a-f]+@pbx$`)
 )
+
+// sipviciousTag reports whether tag is SIPVicious' createTag output: the hex
+// of <data>\x01<random decimal>.
+func sipviciousTag(tag string) bool {
+	raw, err := hex.DecodeString(tag)
+	if err != nil {
+		return false
+	}
+	data, rnd, ok := bytes.Cut(raw, []byte{1})
+	if !ok || len(data) == 0 || len(rnd) == 0 {
+		return false
+	}
+	for _, c := range rnd {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// fromTag returns the tag parameter of the From header, or "".
+func fromTag(req gosip.Request) string {
+	from, ok := req.From()
+	if !ok || from.Params == nil {
+		return ""
+	}
+	if tag, ok := from.Params.Get("tag"); ok && tag != nil {
+		return tag.String()
+	}
+	return ""
+}
+
+// viaHasParam reports whether the top Via hop carries the parameter name.
+func viaHasParam(req gosip.Request, name string) bool {
+	hop, ok := req.ViaHop()
+	return ok && hop.Params != nil && hop.Params.Has(name)
+}
 
 // sdpSessionName returns the lowercased s= line of an SDP body, or "".
 func sdpSessionName(body string) string {
@@ -830,7 +932,13 @@ func Describe(msg gosip.Message) Info {
 	}
 	for _, name := range []string{"User-Agent", "Server"} {
 		if hs := msg.GetHeaders(name); len(hs) > 0 {
-			info.UserAgent = hs[0].Value()
+			// a client that sends the header twice (SipSlaughter adds
+			// "Softphone/2.1.0") keeps both, in order
+			values := make([]string, 0, len(hs))
+			for _, h := range hs {
+				values = append(values, h.Value())
+			}
+			info.UserAgent = strings.Join(values, ", ")
 			break
 		}
 	}

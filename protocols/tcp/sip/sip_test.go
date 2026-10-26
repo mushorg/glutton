@@ -113,6 +113,57 @@ func TestSDPAnswerCodecs(t *testing.T) {
 	require.Contains(t, answer, "c=IN IP4 0.0.0.0\r\n")
 }
 
+func TestSDPAnswerOfferMedia(t *testing.T) {
+	head := "v=0\r\no=- 1 3 IN IP4 1.2.3.4\r\ns=Asterisk\r\nc=IN IP4 1.2.3.4\r\nt=0 0\r\n"
+	accepted := func(formats string) string {
+		return "m=audio 10000 RTP/AVP " + formats + "\r\n"
+	}
+	tail := "a=ptime:20\r\na=maxptime:150\r\na=sendrecv\r\n"
+	cases := []struct{ name, offer, want string }{
+		// SipSlaughter offers no media at all; the answer adds none
+		{"no m-line", "v=0\r\no=- Talk Talk IN IP4 51.77.30.38\r\ns=Talk\r\nc=IN IP4 51.77.30.38\r\nt=0 0\r\n", head},
+		{"no common codec", "v=0\r\nm=audio 4000 RTP/AVP 18 101\r\na=rtpmap:101 telephone-event/8000\r\n",
+			head + "m=audio 0 RTP/AVP 18 101\r\n"},
+		{"pcma only", "v=0\r\nm=audio 4000 RTP/AVP 8\r\n",
+			head + accepted("8") + "a=rtpmap:8 PCMA/8000\r\n" + tail},
+		{"srtp audio", "v=0\r\nm=audio 4000 RTP/SAVP 0\r\n", head + "m=audio 0 RTP/SAVP 0\r\n"},
+		{"audio and video", "v=0\r\nm=audio 4000 RTP/AVP 0\r\nm=video 4002 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n",
+			head + accepted("0") + "a=rtpmap:0 PCMU/8000\r\n" + tail + "m=video 0 RTP/AVP 96\r\n"},
+		// the telephone-event of the accepted section, not of a later one
+		{"second audio rejected", "v=0\r\nm=audio 4000 RTP/AVP 0 101\r\na=rtpmap:101 telephone-event/8000\r\nm=audio 4002 RTP/AVP 8 102\r\na=rtpmap:102 telephone-event/8000\r\n",
+			head + accepted("0 101") + "a=rtpmap:0 PCMU/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-16\r\n" + tail + "m=audio 0 RTP/AVP 8 102\r\n"},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.want, sdpAnswer(c.offer, "1.2.3.4", 10000, 1), c.name)
+	}
+}
+
+// read frame 1 of a 2026-10-26 live capture (51.77.30.38): SipSlaughter
+// dialing a routing prefix plus a UK number, with an SDP offer that has no m= line
+var slaughterRead1 = []byte("INVITE sip:800441519470680@1.2.3.4:65005 SIP/2.0\r\nVia: SIP/2.0/UDP 51.77.30.38:65152;branch=z9hG4bK-mrb-daffa701-425b432-i;rport\r\nFrom: <sip:901@1.2.3.4:65005>;tag=mrb-daffa701-425b432-f\r\nTo: <sip:800441519470680@1.2.3.4:65005>\r\nCSeq: 20 INVITE\r\nCall-ID: mrb-daffa701-425b432@pbx\r\nUser-Agent: SipSlaughter/1.0\r\nContact: <sip:901@51.77.30.38:65152;transport=udp>;+sip.instance=\"<urn:uuid:25529b7e-dd16-4c3c-a593-d74d05470cd5>\"\r\nUser-Agent: Softphone/2.1.0\r\nContent-Length: 76\r\n\r\nv=0\r\no=- Talk Talk IN IP4 51.77.30.38\r\ns=Talk\r\nc=IN IP4 51.77.30.38\r\nt=0 0\r\n")
+
+// read frame 1 of a 2026-10-26 live capture (85.184.251.234): Architect-TCP
+// probing a random 7-digit extension
+var architectRead1 = []byte("REGISTER sip:6791140@1.2.3.4 SIP/2.0\r\nUser-Agent: Architect-TCP/1.0\r\nCall-ID: a76d175b-989c-4d0b-b2e7-ac49283a894b\r\nVia: SIP/2.0/UDP 85.184.251.234:61671;branch=z9hG4bK.xXiVms6JYV25xhoq;rport\r\nMax-Forwards: 70\r\nCSeq: 1 REGISTER\r\nFrom: <sip:6791140@1.2.3.4>;tag=ksC40FUkZHVYxXV4\r\nTo: <sip:6791140@1.2.3.4>\r\nExpires: 3600\r\nContent-Length: 0\r\nContact: <sip:6791140@85.184.251.234:61671;transport=udp>\r\n\r\n")
+
+func TestReplyInviteWithoutOfferedMedia(t *testing.T) {
+	resps := testResponder().Reply(parseRequest(t, slaughterRead1), nil, nil, Answer)
+	require.Equal(t, []int{100, 180, 200}, statusCodes(resps))
+	ok := resps[2].String()
+	require.True(t, strings.HasSuffix(ok, "Content-Length: 74\r\n\r\n"+
+		"v=0\r\n"+
+		"o=- 88743 88745 IN IP4 1.2.3.4\r\n"+
+		"s=Asterisk\r\n"+
+		"c=IN IP4 1.2.3.4\r\n"+
+		"t=0 0\r\n"), ok)
+}
+
+func TestDescribeKeepsEveryUserAgent(t *testing.T) {
+	info := Describe(parseRequest(t, slaughterRead1))
+	require.Equal(t, "SipSlaughter/1.0, Softphone/2.1.0", info.UserAgent)
+	require.Equal(t, "sipslaughter", info.Tool)
+}
+
 func TestReplyRegisterAccepted(t *testing.T) {
 	register := func(extra string) gosip.Response {
 		req := parseRequest(t, []byte("REGISTER sip:1.2.3.4:5060 SIP/2.0\r\n"+
@@ -184,6 +235,8 @@ func TestReplyOptions(t *testing.T) {
 	require.Contains(t, out, "To: \"sipvicious\" <sip:100@1.1.1.1>;tag=0123456789abcdef\r\n")
 	require.Contains(t, out, "Allow: OPTIONS, REGISTER")
 	require.Contains(t, out, "Server: Asterisk PBX 18.20.0\r\n")
+	// chan_pjsip's send_options_response adds these after Supported
+	require.Contains(t, out, "Supported: "+supported+"\r\nAccept-Encoding: identity\r\nAccept-Language: en\r\n")
 	require.NotContains(t, strings.ToLower(out), "glutton")
 }
 
@@ -742,6 +795,64 @@ func TestToolFleetTells(t *testing.T) {
 	// a known tool User-Agent wins over the fleet tells
 	pplsip := strings.Replace(fleet, "User-Agent: Yealink SIP-T46S", "User-Agent: pplsip", 1)
 	require.Equal(t, "pplsip", Tool(parseRequest(t, []byte(pplsip))))
+}
+
+func TestToolLiveTells(t *testing.T) {
+	require.Equal(t, "architect-tcp", Tool(parseRequest(t, architectRead1)))
+	require.Equal(t, "sipslaughter", Tool(parseRequest(t, slaughterRead1)))
+
+	// SipSlaughter's Call-ID names it whatever User-Agent it sends
+	forged := strings.ReplaceAll(string(slaughterRead1), "User-Agent: SipSlaughter/1.0\r\n", "")
+	forged = strings.ReplaceAll(forged, "User-Agent: Softphone/2.1.0", "User-Agent: Yealink SIP-T46S")
+	require.Equal(t, "sipslaughter", Tool(parseRequest(t, []byte(forged))))
+	// a tool User-Agent in the second header still counts
+	second := strings.Replace(string(slaughterRead1), "User-Agent: Softphone/2.1.0", "User-Agent: pplsip", 1)
+	second = strings.Replace(second, "User-Agent: SipSlaughter/1.0", "User-Agent: Softphone/2.1.0", 1)
+	require.Equal(t, "pplsip", Tool(parseRequest(t, []byte(second))))
+}
+
+func TestToolExactUserAgent(t *testing.T) {
+	withUA := func(ua string) gosip.Request {
+		return parseRequest(t, []byte(strings.Replace(string(pplsipInvite), "User-Agent: pplsip\r\n", "User-Agent: "+ua+"\r\n", 1)))
+	}
+	require.Equal(t, "voip", Tool(withUA("VOIP")))
+	// "voip" inside a real product name is not the tool
+	require.Equal(t, "", Tool(withUA("Grandstream VoIP Phone 1.0")))
+}
+
+// read frame 1 of the udp package's SIPVicious INVITE fixture (Ochi capture),
+// with its User-Agent and 1.1.1.1 domain changed so only the branch and tag
+// habits remain
+var sipviciousForged = "INVITE sip:100@1.2.3.4 SIP/2.0\r\nVia: SIP/2.0/UDP 172.110.223.188:5069;branch=z9hG4bK-829846850;rport\r\nContent-Length: 0\r\nFrom: \"100\"<sip:100@1.2.3.4>;tag=613361636136646466666334013237343639353932\r\nAccept: application/sdp\r\nUser-Agent: Linksys/SPA942-6.1.5\r\nTo: \"100\"<sip:100@1.2.3.4>\r\nContact: sip:100@172.110.223.188:5069\r\nCSeq: 1 INVITE\r\nCall-ID: 991852993801236740384404\r\nMax-Forwards: 70\r\n\r\n"
+
+func TestToolSIPViciousHabits(t *testing.T) {
+	require.Equal(t, "sipvicious", Tool(parseRequest(t, []byte(sipviciousForged))))
+
+	// the createTag tag alone: hex of "a3aca6ddffc4\x0127469592"
+	tagOnly := strings.Replace(sipviciousForged, "branch=z9hG4bK-829846850;rport", "branch=z9hG4bKabc", 1)
+	require.Equal(t, "sipvicious", Tool(parseRequest(t, []byte(tagOnly))))
+	// the branch alone, which needs rport beside it
+	branchOnly := strings.Replace(sipviciousForged, "tag=613361636136646466666334013237343639353932", "tag=a3aca6ddffc4", 1)
+	require.Equal(t, "sipvicious", Tool(parseRequest(t, []byte(branchOnly))))
+	noRport := strings.Replace(branchOnly, "branch=z9hG4bK-829846850;rport", "branch=z9hG4bK-829846850", 1)
+	require.Equal(t, "", Tool(parseRequest(t, []byte(noRport))))
+	// a hex tag without the \x01 separator is an ordinary tag
+	require.False(t, sipviciousTag("a3aca6ddffc4"))
+	require.False(t, sipviciousTag("6131"+"01"+"7a"), "the random part is decimal")
+}
+
+func TestToolPjsipPython(t *testing.T) {
+	data := "OPTIONS sip:100@1.2.3.4 SIP/2.0\r\n" +
+		"Via: SIP/2.0/UDP 198.51.100.7:5060;rport;branch=z9hG4bKPj3f1c0e2a-1b2c-4d5e-8f90-123456789abc\r\n" +
+		"From: <sip:100@1.2.3.4>;tag=6a2b1c3d-4e5f\r\n" +
+		"To: <sip:100@1.2.3.4>\r\n" +
+		"Call-ID: 0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0\r\n" +
+		"CSeq: 1 OPTIONS\r\n" +
+		"Content-Length: 0\r\n\r\n"
+	require.Equal(t, "pjsip-python", Tool(parseRequest(t, []byte(data))))
+	// a real pjsip phone sends a User-Agent
+	withUA := strings.Replace(data, "Content-Length: 0", "User-Agent: MicroSIP/3.21.3\r\nContent-Length: 0", 1)
+	require.Equal(t, "", Tool(parseRequest(t, []byte(withUA))))
 }
 
 func TestToolSippts(t *testing.T) {

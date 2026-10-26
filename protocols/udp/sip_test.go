@@ -154,6 +154,7 @@ func TestHandleSIPRegisterAccepted(t *testing.T) {
 			To:        "sip:100@1.2.3.4",
 			CallID:    "e5f4a986066756e4f7a",
 			UserAgent: "VOIP",
+			Tool:      "voip",
 			Payload:   voipRegisterRead1,
 		},
 		{
