@@ -1,6 +1,7 @@
 package helpers
 
 import (
+	"container/list"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -35,22 +36,82 @@ func SelfSignedCertificate(subject pkix.Name, dnsNames ...string) (tls.Certifica
 
 // SelfSignedCertificateForHost returns a self-signed certificate whose CN and
 // SAN match host (DNS name or IP). Empty, oversized, or invalid hosts fall
-// back to CN=localhost. Cached once per host string for the process lifetime.
+// back to CN=localhost. The host is attacker chosen (tunnel SNI or CONNECT
+// target), so every host certificate is signed with one shared key (an RSA
+// key costs ~40ms of CPU to generate, a signature ~1ms) and only the
+// hostCertMax most recently used certificates are kept.
 func SelfSignedCertificateForHost(host string) (tls.Certificate, error) {
 	host = strings.TrimSpace(host)
 	if host == "" || len(host) > 253 || strings.ContainsRune(host, 0) {
 		return SelfSignedCertificate(pkix.Name{CommonName: "localhost"}, "localhost")
 	}
-	if ip := net.ParseIP(host); ip != nil {
-		key := "ip:" + ip.String()
-		v, _ := selfSignedCerts.LoadOrStore(key, &certEntry{})
-		e := v.(*certEntry)
-		e.once.Do(func() {
-			e.cert, e.err = generateCertificate(pkix.Name{CommonName: ip.String()}, nil, []net.IP{ip})
-		})
-		return e.cert, e.err
+	ip := net.ParseIP(host)
+	key := "dns:" + host
+	if ip != nil {
+		key = "ip:" + ip.String()
 	}
-	return SelfSignedCertificate(pkix.Name{CommonName: host}, host)
+	e := hostCertEntry(key)
+	e.once.Do(func() {
+		var priv *rsa.PrivateKey
+		if priv, e.err = sharedHostKey(); e.err != nil {
+			return
+		}
+		if ip != nil {
+			e.cert, e.err = signCertificate(priv, pkix.Name{CommonName: ip.String()}, nil, []net.IP{ip})
+		} else {
+			e.cert, e.err = signCertificate(priv, pkix.Name{CommonName: host}, []string{host}, nil)
+		}
+	})
+	return e.cert, e.err
+}
+
+// hostCertMax bounds the per-host certificates kept; a var so tests can
+// shrink it.
+var hostCertMax = 4096
+
+type hostCertItem struct {
+	key string
+	certEntry
+}
+
+var hostCerts = struct {
+	sync.Mutex
+	index map[string]*list.Element
+	order *list.List // front = most recently used
+}{index: map[string]*list.Element{}, order: list.New()}
+
+// hostCertEntry returns the cache entry for key, creating it and dropping the
+// least recently used one when full.
+func hostCertEntry(key string) *hostCertItem {
+	hostCerts.Lock()
+	defer hostCerts.Unlock()
+	if el, ok := hostCerts.index[key]; ok {
+		hostCerts.order.MoveToFront(el)
+		return el.Value.(*hostCertItem)
+	}
+	for hostCerts.order.Len() >= hostCertMax {
+		oldest := hostCerts.order.Back()
+		delete(hostCerts.index, oldest.Value.(*hostCertItem).key)
+		hostCerts.order.Remove(oldest)
+	}
+	e := &hostCertItem{key: key}
+	hostCerts.index[key] = hostCerts.order.PushFront(e)
+	return e
+}
+
+var hostKey struct {
+	once sync.Once
+	key  *rsa.PrivateKey
+	err  error
+}
+
+// sharedHostKey returns the RSA key all host certificates share, generated
+// once per process.
+func sharedHostKey() (*rsa.PrivateKey, error) {
+	hostKey.once.Do(func() {
+		hostKey.key, hostKey.err = rsa.GenerateKey(rand.Reader, 2048)
+	})
+	return hostKey.key, hostKey.err
 }
 
 func generateCertificate(subject pkix.Name, dnsNames []string, ips []net.IP) (tls.Certificate, error) {
@@ -58,6 +119,11 @@ func generateCertificate(subject pkix.Name, dnsNames []string, ips []net.IP) (tl
 	if err != nil {
 		return tls.Certificate{}, err
 	}
+	return signCertificate(key, subject, dnsNames, ips)
+}
+
+// signCertificate creates a self-signed server certificate for key.
+func signCertificate(key *rsa.PrivateKey, subject pkix.Name, dnsNames []string, ips []net.IP) (tls.Certificate, error) {
 	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
 	if err != nil {
 		return tls.Certificate{}, err

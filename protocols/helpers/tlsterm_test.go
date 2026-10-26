@@ -33,6 +33,34 @@ func TestSelfSignedCertificateForHost(t *testing.T) {
 	require.Equal(t, "localhost", fbLeaf.Subject.CommonName)
 }
 
+func TestSelfSignedCertificateForHostSharedKeyBounded(t *testing.T) {
+	// tunnel SNI and CONNECT targets are attacker chosen: a flood rotating
+	// hosts must not generate an RSA key per host or grow the cache forever
+	prev := hostCertMax
+	hostCertMax = 2
+	t.Cleanup(func() { hostCertMax = prev })
+
+	a, err := SelfSignedCertificateForHost("gunceladreslergiris3.com")
+	require.NoError(t, err)
+	b, err := SelfSignedCertificateForHost("172.67.195.214")
+	require.NoError(t, err)
+	require.Equal(t, a.PrivateKey, b.PrivateKey, "host certificates share one key")
+	require.NotEqual(t, a.Certificate[0], b.Certificate[0])
+
+	again, err := SelfSignedCertificateForHost("gunceladreslergiris3.com")
+	require.NoError(t, err)
+	require.Equal(t, a.Certificate[0], again.Certificate[0], "cached per host")
+
+	_, err = SelfSignedCertificateForHost("musyokimusyoka.com")
+	require.NoError(t, err)
+	hostCerts.Lock()
+	n := hostCerts.order.Len()
+	_, evicted := hostCerts.index["ip:172.67.195.214"]
+	hostCerts.Unlock()
+	require.LessOrEqual(t, n, 2)
+	require.False(t, evicted, "least recently used host is dropped first")
+}
+
 func TestTerminateTLS(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
