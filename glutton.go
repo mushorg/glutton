@@ -45,6 +45,7 @@ type Glutton struct {
 	publicAddrs         []net.IP
 	udpGuard            *guard.Guard
 	tcpGuard            *guard.Guard
+	produceGuard        *guard.Guard
 	ignorePorts         ignoredPorts
 }
 
@@ -147,6 +148,10 @@ func (g *Glutton) Init() error {
 	// amplifier, and TCP peers cannot pull unbounded bytes from it
 	g.udpGuard = guard.New(guardConfig("udp_reply_limit", guard.DefaultConfig()))
 	g.tcpGuard = guard.New(guardConfig("tcp_reply_limit", guard.DefaultTCPConfig()))
+	// Event budget so a flooding source cannot overwhelm the producers
+	g.produceGuard = guard.New(eventLimitConfig("produce_limit"))
+	// and cannot flood the log with a line per connection
+	producer.SetLogLimit(guard.New(eventLimitConfig("log_limit")))
 
 	// Initiating protocol handlers
 	g.tcpProtocolHandlers = protocols.MapTCPProtocolHandlers(g.Logger, g)
@@ -227,7 +232,88 @@ func guardConfig(key string, def guard.Config) guard.Config {
 	if n := viper.GetInt(key + ".max_sources"); n > 0 {
 		cfg.MaxSources = n
 	}
+	if viper.IsSet(key + ".source_prefix_v4") {
+		cfg.SourcePrefixV4 = viper.GetInt(key + ".source_prefix_v4")
+	}
+	if viper.IsSet(key + ".source_prefix_v6") {
+		cfg.SourcePrefixV6 = viper.GetInt(key + ".source_prefix_v6")
+	}
 	return cfg
+}
+
+// Produce and log limit defaults: events (or Info lines) per second per
+// source prefix and in total. Sources are grouped by /24 (IPv4) and /48
+// (IPv6) because floods are spread across a subnet.
+const (
+	defaultProduceSourceRate  = 1
+	defaultProduceSourceBurst = 30
+	defaultProduceGlobalRate  = 200
+	defaultProduceGlobalBurst = 1000
+	defaultProducePrefixV4    = 24
+	defaultProducePrefixV6    = 48
+)
+
+// eventLimitConfig reads produce_limit or log_limit into a guard that
+// charges one request per event or log line (no bytes); it is enabled unless
+// set to false, and global_rate 0 disables the global budget.
+func eventLimitConfig(key string) guard.Config {
+	cfg := guard.Config{
+		Enabled:            true,
+		SourceRequestRate:  defaultProduceSourceRate,
+		SourceRequestBurst: defaultProduceSourceBurst,
+		GlobalRequestRate:  defaultProduceGlobalRate,
+		GlobalRequestBurst: defaultProduceGlobalBurst,
+		MaxSources:         guard.DefaultMaxSources,
+		SourcePrefixV4:     defaultProducePrefixV4,
+		SourcePrefixV6:     defaultProducePrefixV6,
+	}
+	if viper.IsSet(key + ".enabled") {
+		cfg.Enabled = viper.GetBool(key + ".enabled")
+	}
+	if n := viper.GetInt(key + ".source_rate"); n > 0 {
+		cfg.SourceRequestRate = n
+	}
+	if n := viper.GetInt(key + ".source_burst"); n > 0 {
+		cfg.SourceRequestBurst = n
+	}
+	if viper.IsSet(key + ".global_rate") {
+		cfg.GlobalRequestRate = max(0, viper.GetInt(key+".global_rate"))
+	}
+	if n := viper.GetInt(key + ".global_burst"); n > 0 {
+		cfg.GlobalRequestBurst = n
+	}
+	if n := viper.GetInt(key + ".max_sources"); n > 0 {
+		cfg.MaxSources = n
+	}
+	if viper.IsSet(key + ".source_prefix_v4") {
+		cfg.SourcePrefixV4 = viper.GetInt(key + ".source_prefix_v4")
+	}
+	if viper.IsSet(key + ".source_prefix_v6") {
+		cfg.SourcePrefixV6 = viper.GetInt(key + ".source_prefix_v6")
+	}
+	return cfg
+}
+
+// allowProduce charges one event from ip against produce_limit. A dropped
+// event is not an error; a limited source prefix warns once per
+// guard.WarnInterval.
+func (g *Glutton) allowProduce(handler string, ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	d := g.produceGuard.Allow(ip, 0)
+	if d.Allowed {
+		return true
+	}
+	if d.First && g.Logger != nil {
+		g.Logger.Warn("Dropping events over the produce budget",
+			slog.String("limit", string(d.Limit)),
+			slog.String("handler", handler),
+			slog.String("src_ip", ip.String()),
+			slog.String("reporter", "glutton"),
+		)
+	}
+	return false
 }
 
 func (g *Glutton) udpListen(wg *sync.WaitGroup) {
@@ -496,6 +582,13 @@ func (g *Glutton) ProduceTCP(handler string, conn net.Conn, md connection.Metada
 		return nil
 	}
 	if g.Producer != nil {
+		var ip net.IP
+		if a, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+			ip = a.IP
+		}
+		if !g.allowProduce(handler, ip) {
+			return nil
+		}
 		payload = g.sanitizePayload(payload)
 		decoded = producer.SanitizeDecoded(decoded, g.sanitizePayload)
 		if md.TLS != nil {
@@ -514,6 +607,9 @@ func (g *Glutton) ProduceUDP(handler string, srcAddr, dstAddr *net.UDPAddr, md c
 		return nil
 	}
 	if g.Producer != nil {
+		if srcAddr != nil && !g.allowProduce(handler, srcAddr.IP) {
+			return nil
+		}
 		payload = g.sanitizePayload(payload)
 		decoded = producer.SanitizeDecoded(decoded, g.sanitizePayload)
 		return g.Producer.LogUDP(handler, srcAddr, dstAddr, md, payload, decoded)
@@ -560,7 +656,7 @@ func (g *Glutton) ReplyUDPSent(srcAddr, dstAddr *net.UDPAddr, payload []byte) (b
 
 // GuardConn charges writes on conn against the tcp_reply_limit budget for its
 // remote IP. A write over budget fails with guard.ErrLimited, which ends the
-// handler's session; one warning is logged per limited episode.
+// handler's session; a limited peer warns once per guard.WarnInterval.
 func (g *Glutton) GuardConn(conn net.Conn) net.Conn {
 	return g.tcpGuard.Wrap(conn, g.logTCPLimit)
 }

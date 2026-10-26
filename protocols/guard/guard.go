@@ -73,6 +73,11 @@ type Config struct {
 	GlobalRequestBurst int
 	// MaxSources caps the destinations tracked.
 	MaxSources int
+	// SourcePrefixV4 and SourcePrefixV6 group destinations into one source
+	// budget per prefix (e.g. 24 and 48), so a flood spread across a subnet
+	// shares one budget. 0 or the full length keeps one budget per address.
+	SourcePrefixV4 int
+	SourcePrefixV6 int
 }
 
 // DefaultTCPConfig returns the enabled guard defaults for TCP.
@@ -88,6 +93,8 @@ func DefaultTCPConfig() Config {
 		GlobalRequestRate:  DefaultTCPGlobalRequestRate,
 		GlobalRequestBurst: DefaultTCPGlobalRequestBurst,
 		MaxSources:         DefaultMaxSources,
+		SourcePrefixV4:     32,
+		SourcePrefixV6:     128,
 	}
 }
 
@@ -104,6 +111,8 @@ func DefaultConfig() Config {
 		GlobalRequestRate:  DefaultGlobalRequestRate,
 		GlobalRequestBurst: DefaultGlobalRequestBurst,
 		MaxSources:         DefaultMaxSources,
+		SourcePrefixV4:     32,
+		SourcePrefixV6:     128,
 	}
 }
 
@@ -123,16 +132,19 @@ type Decision struct {
 	Allowed bool
 	// Limit is the bucket that refused the reply.
 	Limit Limit
-	// First is true on the first refusal after the bucket last allowed a
-	// reply, so callers can log once per limited episode instead of once per
-	// dropped packet.
+	// First is true on the first refusal by a bucket in WarnInterval, so
+	// callers can log once per limited stretch instead of once per dropped
+	// reply, even while refills let a reply through now and then.
 	First bool
 }
 
+// WarnInterval is how often a bucket that keeps refusing flags First again.
+const WarnInterval = time.Minute
+
 type bucket struct {
-	tokens  float64
-	last    time.Time
-	limited bool
+	tokens float64
+	last   time.Time
+	warned time.Time // last refusal flagged First
 }
 
 func (b *bucket) refill(now time.Time, rate, burst float64) {
@@ -144,11 +156,13 @@ func (b *bucket) refill(now time.Time, rate, burst float64) {
 	b.last = now
 }
 
-// refuse marks the bucket limited and reports whether that is new.
-func (b *bucket) refuse() bool {
-	first := !b.limited
-	b.limited = true
-	return first
+// refuse reports whether this refusal should be flagged First.
+func (b *bucket) refuse(now time.Time) bool {
+	if !b.warned.IsZero() && now.Sub(b.warned) < WarnInterval {
+		return false
+	}
+	b.warned = now
+	return true
 }
 
 type entry struct {
@@ -217,7 +231,7 @@ func (g *Guard) Allow(dst net.IP, size int) Decision {
 	if !ok {
 		return Decision{Limit: LimitSource}
 	}
-	addr = addr.Unmap()
+	addr = g.sourceKey(addr.Unmap())
 	n := float64(size)
 
 	g.mu.Lock()
@@ -227,40 +241,52 @@ func (g *Guard) Allow(dst net.IP, size int) Decision {
 	src := g.source(addr)
 	src.requests.refill(now, float64(g.cfg.SourceRequestRate), float64(g.cfg.SourceRequestBurst))
 	if src.requests.tokens < 1 {
-		return Decision{Limit: LimitSourceRequests, First: src.requests.refuse()}
+		return Decision{Limit: LimitSourceRequests, First: src.requests.refuse(now)}
 	}
 	if g.cfg.GlobalRequestRate > 0 {
 		g.globalRequests.refill(now, float64(g.cfg.GlobalRequestRate), float64(g.cfg.GlobalRequestBurst))
 		if g.globalRequests.tokens < 1 {
-			return Decision{Limit: LimitGlobalRequests, First: g.globalRequests.refuse()}
+			return Decision{Limit: LimitGlobalRequests, First: g.globalRequests.refuse(now)}
 		}
 	}
 
 	src.bytes.refill(now, float64(g.cfg.SourceRate), float64(g.cfg.SourceBurst))
 	if src.bytes.tokens < n {
-		return Decision{Limit: LimitSource, First: src.bytes.refuse()}
+		return Decision{Limit: LimitSource, First: src.bytes.refuse(now)}
 	}
 	if g.cfg.GlobalRate > 0 {
 		g.global.refill(now, float64(g.cfg.GlobalRate), float64(g.cfg.GlobalBurst))
 		if g.global.tokens < n {
-			return Decision{Limit: LimitGlobal, First: g.global.refuse()}
+			return Decision{Limit: LimitGlobal, First: g.global.refuse(now)}
 		}
 	}
 
 	// Charge only after every bucket accepts, so a refusal consumes nothing.
 	if g.cfg.GlobalRequestRate > 0 {
 		g.globalRequests.tokens--
-		g.globalRequests.limited = false
 	}
 	src.requests.tokens--
-	src.requests.limited = false
 	if g.cfg.GlobalRate > 0 {
 		g.global.tokens -= n
-		g.global.limited = false
 	}
 	src.bytes.tokens -= n
-	src.bytes.limited = false
 	return Decision{Allowed: true}
+}
+
+// sourceKey masks addr to the configured source prefix.
+func (g *Guard) sourceKey(addr netip.Addr) netip.Addr {
+	bits := g.cfg.SourcePrefixV6
+	if addr.Is4() {
+		bits = g.cfg.SourcePrefixV4
+	}
+	if bits <= 0 || bits >= addr.BitLen() {
+		return addr
+	}
+	p, err := addr.Prefix(bits)
+	if err != nil {
+		return addr
+	}
+	return p.Addr()
 }
 
 // source returns the entry for addr, creating it and evicting the least

@@ -54,6 +54,8 @@ udp_reply_limit:   # bounds UDP replies per destination IP so spoofed requests c
   global_request_rate: 2048   # replies per second to all destinations together; 0 disables.
   global_request_burst: 4096  # most replies to all destinations at once.
   max_sources: 65536      # destinations tracked; the least recently answered is dropped first.
+  source_prefix_v4: 32   # IPv4 addresses sharing one source budget; 24 groups a /24.
+  source_prefix_v6: 128  # IPv6 prefix sharing one source budget; 48 groups a /48.
 
 tcp_reply_limit:   # bounds bytes and write counts to each TCP peer IP (all handlers, TLS, proxy_tcp, and handler-dialed relays).
   enabled: true
@@ -66,6 +68,28 @@ tcp_reply_limit:   # bounds bytes and write counts to each TCP peer IP (all hand
   global_request_rate: 16384    # writes per second to all peers together; 0 disables.
   global_request_burst: 32768   # most writes to all peers at once.
   max_sources: 65536      # peers tracked; the least recently answered is dropped first.
+  source_prefix_v4: 32   # IPv4 addresses sharing one source budget; 24 groups a /24.
+  source_prefix_v6: 128  # IPv6 prefix sharing one source budget; 48 groups a /48.
+
+produce_limit:   # bounds events sent to producers (Ochi HTTP, HPFeeds) so one flooding source cannot overwhelm them; events over budget are dropped.
+  enabled: true
+  source_rate: 1      # events per second one source prefix may produce.
+  source_burst: 30    # most events one source prefix may produce at once.
+  global_rate: 200    # events per second from all sources together; 0 disables.
+  global_burst: 1000  # most events from all sources at once.
+  max_sources: 65536  # sources tracked; the least recently seen is dropped first.
+  source_prefix_v4: 24  # IPv4 sources in one /24 share a budget (floods are spread across a subnet); 32 is per address.
+  source_prefix_v6: 48  # IPv6 sources in one /48 share a budget; 128 is per address.
+
+log_limit:   # bounds Info log lines that carry a src_ip (SOCKS request, HTTP request handled, ...) so a flood does not log a line per connection; Warn/Error always pass.
+  enabled: true
+  source_rate: 1      # Info lines per second one source prefix may log.
+  source_burst: 30    # most Info lines one source prefix may log at once.
+  global_rate: 200    # Info lines per second from all sources together; 0 disables.
+  global_burst: 1000  # most Info lines from all sources at once.
+  max_sources: 65536  # sources tracked; the least recently seen is dropped first.
+  source_prefix_v4: 24  # IPv4 sources in one /24 share a budget; 32 is per address.
+  source_prefix_v6: 48  # IPv6 sources in one /48 share a budget; 128 is per address.
 
 openvpn:
   reply: false        # answer well-formed UDP hard resets with P_CONTROL_HARD_RESET_SERVER_V2 (default parse-only).

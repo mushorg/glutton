@@ -47,13 +47,13 @@ func TestAllowSourceBurstAndRefill(t *testing.T) {
 
 	c.advance(time.Second)
 	require.True(t, g.Allow(victim, 100).Allowed, "refilled at SourceRate")
-	require.Equal(t, Decision{Limit: LimitSource, First: true}, g.Allow(victim, 100), "new limited episode")
+	require.Equal(t, Decision{Limit: LimitSource}, g.Allow(victim, 100), "refill does not re-flag within WarnInterval")
 
 	c.advance(time.Hour)
 	for range 10 {
 		require.True(t, g.Allow(victim, 100).Allowed, "refill is capped at SourceBurst")
 	}
-	require.False(t, g.Allow(victim, 100).Allowed)
+	require.Equal(t, Decision{Limit: LimitSource, First: true}, g.Allow(victim, 100), "flagged again after WarnInterval")
 }
 
 func TestAllowRefusesReplyLargerThanBurst(t *testing.T) {
@@ -91,7 +91,7 @@ func TestAllowSourceRequestBurstAndRefill(t *testing.T) {
 	c.advance(time.Second)
 	require.True(t, g.Allow(victim, 1).Allowed)
 	require.True(t, g.Allow(victim, 1).Allowed, "refilled at SourceRequestRate")
-	require.Equal(t, Decision{Limit: LimitSourceRequests, First: true}, g.Allow(victim, 1), "new limited episode")
+	require.Equal(t, Decision{Limit: LimitSourceRequests}, g.Allow(victim, 1), "refill does not re-flag within WarnInterval")
 
 	c.advance(time.Hour)
 	for range 3 {
@@ -164,6 +164,7 @@ func TestNewAppliesDefaults(t *testing.T) {
 	want := DefaultConfig()
 	want.GlobalRate = 0
 	want.GlobalRequestRate = 0
+	want.SourcePrefixV4, want.SourcePrefixV6 = 0, 0 // 0 is per address, like the full length
 	require.Equal(t, want, g.cfg, "GlobalRate/GlobalRequestRate 0 keep those global buckets disabled")
 }
 
@@ -212,4 +213,44 @@ func TestWrapPassThrough(t *testing.T) {
 	require.Same(t, net.Conn(a), New(Config{Enabled: false}).Wrap(a, nil))
 	unix := &addrConn{remote: &net.UnixAddr{Name: "x", Net: "unix"}}
 	require.Same(t, net.Conn(unix), New(DefaultTCPConfig()).Wrap(unix, nil), "no IP to charge")
+}
+
+func TestAllowFirstThrottledUnderSteadyFlood(t *testing.T) {
+	// a source just over its request rate gets a refilled token now and
+	// then; that must not log a warning per allowed reply
+	g, c := newGuard(Config{
+		Enabled: true, SourceRate: 1 << 20, SourceBurst: 1 << 20, GlobalRate: 0,
+		SourceRequestRate: 10, SourceRequestBurst: 1, GlobalRequestRate: 0,
+	})
+	flagged := 0
+	for range 1000 { // 50 seconds at 20 requests per second
+		if d := g.Allow(victim, 1); d.First {
+			flagged++
+		}
+		c.advance(50 * time.Millisecond)
+	}
+	require.Equal(t, 1, flagged)
+	c.advance(WarnInterval)
+	g.Allow(victim, 1)
+	require.True(t, g.Allow(victim, 1).First, "flagged again after WarnInterval")
+}
+
+func TestAllowSourcePrefixSharesBudget(t *testing.T) {
+	// SOCKS flood spread over 149.86.227.0/24 (.29, .30, .97, .140, ...)
+	g, _ := newGuard(Config{
+		Enabled: true, SourceRate: 1 << 20, SourceBurst: 1 << 20, GlobalRate: 0,
+		SourceRequestRate: 1, SourceRequestBurst: 3, GlobalRequestRate: 0,
+		SourcePrefixV4: 24, SourcePrefixV6: 48,
+	})
+	require.True(t, g.Allow(net.ParseIP("149.86.227.29"), 1).Allowed)
+	require.True(t, g.Allow(net.ParseIP("149.86.227.30"), 1).Allowed)
+	require.True(t, g.Allow(net.ParseIP("::ffff:149.86.227.97"), 1).Allowed)
+	require.False(t, g.Allow(net.ParseIP("149.86.227.140"), 1).Allowed, "the /24 shares one budget")
+	require.True(t, g.Allow(net.ParseIP("149.86.228.1"), 1).Allowed, "another /24 has its own")
+	require.Equal(t, 2, g.Len())
+
+	for range 3 {
+		require.True(t, g.Allow(net.ParseIP("2001:db8:1:2::1"), 1).Allowed)
+	}
+	require.False(t, g.Allow(net.ParseIP("2001:db8:1:ffff::9"), 1).Allowed, "the /48 shares one budget")
 }

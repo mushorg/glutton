@@ -98,7 +98,7 @@ func TestGuardConfig(t *testing.T) {
 				tc.key + ".global_rate", tc.key + ".global_burst",
 				tc.key + ".source_request_rate", tc.key + ".source_request_burst",
 				tc.key + ".global_request_rate", tc.key + ".global_request_burst",
-				tc.key + ".max_sources"}
+				tc.key + ".max_sources", tc.key + ".source_prefix_v4", tc.key + ".source_prefix_v6"}
 			orig := map[string]any{}
 			for _, k := range keys {
 				orig[k] = viper.Get(k)
@@ -124,10 +124,12 @@ func TestGuardConfig(t *testing.T) {
 			viper.Set(tc.key+".global_request_rate", 0)
 			viper.Set(tc.key+".global_request_burst", 16)
 			viper.Set(tc.key+".max_sources", 50)
+			viper.Set(tc.key+".source_prefix_v4", 24)
+			viper.Set(tc.key+".source_prefix_v6", 48)
 			require.Equal(t, guard.Config{
 				Enabled: false, SourceRate: 10, SourceBurst: 20, GlobalRate: 0, GlobalBurst: 40,
 				SourceRequestRate: 5, SourceRequestBurst: 8, GlobalRequestRate: 0, GlobalRequestBurst: 16,
-				MaxSources: 50,
+				MaxSources: 50, SourcePrefixV4: 24, SourcePrefixV6: 48,
 			}, guardConfig(tc.key, tc.def))
 		})
 	}
@@ -205,4 +207,50 @@ func TestRecoverPanicWritesLog(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(dir, "panic.log"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "handler=boom panic: kaboom")
+}
+
+func TestProduceLimitConfig(t *testing.T) {
+	keys := []string{"produce_limit.enabled", "produce_limit.source_rate", "produce_limit.source_burst", "produce_limit.global_rate", "produce_limit.global_burst", "produce_limit.max_sources", "produce_limit.source_prefix_v4", "produce_limit.source_prefix_v6"}
+	orig := map[string]any{}
+	for _, k := range keys {
+		orig[k] = viper.Get(k)
+		viper.Set(k, nil)
+	}
+	t.Cleanup(func() {
+		for k, v := range orig {
+			viper.Set(k, v)
+		}
+	})
+	cfg := eventLimitConfig("produce_limit")
+	require.True(t, cfg.Enabled, "enabled when unset")
+	require.Equal(t, defaultProduceSourceRate, cfg.SourceRequestRate)
+	require.Equal(t, defaultProduceGlobalRate, cfg.GlobalRequestRate)
+	require.Zero(t, cfg.GlobalRate, "events charge no bytes")
+	require.Equal(t, 24, cfg.SourcePrefixV4, "a flood spread over a /24 is one source")
+	require.Equal(t, 48, cfg.SourcePrefixV6)
+
+	viper.Set("produce_limit.source_burst", 5)
+	viper.Set("produce_limit.global_rate", 0)
+	cfg = eventLimitConfig("produce_limit")
+	require.Equal(t, 5, cfg.SourceRequestBurst)
+	require.Zero(t, cfg.GlobalRequestRate, "0 disables the global budget")
+}
+
+func TestAllowProduceDropsFloodingSource(t *testing.T) {
+	// a SOCKS flood from one source produced one Ochi POST per connection
+	g := &Glutton{produceGuard: guard.New(guard.Config{
+		Enabled:            true,
+		SourceRequestRate:  1,
+		SourceRequestBurst: 3,
+	})}
+	flooder := net.ParseIP("198.51.100.7")
+	allowed := 0
+	for range 100 {
+		if g.allowProduce("socks", flooder) {
+			allowed++
+		}
+	}
+	require.Equal(t, 3, allowed, "only the burst gets through")
+	require.True(t, g.allowProduce("socks", net.ParseIP("198.51.100.8")), "other sources keep their budget")
+	require.True(t, g.allowProduce("socks", nil), "conns without an IP are not limited")
 }

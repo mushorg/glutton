@@ -1,8 +1,11 @@
 package scanner
 
 import (
+	"context"
 	"net"
 	"strings"
+	"sync"
+	"time"
 )
 
 var (
@@ -51,10 +54,7 @@ func Classify(ip net.IP) (scannerName, srcPtr string, err error) {
 			}
 		}
 	}
-	names, err := net.LookupAddr(ip.String())
-	if err != nil {
-		return "", "", nil
-	}
+	names := lookupPTR(ip.String())
 	if len(names) > 0 {
 		srcPtr = strings.TrimSuffix(names[0], ".")
 	}
@@ -85,6 +85,70 @@ func Classify(ip net.IP) (scannerName, srcPtr string, err error) {
 		}
 	}
 	return "", srcPtr, nil
+}
+
+const (
+	// ptrTimeout bounds one PTR lookup, which runs while the handler still
+	// holds the attacker's connection.
+	ptrTimeout = 2 * time.Second
+	// ptrTTL keeps answers so a flood from one source costs one lookup;
+	// ptrFailTTL is shorter so a resolver outage is retried soon.
+	ptrTTL     = 10 * time.Minute
+	ptrFailTTL = time.Minute
+	ptrMax     = 65536
+)
+
+// lookupAddr is the PTR resolver; a var so tests do not touch DNS.
+var lookupAddr = net.DefaultResolver.LookupAddr
+
+type ptrEntry struct {
+	names   []string
+	expires time.Time     // zero while the lookup runs
+	done    chan struct{} // closed when names and expires are set
+}
+
+var ptrCache = struct {
+	sync.Mutex
+	entries map[string]*ptrEntry
+}{entries: map[string]*ptrEntry{}}
+
+// lookupPTR returns the PTR names for ip, cached. Concurrent calls for the
+// same ip share one lookup; failures cache as no names.
+func lookupPTR(ip string) []string {
+	now := time.Now()
+	ptrCache.Lock()
+	if e, ok := ptrCache.entries[ip]; ok && (e.expires.IsZero() || now.Before(e.expires)) {
+		ptrCache.Unlock()
+		<-e.done
+		return e.names
+	}
+	if len(ptrCache.entries) >= ptrMax {
+		for k, e := range ptrCache.entries {
+			if !e.expires.IsZero() && now.After(e.expires) {
+				delete(ptrCache.entries, k)
+			}
+		}
+		if len(ptrCache.entries) >= ptrMax {
+			ptrCache.entries = map[string]*ptrEntry{}
+		}
+	}
+	e := &ptrEntry{done: make(chan struct{})}
+	ptrCache.entries[ip] = e
+	ptrCache.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), ptrTimeout)
+	names, err := lookupAddr(ctx, ip)
+	cancel()
+	ttl := ptrTTL
+	if err != nil {
+		names, ttl = nil, ptrFailTTL
+	}
+	ptrCache.Lock()
+	e.names = names
+	e.expires = time.Now().Add(ttl)
+	ptrCache.Unlock()
+	close(e.done)
+	return names
 }
 
 func IsScanner(ip net.IP) (bool, string, error) {

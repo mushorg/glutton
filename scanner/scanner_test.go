@@ -1,7 +1,11 @@
 package scanner
 
 import (
+	"context"
+	"errors"
 	"net"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -55,4 +59,63 @@ func TestClassifyTLS(t *testing.T) {
 	require.Empty(t, ClassifyTLS("http", ja4))
 	require.Empty(t, ClassifyTLS("socks", "t13d1516h2_8daaf6152771_02713d6af862"))
 	require.Empty(t, ClassifyTLS("socks", ""))
+}
+
+// fakePTR swaps the resolver and empties the PTR cache for one test.
+func fakePTR(t *testing.T, fn func(ip string) ([]string, error)) *atomic.Int32 {
+	t.Helper()
+	var calls atomic.Int32
+	prev := lookupAddr
+	lookupAddr = func(_ context.Context, ip string) ([]string, error) {
+		calls.Add(1)
+		return fn(ip)
+	}
+	reset := func() {
+		ptrCache.Lock()
+		ptrCache.entries = map[string]*ptrEntry{}
+		ptrCache.Unlock()
+	}
+	reset()
+	t.Cleanup(func() {
+		lookupAddr = prev
+		reset()
+	})
+	return &calls
+}
+
+func TestClassifyPTRCachedAcrossFlood(t *testing.T) {
+	// a SOCKS flood from one source must cost one PTR lookup, not one per
+	// event (each lookup went through systemd-resolved until it failed)
+	release := make(chan struct{})
+	calls := fakePTR(t, func(string) ([]string, error) {
+		<-release
+		return []string{"scan-1.shodan.io."}, nil
+	})
+	var wg sync.WaitGroup
+	for range 50 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			name, ptr, err := Classify(net.ParseIP("198.51.100.7"))
+			require.NoError(t, err)
+			require.Equal(t, "shodan", name)
+			require.Equal(t, "scan-1.shodan.io", ptr)
+		}()
+	}
+	close(release)
+	wg.Wait()
+	require.EqualValues(t, 1, calls.Load())
+}
+
+func TestClassifyPTRFailureCached(t *testing.T) {
+	calls := fakePTR(t, func(string) ([]string, error) {
+		return nil, errors.New("server misbehaving")
+	})
+	for range 3 {
+		name, ptr, err := Classify(net.ParseIP("198.51.100.8"))
+		require.NoError(t, err)
+		require.Empty(t, name)
+		require.Empty(t, ptr)
+	}
+	require.EqualValues(t, 1, calls.Load())
 }

@@ -21,6 +21,10 @@ import (
 const (
 	httpTimeout = 10 * time.Second
 	tlsTimeout  = 5 * time.Second
+	// httpIdleConns keeps enough keep-alive connections to the collector
+	// that concurrent events do not each resolve and dial it (the
+	// net/http default is 2 per host).
+	httpIdleConns = 64
 	// hpfBacklog is how many encoded events may wait for the hpfeeds publisher.
 	hpfBacklog = 256
 )
@@ -89,6 +93,9 @@ func New(sensorID, sensorVersion string) (*Producer, error) {
 		httpClient: &http.Client{
 			Transport: &http.Transport{
 				TLSHandshakeTimeout: tlsTimeout,
+				MaxIdleConns:        httpIdleConns,
+				MaxIdleConnsPerHost: httpIdleConns,
+				IdleConnTimeout:     90 * time.Second,
 			},
 			Timeout: httpTimeout,
 		},
