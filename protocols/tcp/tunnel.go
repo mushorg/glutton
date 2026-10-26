@@ -74,10 +74,20 @@ func tunnelCertName(sni, path string) string {
 	return host
 }
 
-// tunnelRead stores data and builds its read frame.
+// storeTunnelPayloads reports whether tunnel reads are written to payloads/
+// (storage.tunnel_payloads, on unless set to false).
+func storeTunnelPayloads() bool {
+	return !viper.IsSet("storage.tunnel_payloads") || viper.GetBool("storage.tunnel_payloads")
+}
+
+// tunnelRead builds a read frame and stores the bytes of tunnel reads. A
+// ClientHello is never stored: its random makes every copy unique, and the
+// frame already carries the bytes and the parsed hello.
 func tunnelRead(path, command, protocol string, data []byte, truncated bool, hello *helpers.ClientHello, logger interfaces.Logger) tunnelFrame {
-	if _, err := helpers.Store(data, "payloads"); err != nil {
-		logger.Error("Failed to store tunneled payload", slog.String("protocol", protocol), producer.ErrAttr(err))
+	if command == "tunnel" && storeTunnelPayloads() {
+		if _, err := helpers.Store(data, "payloads"); err != nil {
+			logger.Error("Failed to store tunneled payload", slog.String("protocol", protocol), producer.ErrAttr(err))
+		}
 	}
 	frame := tunnelFrame{
 		Direction:   "read",

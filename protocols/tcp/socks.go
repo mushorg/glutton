@@ -13,6 +13,7 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
+	"github.com/mushorg/glutton/protocols/guard"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/socks"
@@ -161,7 +162,12 @@ func HandleSOCKS(ctx context.Context, conn net.Conn, md connection.Metadata, log
 		return true
 	}
 	writeFailed := func(err error) error {
-		logger.Error("Failed to write to connection", slog.String("protocol", "socks"), producer.ErrAttr(err))
+		// over budget is expected under a flood; glutton warns once per episode
+		log := logger.Error
+		if errors.Is(err, guard.ErrLimited) {
+			log = logger.Debug
+		}
+		log("Failed to write to connection", slog.String("protocol", "socks"), producer.ErrAttr(err))
 		endReason = connection.EndWriteError
 		return nil
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols"
 	"github.com/mushorg/glutton/protocols/guard"
+	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/recall"
 	"github.com/mushorg/glutton/protocols/spicy"
 	"github.com/mushorg/glutton/rules"
@@ -140,6 +141,8 @@ func (g *Glutton) Init() error {
 	}
 	// Per-source visit memory for handlers that vary replies to returning sources
 	recall.Shared.Configure(recallConfig())
+	// Disk budget for stored payloads and samples; the oldest go first
+	helpers.ConfigureStore(storeConfig())
 	// Reply budgets so spoofed requests cannot use the honeypot as a UDP
 	// amplifier, and TCP peers cannot pull unbounded bytes from it
 	g.udpGuard = guard.New(guardConfig("udp_reply_limit", guard.DefaultConfig()))
@@ -173,6 +176,18 @@ func recallConfig() recall.Config {
 	}
 	if n := viper.GetInt("recall.max_sources"); n > 0 {
 		cfg.Max = n
+	}
+	return cfg
+}
+
+// storeConfig reads the storage limits; 0 disables a limit.
+func storeConfig() helpers.StoreLimits {
+	cfg := helpers.DefaultStoreLimits()
+	if viper.IsSet("storage.max_bytes") {
+		cfg.MaxBytes = max(0, viper.GetInt64("storage.max_bytes"))
+	}
+	if viper.IsSet("storage.max_files") {
+		cfg.MaxFiles = max(0, viper.GetInt("storage.max_files"))
 	}
 	return cfg
 }

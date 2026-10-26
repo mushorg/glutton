@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -113,6 +115,26 @@ func TestHandleHTTPConnectOpaqueTunnel(t *testing.T) {
 		Payload:     httpConnectToken,
 		PayloadHash: helpers.SHA256Hex(httpConnectToken),
 	}, frames[2])
+	require.FileExists(t, filepath.Join("payloads", helpers.SHA256Hex(httpConnectToken)))
+}
+
+func TestHandleHTTPConnectTunnelPayloadsOff(t *testing.T) {
+	client, hp, done := startHTTPConnect(t)
+	prev := viper.Get("storage.tunnel_payloads")
+	viper.Set("storage.tunnel_payloads", false)
+	t.Cleanup(func() { viper.Set("storage.tunnel_payloads", prev) })
+	connectThrough(t, client, httpConnectSelf)
+	_, err := client.Write(httpConnectToken)
+	require.NoError(t, err)
+	_, err = client.Read(make([]byte, 1))
+	require.ErrorIs(t, err, io.EOF)
+
+	_, frames := finishHTTPConnect(t, client, hp, done)
+	require.Len(t, frames, 3)
+	// the event keeps the bytes and their hash; nothing is written to disk
+	require.Equal(t, httpConnectToken, frames[2].Payload)
+	require.Equal(t, helpers.SHA256Hex(httpConnectToken), frames[2].PayloadHash)
+	require.NoDirExists(t, "payloads")
 }
 
 func TestHandleHTTPConnectJudge(t *testing.T) {
@@ -172,6 +194,11 @@ func TestHandleHTTPConnectTLSJudge(t *testing.T) {
 	require.NotEmpty(t, frames[3].Payload)
 	require.Equal(t, "tunnel", frames[4].Command)
 	requireJudgeHTTP(t, frames[4].HTTP, judge)
+	// only the decrypted tunnel read is stored, never the ClientHello
+	stored, err := os.ReadDir("payloads")
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	require.Equal(t, frames[4].PayloadHash, stored[0].Name())
 }
 
 func TestHandleHTTPConnectEarlyDisconnect(t *testing.T) {

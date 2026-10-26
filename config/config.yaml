@@ -32,6 +32,11 @@ dial_timeout: 5   # timeout in seconds for proxy target connection.
 capture_traffic:
   enabled: false
 
+storage:   # files handlers write under payloads/ and samples/ (uploads, fetched samples, RTP audio, tunnel bytes).
+  max_bytes: 1073741824   # total size of stored files; the oldest are deleted first to make room. 0 disables.
+  max_files: 100000       # stored files (each costs an inode); the oldest are deleted first. 0 disables.
+  tunnel_payloads: true   # store CONNECT/SOCKS tunnel reads in payloads/ (TLS ClientHellos are never stored).
+
 recall:   # per-source memory: a source returning after visit_gap gets the next response variant (SIP).
   enabled: true
   visit_gap: 1800     # seconds of silence after which a returning source starts a new visit.

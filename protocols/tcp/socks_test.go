@@ -439,3 +439,27 @@ func TestHandleSOCKSTunnelHTTPHandoff(t *testing.T) {
 	require.NotNil(t, tunnel.HTTP[2].Log4Shell)
 	require.Equal(t, "write", frames[1].Direction)
 }
+
+func TestHandleSOCKSReplyOverBudget(t *testing.T) {
+	// a flooding source over tcp_reply_limit: the refused write ends the
+	// session quietly (glutton warns once per episode), not with an error per
+	// connection
+	client, serverConn := net.Pipe()
+	t.Cleanup(func() { client.Close() })
+	hp := newFakeHoneypot()
+	logger := &recordingLogger{}
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleSOCKS(context.Background(), limitedConn{Conn: serverConn}, connection.Metadata{TargetPort: 1080}, logger, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write(socks4aHttpbin)
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+
+	ev := <-hp.produced
+	require.Equal(t, connection.EndWriteError, ev.endReason)
+	require.Len(t, ev.decoded.([]parsedSOCKS), 1)
+	require.Empty(t, logger.errs)
+	require.Contains(t, logger.debugs, "Failed to write to connection")
+}
