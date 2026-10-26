@@ -30,6 +30,7 @@ Source: `config/config.yaml`. Keys you'll most often touch:
 | `ports.tcp`                                                          | `5000`                   | Local TCP TPROXY listener port.                                                                                                                                                     |
 | `ports.udp`                                                          | `5001`                   | Local UDP TPROXY listener port.                                                                                                                                                     |
 | `ports.ssh`                                                          | `2222`                   | Destination port excluded from TPROXY redirection, added to `ports.ignore.incoming` (see [Ignored ports](#ignored-ports)). `0` adds none.                                                                                            |
+| `ports.ssh_notrack` | `true` | Keeps `ports.ssh` out of conntrack with `raw` table `CT --notrack` rules, so a full conntrack table cannot drop new SSH connections (see [Ignored ports](#ignored-ports)). |
 | `ports.ignore.incoming` | `[]` | Destination ports excluded from TPROXY redirection: services on this host the honeypot must not take over. At most 15 (with `ports.ssh`). |
 | `ports.ignore.outgoing` | `[]` | Source ports excluded from TPROXY redirection: replies from remote services this host connects to (e.g. `53` for DNS). At most 15. |
 | `rules_path`                                                         | `config/rules.yaml`      | Path to the rules file.                                                                                                                                                             |
@@ -139,6 +140,15 @@ Glutton installs one TPROXY rule per protocol in the `mangle` `PREROUTING` chain
 - `ports.ignore.outgoing` becomes `! --sports`: packets from these remote ports are not redirected, for services the host itself talks to whose replies conntrack does not mark as established.
 
 Each list is sent to iptables `multiport`, which takes at most 15 ports; Glutton refuses to start with more. The same lists are used to remove the rule on shutdown, so don't edit them while Glutton runs.
+
+`ports.ssh` is also exempted from connection tracking, unless `ports.ssh_notrack` is `false`:
+
+```
+-t raw -A PREROUTING -i eth0 -p tcp --dport 22 -j CT --notrack
+-t raw -A OUTPUT -o eth0 -p tcp --sport 22 -j CT --notrack
+```
+
+A busy sensor can fill the conntrack table (`nf_conntrack: table full, dropping packet` in `dmesg`), and the kernel then drops new connections on every port, including sshd, which makes SSH and deploys hang. Untracked SSH packets bypass the table. Set `ports.ssh_notrack: false` if the host firewall accepts SSH only with `--ctstate ESTABLISHED`, because untracked packets are in state `UNTRACKED` and such a firewall drops them. The rules are removed on shutdown.
 
 `ports.ssh` is your management sshd port, so your SSH session survives. Both `ports.ssh` and the CLI flag `--ssh` need to match the port your sshd actually listens on — otherwise the management port will be redirected into the honeypot and you'll lock yourself out.
 

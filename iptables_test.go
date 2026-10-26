@@ -19,8 +19,15 @@ func TestGenRuleSpec(t *testing.T) {
 	require.Equal(t, "-i eth0 -p tcp -m state ! --state ESTABLISHED,RELATED -j TPROXY --on-port 5000 --on-ip 127.0.0.1", strings.Join(spec, " "))
 }
 
+func TestGenNoTrackSpecs(t *testing.T) {
+	specs := genNoTrackSpecs("eth0", 22)
+	require.Len(t, specs, 2)
+	require.Equal(t, "-i eth0 -p tcp --dport 22 -j CT --notrack", strings.Join(specs["PREROUTING"], " "))
+	require.Equal(t, "-o eth0 -p tcp --sport 22 -j CT --notrack", strings.Join(specs["OUTPUT"], " "))
+}
+
 func TestIgnoredPortsFromConfig(t *testing.T) {
-	keys := []string{"ports.ssh", "ports.ignore.incoming", "ports.ignore.outgoing"}
+	keys := []string{"ports.ssh", "ports.ssh_notrack", "ports.ignore.incoming", "ports.ignore.outgoing"}
 	orig := map[string]any{}
 	for _, k := range keys {
 		orig[k] = viper.Get(k)
@@ -39,13 +46,20 @@ func TestIgnoredPortsFromConfig(t *testing.T) {
 	set(22, []int{2222, 22, 8022}, []int{53, 123})
 	got, err := ignoredPortsFromConfig()
 	require.NoError(t, err)
-	require.Equal(t, ignoredPorts{Incoming: []uint32{22, 2222, 8022}, Outgoing: []uint32{53, 123}}, got, "ssh merged, sorted, de-duplicated")
+	require.Equal(t, ignoredPorts{Incoming: []uint32{22, 2222, 8022}, Outgoing: []uint32{53, 123}, NoTrack: 22}, got, "ssh merged, sorted, de-duplicated, exempt from conntrack")
+
+	viper.Set("ports.ssh_notrack", false)
+	got, err = ignoredPortsFromConfig()
+	require.NoError(t, err)
+	require.Zero(t, got.NoTrack, "ports.ssh_notrack false keeps ssh tracked")
+	viper.Set("ports.ssh_notrack", true)
 
 	set(0, nil, nil)
 	got, err = ignoredPortsFromConfig()
 	require.NoError(t, err)
 	require.Empty(t, got.Incoming)
 	require.Empty(t, got.Outgoing)
+	require.Zero(t, got.NoTrack)
 
 	set(22, []int{0}, nil)
 	_, err = ignoredPortsFromConfig()

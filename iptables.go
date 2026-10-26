@@ -1,6 +1,7 @@
 package glutton
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -19,12 +20,17 @@ type ignoredPorts struct {
 	Incoming []uint32
 	// Outgoing are source ports: replies from remote services this host connects to (e.g. DNS on 53).
 	Outgoing []uint32
+	// NoTrack is the management sshd port kept out of conntrack (0 for none), so a full
+	// conntrack table cannot drop new SSH connections.
+	NoTrack uint32
 }
 
 // ignoredPortsFromConfig merges ports.ssh (0 for none) into ports.ignore.incoming and reads ports.ignore.outgoing.
+// ports.ssh is also exempted from conntrack unless ports.ssh_notrack is false.
 func ignoredPortsFromConfig() (ignoredPorts, error) {
 	incoming := viper.GetIntSlice("ports.ignore.incoming")
-	if ssh := viper.GetInt("ports.ssh"); ssh != 0 {
+	ssh := viper.GetInt("ports.ssh")
+	if ssh != 0 {
 		incoming = append(incoming, ssh)
 	}
 	in, err := normalizePorts("ports.ignore.incoming", incoming)
@@ -35,7 +41,11 @@ func ignoredPortsFromConfig() (ignoredPorts, error) {
 	if err != nil {
 		return ignoredPorts{}, err
 	}
-	return ignoredPorts{Incoming: in, Outgoing: out}, nil
+	ignore := ignoredPorts{Incoming: in, Outgoing: out}
+	if ssh != 0 && (!viper.IsSet("ports.ssh_notrack") || viper.GetBool("ports.ssh_notrack")) {
+		ignore.NoTrack = uint32(ssh)
+	}
+	return ignore, nil
 }
 
 // normalizePorts validates, sorts and de-duplicates ports.
@@ -98,4 +108,48 @@ func flushTProxyIPTables(iface, srcIP, protocol string, port uint32, ignore igno
 	}
 
 	return ipt.Delete("mangle", "PREROUTING", genRuleSpec("PREROUTING", iface, protocol, srcIP, ignore, port)...)
+}
+
+// genNoTrackSpecs builds the raw table rules that keep TCP port on this host out of conntrack, e.g.
+// iptables -t raw -A PREROUTING -i eth0 -p tcp --dport 22 -j CT --notrack
+// iptables -t raw -A OUTPUT -o eth0 -p tcp --sport 22 -j CT --notrack
+func genNoTrackSpecs(iface string, port uint32) map[string][]string {
+	p := strconv.FormatUint(uint64(port), 10)
+	return map[string][]string{
+		"PREROUTING": {"-i", iface, "-p", "tcp", "--dport", p, "-j", "CT", "--notrack"},
+		"OUTPUT":     {"-o", iface, "-p", "tcp", "--sport", p, "-j", "CT", "--notrack"},
+	}
+}
+
+func setNoTrackIPTables(iface string, ignore ignoredPorts) error {
+	if ignore.NoTrack == 0 {
+		return nil
+	}
+	ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
+	if err != nil {
+		return err
+	}
+	for chain, spec := range genNoTrackSpecs(iface, ignore.NoTrack) {
+		if err := ipt.AppendUnique("raw", chain, spec...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func flushNoTrackIPTables(iface string, ignore ignoredPorts) error {
+	if ignore.NoTrack == 0 {
+		return nil
+	}
+	ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for chain, spec := range genNoTrackSpecs(iface, ignore.NoTrack) {
+		if err := ipt.DeleteIfExists("raw", chain, spec...); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }

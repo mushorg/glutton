@@ -2,6 +2,7 @@ ports:
   tcp: 5000
   udp: 5001
   ssh: 22          # management sshd port; always excluded from redirection (same as listing it in ignore.incoming).
+  ssh_notrack: true # keep ports.ssh out of conntrack so a full conntrack table cannot lock out SSH.
   ignore:          # ports never redirected into the honeypot (iptables multiport, at most 15 per list).
     incoming: []   # destination ports of traffic to services on this host.
     outgoing: []   # source ports of replies to connections this host makes (e.g. 53 for DNS).

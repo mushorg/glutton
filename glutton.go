@@ -468,6 +468,9 @@ func (g *Glutton) Start() error {
 	if g.ignorePorts, err = ignoredPortsFromConfig(); err != nil {
 		return err
 	}
+	if err := setNoTrackIPTables(viper.GetString("interface"), g.ignorePorts); err != nil {
+		return err
+	}
 	if err := setTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "tcp", uint32(g.Server.tcpPort), g.ignorePorts); err != nil {
 		return err
 	}
@@ -690,6 +693,10 @@ func (g *Glutton) Shutdown() {
 	g.Logger.Info("Flushing UDP iptables")
 	if err := flushTProxyIPTables(viper.GetString("interface"), g.publicAddrs[0].String(), "udp", uint32(g.Server.udpPort), g.ignorePorts); err != nil {
 		g.Logger.Error("Failed to drop udp iptables", producer.ErrAttr(err))
+	}
+	g.Logger.Info("Flushing conntrack exemption iptables")
+	if err := flushNoTrackIPTables(viper.GetString("interface"), g.ignorePorts); err != nil {
+		g.Logger.Error("Failed to drop conntrack exemption iptables", producer.ErrAttr(err))
 	}
 	if viper.GetBool("spicy.enabled") {
 		g.Logger.Info("Cleaning up and shutting down Spicy and HILTI runtimes")
