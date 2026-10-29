@@ -205,15 +205,22 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 }
 
 // opensSIPDialog reports whether req starts a dialog: an INVITE, or a REGISTER
-// that is challenged (sip.register_challenge) so its credentialed retry joins
-// the same event. A REGISTER for an unknown extension gets a 404 instead and
-// is an event of its own.
+// that is challenged so its credentialed retry joins the same event. A known
+// extension is challenged when sip.register_challenge is on. An unknown
+// extension is challenged when sip.always_auth_reject is on; otherwise it
+// gets a 404 and is an event of its own.
 func opensSIPDialog(req sip.Request) bool {
 	switch req.Method() {
 	case sip.INVITE:
 		return true
 	case sip.REGISTER:
-		return sipproto.RegisterChallenge() && sipproto.Credentials(req) == "" && !sipproto.UnknownExtension(req)
+		if sipproto.Credentials(req) != "" {
+			return false
+		}
+		if sipproto.UnknownExtension(req) {
+			return sipproto.AlwaysAuthReject()
+		}
+		return sipproto.RegisterChallenge()
 	}
 	return false
 }

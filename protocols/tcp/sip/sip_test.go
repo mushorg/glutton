@@ -771,6 +771,32 @@ func TestReplyUnknownExtension(t *testing.T) {
 	require.Equal(t, []int{404}, statusCodes(r.Reply(parseRequest(t, registerFor("965")), nil, nil, Answer)))
 }
 
+func TestReplyAlwaysAuthReject(t *testing.T) {
+	setExtensions(t, "100-120,200")
+	r := testResponder()
+	unknown := registerFor("xxx")
+	require.Equal(t, []int{404}, statusCodes(r.Reply(parseRequest(t, unknown), nil, nil, Answer)), "key off")
+
+	on := true
+	AlwaysAuthRejectSet = &on
+	t.Cleanup(func() { AlwaysAuthRejectSet = nil })
+
+	resps := r.Reply(parseRequest(t, unknown), nil, nil, Answer)
+	require.Equal(t, []int{401}, statusCodes(resps))
+	require.Contains(t, resps[0].String(), "WWW-Authenticate: Digest realm=\"asterisk\"")
+
+	auth := `Authorization: Digest username="xxx",realm="asterisk",nonce="n",uri="sip:1.2.3.4",response="ab"`
+	authed := []byte(strings.Replace(string(unknown), "Content-Length:", auth+"\r\nContent-Length:", 1))
+	resps = r.Reply(parseRequest(t, authed), nil, nil, Answer)
+	require.Equal(t, []int{403}, statusCodes(resps))
+	require.Equal(t, "Forbidden", resps[0].Reason())
+	require.Equal(t, "xxx", Describe(parseRequest(t, authed)).Username)
+
+	// a listed extension is not refused, and OPTIONS stays a 404 so the list still leaks
+	require.Equal(t, []int{200}, statusCodes(r.Reply(parseRequest(t, registerFor("100")), nil, nil, Answer)))
+	require.Equal(t, []int{404}, statusCodes(r.Reply(parseRequest(t, minimalOptions), nil, nil, Answer)))
+}
+
 // read frame 1 of a 2026-10-24 Ochi capture: the dial fleet (153.75.83.88)
 // with SQL injection in its users, a forged User-Agent and a Zoiper SDP
 var fleetInvite = []byte("INVITE sip:+3908351673002@1.2.3.4:7666 SIP/2.0\r\nVia: SIP/2.0/UDP 153.75.83.88:24262;branch=z9hG4bK-524287-1---ad98d9194f20b265;rport\r\nMax-Forwards: 70\r\nFrom: \"15714881666\" <sip:')or('x'='x@1.2.3.4>;tag=c586bd73\r\nTo: <sip:+3908351673002@1.2.3.4>\r\nCall-ID: Htieaz075Awe3IcNWwkXHZ..\r\nCSeq: 101 INVITE\r\nContact: <sip:')or('x'='x@153.75.83.88:24262;transport=UDP>\r\nUser-Agent: Yealink SIP-T46S\r\nAllow: INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, SUBSCRIBE, INFO\r\nSupported: replaces, timer, 100rel, norefersub\r\nP-Preferred-Identity: <sip:')or('x'='x@1.2.3.4>\r\nAllow-Events: presence, kpml, talk\r\nContent-Type: application/sdp\r\nContent-Length: 296\r\n\r\nv=0\r\no=Z 0 0 IN IP4 153.75.83.88\r\ns=Zoiper\r\nc=IN IP4 153.75.83.88\r\nt=0 0\r\nm=audio 10991 RTP/AVP 0 8 18 9 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:18 G729/8000\r\na=fmtp:18 annexb=no\r\na=rtpmap:9 G722/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-16\r\na=ptime:20\r\na=sendrecv\r\n")

@@ -144,6 +144,13 @@ compare a known-bad extension's reply with the others, stop there; this makes
 the PBX look like chan_sip with `alwaysauthreject=no`, so they find the listed
 extensions and go on to crack them. INVITE dial strings are not affected.
 
+**`sip.always_auth_reject`.** Default off. When it is on, an unauthenticated
+REGISTER for an unknown extension gets the same `401` digest challenge as a
+known one, and the credentialed retry gets `403 Forbidden` instead of a
+binding. OPTIONS for an unknown extension stays `404`, so an enumerator that
+uses OPTIONS still learns the list. On UDP the `401` opens a dialog, and the
+retry joins it (REGISTER, `401`, REGISTER with `username` and digest, `403`).
+
 **Contact and Via port.** The `Contact` of the `180`, `183` and `200`, and the
 `Via` of the honeypot's own BYE, name the port the INVITE arrived on (falling
 back to the Request-URI port, then 5060, only when that is unknown). A call to a

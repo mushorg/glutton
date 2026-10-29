@@ -240,6 +240,14 @@ func sourceVia(req gosip.Request, src net.Addr) ([]gosip.Header, bool) {
 // INVITE outcomes (see Variant).
 func (r *Responder) reply(req gosip.Request, local net.Addr, v Variant) []gosip.Response {
 	if UnknownExtension(req) {
+		if AlwaysAuthReject() && req.Method() == gosip.REGISTER {
+			// Asterisk alwaysauthreject: an unknown REGISTER is challenged
+			// like a known one, and a credentialed retry is refused
+			if Credentials(req) == "" {
+				return []gosip.Response{r.challenge(req)}
+			}
+			return []gosip.Response{r.response(req, 403, "Forbidden", r.Token())}
+		}
 		// a PBX that tells unknown extensions apart (chan_sip with
 		// alwaysauthreject=no) lets enumerators like svwar see which exist
 		return []gosip.Response{r.response(req, 404, "Not Found", r.Token())}

@@ -169,6 +169,22 @@ func RegisterChallenge() bool {
 	return viper.GetBool("sip.register_challenge")
 }
 
+// AlwaysAuthRejectSet overrides sip.always_auth_reject in tests when non-nil.
+var AlwaysAuthRejectSet *bool
+
+// AlwaysAuthReject reports whether a REGISTER for an extension outside
+// sip.extensions is challenged instead of answered 404 (config key
+// sip.always_auth_reject, default off, named after Asterisk's
+// alwaysauthreject). A credentialed retry for that extension gets 403, so
+// the sensor does not accept a binding that should not exist. OPTIONS is
+// unchanged, so enumerators still learn the extension list from it.
+func AlwaysAuthReject() bool {
+	if AlwaysAuthRejectSet != nil {
+		return *AlwaysAuthRejectSet
+	}
+	return viper.GetBool("sip.always_auth_reject")
+}
+
 // DefaultAnsweredHold is the sip.answered_hold default.
 const DefaultAnsweredHold = 5 * time.Minute
 

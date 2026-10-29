@@ -1,6 +1,7 @@
 package udp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1481,6 +1482,50 @@ func setSIPExtensions(t *testing.T, list string) {
 // with sip.extensions set, a REGISTER for an unknown extension is answered
 // 404 at once and produced on its own, while a known one is challenged and
 // waits for its credentialed retry
+func TestHandleSIPAlwaysAuthRejectUnknownRegister(t *testing.T) {
+	stubSIPResponder(t)
+	stubSIPDialogs(t)
+	setSIPExtensions(t, "100-120")
+	on := true
+	sipproto.AlwaysAuthRejectSet = &on
+	t.Cleanup(func() { sipproto.AlwaysAuthRejectSet = nil })
+	prev := sipproto.RegisterChallengeSet
+	sipproto.RegisterChallengeSet = nil
+	t.Cleanup(func() { sipproto.RegisterChallengeSet = prev })
+
+	h := &recordingHoneypot{}
+	src := &net.UDPAddr{IP: net.ParseIP("45.86.202.106"), Port: 52089}
+	reg := bytes.ReplaceAll(sweepRegister965, []byte("965"), []byte("xxx"))
+
+	sendSIP(t, h, src, reg)
+	require.Empty(t, h.produced, "the challenged REGISTER waits for its retry")
+	require.Len(t, h.replies, 1)
+	require.True(t, strings.HasPrefix(string(h.replies[0]), "SIP/2.0 401 Unauthorized\r\n"))
+
+	digest := `Authorization: Digest username="xxx",realm="asterisk",nonce="1761350400/f2bfc5f195fd940b70b5121ef023596e",uri="sip:1.2.3.4",response="d41d8cd98f00b204e9800998ecf8427e"`
+	retry := strings.Replace(string(reg), "CSeq: 1 REGISTER\r\n", "CSeq: 2 REGISTER\r\n"+digest+"\r\n", 1)
+	sendSIP(t, h, src, []byte(retry))
+
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndHandlerClose, h.produced[0].endReason)
+	events := h.produced[0].decoded.([]parsedSIP)
+	require.Len(t, events, 4)
+	require.Equal(t, "REGISTER", events[0].Command)
+	require.Equal(t, "401", events[1].Status)
+	require.Equal(t, "xxx", events[2].Username)
+	require.Equal(t, "d41d8cd98f00b204e9800998ecf8427e", events[2].DigestResponse)
+	require.Equal(t, "403", events[3].Status)
+
+	// OPTIONS for an unlisted user is still 404, and its own event
+	opts := []byte("OPTIONS sip:1@1.2.3.4 SIP/2.0\r\nVia: SIP/2.0/UDP 1.2.3.4:5060;branch=z9hG4bK1\r\nFrom: <sip:1@1.2.3.4>;tag=t\r\nTo: <sip:1@1.2.3.4>\r\nCall-ID: opts-1\r\nCSeq: 1 OPTIONS\r\nContent-Length: 0\r\n\r\n")
+	sendSIP(t, h, src, opts)
+	require.Len(t, h.produced, 2)
+	optEvents := h.produced[1].decoded.([]parsedSIP)
+	require.Len(t, optEvents, 2)
+	require.Equal(t, "OPTIONS", optEvents[0].Command)
+	require.Equal(t, "404", optEvents[1].Status)
+}
+
 func TestHandleSIPRegisterUnknownExtension(t *testing.T) {
 	stubSIPResponder(t)
 	stubSIPDialogs(t)
