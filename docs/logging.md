@@ -9,7 +9,7 @@ Glutton has two output paths: process logs through Go `slog`, and optional produ
 - stdout
 - the path configured by `--logpath`
 
-The file writer uses lumberjack rotation: 200 MB max size, 356 days max age, compression on. Every record carries the `sensorID` attribute (read from / written to `<var-dir>/glutton.id`).
+The file writer uses lumberjack rotation: 200 MB max size, 356 days max age, compression on. It is skipped (stdout only) when `--logpath` is empty, `/dev/null` (the default), or an existing non-regular file: lumberjack rotates by renaming the file and creating a new regular one, which on `/dev/null` replaced the device with a file in RAM-backed devtmpfs that every process on the host wrote into. Every record carries the `sensorID` attribute (read from / written to `<var-dir>/glutton.id`).
 
 The `--debug` flag is parsed but not wired into `slog.HandlerOptions`, so it does not currently lower the log level.
 

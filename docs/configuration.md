@@ -13,7 +13,7 @@ CLI flags override the matching keys in `config.yaml`.
 | ------------- | ----- | ------------------ | ---------------------------------------------------------------------------- |
 | `--interface` | `-i`  | `eth0`             | Bound as `interface`.                                                        |
 | `--ssh`       | `-s`  | `2222`             | Overrides `ports.ssh`. Match this to the port your sshd actually listens on. |
-| `--logpath`   | `-l`  | `/dev/null`        | Rotating JSON log file path. Logs also go to stdout.                         |
+| `--logpath`   | `-l`  | `/dev/null`        | Rotating JSON log file path. Logs also go to stdout. `/dev/null`, an empty path, or any non-regular file (device, pipe) means stdout only. |
 | `--confpath`  | `-c`  | `config/`          | Directory holding `config.yaml` and `rules.yaml`.                            |
 | `--debug`     | `-d`  | `false`            | Parsed and bound, but not yet wired into `slog.HandlerOptions`.              |
 | `--version`   | —     | `false`            | Prints version and exits before runtime init.                                |

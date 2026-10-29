@@ -18,29 +18,45 @@ func ErrAttr(err error) slog.Attr {
 }
 
 type TeeWriter struct {
-	stdout *os.File
-	file   io.Writer
+	stdout io.Writer
+	file   io.Writer // nil when logging to stdout only
 }
 
 func (t *TeeWriter) Write(p []byte) (n int, err error) {
 	n, err = t.stdout.Write(p)
-	if err != nil {
+	if err != nil || t.file == nil {
 		return n, err
 	}
 	n, err = t.file.Write(p)
 	return n, err
 }
 
+// logFile returns the rotating writer for path, or nil when path is not a
+// log file: empty, os.DevNull (the --logpath default), or an existing
+// non-regular file such as a device or pipe. lumberjack rotates by renaming
+// the file and creating a new regular one, so on /dev/null it replaced the
+// device with a growing file in RAM-backed devtmpfs that every process on
+// the host then wrote into.
+func logFile(path string) io.Writer {
+	if path == "" || path == os.DevNull {
+		return nil
+	}
+	if fi, err := os.Stat(path); err == nil && !fi.Mode().IsRegular() {
+		return nil
+	}
+	return &lumberjack.Logger{
+		Filename: path,
+		MaxSize:  200,  // megabyte
+		MaxAge:   356,  //days
+		Compress: true, // disabled by default
+	}
+}
+
 // NewLogger creates a logger instance
 func NewLogger(id string) *slog.Logger {
 	writer := &TeeWriter{
 		stdout: os.Stdout,
-		file: &lumberjack.Logger{
-			Filename: viper.GetString("logpath"),
-			MaxSize:  200,  // megabyte
-			MaxAge:   356,  //days
-			Compress: true, // disabled by default
-		},
+		file:   logFile(viper.GetString("logpath")),
 	}
 	handlerOptions := &slog.HandlerOptions{}
 	debug := viper.GetBool("debug")

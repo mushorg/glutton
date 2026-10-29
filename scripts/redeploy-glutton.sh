@@ -21,7 +21,8 @@ NEW_VERSION=$("$NEW" --version 2>&1 | grep -m1 "version v" || true)
 echo "new binary: ${NEW_VERSION:-unknown}"
 
 # Stop every running glutton, not just the one in a matching screen session.
-screen -ls 2>/dev/null | awk -v n="\\\\.$SCREEN_NAME[[:space:]]" '$1 ~ n {print $1}' | while read -r s; do
+# screen -ls exits 1 when no sessions exist (e.g. after a reboot).
+{ screen -ls 2>/dev/null || true; } | awk -v n="\\\\.$SCREEN_NAME[[:space:]]" '$1 ~ n {print $1}' | while read -r s; do
 	screen -S "$s" -X quit 2>/dev/null || true
 done
 pkill -TERM -x glutton 2>/dev/null || true
