@@ -61,6 +61,10 @@ func sipIdleDuration() time.Duration {
 	return max(idle, 64*sipT1)
 }
 
+// sipAnsweredHold is how long an answered, ACKed call stays open for its
+// BYE (sip.answered_hold); tests swap it.
+var sipAnsweredHold = sipproto.AnsweredHold
+
 // sipRingDelay is how long an answered INVITE rings before the 200 OK; an
 // instant answer is a honeypot tell. Tests swap it for a fixed value.
 var sipRingDelay = func() time.Duration {
@@ -159,6 +163,7 @@ type sipDialog struct {
 	final      sip.Response
 	finalBytes []byte
 	finalEnd   string // endReason when the final response is never ACKed
+	finalSent  bool   // the final response left at least once
 	acked      bool
 	resend     sipTimer
 	interval   time.Duration
@@ -225,6 +230,8 @@ func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
 		}
 		d.acked = true
 		d.stopResendLocked()
+		// an answered call now waits for its BYE (see armIdleLocked)
+		d.armIdleLocked()
 		// the ACK to a 404, 486 or 487 completes the failed call; after a
 		// 401/407 the caller retries the INVITE with credentials in this dialog
 		if !d.final.IsSuccess() && !isAuthChallenge(d.final) {
@@ -461,9 +468,9 @@ func (d *sipDialog) stopRingLocked() {
 // the endReason stay the same without the resends.
 func (d *sipDialog) sendFinalLocked(final sip.Response, unacked string) (string, error) {
 	data := []byte(final.String())
-	if err := d.writeLocked(data, final); err != nil {
-		return connection.EndWriteError, err
-	}
+	// a failed send ends nothing: the resends below retry it, and the call
+	// ends as write_error only if it never left (see resendFinal)
+	d.finalSent = d.writeLocked(data, final) == nil
 	d.bindMediaLocked(final)
 	d.stopResendLocked()
 	d.last = data
@@ -503,6 +510,9 @@ func (d *sipDialog) writeLocked(data []byte, msg sip.Message) error {
 	frame := sipTag(d.visit, sipDecoded("write", msg, data))
 	sent, err := replySIP(d.h, d.src, d.dst, data)
 	frame.Dropped = !sent && err == nil
+	if err != nil {
+		frame.Error = err.Error()
+	}
 	d.events = append(d.events, frame)
 	if err != nil {
 		d.logger.Error("Failed to send SIP reply", slog.String("protocol", "sip"), producer.ErrAttr(err))
@@ -515,7 +525,13 @@ func (d *sipDialog) armIdleLocked() {
 	if d.idle != nil {
 		d.idle.Stop()
 	}
-	d.idle = sipAfterFunc(sipIdleDuration(), func() { d.finish(connection.EndTimeout) })
+	idle := sipIdleDuration()
+	if d.acked && d.answeredLocked() {
+		// dialers hang up answered calls minutes later; keep the BYE in
+		// this event
+		idle = max(idle, sipAnsweredHold())
+	}
+	d.idle = sipAfterFunc(idle, func() { d.finish(connection.EndTimeout) })
 }
 
 func (d *sipDialog) stopResendLocked() {
@@ -538,7 +554,12 @@ func (d *sipDialog) resendFinal() {
 	}
 	d.waited += d.interval
 	endReason := ""
-	if d.waited >= 64*sipT1 {
+	switch {
+	case d.waited >= 64*sipT1 && !d.finalSent:
+		// the final response never left, so the caller's silence says
+		// nothing about the tool
+		endReason = connection.EndWriteError
+	case d.waited >= 64*sipT1:
 		endReason = d.finalEnd
 		_ = d.visit.NoteUnacked(d.src.IP, int(d.final.StatusCode()), d.logger)
 		if d.final.IsSuccess() {
@@ -548,13 +569,17 @@ func (d *sipDialog) resendFinal() {
 				}
 			}
 		}
-	} else if err := d.writeLocked(d.finalBytes, d.final); err != nil {
-		endReason = connection.EndWriteError
-	} else if len(d.events) >= maxSIPDialogFrames {
-		endReason = connection.EndMaxFrames
-	} else {
-		d.interval = min(2*d.interval, sipT2)
-		d.resend = sipAfterFunc(d.interval, d.resendFinal)
+	default:
+		// a failed resend is retried at the next interval
+		if d.writeLocked(d.finalBytes, d.final) == nil {
+			d.finalSent = true
+		}
+		if len(d.events) >= maxSIPDialogFrames {
+			endReason = connection.EndMaxFrames
+		} else {
+			d.interval = min(2*d.interval, sipT2)
+			d.resend = sipAfterFunc(d.interval, d.resendFinal)
+		}
 	}
 	d.mu.Unlock()
 

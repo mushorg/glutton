@@ -867,6 +867,12 @@ func TestToolSIPScanCall(t *testing.T) {
 	// a tool User-Agent wins
 	pplsip := strings.Replace(string(scanCallInvite), "OpenSIPS (3.2.10 (x86_64/linux))", "pplsip", 1)
 	require.Equal(t, "pplsip", Tool(parseRequest(t, []byte(pplsip))))
+	// its ACK and BYE carry no SDP; the Call-ID names it (captured BYE,
+	// Quintum User-Agent)
+	bye := "BYE sip:18327772064@1.2.3.4:5060 SIP/2.0\r\nVia: SIP/2.0/TCP 5.250.182.200:5060;branch=z9hG4bK-3d43d6224967;rport\r\nFrom: <sip:700@5.250.182.200>;tag=9a2a00a55681\r\nTo: <sip:18327772064@1.2.3.4>;tag=feedface\r\nCall-ID: ab00day-w5-4f43ed51760e41df@5.250.182.200\r\nCSeq: 3 BYE\r\nUser-Agent: Quintum/1.0.0 SN/0030E1013945\r\nContent-Length: 0\r\n\r\n"
+	require.Equal(t, "sip-scan-call", Tool(parseRequest(t, []byte(bye))))
+	unrelated := strings.Replace(bye, "ab00day-w5-4f43ed51760e41df", "ab00day-x5-4f43ed51760e41df", 1)
+	require.Equal(t, "", Tool(parseRequest(t, []byte(unrelated))))
 }
 
 func TestToolOptionsPing(t *testing.T) {

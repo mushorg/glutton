@@ -3,6 +3,7 @@ package udp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -444,17 +445,18 @@ func stubSIPDialogs(t *testing.T) *fakeSIPTimers {
 	timers := &fakeSIPTimers{}
 	origTable, origAfter, origIdle := sipDialogs, sipAfterFunc, sipIdle
 	origLimit, origRing := sipproto.RejectLimit, sipRingDelay
-	origMedia := sipMedia
+	origMedia, origHold := sipMedia, sipAnsweredHold
 	sipproto.RegisterChallengeSet = nil
 	sipDialogs = newSIPDialogTable(maxSIPDialogs)
 	sipMedia = &sipMediaTable{bindings: map[string]*sipDialog{}}
 	sipAfterFunc = timers.afterFunc
 	sipIdle = time.Minute
+	sipAnsweredHold = func() time.Duration { return time.Minute }
 	sipproto.RejectLimit = 0
 	sipRingDelay = func() time.Duration { return sipRing }
 	t.Cleanup(func() {
 		sipDialogs, sipAfterFunc, sipIdle = origTable, origAfter, origIdle
-		sipMedia = origMedia
+		sipMedia, sipAnsweredHold = origMedia, origHold
 		sipproto.RegisterChallengeSet = nil
 		sipproto.RejectLimit, sipRingDelay = origLimit, origRing
 	})
@@ -1542,6 +1544,96 @@ func TestHandleSIPMarksDroppedReplies(t *testing.T) {
 	require.NoError(t, HandleSIP(context.Background(), src, pplsipDst, sipOptions(), connection.Metadata{}, testLogger{}, plain))
 	events = plain.produced[0].decoded.([]parsedSIP)
 	require.False(t, events[1].Dropped)
+}
+
+// failingHoneypot fails to send replies whose status line starts with one
+// of fail, the first failures times each (every time when failures is 0).
+type failingHoneypot struct {
+	recordingHoneypot
+	fail     []string
+	failures int
+	failed   int
+}
+
+func (h *failingHoneypot) ReplyUDPSent(srcAddr, dstAddr *net.UDPAddr, payload []byte) (bool, error) {
+	for _, f := range h.fail {
+		if strings.HasPrefix(string(payload), f) && (h.failures == 0 || h.failed < h.failures) {
+			h.failed++
+			return false, errors.New("dial: socket connect: address already in use")
+		}
+	}
+	return true, h.ReplyUDP(srcAddr, dstAddr, payload)
+}
+
+// a 200 OK that fails to send is resent like an unACKed one instead of
+// ending the call, and its frame says why it did not leave
+func TestHandleSIPDialogFailedOKResent(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	h := &failingHoneypot{fail: []string{"SIP/2.0 200 OK"}, failures: 1}
+	require.NoError(t, HandleSIP(context.Background(), pplsipSrc, pplsipDst, pplsipInviteRead1, connection.Metadata{}, testLogger{}, h))
+	timers.fire(t, sipRing)
+	require.Len(t, h.replies, 2, "the first 200 OK did not leave")
+	require.Empty(t, h.produced)
+	timers.fire(t, sipT1)
+	require.Len(t, h.replies, 3)
+	require.True(t, strings.HasPrefix(string(h.replies[2]), "SIP/2.0 200 OK\r\n"))
+
+	require.NoError(t, HandleSIP(context.Background(), pplsipSrc, pplsipDst, pplsipInDialog("ACK", 1, pplsipCallID), connection.Metadata{}, testLogger{}, h))
+	require.NoError(t, HandleSIP(context.Background(), pplsipSrc, pplsipDst, pplsipInDialog("BYE", 2, pplsipCallID), connection.Metadata{}, testLogger{}, h))
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndClientClose, h.produced[0].endReason)
+	events := h.produced[0].decoded.([]parsedSIP)
+	require.Equal(t, "200", events[3].Status)
+	require.Equal(t, "dial: socket connect: address already in use", events[3].Error)
+	require.False(t, events[3].Dropped)
+	require.Equal(t, "200", events[4].Status)
+	require.Empty(t, events[4].Error)
+	require.Equal(t, "ACK", events[5].Command)
+}
+
+// a 200 OK that never leaves ends as write_error once the resend window
+// passes, without the 408 BYE
+func TestHandleSIPDialogOKNeverSent(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	h := &failingHoneypot{fail: []string{"SIP/2.0 200 OK"}}
+	require.NoError(t, HandleSIP(context.Background(), pplsipSrc, pplsipDst, pplsipInviteRead1, connection.Metadata{}, testLogger{}, h))
+	timers.fire(t, sipRing)
+	schedule := []time.Duration{sipT1, 2 * sipT1, 4 * sipT1, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2, sipT2}
+	for _, d := range schedule {
+		require.Empty(t, h.produced)
+		timers.fire(t, d)
+	}
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndWriteError, h.produced[0].endReason)
+	require.Len(t, h.replies, 2, "only 100 and 180 left; no BYE")
+	events := h.produced[0].decoded.([]parsedSIP)
+	require.Len(t, events, 3+len(schedule))
+	for _, e := range events[3:] {
+		require.Equal(t, "200", e.Status)
+		require.NotEmpty(t, e.Error)
+	}
+	require.Empty(t, timers.pending())
+}
+
+// an answered, ACKed call waits sip.answered_hold for its BYE instead of
+// conn_timeout
+func TestHandleSIPDialogAnsweredHold(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	sipAnsweredHold = func() time.Duration { return 5 * time.Minute }
+	h := &recordingHoneypot{}
+
+	sendSIP(t, h, pplsipSrc, pplsipInviteRead1)
+	timers.fire(t, sipRing)
+	require.Equal(t, []time.Duration{time.Minute, sipT1}, timers.pending(), "an unACKed 200 keeps the short idle")
+	sendSIP(t, h, pplsipSrc, pplsipInDialog("ACK", 1, pplsipCallID))
+	require.Equal(t, []time.Duration{5 * time.Minute}, timers.pending())
+
+	timers.fire(t, 5*time.Minute)
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndTimeout, h.produced[0].endReason)
 }
 
 func withHeader(data []byte, header string) []byte {

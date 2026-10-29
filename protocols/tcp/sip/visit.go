@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/recall"
@@ -166,6 +167,20 @@ func RegisterChallenge() bool {
 		return *RegisterChallengeSet
 	}
 	return viper.GetBool("sip.register_challenge")
+}
+
+// DefaultAnsweredHold is the sip.answered_hold default.
+const DefaultAnsweredHold = 5 * time.Minute
+
+// AnsweredHold returns how long an answered, ACKed call waits for its BYE
+// (config key sip.answered_hold, in seconds). Dialers hold a call for
+// minutes before hanging up, longer than conn_timeout, and the BYE belongs
+// in the call's event.
+func AnsweredHold() time.Duration {
+	if secs := viper.GetInt("sip.answered_hold"); secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return DefaultAnsweredHold
 }
 
 // ExtensionsSet overrides sip.extensions in tests when non-nil.

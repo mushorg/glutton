@@ -48,6 +48,7 @@ type parsedSIP struct {
 	Payload        []byte `json:"payload,omitempty"`
 	Truncated      bool   `json:"truncated,omitempty"`
 	Dropped        bool   `json:"dropped,omitempty"` // write the udp_reply_limit budget kept from leaving
+	Error          string `json:"error,omitempty"`   // why a write failed to send
 	Variant        string `json:"variant,omitempty"` // response variant on writes
 	Visit          int    `json:"visit,omitempty"`   // source's visit number on writes
 

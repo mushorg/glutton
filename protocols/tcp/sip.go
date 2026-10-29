@@ -100,6 +100,11 @@ var sipTCPRingDelay = func() time.Duration {
 // sipParkTable); tests swap it.
 var sipTCPParkHold = sessionIdleDuration
 
+// sipTCPAnsweredHold is how long a connection waits instead when a call on
+// it was answered and ACKed, so the BYE minutes later joins the call
+// (sip.answered_hold); tests swap it.
+var sipTCPAnsweredHold = sipproto.AnsweredHold
+
 // sipCall is the INVITE server transaction of one Call-ID on a connection.
 type sipCall struct {
 	reject       bool // answer the first INVITE with 404
@@ -220,7 +225,8 @@ type sipParkedConn struct {
 // fleet) close the connection after the 200 OK and send the ACK, or later
 // the BYE, over a new one, as RFC 3261 section 18 allows; the new connection
 // takes the parked one over, so the call stays one event. A parked
-// connection nobody takes produces after sipTCPParkHold.
+// connection nobody takes produces after sipTCPParkHold, or
+// sipTCPAnsweredHold when it holds an answered, ACKed call.
 type sipParkTable struct {
 	mu    sync.Mutex
 	byKey map[string]*sipParkedConn
@@ -247,6 +253,12 @@ func (t *sipParkTable) park(s *sipServer, conn net.Conn, md connection.Metadata,
 	if len(ids) == 0 {
 		return false
 	}
+	hold := sipTCPParkHold()
+	for _, id := range ids {
+		if c := s.calls[id]; c.acked && c.final.IsSuccess() {
+			hold = max(hold, sipTCPAnsweredHold())
+		}
+	}
 	p := &sipParkedConn{server: s, conn: conn, md: md, h: h}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -265,7 +277,7 @@ func (t *sipParkTable) park(s *sipServer, conn net.Conn, md connection.Metadata,
 		t.byKey[key] = p
 	}
 	t.count++
-	p.timer = sipTCPAfterFunc(sipTCPParkHold(), func() { t.expire(p) })
+	p.timer = sipTCPAfterFunc(hold, func() { t.expire(p) })
 	return true
 }
 

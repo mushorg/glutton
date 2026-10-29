@@ -723,8 +723,9 @@ func Tool(req gosip.Request) string {
 		return "zoiper-fleet"
 	}
 	// a dial fleet that rotates its User-Agent (2N, Gequdio, OpenSIPS) but
-	// always names its SDP session this, with media at 0.0.0.0
-	if sdpSessionName(string(req.Body())) == "sip scan call" {
+	// always names its SDP session this, with media at 0.0.0.0; its
+	// ab00day-w5-<hex> Call-ID also tags the ACK and BYE, which carry no SDP
+	if sdpSessionName(string(req.Body())) == "sip scan call" || sipScanCallID.MatchString(callIDValue(req)) {
 		return "sip-scan-call"
 	}
 	// the minimal liveness probe "OPTIONS sip:1@1" sent from many networks:
@@ -750,6 +751,7 @@ var (
 	sipptsBranch       = regexp.MustCompile(`^z9hG4bK\d+$`)
 	sipviciousBranch   = regexp.MustCompile(`^z9hG4bK-\d+$`)
 	sipslaughterCallID = regexp.MustCompile(`^mrb-[0-9a-f]+-[0-9a-f]+@pbx$`)
+	sipScanCallID      = regexp.MustCompile(`^ab00day-w5-[0-9a-f]+@`)
 )
 
 // sipviciousTag reports whether tag is SIPVicious' createTag output: the hex

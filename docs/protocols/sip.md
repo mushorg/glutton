@@ -27,6 +27,7 @@ connection.
 | `payload` | messages | Raw bytes as received or sent. |
 | `truncated` | all | UDP: the datagram exceeded 4096 bytes. TCP: the message body exceeded 4096 bytes. Media: see [Call media](#call-media-udp). |
 | `dropped` | UDP writes | The `udp_reply_limit` budget kept this reply from leaving; the client never received it. |
+| `error` | UDP writes | Sending this reply failed (the socket error text); the client never received it. |
 | `ssrc` | media | RTP SSRC (hex). |
 | `codec` | media | Answered encoding name (e.g. `PCMU`), or `pt<N>`. |
 | `packets` / `lost` | media | Packets received / gaps in the sequence numbers. |
@@ -81,7 +82,7 @@ named by their tell instead:
 | `zoiper-fleet` | SDP `s=Zoiper` behind a `User-Agent` that does not say Zoiper (a phone model that changes every call). |
 | `sippts` | No `User-Agent`, a numeric `N-N-N` `Call-ID` and a digits-only Via branch (`z9hG4bK<digits>`), sippts' habits with its default `pplsip` agent removed. |
 | `pjsip-python` | No `User-Agent` and pjsip's `z9hG4bKPj` Via branch: a script on the pjsip Python bindings (real pjsip phones and Asterisk send a `User-Agent`). |
-| `sip-scan-call` | SDP session name `s=SIP Scan Call` (media at `0.0.0.0`): a dial fleet that rotates its `User-Agent` (2N IP Audio Kit, Gequdio, OpenSIPS). |
+| `sip-scan-call` | SDP session name `s=SIP Scan Call` (media at `0.0.0.0`), or a `Call-ID` of `ab00day-w5-<hex>@<host>` (tags its ACK and BYE, which carry no SDP): a dial fleet that rotates its `User-Agent` (2N IP Audio Kit, Gequdio, OpenSIPS, Quintum). |
 | `options-ping` | `OPTIONS` with no `User-Agent`, `Call-ID: 1` and a one-character Via branch (the `OPTIONS sip:1@1` liveness probe sent from many networks). |
 
 `User-Agent` matches win over these. It is a triage hint, not proof: a scanner
@@ -185,6 +186,13 @@ so a call is one event.
   Asterisk/pjsip. It sends a `write` frame whose `command` is `BYE`
   (`Reason: SIP ;cause=408 ;text="Request Timeout"`, sent to the caller's source
   address) and produces the dialog with `timeout`.
+- A final response that fails to send (a write frame with `error`) does not
+  end the call: the T1 resends retry it. If it never leaves within 64*T1, the
+  dialog ends with `write_error`, without a BYE and without counting toward
+  Escalation.
+- Once the `200` is ACKed the dialog waits `sip.answered_hold` (default 300 s)
+  instead of `conn_timeout` for the next datagram, so a BYE sent minutes later
+  stays in the call's event.
 
 Datagrams outside a dialog (OPTIONS, REGISTER, a stray ACK/BYE) are still one
 event each, with `handler_close`.
@@ -194,7 +202,8 @@ event each, with `handler_close`.
 | `endReason` | When |
 | --- | --- |
 | `client_close` | A BYE or CANCEL was answered, or a `404`/`487` was ACKed (or a `487` timed out). |
-| `timeout` | No datagram for `conn_timeout` (at least 32 s), an unACKed `200` or `404`. |
+| `timeout` | No datagram for `conn_timeout` (at least 32 s; `sip.answered_hold` after an ACKed `200`), an unACKed `200` or `404`. |
+| `write_error` | A reply failed to send; for the final response, only once every resend failed. |
 | `max_frames` | The dialog reached 32 frames. |
 | `evicted` | 256 dialogs are open. |
 | `handler_close` | Shutdown, and single datagrams outside a dialog. |
@@ -282,7 +291,8 @@ connection for a later request of the same call, and some dialers do: the
 over a new one about 10 s later. When a connection ends (`client_close`,
 `client_reset`, `read_error` or `timeout`) with a call still open (a final
 response not yet ACKed, or an answered call without BYE), its event is held
-for `conn_timeout` (default 45 s). A new connection from the same source IP
+for `conn_timeout` (default 45 s), or `sip.answered_hold` (default 300 s) when
+the call was answered and ACKed, as the BYE comes minutes later. A new connection from the same source IP
 whose request carries that `call_id` takes it over: the held frames come first
 in the new connection's event, which keeps the first connection's
 `startedAt`/`srcPort` and ends with the last one's `endReason`. A held

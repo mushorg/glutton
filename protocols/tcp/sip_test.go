@@ -132,14 +132,15 @@ func stubSIPTimers(t *testing.T) *fakeSIPTimers {
 	t.Helper()
 	timers := &fakeSIPTimers{}
 	origAfter, origRing, origLimit := sipTCPAfterFunc, sipTCPRingDelay, sipproto.RejectLimit
-	origHold := sipTCPParkHold
+	origHold, origAnswered := sipTCPParkHold, sipTCPAnsweredHold
 	sipTCPAfterFunc = timers.afterFunc
 	sipTCPRingDelay = func() time.Duration { return sipRing }
 	sipTCPParkHold = func() time.Duration { return sipParkHold }
+	sipTCPAnsweredHold = func() time.Duration { return sipParkHold }
 	sipproto.RejectLimit = 0
 	t.Cleanup(func() {
 		sipTCPAfterFunc, sipTCPRingDelay, sipproto.RejectLimit = origAfter, origRing, origLimit
-		sipTCPParkHold = origHold
+		sipTCPParkHold, sipTCPAnsweredHold = origHold, origAnswered
 	})
 	return timers
 }
@@ -760,6 +761,45 @@ func TestHandleSIPTCPByeOnNewConnection(t *testing.T) {
 
 	produced := waitSIP(t, hp2, done2)
 	require.Equal(t, []string{"<INVITE", "100", "180", "200", "<ACK", "<BYE", "200"}, statuses(produced.decoded.([]parsedSIP)))
+	require.Equal(t, "5.250.182.200:31808", produced.remote)
+}
+
+// an answered, ACKed call waits sip.answered_hold for its BYE; an unACKed
+// one keeps the short hold
+func TestHandleSIPTCPAnsweredCallHeldLonger(t *testing.T) {
+	timers := stubSIPTimers(t)
+	stubSIPRecall(t)
+	sipTCPAnsweredHold = func() time.Duration { return 5 * time.Minute }
+
+	client, hp1, done1 := scanCallAnswered(t, timers, "5.250.182.200:31808", time.Time{})
+	require.NoError(t, client.Close())
+	waitParked(t, hp1, done1)
+	require.Contains(t, timers.pending(), sipParkHold)
+	require.NotContains(t, timers.pending(), 5*time.Minute)
+
+	client2, hp2, done2 := startSIPFrom(t, staticAddr{"5.250.182.200:32183"})
+	_, err := client2.Write(sipScanCallAck)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		for _, d := range timers.pending() {
+			if d == sipTCPAckTimeout {
+				return false
+			}
+		}
+		return true
+	}, time.Second, time.Millisecond)
+	require.NoError(t, client2.Close())
+	waitParked(t, hp2, done2)
+	require.Contains(t, timers.pending(), 5*time.Minute)
+
+	timers.fire(t, 5*time.Minute)
+	var produced producedTCP
+	select {
+	case produced = <-hp2.produced:
+	case <-time.After(2 * time.Second):
+		t.Fatal("parked connection was not produced")
+	}
+	require.Equal(t, []string{"<INVITE", "100", "180", "200", "<ACK"}, statuses(produced.decoded.([]parsedSIP)))
 	require.Equal(t, "5.250.182.200:31808", produced.remote)
 }
 
