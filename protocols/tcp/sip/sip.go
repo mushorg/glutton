@@ -673,9 +673,10 @@ var sipToolsExact = map[string]string{
 // that, a header or body habit, returning "" when nothing matches. The name
 // is the tool family (SIPVicious, sipcli, sipsak, pplsip, VaxSIPUserAgent,
 // SipSlaughter, ...) or, for a fleet that forges its User-Agent, its tell
-// (sqli-from, zoiper-fleet, sippts, pjsip-python). User-Agent matches, in any
-// of the request's User-Agent headers, win. It is a triage hint, not
-// proof: a scanner can forge any header.
+// (sqli-from, zoiper-fleet, sip-scan-call, options-ping, sippts,
+// pjsip-python). User-Agent matches, in any of the request's User-Agent
+// headers, win. It is a triage hint, not proof: a scanner can forge any
+// header.
 func Tool(req gosip.Request) string {
 	uas := req.GetHeaders("User-Agent")
 	for _, h := range uas {
@@ -720,6 +721,16 @@ func Tool(req gosip.Request) string {
 	// still names the Zoiper stack it is built on
 	if sdpSessionName(string(req.Body())) == "zoiper" && !strings.Contains(ua, "zoiper") {
 		return "zoiper-fleet"
+	}
+	// a dial fleet that rotates its User-Agent (2N, Gequdio, OpenSIPS) but
+	// always names its SDP session this, with media at 0.0.0.0
+	if sdpSessionName(string(req.Body())) == "sip scan call" {
+		return "sip-scan-call"
+	}
+	// the minimal liveness probe "OPTIONS sip:1@1" sent from many networks:
+	// no User-Agent, Call-ID 1 and a one-character Via branch
+	if req.Method() == gosip.OPTIONS && len(uas) == 0 && callIDValue(req) == "1" && len(viaBranch(req)) == 1 {
+		return "options-ping"
 	}
 	// sippts (whose default User-Agent is pplsip) with the User-Agent left
 	// out: numeric "N-N-N" Call-ID and a digits-only Via branch

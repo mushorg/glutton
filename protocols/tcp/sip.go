@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
@@ -38,6 +39,9 @@ const (
 	// sipTCPAckTimeout is how long a final response to INVITE waits for its
 	// ACK (64*T1, RFC 3261 §17.2.1). A reliable transport does not resend it.
 	sipTCPAckTimeout = 64 * 500 * time.Millisecond
+	// maxSIPTCPParked caps the ended connections held for a follow-up
+	// connection (see sipParkTable); when it is full they produce at once.
+	maxSIPTCPParked = 256
 )
 
 type parsedSIP struct {
@@ -90,6 +94,11 @@ var sipTCPAfterFunc = func(d time.Duration, f func()) sipTimer {
 var sipTCPRingDelay = func() time.Duration {
 	return 2*time.Second + rand.N(4*time.Second)
 }
+
+// sipTCPParkHold is how long a connection that ended with a call still open
+// waits for the caller to carry the call on over a new connection (see
+// sipParkTable); tests swap it.
+var sipTCPParkHold = sessionIdleDuration
 
 // sipCall is the INVITE server transaction of one Call-ID on a connection.
 type sipCall struct {
@@ -144,6 +153,177 @@ type sipServer struct {
 	// owns all state; done stops senders once the handler returns.
 	timers chan func() (string, error)
 	done   chan struct{}
+	// origin is the first connection of a call carried on over several
+	// connections; the event takes its start time and source port.
+	origin *sipOrigin
+}
+
+type sipOrigin struct {
+	md     connection.Metadata
+	remote net.Addr
+}
+
+// openCallIDs returns the Call-IDs whose final response was sent and that the
+// caller may still continue: an unACKed final, or an answered call not yet
+// ended by BYE.
+func (s *sipServer) openCallIDs() []string {
+	var ids []string
+	for id, c := range s.calls {
+		if id != "" && c.final != nil && (!c.acked || c.final.IsSuccess()) {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// produce emits the connection's event; for a call carried on from parked
+// connections it keeps the first connection's start and source address.
+func (s *sipServer) produce(conn net.Conn, md connection.Metadata, h interfaces.Honeypot) {
+	s.note()
+	if s.origin != nil {
+		md, conn = s.origin.withEnd(md.EndReason), &remoteAddrConn{Conn: conn, remote: s.origin.remote}
+	}
+	if err := h.ProduceTCP("sip", conn, md, helpers.FirstOrEmpty[parsedSIP](s.events).Payload, s.events); err != nil {
+		s.logger.Error("Failed to produce message", slog.String("protocol", "sip"), producer.ErrAttr(err))
+	}
+}
+
+func (o *sipOrigin) withEnd(endReason string) connection.Metadata {
+	md := o.md
+	md.EndReason = endReason
+	return md
+}
+
+// sipParkable reports whether a connection that ended this way may be
+// continued by the caller: it hung up or went quiet, rather than the
+// honeypot ending it.
+func sipParkable(endReason string) bool {
+	switch endReason {
+	case connection.EndClientClose, connection.EndClientReset, connection.EndReadError, connection.EndTimeout:
+		return true
+	}
+	return false
+}
+
+// sipParkedConn is a connection that ended with calls still open.
+type sipParkedConn struct {
+	server *sipServer
+	conn   net.Conn // closed; ProduceTCP still reads its addresses
+	md     connection.Metadata
+	h      interfaces.Honeypot
+	keys   []string
+	timer  sipTimer
+}
+
+// sipParkTable holds connections that ended with a call still open, keyed
+// by source IP and Call-ID. Some dialers (the OpenSIPS "SIP Scan Call"
+// fleet) close the connection after the 200 OK and send the ACK, or later
+// the BYE, over a new one, as RFC 3261 section 18 allows; the new connection
+// takes the parked one over, so the call stays one event. A parked
+// connection nobody takes produces after sipTCPParkHold.
+type sipParkTable struct {
+	mu    sync.Mutex
+	byKey map[string]*sipParkedConn
+	count int
+}
+
+var sipParked = newSIPParkTable()
+
+func newSIPParkTable() *sipParkTable {
+	return &sipParkTable{byKey: map[string]*sipParkedConn{}}
+}
+
+func sipParkKey(ip net.IP, callID string) string {
+	return ip.String() + "|" + callID
+}
+
+// park holds the ended connection when its source left calls open. It
+// returns false when the connection should produce now instead.
+func (t *sipParkTable) park(s *sipServer, conn net.Conn, md connection.Metadata, h interfaces.Honeypot) bool {
+	if s.srcIP == nil || !sipParkable(md.EndReason) {
+		return false
+	}
+	ids := s.openCallIDs()
+	if len(ids) == 0 {
+		return false
+	}
+	p := &sipParkedConn{server: s, conn: conn, md: md, h: h}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.count >= maxSIPTCPParked {
+		return false
+	}
+	for _, id := range ids {
+		key := sipParkKey(s.srcIP, id)
+		if t.byKey[key] != nil {
+			// another ended connection already waits for this call
+			return false
+		}
+		p.keys = append(p.keys, key)
+	}
+	for _, key := range p.keys {
+		t.byKey[key] = p
+	}
+	t.count++
+	p.timer = sipTCPAfterFunc(sipTCPParkHold(), func() { t.expire(p) })
+	return true
+}
+
+// take removes and returns the connection parked for ip's call, or nil.
+func (t *sipParkTable) take(ip net.IP, callID string) *sipParkedConn {
+	t.mu.Lock()
+	p := t.byKey[sipParkKey(ip, callID)]
+	if p != nil {
+		t.removeLocked(p)
+	}
+	t.mu.Unlock()
+	if p != nil {
+		p.timer.Stop()
+	}
+	return p
+}
+
+// expire produces p when no connection took it over.
+func (t *sipParkTable) expire(p *sipParkedConn) {
+	t.mu.Lock()
+	parked := len(p.keys) > 0 && t.byKey[p.keys[0]] == p
+	if parked {
+		t.removeLocked(p)
+	}
+	t.mu.Unlock()
+	if parked {
+		p.server.produce(p.conn, p.md, p.h)
+	}
+}
+
+func (t *sipParkTable) removeLocked(p *sipParkedConn) {
+	for _, key := range p.keys {
+		if t.byKey[key] == p {
+			delete(t.byKey, key)
+		}
+	}
+	t.count--
+}
+
+// adopt continues the calls of a parked connection on this one: its frames
+// come first in this connection's event, and an unACKed final waits for its
+// ACK here (an unACKed 200 OK is hung up over this connection).
+func (s *sipServer) adopt(p *sipParkedConn) {
+	s.events = append(p.server.events, s.events...)
+	s.origin = p.server.origin
+	if s.origin == nil {
+		s.origin = &sipOrigin{md: p.md, remote: p.conn.RemoteAddr()}
+	}
+	for id, c := range p.server.calls {
+		if _, ok := s.calls[id]; ok || c.final == nil || len(s.calls) >= maxSIPTCPCalls {
+			continue
+		}
+		s.calls[id] = c
+		if !c.acked {
+			final := c.final
+			c.ack = s.after(sipTCPAckTimeout, func() (string, error) { return s.ackTimeout(c, final) })
+		}
+	}
 }
 
 // begin picks the response variant once per connection (see
@@ -284,9 +464,8 @@ func handleSIP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		close(server.done)
 		server.stopTimers()
 		md.EndReason = endReason
-		server.note()
-		if err := h.ProduceTCP("sip", conn, md, helpers.FirstOrEmpty[parsedSIP](server.events).Payload, server.events); err != nil {
-			logger.Error("Failed to produce message", slog.String("protocol", "sip"), producer.ErrAttr(err))
+		if !sipParked.park(server, conn, md, h) {
+			server.produce(conn, md, h)
 		}
 		if err := conn.Close(); err != nil {
 			logger.Debug("Failed to close SIP connection", slog.String("protocol", "sip"), producer.ErrAttr(err))
@@ -365,6 +544,11 @@ func (s *sipServer) handle(pp *parser.PacketParser, m sipproto.StreamMessage) (s
 	}
 	s.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
 	s.begin()
+	if s.srcIP != nil && frame.CallID != "" && s.calls[frame.CallID] == nil {
+		if p := sipParked.take(s.srcIP, frame.CallID); p != nil {
+			s.adopt(p)
+		}
+	}
 
 	seq := uint32(0)
 	if cseq, ok := req.CSeq(); ok {

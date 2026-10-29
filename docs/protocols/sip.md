@@ -81,6 +81,8 @@ named by their tell instead:
 | `zoiper-fleet` | SDP `s=Zoiper` behind a `User-Agent` that does not say Zoiper (a phone model that changes every call). |
 | `sippts` | No `User-Agent`, a numeric `N-N-N` `Call-ID` and a digits-only Via branch (`z9hG4bK<digits>`), sippts' habits with its default `pplsip` agent removed. |
 | `pjsip-python` | No `User-Agent` and pjsip's `z9hG4bKPj` Via branch: a script on the pjsip Python bindings (real pjsip phones and Asterisk send a `User-Agent`). |
+| `sip-scan-call` | SDP session name `s=SIP Scan Call` (media at `0.0.0.0`): a dial fleet that rotates its `User-Agent` (2N IP Audio Kit, Gequdio, OpenSIPS). |
+| `options-ping` | `OPTIONS` with no `User-Agent`, `Call-ID: 1` and a one-character Via branch (the `OPTIONS sip:1@1` liveness probe sent from many networks). |
 
 `User-Agent` matches win over these. It is a triage hint, not proof: a scanner
 can forge any header.
@@ -271,7 +273,23 @@ ports goes to the `udp` catch-all as before.
 
 TCP/5060 and TLS/5061 (`tls: true`, so the handler sees plaintext and the event
 carries `tls`) produce one event per connection, with `endReason` from the
-connection (`client_close`, `timeout`, `read_error` and so on).
+connection (`client_close`, `timeout`, `read_error` and so on), unless a call
+continues on a later connection (see below).
+
+**Calls across connections.** RFC 3261 section 18 lets a client open a new
+connection for a later request of the same call, and some dialers do: the
+"SIP Scan Call" fleet closes the connection after the `200` and sends the ACK
+over a new one about 10 s later. When a connection ends (`client_close`,
+`client_reset`, `read_error` or `timeout`) with a call still open (a final
+response not yet ACKed, or an answered call without BYE), its event is held
+for `conn_timeout` (default 45 s). A new connection from the same source IP
+whose request carries that `call_id` takes it over: the held frames come first
+in the new connection's event, which keeps the first connection's
+`startedAt`/`srcPort` and ends with the last one's `endReason`. A held
+connection nobody takes over is produced when the hold passes, with its own
+`endReason`. This also delays by up to `conn_timeout` the events of TCP callers
+that never ACK (most toll-fraud tools). Up to 256 connections are held; beyond
+that they are produced at once.
 
 The generic `tcp` catch-all also peeks the start line and reroutes SIP from any
 other TCP port (for example 65060) here, as it does for UDP. SIP wins over HTTP

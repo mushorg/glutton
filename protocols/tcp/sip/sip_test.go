@@ -855,6 +855,35 @@ func TestToolPjsipPython(t *testing.T) {
 	require.Equal(t, "", Tool(parseRequest(t, []byte(withUA))))
 }
 
+// read frame 1 of a 2026-10-26 live capture (5.250.182.200, over TCP): the
+// "SIP Scan Call" dial fleet, this time with an OpenSIPS User-Agent
+var scanCallInvite = []byte("INVITE sip:18327772064@1.2.3.4 SIP/2.0\r\nVia: SIP/2.0/TCP 5.250.182.200:5060;branch=z9hG4bK-75cb45666d08;rport\r\nMax-Forwards: 70\r\nFrom: <sip:700@5.250.182.200>;tag=9a2a00a55681\r\nTo: <sip:18327772064@1.2.3.4>\r\nCall-ID: ab00day-w5-4f43ed51760e41df@5.250.182.200\r\nCSeq: 1 INVITE\r\nContact: <sip:700@5.250.182.200:5060>\r\nRemote-Party-ID: <sip:700@5.250.182.200>;party=calling;screen=yes;privacy=off\r\nP-Asserted-Identity: <sip:700@5.250.182.200>\r\nAllow: INVITE, ACK, CANCEL, BYE, OPTIONS, REFER, NOTIFY, INFO, UPDATE, PRACK, SUBSCRIBE\r\nSupported: 100rel, replaces, timer, norefersub, path, outbound\r\nAccept: application/sdp, application/dtmf-relay, application/dtmf, multipart/mixed\r\nUser-Agent: OpenSIPS (3.2.10 (x86_64/linux))\r\nContent-Type: application/sdp\r\nContent-Length: 215\r\n\r\nv=0\r\no=700 0 0 IN IP4 0.0.0.0\r\ns=SIP Scan Call\r\nc=IN IP4 0.0.0.0\r\nt=0 0\r\nm=audio 21752 RTP/AVP 0 8 18 9 3\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:18 G729/8000\r\na=rtpmap:9 G722/8000\r\na=rtpmap:3 GSM/8000")
+
+func TestToolSIPScanCall(t *testing.T) {
+	require.Equal(t, "sip-scan-call", Tool(parseRequest(t, scanCallInvite)))
+	// the session name, not the User-Agent, names it
+	other := strings.Replace(string(scanCallInvite), "OpenSIPS (3.2.10 (x86_64/linux))", "2N IP Audio Kit", 1)
+	require.Equal(t, "sip-scan-call", Tool(parseRequest(t, []byte(other))))
+	// a tool User-Agent wins
+	pplsip := strings.Replace(string(scanCallInvite), "OpenSIPS (3.2.10 (x86_64/linux))", "pplsip", 1)
+	require.Equal(t, "pplsip", Tool(parseRequest(t, []byte(pplsip))))
+}
+
+func TestToolOptionsPing(t *testing.T) {
+	require.Equal(t, "options-ping", Tool(parseRequest(t, minimalOptions)))
+	// any one-character branch (the fleet sends 0-9a-f)
+	other := strings.Replace(string(minimalOptions), "branch=c", "branch=7", 1)
+	require.Equal(t, "options-ping", Tool(parseRequest(t, []byte(other))))
+	for _, change := range []struct{ old, new string }{
+		{"branch=c", "branch=z9hG4bK1"},
+		{"Call-ID: 1\r\n", "Call-ID: 12\r\n"},
+		{"CSeq: 1 OPTIONS\r\n", "CSeq: 1 OPTIONS\r\nUser-Agent: Linphone/5.2\r\n"},
+	} {
+		data := strings.Replace(string(minimalOptions), change.old, change.new, 1)
+		require.Equal(t, "", Tool(parseRequest(t, []byte(data))), change.new)
+	}
+}
+
 func TestToolSippts(t *testing.T) {
 	require.Equal(t, "sippts", Tool(parseRequest(t, sweepRegister)))
 
@@ -864,8 +893,8 @@ func TestToolSippts(t *testing.T) {
 	require.Equal(t, "", Tool(parseRequest(t, []byte(otherCallID))))
 	otherBranch := strings.Replace(string(sweepRegister), "branch=z9hG4bK673996722", "branch=z9hG4bK-67399a", 1)
 	require.Equal(t, "", Tool(parseRequest(t, []byte(otherBranch))))
-	// the minimal OPTIONS probe carries none of the tells
-	require.Equal(t, "", Tool(parseRequest(t, minimalOptions)))
+	// the minimal OPTIONS probe carries none of the sippts tells
+	require.Equal(t, "options-ping", Tool(parseRequest(t, minimalOptions)))
 }
 
 func TestCalledNumberRefer(t *testing.T) {

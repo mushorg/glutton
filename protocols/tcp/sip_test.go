@@ -36,10 +36,25 @@ func startSIP(t *testing.T) (net.Conn, *fakeHoneypot, chan error) {
 func stubSIPRecall(t *testing.T) func(time.Duration) {
 	t.Helper()
 	now := time.Date(2026, 10, 7, 16, 0, 0, 0, time.UTC)
-	orig := sipRecall
+	orig, origParked := sipRecall, sipParked
 	sipRecall = recall.NewWithClock(recall.Config{Enabled: true, Gap: time.Hour}, func() time.Time { return now })
-	t.Cleanup(func() { sipRecall = orig })
+	sipParked = newSIPParkTable()
+	t.Cleanup(func() { sipRecall, sipParked = orig, origParked })
 	return func(d time.Duration) { now = now.Add(d) }
+}
+
+// flushSIPParked produces every parked connection, as their hold timers
+// would.
+func flushSIPParked() {
+	sipParked.mu.Lock()
+	parked := map[*sipParkedConn]bool{}
+	for _, p := range sipParked.byKey {
+		parked[p] = true
+	}
+	sipParked.mu.Unlock()
+	for p := range parked {
+		sipParked.expire(p)
+	}
 }
 
 type fakeSIPTimer struct {
@@ -108,17 +123,23 @@ func (ts *fakeSIPTimers) fire(t *testing.T, d time.Duration) {
 // sipRing is the ringing delay in tests.
 const sipRing = 3 * time.Second
 
+// sipParkHold is how long a parked connection waits in tests.
+const sipParkHold = 45 * time.Second
+
 // stubSIPTimers gives the test hand-fired timers; INVITEs ring for sipRing
 // and none are rejected.
 func stubSIPTimers(t *testing.T) *fakeSIPTimers {
 	t.Helper()
 	timers := &fakeSIPTimers{}
 	origAfter, origRing, origLimit := sipTCPAfterFunc, sipTCPRingDelay, sipproto.RejectLimit
+	origHold := sipTCPParkHold
 	sipTCPAfterFunc = timers.afterFunc
 	sipTCPRingDelay = func() time.Duration { return sipRing }
+	sipTCPParkHold = func() time.Duration { return sipParkHold }
 	sipproto.RejectLimit = 0
 	t.Cleanup(func() {
 		sipTCPAfterFunc, sipTCPRingDelay, sipproto.RejectLimit = origAfter, origRing, origLimit
+		sipTCPParkHold = origHold
 	})
 	return timers
 }
@@ -163,7 +184,15 @@ func waitSIP(t *testing.T, hp *fakeHoneypot, done chan error) producedTCP {
 	case <-time.After(2 * time.Second):
 		t.Fatal("handler did not finish")
 	}
-	produced := <-hp.produced
+	// a connection that left a call open is parked for the caller's next
+	// connection; tests that do not reconnect produce it right away
+	flushSIPParked()
+	var produced producedTCP
+	select {
+	case produced = <-hp.produced:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no event produced")
+	}
 	require.Empty(t, hp.produced, "exactly one event per session")
 	return produced
 }
@@ -640,4 +669,148 @@ func TestHandleSIPTCPTruncatedBody(t *testing.T) {
 	require.True(t, events[0].Truncated)
 	require.Len(t, events[0].Payload, len(big)-5000+sipMaxBody)
 	require.Equal(t, "OPTIONS", events[len(events)-2].Command)
+}
+
+// read frames of two connections in a 2026-10-26 live capture
+// (5.250.182.200): the "SIP Scan Call" fleet, with an OpenSIPS User-Agent,
+// closes the connection after the 200 OK and sends the ACK over a new one
+var (
+	sipScanCallInvite = []byte("INVITE sip:18327772064@1.2.3.4 SIP/2.0\r\nVia: SIP/2.0/TCP 5.250.182.200:5060;branch=z9hG4bK-75cb45666d08;rport\r\nMax-Forwards: 70\r\nFrom: <sip:700@5.250.182.200>;tag=9a2a00a55681\r\nTo: <sip:18327772064@1.2.3.4>\r\nCall-ID: ab00day-w5-4f43ed51760e41df@5.250.182.200\r\nCSeq: 1 INVITE\r\nContact: <sip:700@5.250.182.200:5060>\r\nRemote-Party-ID: <sip:700@5.250.182.200>;party=calling;screen=yes;privacy=off\r\nP-Asserted-Identity: <sip:700@5.250.182.200>\r\nAllow: INVITE, ACK, CANCEL, BYE, OPTIONS, REFER, NOTIFY, INFO, UPDATE, PRACK, SUBSCRIBE\r\nSupported: 100rel, replaces, timer, norefersub, path, outbound\r\nAccept: application/sdp, application/dtmf-relay, application/dtmf, multipart/mixed\r\nUser-Agent: OpenSIPS (3.2.10 (x86_64/linux))\r\nContent-Type: application/sdp\r\nContent-Length: 215\r\n\r\nv=0\r\no=700 0 0 IN IP4 0.0.0.0\r\ns=SIP Scan Call\r\nc=IN IP4 0.0.0.0\r\nt=0 0\r\nm=audio 21752 RTP/AVP 0 8 18 9 3\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:18 G729/8000\r\na=rtpmap:9 G722/8000\r\na=rtpmap:3 GSM/8000")
+	sipScanCallAck    = []byte("ACK sip:18327772064@1.2.3.4 SIP/2.0\r\nVia: SIP/2.0/TCP 5.250.182.200:5060;branch=z9hG4bK-3d43d6224966;rport\r\nMax-Forwards: 70\r\nFrom: <sip:700@5.250.182.200>;tag=9a2a00a55681\r\nTo: <sip:18327772064@1.2.3.4>;tag=fe49df2571d0fed0\r\nCall-ID: ab00day-w5-4f43ed51760e41df@5.250.182.200\r\nCSeq: 1 ACK\r\nUser-Agent: OpenSIPS (3.2.10 (x86_64/linux))\r\nContent-Length: 0\r\n\r\n")
+	sipScanCallBye    = []byte("BYE sip:18327772064@1.2.3.4:5060 SIP/2.0\r\nVia: SIP/2.0/TCP 5.250.182.200:5060;branch=z9hG4bK-3d43d6224967;rport\r\nFrom: <sip:700@5.250.182.200>;tag=9a2a00a55681\r\nTo: <sip:18327772064@1.2.3.4>;tag=feedface\r\nCall-ID: ab00day-w5-4f43ed51760e41df@5.250.182.200\r\nCSeq: 2 BYE\r\nContent-Length: 0\r\n\r\n")
+)
+
+// scanCallAnswered dials the captured INVITE on a new connection from
+// remote, lets it ring and returns once the 200 OK arrived.
+func scanCallAnswered(t *testing.T, timers *fakeSIPTimers, remote string, added time.Time) (net.Conn, *fakeHoneypot, chan error) {
+	t.Helper()
+	client, hp, done := startSIPWith(t, staticAddr{remote}, connection.Metadata{Added: added})
+	_, err := client.Write(sipScanCallInvite)
+	require.NoError(t, err)
+	requireStatus(t, readSIPReply(t, client), "100")
+	requireStatus(t, readSIPReply(t, client), "180")
+	timers.fire(t, sipRing)
+	requireStatus(t, readSIPReply(t, client), "200")
+	return client, hp, done
+}
+
+// waitParked waits for a handler whose connection was parked: it returned,
+// and nothing was produced.
+func waitParked(t *testing.T, hp *fakeHoneypot, done chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	require.Empty(t, hp.produced, "a connection with an open call waits for the next one")
+}
+
+func TestHandleSIPTCPAckOnNewConnection(t *testing.T) {
+	timers := stubSIPTimers(t)
+	stubSIPRecall(t)
+	first := time.Date(2026, 10, 26, 22, 58, 59, 0, time.UTC)
+	client, hp1, done1 := scanCallAnswered(t, timers, "5.250.182.200:31808", first)
+	require.NoError(t, client.Close())
+	waitParked(t, hp1, done1)
+
+	client2, hp2, done2 := startSIPWith(t, staticAddr{"5.250.182.200:32183"}, connection.Metadata{Added: first.Add(10 * time.Second)})
+	_, err := client2.Write(sipScanCallAck)
+	require.NoError(t, err)
+	// the ACK reached the call: no 408 BYE is pending any more
+	require.Eventually(t, func() bool {
+		for _, d := range timers.pending() {
+			if d == sipTCPAckTimeout {
+				return false
+			}
+		}
+		return true
+	}, time.Second, time.Millisecond)
+	require.NoError(t, client2.Close())
+
+	produced := waitSIP(t, hp2, done2)
+	events := produced.decoded.([]parsedSIP)
+	require.Equal(t, []string{"<INVITE", "100", "180", "200", "<ACK"}, statuses(events))
+	require.Equal(t, sipScanCallInvite, produced.payload)
+	require.Equal(t, sipScanCallAck, events[4].Payload)
+	require.Equal(t, "sip-scan-call", events[0].Tool)
+	require.Equal(t, connection.EndClientClose, produced.endReason)
+	// the event starts with the call's first connection
+	require.Equal(t, "5.250.182.200:31808", produced.remote)
+	require.Equal(t, first, produced.added)
+	require.Empty(t, hp1.produced)
+}
+
+func TestHandleSIPTCPByeOnNewConnection(t *testing.T) {
+	timers := stubSIPTimers(t)
+	stubSIPRecall(t)
+	client, hp1, done1 := scanCallAnswered(t, timers, "5.250.182.200:31808", time.Time{})
+	_, err := client.Write(sipScanCallAck)
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
+	// an answered call stays open until its BYE
+	waitParked(t, hp1, done1)
+
+	client2, hp2, done2 := startSIPFrom(t, staticAddr{"5.250.182.200:40000"})
+	_, err = client2.Write(sipScanCallBye)
+	require.NoError(t, err)
+	requireStatus(t, readSIPReply(t, client2), "200")
+	require.NoError(t, client2.Close())
+
+	produced := waitSIP(t, hp2, done2)
+	require.Equal(t, []string{"<INVITE", "100", "180", "200", "<ACK", "<BYE", "200"}, statuses(produced.decoded.([]parsedSIP)))
+	require.Equal(t, "5.250.182.200:31808", produced.remote)
+}
+
+func TestHandleSIPTCPParkedConnectionExpires(t *testing.T) {
+	timers := stubSIPTimers(t)
+	stubSIPRecall(t)
+	client, hp1, done1 := scanCallAnswered(t, timers, "5.250.182.200:31808", time.Time{})
+	require.NoError(t, client.Close())
+	waitParked(t, hp1, done1)
+
+	// another source's ACK with the same Call-ID does not take the call over
+	client2, hp2, done2 := startSIPFrom(t, staticAddr{"198.51.100.9:5060"})
+	_, err := client2.Write(sipScanCallAck)
+	require.NoError(t, err)
+	require.NoError(t, client2.Close())
+	select {
+	case err := <-done2:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	other := <-hp2.produced
+	require.Equal(t, []string{"<ACK"}, statuses(other.decoded.([]parsedSIP)))
+
+	// nobody continued the call: it is produced once the hold passes
+	timers.fire(t, sipParkHold)
+	var produced producedTCP
+	select {
+	case produced = <-hp1.produced:
+	case <-time.After(2 * time.Second):
+		t.Fatal("parked connection was not produced")
+	}
+	require.Equal(t, []string{"<INVITE", "100", "180", "200"}, statuses(produced.decoded.([]parsedSIP)))
+	require.Equal(t, connection.EndClientClose, produced.endReason)
+	require.Empty(t, sipParked.byKey)
+}
+
+func TestHandleSIPTCPParkTableFull(t *testing.T) {
+	timers := stubSIPTimers(t)
+	stubSIPRecall(t)
+	sipParked.count = maxSIPTCPParked
+	client, hp, done := scanCallAnswered(t, timers, "5.250.182.200:31808", time.Time{})
+	require.NoError(t, client.Close())
+	// no room to park: the connection produces at once, without a flush
+	require.NoError(t, <-done)
+	var produced producedTCP
+	select {
+	case produced = <-hp.produced:
+	case <-time.After(2 * time.Second):
+		t.Fatal("connection was parked although the table is full")
+	}
+	require.Equal(t, []string{"<INVITE", "100", "180", "200"}, statuses(produced.decoded.([]parsedSIP)))
+	require.Empty(t, sipParked.byKey)
 }

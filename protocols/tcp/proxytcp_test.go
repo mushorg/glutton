@@ -75,6 +75,8 @@ type producedTCP struct {
 	tls       *connection.TLSInfo
 	stack     []string
 	fleet     string
+	remote    string    // conn.RemoteAddr() at produce time
+	added     time.Time // md.Added (the event's startedAt)
 }
 
 type fakeHoneypot struct {
@@ -86,7 +88,11 @@ func newFakeHoneypot() *fakeHoneypot {
 }
 
 func (h *fakeHoneypot) ProduceTCP(protocol string, conn net.Conn, md connection.Metadata, payload []byte, decoded interface{}) error {
-	h.produced <- producedTCP{protocol: protocol, payload: payload, decoded: decoded, endReason: md.EndReason, tls: md.TLS, stack: md.Stack("tcp", protocol), fleet: md.Fleet}
+	remote := ""
+	if conn != nil && conn.RemoteAddr() != nil {
+		remote = conn.RemoteAddr().String()
+	}
+	h.produced <- producedTCP{protocol: protocol, payload: payload, decoded: decoded, endReason: md.EndReason, tls: md.TLS, stack: md.Stack("tcp", protocol), fleet: md.Fleet, remote: remote, added: md.Added}
 	return nil
 }
 
