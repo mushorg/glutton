@@ -200,3 +200,78 @@ func TestParseCredSSPNTLMVersion(t *testing.T) {
 		require.Equal(t, tc.want, ParseCredSSP(WrapTSRequest(msg)).NTLMVersion)
 	}
 }
+
+// MCS Connect-Initial and Client Info PDU from a TLS brute-forcer that writes
+// ASCII "FREERDP" into the UTF-16 clientName field and sends a China Standard
+// Time zone block (ochi.mushmush.org/events/d4bd8b39-9804-4efd-89b9-a84a8f7548b8).
+var (
+	asciiNameConnectInitialFixture = mustHex("0300016c02f0807f658201600401010401010101ff301a020122020102020100020101020100020101020300ffff020102301a02010102010102010102010102010002010102020420020102301c020300ffff020300fc04020300ffff020101020100020101020300ffff0201020481fb000500147c000180f2000801310001c0044475636180e401c0d800040008000005000401ca03aa09040000ce0e0000465245455244500000000000000000000000000000000000000000000000000004000000000000000c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001ca0100000000001800070021000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007000100000002c00c000000000000000000")
+	tzClientInfoFixture            = mustHex("0300015102f08064000603eb7081424000000000000000fb43030000000a000c00000000000000410064006d0069006e0000003900380037003600350034000000000000000200100030002e0030002e0030002e0030000000400043003a005c00570069006e0064006f00770073005c00530079007300740065006d00330032005c006d007300740073006300610078002e0064006c006c00000020feffff2d4efd560768c651f665f495000064006c006c002c002d003500370032000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002d4efd560f59e44ef66500002e0064006c006c002c002d003500370031000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c4ffffff00000000000000000000")
+)
+
+func TestParseClientDataASCIIName(t *testing.T) {
+	cd := ParseClientData(asciiNameConnectInitialFixture)
+	require.NotNil(t, cd)
+	require.Equal(t, ClientData{
+		ClientName:     "FREERDP",
+		ClientNameANSI: true,
+		ClientBuild:    3790,
+		DesktopWidth:   1280,
+		DesktopHeight:  1024,
+		KeyboardLayout: 0x0409,
+		HighColorDepth: 24,
+	}, *cd)
+}
+
+func TestIsANSIName(t *testing.T) {
+	name := func(b []byte) []byte { return append(b, make([]byte, 32-len(b))...) }
+	require.True(t, isANSIName(name([]byte("FREERDP"))))
+	require.True(t, isANSIName(name([]byte("WORK"))))
+	require.False(t, isANSIName(name(utf16LE("EMP-LAP-0014"))))
+	require.False(t, isANSIName(name(utf16LE("Ä"))), "one-unit UTF-16 name")
+	require.False(t, isANSIName(name(nil)))
+	require.False(t, isANSIName(name([]byte{0xc4, 0x80, 0x41})), "non-printable bytes stay UTF-16")
+}
+
+func TestParseClientInfoTimeZone(t *testing.T) {
+	ch, payload, ok := SendDataRequest(tzClientInfoFixture)
+	require.True(t, ok)
+	require.Equal(t, uint16(1003), ch)
+	ci, ok := ParseClientInfo(payload)
+	require.True(t, ok)
+	bias := int32(-480)
+	require.Equal(t, ClientInfo{
+		Username:       "Admin",
+		Password:       "987654",
+		ClientAddress:  "0.0.0.0",
+		ClientDir:      `C:\Windows\System32\mstscax.dll`,
+		Autologon:      true,
+		TZBias:         &bias,
+		TZStandardName: "中国标准时间",
+		TZDaylightName: "中国夏令时",
+	}, ci)
+	js, err := json.Marshal(ci)
+	require.NoError(t, err)
+	require.Contains(t, string(js), `"tz_bias":-480`)
+
+	// Time zone cut short: the earlier fields stay, no partial time zone.
+	ci, ok = ParseClientInfo(payload[:len(payload)-100])
+	require.True(t, ok)
+	require.Equal(t, "Admin", ci.Username)
+	require.Equal(t, "987654", ci.Password)
+	require.Equal(t, `C:\Windows\System32\mstscax.dll`, ci.ClientDir)
+	require.Nil(t, ci.TZBias)
+	require.Empty(t, ci.TZStandardName)
+}
+
+func TestParseClientInfoUTCTimeZone(t *testing.T) {
+	b := clientInfoPayload("", "u", "p")
+	tz := make([]byte, timeZoneInfoLen)
+	copy(tz[4:], utf16LE("UTC"))
+	ci, ok := ParseClientInfo(append(b, tz...))
+	require.True(t, ok)
+	require.NotNil(t, ci.TZBias, "bias 0 is still reported")
+	require.Equal(t, int32(0), *ci.TZBias)
+	require.Equal(t, "UTC", ci.TZStandardName)
+	require.Empty(t, ci.TZDaylightName)
+}

@@ -16,7 +16,7 @@ After an `NTLMAuthenticate` the honeypot fails the logon like Windows does, unle
 
 ### Connection sequence after MCS (TLS or standard RDP security without CredSSP)
 
-`MCSConnectInitial` reads carry `client_data`, parsed from the GCC `Duca` client data blocks: `client_name`, `client_build`, `desktop_width`, `desktop_height`, `keyboard_layout` (LCID, e.g. 1033 = 0x409 en-US), `high_color_depth`, `encryption_methods` (CS_SECURITY bitmask), and `channels` (static virtual channel names such as `rdpdr`, `cliprdr`, `rdpsnd`). The `MCSConnectResponse` assigns each requested channel an ID from 1004 (I/O channel 1003) and announces ENCRYPTION_LEVEL_NONE.
+`MCSConnectInitial` reads carry `client_data`, parsed from the GCC `Duca` client data blocks: `client_name` (plus `client_name_ansi` when the client wrote an ASCII name into the UTF-16 field, e.g. `FREERDP`; a tool fingerprint), `client_build`, `desktop_width`, `desktop_height`, `keyboard_layout` (LCID, e.g. 1033 = 0x409 en-US), `high_color_depth`, `encryption_methods` (CS_SECURITY bitmask), and `channels` (static virtual channel names such as `rdpdr`, `cliprdr`, `rdpsnd`). The `MCSConnectResponse` assigns each requested channel an ID from 1004 (I/O channel 1003) and announces ENCRYPTION_LEVEL_NONE.
 
 The handler then follows the MCS domain sequence. Several TPKT PDUs in one read are split, and a PDU split across reads is reassembled (a partial PDU left at disconnect is stored with `truncated`):
 
@@ -29,6 +29,6 @@ The handler then follows the MCS domain sequence. Several TPKT PDUs in one read 
 | `SecurityExchange` / `SendDataRequest` | none |
 | `X224Data` (unknown MCS PDU) | none |
 
-`client_info` is the Client Info PDU (TS_INFO_PACKET): `domain`, `username`, `password` (plaintext guess), `alternate_shell`, `working_dir`, `client_address`, `client_dir`, `autologon`, and `encrypted` when the client used standard RDP security encryption (then nothing else is decoded, including the password). Sessions are capped at 128 frames (`endReason` `max_frames`).
+`client_info` is the Client Info PDU (TS_INFO_PACKET): `domain`, `username`, `password` (plaintext guess), `alternate_shell`, `working_dir`, `client_address`, `client_dir`, the client time zone from the extended info (`tz_bias` in minutes, UTC = local + bias, e.g. -480 for UTC+8; `tz_standard_name`, `tz_daylight_name`, set only when the full 172-byte block was sent), `autologon`, and `encrypted` when the client used standard RDP security encryption (then nothing else is decoded, including the password). Sessions are capped at 128 frames (`endReason` `max_frames`).
 
 Not emulated: standard RDP security key exchange (RSA/RC4), licensing beyond the valid-client shortcut, the capability exchange (Demand/Confirm Active), input events, and a desktop. NLA can complete only for a password in `rdp.credentials` or `rdp.guess_passwords` (the session key is password-derived, so an unknown password cannot be accepted). The later Client Info path still denies the session (`ERRINFO_SERVER_DENIED_CONNECTION`).

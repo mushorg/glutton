@@ -15,6 +15,11 @@ type ClientInfo struct {
 	WorkingDir     string `json:"working_dir,omitempty"`
 	ClientAddress  string `json:"client_address,omitempty"`
 	ClientDir      string `json:"client_dir,omitempty"`
+	// TZBias is the client time zone bias in minutes (UTC = local + bias),
+	// set only when the full time zone block was sent.
+	TZBias         *int32 `json:"tz_bias,omitempty"`
+	TZStandardName string `json:"tz_standard_name,omitempty"`
+	TZDaylightName string `json:"tz_daylight_name,omitempty"`
 	Autologon      bool   `json:"autologon,omitempty"`
 	Encrypted      bool   `json:"encrypted,omitempty"`
 }
@@ -106,8 +111,23 @@ func ParseClientInfo(payload []byte) (ci ClientInfo, ok bool) {
 		return ci, true
 	}
 	ci.ClientDir = decodeUTF16Z(ext[2 : 2+n])
+
+	// TS_TIME_ZONE_INFORMATION (2.2.1.11.1.1.1): Bias(4), StandardName(64),
+	// StandardDate(16), StandardBias(4), DaylightName(64), DaylightDate(16),
+	// DaylightBias(4). Names stop at the first NUL; clients leave stale
+	// bytes after it.
+	tz := ext[2+n:]
+	if len(tz) < timeZoneInfoLen {
+		return ci, true
+	}
+	bias := int32(binary.LittleEndian.Uint32(tz[0:4]))
+	ci.TZBias = &bias
+	ci.TZStandardName = decodeUTF16Z(tz[4:68])
+	ci.TZDaylightName = decodeUTF16Z(tz[88:152])
 	return ci, true
 }
+
+const timeZoneInfoLen = 172
 
 func decodeANSIZ(b []byte) string {
 	for i, c := range b {

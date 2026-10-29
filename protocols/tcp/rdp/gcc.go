@@ -22,6 +22,7 @@ const (
 // user data: CS_CORE, CS_SECURITY and CS_NET.
 type ClientData struct {
 	ClientName        string   `json:"client_name,omitempty"`
+	ClientNameANSI    bool     `json:"client_name_ansi,omitempty"`
 	ClientBuild       uint32   `json:"client_build,omitempty"`
 	DesktopWidth      uint16   `json:"desktop_width,omitempty"`
 	DesktopHeight     uint16   `json:"desktop_height,omitempty"`
@@ -88,7 +89,12 @@ func parseCSCore(b []byte, cd *ClientData) bool {
 	cd.DesktopHeight = binary.LittleEndian.Uint16(b[10:12])
 	cd.KeyboardLayout = binary.LittleEndian.Uint32(b[16:20])
 	cd.ClientBuild = binary.LittleEndian.Uint32(b[20:24])
-	cd.ClientName = decodeUTF16Z(b[24:56])
+	if isANSIName(b[24:56]) {
+		cd.ClientName = decodeANSIZ(b[24:56])
+		cd.ClientNameANSI = true
+	} else {
+		cd.ClientName = decodeUTF16Z(b[24:56])
+	}
 	if len(b) >= 142 {
 		cd.HighColorDepth = binary.LittleEndian.Uint16(b[140:142])
 	}
@@ -129,6 +135,27 @@ func perLength(b []byte) (n, hdr int) {
 		return 0, 0
 	}
 	return int(b[0]&0x3f)<<8 | int(b[1]), 2
+}
+
+// isANSIName reports whether a clientName field (UTF-16LE per the spec) holds
+// a NUL-terminated ASCII string instead, as some brute-forcers send
+// ("FREERDP\x00" decodes to CJK mojibake as UTF-16). A UTF-16 ASCII name has a
+// NUL high byte at index 1, so two or more printable bytes before the first NUL
+// mean ANSI. Rare CJK names made only of printable-byte code units match too.
+func isANSIName(b []byte) bool {
+	n := bytes.IndexByte(b, 0)
+	if n < 0 {
+		n = len(b)
+	}
+	if n < 2 {
+		return false
+	}
+	for _, c := range b[:n] {
+		if c < 0x20 || c > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 // decodeUTF16Z decodes a UTF-16LE string and stops at the first NUL.

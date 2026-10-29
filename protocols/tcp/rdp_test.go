@@ -681,6 +681,80 @@ func TestHandleRDPClientInfoOverTLS(t *testing.T) {
 	require.Contains(t, string(js), `"password":"Winter2024!"`)
 }
 
+// TestHandleRDPCapturedBruteForce replays the client side of
+// ochi.mushmush.org/events/d4bd8b39-9804-4efd-89b9-a84a8f7548b8: ASCII
+// "FREERDP" in the UTF-16 clientName and a China Standard Time zone block.
+func TestHandleRDPCapturedBruteForce(t *testing.T) {
+	cr := mustDecodeHex("030000130ee00000000000010008000b000000")
+	mcs := mustDecodeHex("0300016c02f0807f658201600401010401010101ff301a020122020102020100020101020100020101020300ffff020102301a02010102010102010102010102010002010102020420020102301c020300ffff020300fc04020300ffff020101020100020101020300ffff0201020481fb000500147c000180f2000801310001c0044475636180e401c0d800040008000005000401ca03aa09040000ce0e0000465245455244500000000000000000000000000000000000000000000000000004000000000000000c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001ca0100000000001800070021000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007000100000002c00c000000000000000000")
+	info := mustDecodeHex("0300015102f08064000603eb7081424000000000000000fb43030000000a000c00000000000000410064006d0069006e0000003900380037003600350034000000000000000200100030002e0030002e0030002e0030000000400043003a005c00570069006e0064006f00770073005c00530079007300740065006d00330032005c006d007300740073006300610078002e0064006c006c00000020feffff2d4efd560768c651f665f495000064006c006c002c002d003500370032000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002d4efd560f59e44ef66500002e0064006c006c002c002d003500370031000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c4ffffff00000000000000000000")
+	tlsClient, cc, done, hp := startRDPTLS(t, cr)
+	require.Equal(t, mustDecodeHex("030000130ed000000000000200080001000000"), cc, "TLS selected")
+
+	_, err := tlsClient.Write(mcs)
+	require.NoError(t, err)
+	buf := make([]byte, 512)
+	_, err = tlsClient.Read(buf)
+	require.NoError(t, err)
+	_, err = tlsClient.Write(append(append([]byte{}, rdpErectDomain...), rdpAttachUser...))
+	require.NoError(t, err)
+	_, err = io.ReadFull(tlsClient, make([]byte, 11))
+	require.NoError(t, err)
+	for _, ch := range []uint16{1007, 1003} {
+		_, err = tlsClient.Write(rdpChannelJoin(ch))
+		require.NoError(t, err)
+		_, err = io.ReadFull(tlsClient, make([]byte, 15))
+		require.NoError(t, err)
+	}
+	_, err = tlsClient.Write(info)
+	require.NoError(t, err)
+	_, err = io.ReadAll(tlsClient)
+	require.NoError(t, err)
+	waitRDPDone(t, done)
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "rdp", produced.protocol)
+	require.Equal(t, cr, produced.payload)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+	events := produced.decoded.([]parsedRDP)
+	require.Equal(t, []string{
+		"read:ConnectionRequest", "write:ConnectionConfirm", "read:TLSClientHello", "write:TLSHandshake",
+		"read:MCSConnectInitial", "write:MCSConnectResponse",
+		"read:ErectDomainRequest", "read:AttachUserRequest", "write:AttachUserConfirm",
+		"read:ChannelJoinRequest", "write:ChannelJoinConfirm", "read:ChannelJoinRequest", "write:ChannelJoinConfirm",
+		"read:ClientInfo", "write:LicenseErrorAlert", "write:SetErrorInfo", "write:DisconnectProviderUltimatum",
+	}, rdpCommands(events))
+
+	require.Equal(t, mcs, events[4].Payload)
+	require.Equal(t, &rdp.ClientData{
+		ClientName:     "FREERDP",
+		ClientNameANSI: true,
+		ClientBuild:    3790,
+		DesktopWidth:   1280,
+		DesktopHeight:  1024,
+		KeyboardLayout: 0x0409,
+		HighColorDepth: 24,
+	}, events[4].ClientData)
+
+	bias := int32(-480)
+	require.Equal(t, info, events[13].Payload)
+	require.Equal(t, &rdp.ClientInfo{
+		Username:       "Admin",
+		Password:       "987654",
+		ClientAddress:  "0.0.0.0",
+		ClientDir:      `C:\Windows\System32\mstscax.dll`,
+		Autologon:      true,
+		TZBias:         &bias,
+		TZStandardName: "中国标准时间",
+		TZDaylightName: "中国夏令时",
+	}, events[13].ClientInfo)
+	require.Equal(t, "ERRINFO_SERVER_DENIED_CONNECTION", events[15].Status)
+}
+
 func TestHandleRDPReassemblesSplitPDUs(t *testing.T) {
 	client, serverConn := net.Pipe()
 	defer client.Close()
