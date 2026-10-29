@@ -16,11 +16,25 @@ type Command struct {
 	Arg string
 }
 
-// ParseCommand parses a client command line. Verbs are case-insensitive.
+// ParseCommand parses a client command line. Verbs are case-insensitive. A
+// verb with non-printable bytes (binary data such as a stray TLS record) is
+// not a command, so it parses as the empty Command.
 func ParseCommand(line string) Command {
 	line = strings.TrimSpace(line)
 	verb, arg, _ := strings.Cut(line, " ")
+	if !printable(verb) {
+		return Command{}
+	}
 	return Command{Verb: strings.ToUpper(verb), Arg: strings.TrimSpace(arg)}
+}
+
+func printable(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] <= ' ' || s[i] > '~' {
+			return false
+		}
+	}
+	return true
 }
 
 // Reply is a server response and whether it ends the session.
@@ -30,14 +44,29 @@ type Reply struct {
 	Close  bool
 }
 
-// capabilities advertises USER/PASS only, so credential guessers keep talking.
-var capabilities = "+OK\r\nCAPA\r\nTOP\r\nUSER\r\nUIDL\r\nRESP-CODES\r\nPIPELINING\r\n.\r\n"
+// Capabilities is the CAPA reply. It advertises USER/PASS only, so credential
+// guessers keep talking, and STLS (RFC 2595) until TLS is active, as Dovecot
+// does.
+func Capabilities(tls bool) string {
+	stls := "STLS\r\n"
+	if tls {
+		stls = ""
+	}
+	return "+OK\r\nCAPA\r\nTOP\r\n" + stls + "USER\r\nUIDL\r\nRESP-CODES\r\nPIPELINING\r\n.\r\n"
+}
 
-// Respond builds the reply to cmd. PASS is always refused.
-func Respond(cmd Command) Reply {
+// Respond builds the reply to cmd; tls reports whether the session is
+// already encrypted. PASS is always refused. A +OK reply to STLS means the
+// caller must start the TLS handshake next.
+func Respond(cmd Command, tls bool) Reply {
 	switch cmd.Verb {
 	case "CAPA":
-		return ok(capabilities)
+		return ok(Capabilities(tls))
+	case "STLS":
+		if tls {
+			return errReply("-ERR TLS is already active.\r\n")
+		}
+		return ok("+OK Begin TLS negotiation now.\r\n")
 	case "USER":
 		return ok("+OK\r\n")
 	case "PASS":
