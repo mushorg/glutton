@@ -118,6 +118,7 @@ func MapUDPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"kerberos":    bindUDP(udp.HandleKerberos, log, h),
 		"coap":        bindUDP(udp.HandleCoAP, log, h),
 		"ike":         bindUDP(udp.HandleIKE, log, h),
+		"nbns":        bindUDP(udp.HandleNBNS, log, h),
 		"a2s":         bindUDP(udp.HandleA2S, log, h),
 		"steam":       bindUDP(udp.HandleSteam, log, h),
 		"ddp":         bindUDP(udp.HandleDDP, log, h),

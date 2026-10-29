@@ -2,7 +2,8 @@ package smb
 
 import (
 	"fmt"
-	"strings"
+
+	"github.com/mushorg/glutton/protocols/helpers/netbios"
 )
 
 // NetBIOS Session Service packet types (RFC 1002 4.3.1). Direct TCP (445)
@@ -42,43 +43,15 @@ func MakePositiveSessionResponse() []byte {
 // session request body (after the 4-byte NBSS header). ok is false when either
 // name is not a valid first-level encoded name.
 func ParseSessionRequest(body []byte) (called, calling string, ok bool) {
-	called, n, ok := decodeNetBIOSName(body)
+	called, _, n, ok := netbios.Decode(body)
 	if !ok {
 		return "", "", false
 	}
-	calling, _, ok = decodeNetBIOSName(body[n:])
+	calling, _, _, ok = netbios.Decode(body[n:])
 	if !ok {
 		return "", "", false
 	}
 	return called, calling, true
-}
-
-// decodeNetBIOSName decodes one first-level encoded name (RFC 1001 14.1):
-// a 0x20 length byte, 32 'A'..'P' half-ASCII characters, then scope labels up
-// to a zero byte. The 16th byte (service suffix) and space padding are dropped;
-// n is the number of bytes consumed including the scope.
-func decodeNetBIOSName(b []byte) (name string, n int, ok bool) {
-	const encodedLen = 32
-	if len(b) < 1+encodedLen || b[0] != encodedLen {
-		return "", 0, false
-	}
-	raw := make([]byte, encodedLen/2)
-	for i := range raw {
-		hi, lo := b[1+2*i]-'A', b[2+2*i]-'A'
-		if hi > 0x0f || lo > 0x0f {
-			return "", 0, false
-		}
-		raw[i] = hi<<4 | lo
-	}
-	n = 1 + encodedLen
-	for n < len(b) && b[n] != 0 {
-		n += 1 + int(b[n])
-	}
-	if n >= len(b) {
-		return "", 0, false
-	}
-	n++ // terminating zero label
-	return strings.TrimRight(string(raw[:15]), " \x00"), n, true
 }
 
 // PeekLen is how many client bytes LooksLikeSMB needs: the 4-byte NBSS header

@@ -72,6 +72,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | SMTP                        | mail submission probes                   |
 | RDP                         | Remote Desktop handshake                 |
 | SMB                         | Windows file-sharing probes              |
+| NBNS                        | NetBIOS name queries on udp/137          |
 | FTP                         | file transfer commands                   |
 | SIP                         | VoIP signaling traffic                   |
 | RFB/VNC                     | remote framebuffer auth                  |

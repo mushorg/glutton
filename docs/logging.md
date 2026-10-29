@@ -127,6 +127,7 @@ Example shape:
 | `raknet` | UDP | [protocols/raknet.md](protocols/raknet.md) |
 | `kerberos` | UDP | [protocols/kerberos.md](protocols/kerberos.md) |
 | `ike` | UDP | [protocols/ike.md](protocols/ike.md) |
+| `nbns` | UDP | [protocols/nbns.md](protocols/nbns.md) |
 | `coap` | UDP | [protocols/coap.md](protocols/coap.md) |
 | `a2s` | UDP | [protocols/a2s.md](protocols/a2s.md) |
 | `steam` | UDP | [protocols/steam.md](protocols/steam.md) |

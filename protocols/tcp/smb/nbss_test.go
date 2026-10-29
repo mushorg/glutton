@@ -3,6 +3,7 @@ package smb
 import (
 	"testing"
 
+	"github.com/mushorg/glutton/protocols/helpers/netbios"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,26 +39,12 @@ func TestLooksLikeSMB(t *testing.T) {
 	}
 }
 
-// encodeNetBIOSName first-level encodes name padded to 15 bytes plus suffix.
-func encodeNetBIOSName(name string, suffix byte) []byte {
-	raw := []byte(name)
-	for len(raw) < 15 {
-		raw = append(raw, ' ')
-	}
-	raw = append(raw[:15], suffix)
-	out := []byte{0x20}
-	for _, c := range raw {
-		out = append(out, 'A'+c>>4, 'A'+c&0x0f)
-	}
-	return append(out, 0x00)
-}
-
 func TestParseSessionRequest(t *testing.T) {
 	// smbclient's default called name: "*SMBSERVER" with the 0x20 server suffix.
 	called := []byte("\x20CKFDENECFDEFFCFGEFFCCACACACACACA\x00")
-	require.Equal(t, encodeNetBIOSName("*SMBSERVER", 0x20), called)
+	require.Equal(t, netbios.Encode("*SMBSERVER", 0x20), called)
 
-	body := append(append([]byte{}, called...), encodeNetBIOSName("WORKSTATION", 0x00)...)
+	body := append(append([]byte{}, called...), netbios.Encode("WORKSTATION", 0x00)...)
 	gotCalled, gotCalling, ok := ParseSessionRequest(body)
 	require.True(t, ok)
 	require.Equal(t, "*SMBSERVER", gotCalled)
@@ -65,10 +52,10 @@ func TestParseSessionRequest(t *testing.T) {
 }
 
 func TestParseSessionRequestScope(t *testing.T) {
-	called := encodeNetBIOSName("FILESRV", 0x20)
+	called := netbios.Encode("FILESRV", 0x20)
 	// Replace the empty scope with "CORP" so the parser has to skip a label.
 	called = append(called[:len(called)-1], append([]byte{4}, "CORP\x00"...)...)
-	body := append(called, encodeNetBIOSName("PC1", 0x00)...)
+	body := append(called, netbios.Encode("PC1", 0x00)...)
 	gotCalled, gotCalling, ok := ParseSessionRequest(body)
 	require.True(t, ok)
 	require.Equal(t, "FILESRV", gotCalled)
@@ -76,7 +63,7 @@ func TestParseSessionRequestScope(t *testing.T) {
 }
 
 func TestParseSessionRequestMalformed(t *testing.T) {
-	valid := encodeNetBIOSName("HOST", 0x20)
+	valid := netbios.Encode("HOST", 0x20)
 	for name, body := range map[string][]byte{
 		"empty":         nil,
 		"bad length":    append([]byte{0x10}, valid[1:]...),
