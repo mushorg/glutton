@@ -6,7 +6,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 
 ## `http` (Go)
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `ja4h`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `elasticsearch`, `log4shell`, `php2shell`, `plex2shell`, `session_id`, `dest_port`, `src_port`, `payload`, and on [CONNECT tunnel](#connect-proxy-tunnels) frames `payload_hash`, `error`, `requests`, `distinct_requests`, `request_line`, `http`, plus TLS ClientHello fingerprint fields (`sni`, `ja4`, …)
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `ja4h`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `elasticsearch`, `log4shell`, `php2shell`, `phpinfo`, `plex2shell`, `session_id`, `dest_port`, `src_port`, `payload`, and on [CONNECT tunnel](#connect-proxy-tunnels) frames `payload_hash`, `error`, `requests`, `distinct_requests`, `request_line`, `http`, plus TLS ClientHello fingerprint fields (`sni`, `ja4`, …)
 
 ### Frame fields
 
@@ -21,7 +21,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 | `status` | writes | Response status, e.g. `200`. |
 | `username`, `password` | reads | `Authorization: Basic` credentials, otherwise `Proxy-Authorization: Basic` (any method, including `CONNECT`), or the Proxmox VE ticket login form (see [Emulated applications](#emulated-applications)). Recorded in plaintext. |
 | `payload_hash`, `truncated`, `error`, `requests`, `distinct_requests`, `request_line`, `http`, `sni`, `ja4`, … | tunnel frames | See [CONNECT proxy tunnels](#connect-proxy-tunnels). |
-| `browser`, `binary`, `args`, `citrix`, `elasticsearch`, `log4shell`, `php2shell`, `plex2shell`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
+| `browser`, `binary`, `args`, `citrix`, `elasticsearch`, `log4shell`, `php2shell`, `phpinfo`, `plex2shell`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
 
 ### Sessions
 
@@ -134,6 +134,18 @@ Package: `protocols/tcp/php2shell`. Parse-only: a `multipart/form-data` read tha
 | `scanner_user_agent` | `User-Agent` contains `PHP2Shell/`. |
 
 `parts` and `max_depth` cover the first 1 MiB of the body; bodies over 1 MiB are not read, so the scanner's 8 and 20 MiB probes are tagged from headers alone (`empty_boundary`, `large_body`, `scanner_user_agent`); `content_length` is the larger of the declared and received size; `boundary` is capped at 128 B. `truncated` is set when either cap applies. The Spicy `http` handler does not set `php2shell`.
+
+#### phpinfo() page
+
+Package: `protocols/tcp/phpinfo`. Exposure scanners (Censys, nuclei `phpinfo-files`) request well-known test scripts and record the PHP version and configuration. A matching request sets `phpinfo` to `{page}` (the script name, lowercased) and gets a `200` `text/html` phpinfo() page of a Debian 11 host: PHP 7.4.33, `Server: Apache/2.4.62 (Debian)`, Apache 2.0 Handler, Debian default `php.ini`. Hostname, kernel build and the systemd invocation ID are random per sensor. Request headers, `$_SERVER` values (client address and port, `Host`, URI, `HTTPS` when the sensor terminated TLS) and `$_GET` are reflected, HTML-escaped, as the real page does; at most 64 headers and 32 query parameters, each value capped at 1 KiB. The page carries no credentials or application secrets and accepts no uploads. `HEAD` gets the headers only.
+
+| Path | Matches |
+| --- | --- |
+| `phpinfo.php`, `info.php`, `infophp.php`, `php_info.php`, `php-info.php`, `pinfo.php`, `phpversion.php`, `inf0.php`, `infos.php`, `old_phpinfo.php`, `linusadmin-phpinfo.php`, `phpinfo` | in any directory (`/public/phpinfo.php`, `/_profiler/phpinfo`, `/dashboard/phpinfo.php`) |
+| `i.php`, `pi.php`, `p.php`, `php.php`, `php2.php`, `test.php`, `a.php`, `asdf.php`, `time.php`, `temp.php`, `testxx.php` | at the web root only |
+| `/?phpinfo=1`, `/index.php?phpinfo=1`, `/l.php?act=phpinfo` | by query |
+
+The Selenium, Proxmox VE, Elasticsearch, Plex and Citrix personas answer first on their ports and paths. The Spicy `http` handler does not set `phpinfo`.
 
 #### Plex2Shell (CVE-2026-96652, -96654, -96655, -96656)
 

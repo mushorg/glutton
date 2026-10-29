@@ -18,6 +18,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/elasticsearch"
 	"github.com/mushorg/glutton/protocols/tcp/log4shell"
 	"github.com/mushorg/glutton/protocols/tcp/php2shell"
+	"github.com/mushorg/glutton/protocols/tcp/phpinfo"
 	"github.com/mushorg/glutton/protocols/tcp/plex2shell"
 	"github.com/mushorg/glutton/protocols/tcp/pve"
 	"github.com/stretchr/testify/require"
@@ -946,6 +947,80 @@ func TestHandleHTTPPHP2Shell(t *testing.T) {
 		Boundary:      "b",
 	}, events[0].PHP2Shell)
 	require.Nil(t, events[1].PHP2Shell)
+}
+
+// The Censys phpinfo probe (Ochi event 6fd4f912-f244-4bec-824f-a9b75e3249bb,
+// TLS on tcp/41027) gets a phpinfo() page and a tagged read frame; other paths
+// on the same connection keep the default reply.
+func TestHandleHTTPPHPInfo(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+	prevNow := httpNow
+	httpNow = func() time.Time { return time.Date(2026, 10, 29, 19, 15, 4, 0, time.UTC) }
+	t.Cleanup(func() { httpNow = prevNow })
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	md := connection.Metadata{TargetPort: 41027, TLS: &connection.TLSInfo{}}
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, md, &recordingLogger{}, hp)
+	}()
+
+	censys := []byte("GET /phpinfo.php HTTP/1.1\r\n" +
+		"Host: 1.2.3.4:41027\r\n" +
+		"User-Agent: Mozilla/5.0 (compatible; CensysInspect/1.1; +https://about.censys.io/)\r\n" +
+		"Accept: */*\r\n" +
+		"Accept-Encoding: gzip\r\n\r\n")
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write(censys)
+	require.NoError(t, err)
+	status, headers, body := readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "Apache/2.4.62 (Debian)", headers.Get("Server"))
+	require.Equal(t, "text/html; charset=UTF-8", headers.Get("Content-Type"))
+	require.Contains(t, string(body), `>PHP Version </td><td class="v">7.4.33 </td>`)
+	require.Contains(t, string(body), `$_SERVER[&#39;HTTPS&#39;]</td><td class="v">on</td>`)
+	require.Contains(t, string(body), `$_SERVER[&#39;SERVER_PORT&#39;]</td><td class="v">41027</td>`)
+	sessionID := sessionCookieFromHeaders(t, headers)
+
+	_, err = client.Write(httpTestRequest("GET", "/robots.txt", sessionID, nil))
+	require.NoError(t, err)
+	status, _, body = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, body)
+
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "http", produced.protocol)
+	require.Equal(t, censys, produced.payload)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+	events, ok := produced.decoded.([]parsedHTTP)
+	require.True(t, ok)
+	require.Len(t, events, 4)
+	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, "GET", events[0].Command)
+	require.Equal(t, "/phpinfo.php", events[0].Path)
+	require.Equal(t, &phpinfo.Request{Page: "phpinfo.php"}, events[0].PHPInfo)
+	require.Equal(t, censys, events[0].Payload)
+	require.Equal(t, "write", events[1].Direction)
+	require.Equal(t, "200", events[1].Status)
+	require.Contains(t, string(events[1].Payload), "<title>PHP 7.4.33 - phpinfo()</title>")
+	require.Equal(t, "/robots.txt", events[2].Path)
+	require.Nil(t, events[2].PHPInfo)
+	require.Equal(t, "200", events[3].Status)
 }
 
 // A Plex2Shell subscribe probe on tcp/32400 is tagged and answered like an

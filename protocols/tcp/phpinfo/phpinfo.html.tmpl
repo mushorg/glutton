@@ -1,0 +1,238 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<style type="text/css">
+body {background-color: #fff; color: #222; font-family: sans-serif;}
+pre {margin: 0; font-family: monospace;}
+a:link {color: #009; text-decoration: none; background-color: #fff;}
+a:hover {text-decoration: underline;}
+table {border-collapse: collapse; border: 0; width: 934px; box-shadow: 1px 2px 3px #ccc;}
+.center {text-align: center;}
+.center table {margin: 1em auto; text-align: left;}
+.center th {text-align: center !important;}
+td, th {border: 1px solid #666; font-size: 75%; vertical-align: baseline; padding: 4px 5px;}
+h1 {font-size: 150%;}
+h2 {font-size: 125%;}
+.p {text-align: left;}
+.e {background-color: #ccf; width: 300px; font-weight: bold;}
+.h {background-color: #99c; font-weight: bold;}
+.v {background-color: #ddd; max-width: 300px; overflow-x: auto; word-wrap: break-word;}
+.v i {color: #999;}
+img {float: right; border: 0;}
+hr {width: 934px; background-color: #ccc; border: 0; height: 1px;}
+</style>
+<title>PHP {{.Version}} - phpinfo()</title><meta name="ROBOTS" content="NOINDEX,NOFOLLOW,NOARCHIVE" /></head>
+<body><div class="center">
+<table>
+<tr class="h"><td>
+<h1 class="p">PHP Version {{.Version}}</h1>
+</td></tr>
+</table>
+<table>
+<tr><td class="e">System </td><td class="v">{{.System}} </td></tr>
+<tr><td class="e">Build Date </td><td class="v">Nov  4 2024 11:21:58 </td></tr>
+<tr><td class="e">Server API </td><td class="v">Apache 2.0 Handler </td></tr>
+<tr><td class="e">Virtual Directory Support </td><td class="v">disabled </td></tr>
+<tr><td class="e">Configuration File (php.ini) Path </td><td class="v">/etc/php/7.4/apache2 </td></tr>
+<tr><td class="e">Loaded Configuration File </td><td class="v">/etc/php/7.4/apache2/php.ini </td></tr>
+<tr><td class="e">Scan this dir for additional .ini files </td><td class="v">/etc/php/7.4/apache2/conf.d </td></tr>
+<tr><td class="e">Additional .ini files parsed </td><td class="v">/etc/php/7.4/apache2/conf.d/10-mysqlnd.ini,
+/etc/php/7.4/apache2/conf.d/10-opcache.ini,
+/etc/php/7.4/apache2/conf.d/10-pdo.ini,
+/etc/php/7.4/apache2/conf.d/20-calendar.ini,
+/etc/php/7.4/apache2/conf.d/20-ctype.ini,
+/etc/php/7.4/apache2/conf.d/20-curl.ini,
+/etc/php/7.4/apache2/conf.d/20-exif.ini,
+/etc/php/7.4/apache2/conf.d/20-fileinfo.ini,
+/etc/php/7.4/apache2/conf.d/20-ftp.ini,
+/etc/php/7.4/apache2/conf.d/20-gd.ini,
+/etc/php/7.4/apache2/conf.d/20-gettext.ini,
+/etc/php/7.4/apache2/conf.d/20-iconv.ini,
+/etc/php/7.4/apache2/conf.d/20-json.ini,
+/etc/php/7.4/apache2/conf.d/20-mbstring.ini,
+/etc/php/7.4/apache2/conf.d/20-mysqli.ini,
+/etc/php/7.4/apache2/conf.d/20-pdo_mysql.ini,
+/etc/php/7.4/apache2/conf.d/20-phar.ini,
+/etc/php/7.4/apache2/conf.d/20-posix.ini,
+/etc/php/7.4/apache2/conf.d/20-readline.ini,
+/etc/php/7.4/apache2/conf.d/20-shmop.ini,
+/etc/php/7.4/apache2/conf.d/20-sockets.ini,
+/etc/php/7.4/apache2/conf.d/20-sysvmsg.ini,
+/etc/php/7.4/apache2/conf.d/20-sysvsem.ini,
+/etc/php/7.4/apache2/conf.d/20-sysvshm.ini,
+/etc/php/7.4/apache2/conf.d/20-tokenizer.ini,
+/etc/php/7.4/apache2/conf.d/20-xml.ini,
+/etc/php/7.4/apache2/conf.d/20-zip.ini
+ </td></tr>
+<tr><td class="e">PHP API </td><td class="v">20190902 </td></tr>
+<tr><td class="e">PHP Extension </td><td class="v">20190902 </td></tr>
+<tr><td class="e">Zend Extension </td><td class="v">320190902 </td></tr>
+<tr><td class="e">Zend Extension Build </td><td class="v">API320190902,NTS </td></tr>
+<tr><td class="e">PHP Extension Build </td><td class="v">API20190902,NTS </td></tr>
+<tr><td class="e">Debug Build </td><td class="v">no </td></tr>
+<tr><td class="e">Thread Safety </td><td class="v">disabled </td></tr>
+<tr><td class="e">Zend Signal Handling </td><td class="v">enabled </td></tr>
+<tr><td class="e">Zend Memory Manager </td><td class="v">enabled </td></tr>
+<tr><td class="e">Zend Multibyte Support </td><td class="v">provided by mbstring </td></tr>
+<tr><td class="e">IPv6 Support </td><td class="v">enabled </td></tr>
+<tr><td class="e">DTrace Support </td><td class="v">available, disabled </td></tr>
+<tr><td class="e">Registered PHP Streams</td><td class="v">https, ftps, compress.zlib, php, file, glob, data, http, ftp, phar, zip</td></tr>
+<tr><td class="e">Registered Stream Socket Transports</td><td class="v">tcp, udp, unix, udg, ssl, tls, tlsv1.0, tlsv1.1, tlsv1.2, tlsv1.3</td></tr>
+<tr><td class="e">Registered Stream Filters</td><td class="v">zlib.*, string.rot13, string.toupper, string.tolower, string.strip_tags, convert.*, consumed, dechunk, convert.iconv.*</td></tr>
+</table>
+<table>
+<tr class="v"><td>
+This program makes use of the Zend Scripting Language Engine:<br />Zend&nbsp;Engine&nbsp;v3.4.0,&nbsp;Copyright&nbsp;(c)&nbsp;Zend&nbsp;Technologies<br />&nbsp;&nbsp;&nbsp;&nbsp;with&nbsp;Zend&nbsp;OPcache&nbsp;v{{.Version}},&nbsp;Copyright&nbsp;(c),&nbsp;by&nbsp;Zend&nbsp;Technologies<br /></td></tr>
+</table>
+<hr />
+<h1>Configuration</h1>
+<h2><a name="module_apache2handler">apache2handler</a></h2>
+<table>
+<tr><td class="e">Apache Version </td><td class="v">{{.Server}} </td></tr>
+<tr><td class="e">Apache API Version </td><td class="v">20120211 </td></tr>
+<tr><td class="e">Server Administrator </td><td class="v">webmaster@localhost </td></tr>
+<tr><td class="e">Hostname:Port </td><td class="v">{{.Hostname}}:{{.Port}} </td></tr>
+<tr><td class="e">User/Group </td><td class="v">www-data(33)/33 </td></tr>
+<tr><td class="e">Max Requests </td><td class="v">Per Child: 0 - Keep Alive: on - Max Per Connection: 100 </td></tr>
+<tr><td class="e">Timeouts </td><td class="v">Connection: 300 - Keep-Alive: 5 </td></tr>
+<tr><td class="e">Virtual Server </td><td class="v">Yes </td></tr>
+<tr><td class="e">Server Root </td><td class="v">/etc/apache2 </td></tr>
+<tr><td class="e">Loaded Modules </td><td class="v">core mod_so mod_watchdog http_core mod_log_config mod_logio mod_version mod_unixd mod_access_compat mod_alias mod_auth_basic mod_authn_core mod_authn_file mod_authz_core mod_authz_host mod_authz_user mod_autoindex mod_deflate mod_dir mod_env mod_filter mod_mime prefork mod_negotiation mod_php7 mod_reqtimeout mod_rewrite mod_setenvif mod_socache_shmcb mod_ssl mod_status </td></tr>
+</table>
+<table>
+<tr class="h"><th>Directive</th><th>Local Value</th><th>Master Value</th></tr>
+<tr><td class="e">engine</td><td class="v">1</td><td class="v">1</td></tr>
+<tr><td class="e">last_modified</td><td class="v">0</td><td class="v">0</td></tr>
+<tr><td class="e">xbithack</td><td class="v">0</td><td class="v">0</td></tr>
+</table>
+<h2>Apache Environment</h2>
+<table>
+<tr class="h"><th>Variable</th><th>Value</th></tr>
+{{range .Apache}}<tr><td class="e">{{.Key}} </td><td class="v">{{if .Value}}{{.Value}} {{else}}<i>no value</i> {{end}}</td></tr>
+{{end}}</table>
+<h2>HTTP Headers Information</h2>
+<table>
+<tr class="h"><th colspan="2">HTTP Request Headers</th></tr>
+<tr><td class="e">HTTP Request </td><td class="v">{{.RequestLine}} </td></tr>
+{{range .Headers}}<tr><td class="e">{{.Key}} </td><td class="v">{{.Value}} </td></tr>
+{{end}}<tr class="h"><th colspan="2">HTTP Response Headers</th></tr>
+</table>
+<h2><a name="module_core">Core</a></h2>
+<table>
+<tr><td class="e">PHP Version </td><td class="v">{{.Version}} </td></tr>
+</table>
+<table>
+<tr class="h"><th>Directive</th><th>Local Value</th><th>Master Value</th></tr>
+<tr><td class="e">allow_url_fopen</td><td class="v">On</td><td class="v">On</td></tr>
+<tr><td class="e">allow_url_include</td><td class="v">Off</td><td class="v">Off</td></tr>
+<tr><td class="e">auto_append_file</td><td class="v"><i>no value</i></td><td class="v"><i>no value</i></td></tr>
+<tr><td class="e">auto_prepend_file</td><td class="v"><i>no value</i></td><td class="v"><i>no value</i></td></tr>
+<tr><td class="e">default_charset</td><td class="v">UTF-8</td><td class="v">UTF-8</td></tr>
+<tr><td class="e">disable_classes</td><td class="v"><i>no value</i></td><td class="v"><i>no value</i></td></tr>
+<tr><td class="e">disable_functions</td><td class="v">pcntl_alarm,pcntl_fork,pcntl_waitpid,pcntl_wait,pcntl_wifexited,pcntl_wifstopped,pcntl_wifsignaled,pcntl_wifcontinued,pcntl_wexitstatus,pcntl_wtermsig,pcntl_wstopsig,pcntl_signal,pcntl_signal_get_handler,pcntl_signal_dispatch,pcntl_get_last_error,pcntl_strerror,pcntl_sigprocmask,pcntl_sigwaitinfo,pcntl_sigtimedwait,pcntl_exec,pcntl_getpriority,pcntl_setpriority,pcntl_async_signals,pcntl_unshare,</td><td class="v">pcntl_alarm,pcntl_fork,pcntl_waitpid,pcntl_wait,pcntl_wifexited,pcntl_wifstopped,pcntl_wifsignaled,pcntl_wifcontinued,pcntl_wexitstatus,pcntl_wtermsig,pcntl_wstopsig,pcntl_signal,pcntl_signal_get_handler,pcntl_signal_dispatch,pcntl_get_last_error,pcntl_strerror,pcntl_sigprocmask,pcntl_sigwaitinfo,pcntl_sigtimedwait,pcntl_exec,pcntl_getpriority,pcntl_setpriority,pcntl_async_signals,pcntl_unshare,</td></tr>
+<tr><td class="e">display_errors</td><td class="v">Off</td><td class="v">Off</td></tr>
+<tr><td class="e">display_startup_errors</td><td class="v">Off</td><td class="v">Off</td></tr>
+<tr><td class="e">doc_root</td><td class="v"><i>no value</i></td><td class="v"><i>no value</i></td></tr>
+<tr><td class="e">enable_dl</td><td class="v">Off</td><td class="v">Off</td></tr>
+<tr><td class="e">error_reporting</td><td class="v">22527</td><td class="v">22527</td></tr>
+<tr><td class="e">expose_php</td><td class="v">Off</td><td class="v">Off</td></tr>
+<tr><td class="e">file_uploads</td><td class="v">On</td><td class="v">On</td></tr>
+<tr><td class="e">include_path</td><td class="v">.:/usr/share/php</td><td class="v">.:/usr/share/php</td></tr>
+<tr><td class="e">log_errors</td><td class="v">On</td><td class="v">On</td></tr>
+<tr><td class="e">max_execution_time</td><td class="v">30</td><td class="v">30</td></tr>
+<tr><td class="e">max_input_time</td><td class="v">60</td><td class="v">60</td></tr>
+<tr><td class="e">memory_limit</td><td class="v">128M</td><td class="v">128M</td></tr>
+<tr><td class="e">open_basedir</td><td class="v"><i>no value</i></td><td class="v"><i>no value</i></td></tr>
+<tr><td class="e">output_buffering</td><td class="v">4096</td><td class="v">4096</td></tr>
+<tr><td class="e">post_max_size</td><td class="v">8M</td><td class="v">8M</td></tr>
+<tr><td class="e">register_argc_argv</td><td class="v">Off</td><td class="v">Off</td></tr>
+<tr><td class="e">short_open_tag</td><td class="v">Off</td><td class="v">Off</td></tr>
+<tr><td class="e">upload_max_filesize</td><td class="v">2M</td><td class="v">2M</td></tr>
+<tr><td class="e">upload_tmp_dir</td><td class="v"><i>no value</i></td><td class="v"><i>no value</i></td></tr>
+<tr><td class="e">variables_order</td><td class="v">GPCS</td><td class="v">GPCS</td></tr>
+</table>
+<h2><a name="module_date">date</a></h2>
+<table>
+<tr><td class="e">date/time support </td><td class="v">enabled </td></tr>
+<tr><td class="e">timelib version </td><td class="v">2018.04 </td></tr>
+<tr><td class="e">"Olson" Timezone Database Version </td><td class="v">0.system </td></tr>
+<tr><td class="e">Timezone Database </td><td class="v">internal </td></tr>
+<tr><td class="e">Default timezone </td><td class="v">UTC </td></tr>
+</table>
+<h2><a name="module_json">json</a></h2>
+<table>
+<tr><td class="e">json support </td><td class="v">enabled </td></tr>
+</table>
+<h2><a name="module_mysqli">mysqli</a></h2>
+<table>
+<tr class="h"><th>MysqlI Support</th><th>enabled</th></tr>
+<tr><td class="e">Client API library version </td><td class="v">mysqlnd 7.4.33 </td></tr>
+</table>
+<h2><a name="module_openssl">openssl</a></h2>
+<table>
+<tr><td class="e">OpenSSL support </td><td class="v">enabled </td></tr>
+<tr><td class="e">OpenSSL Library Version </td><td class="v">OpenSSL 1.1.1w  11 Sep 2023 </td></tr>
+<tr><td class="e">OpenSSL Header Version </td><td class="v">OpenSSL 1.1.1w  11 Sep 2023 </td></tr>
+<tr><td class="e">Openssl default config </td><td class="v">/usr/lib/ssl/openssl.cnf </td></tr>
+</table>
+<h2><a name="module_pcre">pcre</a></h2>
+<table>
+<tr><td class="e">PCRE (Perl Compatible Regular Expressions) Support </td><td class="v">enabled </td></tr>
+<tr><td class="e">PCRE Library Version </td><td class="v">10.36 2020-12-04 </td></tr>
+<tr><td class="e">PCRE Unicode Version </td><td class="v">13.0.0 </td></tr>
+<tr><td class="e">PCRE JIT Support </td><td class="v">enabled </td></tr>
+</table>
+<h2><a name="module_session">session</a></h2>
+<table>
+<tr><td class="e">Session Support </td><td class="v">enabled </td></tr>
+<tr><td class="e">Registered save handlers </td><td class="v">files user </td></tr>
+<tr><td class="e">Registered serializer handlers </td><td class="v">php_serialize php php_binary </td></tr>
+</table>
+<h2><a name="module_standard">standard</a></h2>
+<table>
+<tr><td class="e">Dynamic Library Support </td><td class="v">enabled </td></tr>
+<tr><td class="e">Path to sendmail </td><td class="v">/usr/sbin/sendmail -t -i </td></tr>
+</table>
+<h2><a name="module_zlib">zlib</a></h2>
+<table>
+<tr><td class="e">ZLib Support </td><td class="v">enabled </td></tr>
+<tr><td class="e">Compiled Version </td><td class="v">1.2.11 </td></tr>
+<tr><td class="e">Linked Version </td><td class="v">1.2.11 </td></tr>
+</table>
+<h2>Additional Modules</h2>
+<table>
+<tr class="h"><th>Module Name</th></tr>
+</table>
+<h2>Environment</h2>
+<table>
+<tr class="h"><th>Variable</th><th>Value</th></tr>
+<tr><td class="e">APACHE_RUN_DIR </td><td class="v">/var/run/apache2 </td></tr>
+<tr><td class="e">APACHE_PID_FILE </td><td class="v">/var/run/apache2/apache2.pid </td></tr>
+<tr><td class="e">JOURNAL_STREAM </td><td class="v">8:21374 </td></tr>
+<tr><td class="e">PATH </td><td class="v">/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin </td></tr>
+<tr><td class="e">INVOCATION_ID </td><td class="v">{{.InvocationID}} </td></tr>
+<tr><td class="e">APACHE_LOCK_DIR </td><td class="v">/var/lock/apache2 </td></tr>
+<tr><td class="e">LANG </td><td class="v">C </td></tr>
+<tr><td class="e">APACHE_RUN_USER </td><td class="v">www-data </td></tr>
+<tr><td class="e">APACHE_RUN_GROUP </td><td class="v">www-data </td></tr>
+<tr><td class="e">APACHE_LOG_DIR </td><td class="v">/var/log/apache2 </td></tr>
+<tr><td class="e">PWD </td><td class="v">/ </td></tr>
+</table>
+<h2>PHP Variables</h2>
+<table>
+<tr class="h"><th>Variable</th><th>Value</th></tr>
+{{range .Vars}}<tr><td class="e">{{.Key}}</td><td class="v">{{if .Value}}{{.Value}}{{else}}<i>no value</i>{{end}}</td></tr>
+{{end}}</table>
+<hr />
+<h2>PHP License</h2>
+<table>
+<tr class="v"><td>
+<p>
+This program is free software; you can redistribute it and/or modify it under the terms of the PHP License as published by the PHP Group and included in the distribution in the file:  LICENSE
+</p>
+<p>This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+</p>
+<p>If you did not receive a copy of the PHP license, or have any questions about PHP licensing, please contact license@php.net.
+</p>
+</td></tr>
+</table>
+</div></body></html>

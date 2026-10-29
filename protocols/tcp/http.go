@@ -24,6 +24,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/ja4h"
 	"github.com/mushorg/glutton/protocols/tcp/log4shell"
 	"github.com/mushorg/glutton/protocols/tcp/php2shell"
+	"github.com/mushorg/glutton/protocols/tcp/phpinfo"
 	"github.com/mushorg/glutton/protocols/tcp/plex2shell"
 	"github.com/mushorg/glutton/protocols/tcp/pve"
 	"github.com/mushorg/glutton/protocols/tcp/selenium"
@@ -129,6 +130,7 @@ type parsedHTTP struct {
 	Elastic    *elasticsearch.Request `json:"elasticsearch,omitempty"` // tcp/9200 REST operation, index, scripts
 	Log4Shell  *log4shell.Request     `json:"log4shell,omitempty"`     // CVE-2021-44228 JNDI lookups (parse-only)
 	PHP2Shell  *php2shell.Request     `json:"php2shell,omitempty"`     // CVE-2026-109618/109619 multipart shape (parse-only)
+	PHPInfo    *phpinfo.Request       `json:"phpinfo,omitempty"`       // request for a well-known phpinfo() page
 	Plex2Shell *plex2shell.Request    `json:"plex2shell,omitempty"`    // CVE-2026-96652/-96654/-96655/-96656 subscribe callback shape
 	Payload    []byte                 `json:"payload,omitempty"`       // raw HTTP request or response bytes
 	// CONNECT tunnel frames (see serveTunnel): payload_hash and truncated on
@@ -324,6 +326,7 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 		)
 	}
 	frame.Plex2Shell = plex2shell.Inspect(path, req.URL.RawQuery, req.Header)
+	frame.PHPInfo = phpinfo.Match(path, req.URL.RawQuery)
 	if frame.Plex2Shell != nil {
 		logger.Info(
 			"HTTP Plex2Shell request",
@@ -364,6 +367,9 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 			slog.String("stage", string(frame.Citrix.Stage)),
 		)
 		return s.write(citrix.Respond(frame.Citrix.Stage))
+	}
+	if frame.PHPInfo != nil {
+		return s.write(phpinfo.Respond(s.phpinfoInput(req, raw, md)))
 	}
 
 	switch req.Method {
@@ -410,6 +416,27 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 		return fmt.Errorf("failed to send HTTP response: %w", err)
 	}
 	return nil
+}
+
+// phpinfoInput describes the request and connection the way a phpinfo()
+// page reports them.
+func (s *httpServer) phpinfoInput(req *http.Request, raw []byte, md connection.Metadata) phpinfo.Input {
+	remoteAddr, remotePort, _ := net.SplitHostPort(s.conn.RemoteAddr().String())
+	serverAddr, _, _ := net.SplitHostPort(s.conn.LocalAddr().String())
+	return phpinfo.Input{
+		Method:     req.Method,
+		RequestURI: req.RequestURI,
+		Path:       req.URL.Path,
+		RawQuery:   req.URL.RawQuery,
+		Proto:      req.Proto,
+		RawRequest: raw,
+		RemoteAddr: remoteAddr,
+		RemotePort: remotePort,
+		ServerAddr: serverAddr,
+		ServerPort: md.TargetPort,
+		HTTPS:      md.TLS != nil,
+		Now:        httpNow(),
+	}
 }
 
 // serveConnect captures what the client sends through a granted CONNECT to
