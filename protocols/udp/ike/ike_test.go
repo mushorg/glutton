@@ -118,9 +118,7 @@ func buildRequest(t *testing.T, transforms []Transform, keGroup uint16) []byte {
 	body = appendPayload(body, payloadKE, sa)
 	body = appendPayload(body, payloadNonce, ke)
 	body = appendPayload(body, payloadNone, bytes.Repeat([]byte{0xbb}, 16))
-	data := header(m, [8]byte{}, payloadSA, body)
-	data[19] = flagInitiator
-	return data
+	return header(m, [8]byte{}, payloadSA, VersionV2, ExchangeSAInit, flagInitiator, body)
 }
 
 func saPayloadFrom(num byte, ts []Transform) []byte {
@@ -239,8 +237,7 @@ func TestVendorIDs(t *testing.T) {
 	m := Message{SPIi: [8]byte{9}}
 	vid, _ := hex.DecodeString("4048b7d56ebce88525e7de7f00d6c2d3")
 	body := appendPayload(nil, payloadNone, vid)
-	data := header(m, [8]byte{}, payloadVendorID, body)
-	data[18] = ExchangeInformational
+	data := header(m, [8]byte{}, payloadVendorID, VersionV2, ExchangeInformational, flagResponse, body)
 	parsed, err := Parse(data)
 	require.NoError(t, err)
 	require.Equal(t, []string{"4048b7d56ebce88525e7de7f00d6c2d3"}, parsed.VendorIDHex())
@@ -261,6 +258,118 @@ func TestFindPrefixedHeader(t *testing.T) {
 	_, ok = FindPrefixedHeader(append([]byte("0000000000000000"), censysRead1[:200]...))
 	require.False(t, ok, "length field does not cover the rest")
 	_, ok = FindPrefixedHeader(bytes.Repeat([]byte{0x41}, 64))
+	require.False(t, ok)
+}
+
+// 2026-10-29 capture, 86.38.187.240 → udp/4500: IKEv1 Main Mode, 8 transforms.
+var v1MainModeHex = "000000003d7d0390a76991ac00000000000000000110020000000000000001640000014800000001000000010000013c01010008030000280101000080010007800e010080020004800300018004000e800b0001000c000400007080030000280201000080010007800e008080020004800300018004000e800b0001000c000400007080030000280301000080010007800e010080020002800300018004000e800b0001000c000400007080030000280401000080010007800e008080020002800300018004000e800b0001000c000400007080030000280501000080010007800e0080800200028003000180040002800b0001000c000400007080030000240601000080010005800200028003000180040002800b0001000c000400007080030000240701000080010005800200018003000180040002800b0001000c000400007080000000240801000080010001800200028003000180040002800b0001000c000400007080"
+
+func v1MainMode(t *testing.T) []byte {
+	t.Helper()
+	raw, err := hex.DecodeString(v1MainModeHex)
+	require.NoError(t, err)
+	msg, ok := StripNonESPMarker(raw)
+	require.True(t, ok)
+	return msg
+}
+
+func TestParseV1MainMode(t *testing.T) {
+	m, err := Parse(v1MainMode(t))
+	require.NoError(t, err)
+	require.Equal(t, "1.0", m.VersionString())
+	require.Equal(t, "IDENTITY_PROTECTION", ExchangeName(m.Exchange))
+	require.Equal(t, "3d7d0390a76991ac", hex.EncodeToString(m.SPIi[:]))
+	require.Len(t, m.V1Proposals, 1)
+	require.Len(t, m.V1Proposals[0].Transforms, 8)
+	require.Equal(t, []string{"AES_CBC_256", "AES_CBC_128", "3DES", "DES"}, m.V1Offered("encryption"))
+	require.Equal(t, []string{"SHA2_256", "SHA1", "MD5"}, m.V1Offered("hash"))
+	require.Equal(t, []string{"PSK"}, m.V1Offered("auth"))
+	require.Equal(t, []string{"MODP_2048", "MODP_1024"}, m.V1Offered("group"))
+	require.Equal(t, []string{"28800"}, m.V1Offered("life"))
+
+	first := m.V1Proposals[0].Transforms[0]
+	require.Equal(t, byte(1), first.Num)
+	require.Equal(t, uint16(256), first.KeyLength)
+	require.Equal(t, uint32(28800), first.LifeSeconds)
+}
+
+func TestChooseV1PrefersAES256(t *testing.T) {
+	m, err := Parse(v1MainMode(t))
+	require.NoError(t, err)
+	c, ok := ChooseV1(m)
+	require.True(t, ok)
+	require.Equal(t, byte(1), c.Transform.Num)
+	require.Equal(t, "AES_CBC_256", c.Transform.EncryptionName())
+	require.Equal(t, "SHA2_256", c.Transform.HashName())
+	require.Equal(t, "PSK", c.Transform.AuthName())
+	require.Equal(t, "MODP_2048", c.Transform.GroupName())
+
+	r, ok, err := BuildReplyV1(m, &counter{})
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "IDENTITY_PROTECTION", r.Status)
+	parsed, err := Parse(r.Data)
+	require.NoError(t, err)
+	require.Equal(t, m.SPIi, parsed.SPIi)
+	require.Equal(t, []byte{1, 2, 3, 4, 5, 6, 7, 8}, parsed.SPIr[:])
+	require.Equal(t, byte(0), parsed.Flags, "IKEv1 message 2 is not the IKEv2 response flag")
+	require.Len(t, parsed.V1Proposals, 1)
+	require.Len(t, parsed.V1Proposals[0].Transforms, 1)
+	require.Equal(t, byte(1), parsed.V1Proposals[0].Transforms[0].Num)
+	require.Equal(t, []string{
+		hex.EncodeToString(vidNATRFC3947),
+		hex.EncodeToString(vidNATDraft02),
+		hex.EncodeToString(vidDPD),
+		hex.EncodeToString(vidXAUTH),
+	}, parsed.VendorIDHex())
+}
+
+func TestChooseV1NoMatch(t *testing.T) {
+	m, err := Parse(v1MainMode(t))
+	require.NoError(t, err)
+	// leave only the DES transform
+	m.V1Proposals[0].Transforms = m.V1Proposals[0].Transforms[7:]
+	_, ok := ChooseV1(m)
+	require.False(t, ok)
+
+	r, ok, err := BuildReplyV1(m, &counter{})
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "NO_PROPOSAL_CHOSEN", r.Status)
+	parsed, err := Parse(r.Data)
+	require.NoError(t, err)
+	require.Equal(t, "INFORMATIONAL_V1", ExchangeName(parsed.Exchange))
+	require.Equal(t, []string{"NO_PROPOSAL_CHOSEN"}, parsed.NotifyNames())
+}
+
+func TestV1MalformedAttributes(t *testing.T) {
+	_, err := parseV1Attrs(V1Transform{}, []byte{0x00, 0x0c, 0x00, 0x04, 0x00})
+	require.ErrorIs(t, err, ErrMalformed)
+	_, err = parseV1Attrs(V1Transform{}, []byte{0x80, 0x01})
+	require.ErrorIs(t, err, ErrMalformed)
+	_, err = parseV1Transforms([]byte{0x00, 0x00, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00}, 2)
+	require.ErrorIs(t, err, ErrMalformed)
+
+	// life duration claims 4 bytes and the buffer ends inside it, with the
+	// ISAKMP length still covering the datagram
+	raw := v1MainMode(t)
+	raw = raw[:len(raw)-2]
+	binary.BigEndian.PutUint32(raw[24:28], uint32(len(raw)))
+	// shrink the SA, proposal and last transform lengths by 2
+	for _, off := range []int{HeaderLen + 2, HeaderLen + 4 + 8 + 2} {
+		n := binary.BigEndian.Uint16(raw[off : off+2])
+		binary.BigEndian.PutUint16(raw[off:off+2], n-2)
+	}
+	_, err = Parse(raw)
+	require.ErrorIs(t, err, ErrMalformed)
+}
+
+func TestBuildReplyV1SkipsAggressive(t *testing.T) {
+	m, err := Parse(v1MainMode(t))
+	require.NoError(t, err)
+	m.Exchange = exchangeAggressive
+	_, ok, err := BuildReplyV1(m, &counter{})
+	require.NoError(t, err)
 	require.False(t, ok)
 }
 

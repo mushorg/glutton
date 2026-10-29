@@ -49,7 +49,20 @@ const (
 	payloadNonce    byte = 40
 	payloadNotify   byte = 41
 	payloadVendorID byte = 43
+
+	// IKEv1 payload types (RFC 2408 §3.1).
+	payloadV1SA     byte = 1
+	payloadV1KE     byte = 4
+	payloadV1ID     byte = 5
+	payloadV1Nonce  byte = 10
+	payloadV1Notify byte = 11
 	payloadV1VID    byte = 13
+
+	// IKEv1 exchange types answered or recorded by the handler.
+	exchangeMainMode   byte = 2
+	exchangeAggressive byte = 4
+	exchangeInfoV1     byte = 5
+	flagV1Encryption   byte = 0x01
 )
 
 // Transform types.
@@ -171,9 +184,17 @@ type Message struct {
 	Proposals []Proposal
 	HasKE     bool
 	KEGroup   uint16
+	KELen     int // IKEv1 KE public value length; IKEv2 leaves this 0
 	Nonce     []byte
+	NonceLen  int // IKEv1 nonce length; IKEv2 leaves this 0 and fills Nonce
 	Notifies  []uint16
 	VendorIDs [][]byte
+
+	// IKEv1 SA, filled only for version 1. Each transform is one complete
+	// attribute set (encryption, hash, auth, group, life), not an IKEv2 OR.
+	V1Proposals []V1Proposal
+	IDType      string
+	Identity    string
 }
 
 // VersionString returns e.g. "2.0".
@@ -327,14 +348,35 @@ func Parse(data []byte) (Message, error) {
 		switch {
 		case v2 && typ == payloadSA:
 			m.Proposals, err = parseSA(body)
+		case !v2 && typ == payloadV1SA:
+			m.V1Proposals, err = parseV1SA(body)
 		case v2 && typ == payloadKE:
 			if len(body) < 4 {
 				return m, ErrMalformed
 			}
 			m.HasKE = true
 			m.KEGroup = binary.BigEndian.Uint16(body[0:2])
+		case !v2 && typ == payloadV1KE:
+			m.HasKE = true
+			m.KELen = len(body)
+			if m.KEGroup == 0 {
+				m.KEGroup = firstV1Group(m)
+			}
 		case v2 && typ == payloadNonce:
 			m.Nonce = body
+		case !v2 && typ == payloadV1Nonce:
+			m.NonceLen = len(body)
+		case !v2 && typ == payloadV1ID:
+			m.IDType, m.Identity, err = parseV1ID(body)
+		case !v2 && typ == payloadV1Notify:
+			if len(body) < 8 {
+				return m, ErrMalformed
+			}
+			spiSize := int(body[5])
+			if len(body) < 8+spiSize {
+				return m, ErrMalformed
+			}
+			m.Notifies = append(m.Notifies, binary.BigEndian.Uint16(body[6:8]))
 		case v2 && typ == payloadNotify:
 			if len(body) < 4 || len(body) < 4+int(body[1]) {
 				return m, ErrMalformed
@@ -505,9 +547,10 @@ func (c Choice) Transforms() []Transform {
 // Reply is a built response.
 type Reply struct {
 	Data   []byte
-	Status string  // notify name, or "IKE_SA_INIT" for a full response
+	Status string  // notify name, or the exchange name for a full response
 	SPIr   [8]byte // zero for notify-only responses
 	Choice *Choice
+	V1     *V1Choice
 }
 
 // BuildReply returns the response to an IKEv2 IKE_SA_INIT request, or false
@@ -543,7 +586,7 @@ func BuildReply(m Message, rnd io.Reader) (Reply, bool, error) {
 	keBody = append(keBody, 0, 0)
 	body = appendPayload(body, payloadNonce, append(keBody, ke...))
 	body = appendPayload(body, payloadNone, nonce)
-	return Reply{Data: header(m, spiR, payloadSA, body), Status: ExchangeName(ExchangeSAInit), SPIr: spiR, Choice: &c}, true, nil
+	return Reply{Data: header(m, spiR, payloadSA, VersionV2, ExchangeSAInit, flagResponse, body), Status: ExchangeName(ExchangeSAInit), SPIr: spiR, Choice: &c}, true, nil
 }
 
 func saPayload(c Choice) []byte {
@@ -583,14 +626,17 @@ func notifyResponse(m Message, notify uint16, data []byte) []byte {
 	body := []byte{0, 0} // protocol ID, SPI size
 	body = binary.BigEndian.AppendUint16(body, notify)
 	body = append(body, data...)
-	return header(m, [8]byte{}, payloadNotify, appendPayload(nil, payloadNone, body))
+	return header(m, [8]byte{}, payloadNotify, VersionV2, ExchangeSAInit, flagResponse, appendPayload(nil, payloadNone, body))
 }
 
-func header(m Message, spiR [8]byte, first byte, body []byte) []byte {
+// header builds an ISAKMP header. version, exchange and flags are the wire
+// bytes: IKEv2 replies use VersionV2, IKE_SA_INIT and the response flag;
+// IKEv1 Main Mode replies use VersionV1, exchange 2 and flags 0.
+func header(m Message, spiR [8]byte, first, version, exchange, flags byte, body []byte) []byte {
 	out := make([]byte, 0, HeaderLen+len(body))
 	out = append(out, m.SPIi[:]...)
 	out = append(out, spiR[:]...)
-	out = append(out, first, VersionV2, ExchangeSAInit, flagResponse)
+	out = append(out, first, version, exchange, flags)
 	out = binary.BigEndian.AppendUint32(out, 0)
 	out = binary.BigEndian.AppendUint32(out, uint32(HeaderLen+len(body)))
 	return append(out, body...)

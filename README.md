@@ -73,6 +73,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | RDP                         | Remote Desktop handshake                 |
 | SMB                         | Windows file-sharing probes              |
 | NBNS                        | NetBIOS name queries on udp/137          |
+| IKE                         | IKEv1 Main Mode and IKEv2 SA_INIT on udp/500, 4500 |
 | FTP                         | file transfer commands                   |
 | SIP                         | VoIP signaling traffic                   |
 | RFB/VNC                     | remote framebuffer auth                  |

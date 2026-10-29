@@ -31,7 +31,13 @@ type parsedIKE struct {
 	PRF        []string `json:"prf,omitempty"`
 	Integrity  []string `json:"integrity,omitempty"`
 	DHGroups   []string `json:"dh_groups,omitempty"`
+	Hash       []string `json:"hash,omitempty"`        // IKEv1 hash algorithms
+	AuthMethod []string `json:"auth_method,omitempty"` // IKEv1 authentication methods
+	Life       []string `json:"life,omitempty"`        // IKEv1 lifetime, seconds
 	KEGroup    string   `json:"ke_group,omitempty"`
+	Identity   string   `json:"identity,omitempty"` // IKEv1 ID payload
+	IDType     string   `json:"id_type,omitempty"`
+	NonceLen   int      `json:"nonce_len,omitempty"` // IKEv1 nonce length
 	Notifies   []string `json:"notifies,omitempty"`
 	VendorIDs  []string `json:"vendor_ids,omitempty"` // hex
 	NATT       bool     `json:"nat_t,omitempty"`      // non-ESP marker present (udp/4500)
@@ -53,6 +59,16 @@ func ikeFrame(direction string, m ike.Message) parsedIKE {
 		DHGroups:   m.Offered(ike.TransformDH),
 		Notifies:   m.NotifyNames(),
 		VendorIDs:  m.VendorIDHex(),
+		Identity:   m.Identity,
+		IDType:     m.IDType,
+		NonceLen:   m.NonceLen,
+	}
+	if len(m.V1Proposals) > 0 {
+		f.Encryption = m.V1Offered("encryption")
+		f.Hash = m.V1Offered("hash")
+		f.AuthMethod = m.V1Offered("auth")
+		f.DHGroups = m.V1Offered("group")
+		f.Life = m.V1Offered("life")
 	}
 	if m.HasKE {
 		f.KEGroup = ike.Transform{Type: ike.TransformDH, ID: m.KEGroup}.Name()
@@ -61,10 +77,11 @@ func ikeFrame(direction string, m ike.Message) parsedIKE {
 }
 
 // HandleIKE parses an IKE (ISAKMP) datagram on udp/500 or udp/4500 and
-// answers IKEv2 IKE_SA_INIT requests like a gateway that accepts legacy
-// proposals but requires a 2048-bit or EC Diffie-Hellman group. IKEv1 and
-// other exchanges are recorded without a reply, as are messages behind a
-// non-standard prefix.
+// answers IKEv2 IKE_SA_INIT and IKEv1 Main Mode like a gateway that accepts
+// legacy proposals but requires a 2048-bit or EC Diffie-Hellman group for
+// IKEv2. IKEv1 Aggressive Mode is recorded (identity, KE, nonce length) and
+// not answered. Messages behind a non-standard prefix are recorded without
+// a reply. A reply larger than twice the request is dropped.
 func HandleIKE(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	payload := make([]byte, min(len(data), maxIKEPayload))
 	copy(payload, data[:len(payload)])
@@ -131,12 +148,24 @@ func HandleIKE(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 		return nil
 	}
 	if !ok {
-		return nil
+		reply, ok, err = ike.BuildReplyV1(msg, ikeRand)
+		if err != nil {
+			logger.Error("Failed to build IKE reply", slog.String("protocol", "ike"), producer.ErrAttr(err))
+			return nil
+		}
+		if !ok {
+			return nil
+		}
 	}
 
 	resp := reply.Data
 	if natt {
 		resp = append([]byte{0, 0, 0, 0}, resp...)
+	}
+	// a one-transform Main Mode message 1 must not turn into amplification
+	if len(resp) > 2*len(data) {
+		logger.Debug("Skipped IKE reply larger than twice the request", slog.String("protocol", "ike"), slog.Int("request", len(data)), slog.Int("reply", len(resp)))
+		return nil
 	}
 	write := parsedIKE{
 		Direction: "write",
@@ -148,6 +177,10 @@ func HandleIKE(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 		NATT:      natt,
 		Payload:   resp,
 	}
+	if reply.V1 != nil || msg.Version>>4 == 1 {
+		write.Command = ike.ExchangeName(2) // IDENTITY_PROTECTION
+		write.Version = "1.0"
+	}
 	if c := reply.Choice; c != nil {
 		write.Encryption = []string{c.ENCR.Name()}
 		write.PRF = []string{c.PRF.Name()}
@@ -157,6 +190,16 @@ func HandleIKE(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 		write.DHGroups = []string{c.DH.Name()}
 		if reply.Status == ike.ExchangeName(ike.ExchangeSAInit) {
 			write.KEGroup = c.DH.Name()
+		}
+	}
+	if c := reply.V1; c != nil {
+		t := c.Transform
+		write.Encryption = []string{t.EncryptionName()}
+		write.Hash = []string{t.HashName()}
+		write.AuthMethod = []string{t.AuthName()}
+		write.DHGroups = []string{t.GroupName()}
+		if life := t.LifeString(); life != "" {
+			write.Life = []string{life}
 		}
 	}
 	events = append(events, write)

@@ -3,11 +3,13 @@ package udp
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"net"
 	"testing"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/udp/ike"
 	"github.com/stretchr/testify/require"
 )
 
@@ -110,20 +112,174 @@ func TestHandleIKENATTMarker(t *testing.T) {
 	require.True(t, events[1].NATT)
 }
 
-func TestHandleIKEv1NoReply(t *testing.T) {
+func TestHandleIKEv1NoSAGetsNoProposal(t *testing.T) {
 	h := &recordingHoneypot{}
 	src, dst := ikeAddrs(500)
+	// IKEv2 SA body left in place: it is not an IKEv1 SA, so nothing matches.
 	v1 := append([]byte{}, ikeCensysRead1...)
 	v1[17] = 0x10 // IKEv1
 	v1[18] = 2    // Identity Protection (Main Mode)
 
 	require.NoError(t, HandleIKE(context.Background(), src, dst, v1, connection.Metadata{}, testLogger{}, h))
+	require.Len(t, h.replies, 1)
+	events := h.produced[0].decoded.([]parsedIKE)
+	require.Len(t, events, 2)
+	require.Equal(t, "1.0", events[0].Version)
+	require.Equal(t, "IDENTITY_PROTECTION", events[0].Command)
+	require.Empty(t, events[0].Encryption)
+	require.Equal(t, "IDENTITY_PROTECTION", events[1].Command)
+	require.Equal(t, "NO_PROPOSAL_CHOSEN", events[1].Status)
+	require.Equal(t, "1.0", events[1].Version)
+}
+
+// 2026-10-29 capture, 86.38.187.240 → udp/4500: IKEv1 Main Mode behind the non-ESP marker.
+var ikeV1MainMode, _ = hex.DecodeString("000000003d7d0390a76991ac00000000000000000110020000000000000001640000014800000001000000010000013c01010008030000280101000080010007800e010080020004800300018004000e800b0001000c000400007080030000280201000080010007800e008080020004800300018004000e800b0001000c000400007080030000280301000080010007800e010080020002800300018004000e800b0001000c000400007080030000280401000080010007800e008080020002800300018004000e800b0001000c000400007080030000280501000080010007800e0080800200028003000180040002800b0001000c000400007080030000240601000080010005800200028003000180040002800b0001000c000400007080030000240701000080010005800200018003000180040002800b0001000c000400007080000000240801000080010001800200028003000180040002800b0001000c000400007080")
+
+func TestHandleIKEv1MainModeReply(t *testing.T) {
+	prev := ikeRand
+	ikeRand = bytes.NewReader(bytes.Repeat([]byte{0x5a}, 64))
+	t.Cleanup(func() { ikeRand = prev })
+
+	h := &recordingHoneypot{}
+	src, dst := ikeAddrs(4500)
+	require.NoError(t, HandleIKE(context.Background(), src, dst, ikeV1MainMode, connection.Metadata{}, testLogger{}, h))
+	require.Len(t, h.replies, 1)
+	require.Equal(t, []byte{0, 0, 0, 0}, h.replies[0][:4], "NAT-T marker kept")
+	require.LessOrEqual(t, len(h.replies[0]), 2*len(ikeV1MainMode))
+
+	msg, ok := ike.StripNonESPMarker(h.replies[0])
+	require.True(t, ok)
+	parsed, err := ike.Parse(msg)
+	require.NoError(t, err)
+	require.Equal(t, "3d7d0390a76991ac", hex.EncodeToString(parsed.SPIi[:]))
+	require.Equal(t, "5a5a5a5a5a5a5a5a", hex.EncodeToString(parsed.SPIr[:]))
+	require.Equal(t, "IDENTITY_PROTECTION", ike.ExchangeName(parsed.Exchange))
+	require.Equal(t, []string{
+		"4a131c81070358455c5728f20e95452f",
+		"90cb80913ebb696e086381b5ec427b1f",
+		"afcad71368a1f1c96b8696fc77570100",
+		"09002689dfd6b712",
+	}, parsed.VendorIDHex())
+	require.Equal(t, []string{"AES_CBC_256"}, parsed.V1Offered("encryption"))
+
+	events := h.produced[0].decoded.([]parsedIKE)
+	require.Len(t, events, 2)
+	require.Equal(t, parsedIKE{
+		Direction:  "read",
+		Command:    "IDENTITY_PROTECTION",
+		Version:    "1.0",
+		SPIi:       "3d7d0390a76991ac",
+		SPIr:       "0000000000000000",
+		Encryption: []string{"AES_CBC_256", "AES_CBC_128", "3DES", "DES"},
+		Hash:       []string{"SHA2_256", "SHA1", "MD5"},
+		AuthMethod: []string{"PSK"},
+		DHGroups:   []string{"MODP_2048", "MODP_1024"},
+		Life:       []string{"28800"},
+		NATT:       true,
+		Payload:    ikeV1MainMode,
+	}, events[0])
+	require.Equal(t, parsedIKE{
+		Direction:  "write",
+		Command:    "IDENTITY_PROTECTION",
+		Status:     "IDENTITY_PROTECTION",
+		Version:    "1.0",
+		SPIi:       "3d7d0390a76991ac",
+		SPIr:       "5a5a5a5a5a5a5a5a",
+		Encryption: []string{"AES_CBC_256"},
+		Hash:       []string{"SHA2_256"},
+		AuthMethod: []string{"PSK"},
+		DHGroups:   []string{"MODP_2048"},
+		Life:       []string{"28800"},
+		NATT:       true,
+		Payload:    h.replies[0],
+	}, events[1])
+}
+
+func TestHandleIKEv1AggressiveRecordedOnly(t *testing.T) {
+	h := &recordingHoneypot{}
+	src, dst := ikeAddrs(500)
+	req := aggressiveIKE("vpn@example")
+	require.NoError(t, HandleIKE(context.Background(), src, dst, req, connection.Metadata{}, testLogger{}, h))
 	require.Empty(t, h.replies)
 	events := h.produced[0].decoded.([]parsedIKE)
 	require.Len(t, events, 1)
-	require.Equal(t, "1.0", events[0].Version)
+	require.Equal(t, "AGGRESSIVE", events[0].Command)
+	require.Equal(t, "USER_FQDN", events[0].IDType)
+	require.Equal(t, "vpn@example", events[0].Identity)
+	require.Equal(t, 16, events[0].NonceLen)
+	require.Equal(t, "MODP_2048", events[0].KEGroup)
+	require.Equal(t, []string{"AES_CBC_256"}, events[0].Encryption)
+}
+
+func TestHandleIKEv1SkipsAmplifyingReply(t *testing.T) {
+	prev := ikeRand
+	ikeRand = bytes.NewReader(bytes.Repeat([]byte{0x5a}, 64))
+	t.Cleanup(func() { ikeRand = prev })
+
+	// one accepted transform and no lifetime: message 2 is larger than twice this
+	req := minimalV1MainMode(false)
+	h := &recordingHoneypot{}
+	src, dst := ikeAddrs(500)
+	require.NoError(t, HandleIKE(context.Background(), src, dst, req, connection.Metadata{}, testLogger{}, h))
+	require.Empty(t, h.replies)
+	events := h.produced[0].decoded.([]parsedIKE)
+	require.Len(t, events, 1)
 	require.Equal(t, "IDENTITY_PROTECTION", events[0].Command)
-	require.Empty(t, events[0].Encryption, "IKEv1 SA payloads are not decoded")
+}
+
+func aggressiveIKE(id string) []byte {
+	sa := minimalV1SA(true)
+	ke := bytes.Repeat([]byte{0x11}, 32)
+	nonce := bytes.Repeat([]byte{0x22}, 16)
+	ident := append([]byte{3, 0, 0, 0}, id...) // USER_FQDN, protocol, port
+	// SA next=KE, KE next=nonce, nonce next=ID, ID next=none
+	body := ikePayload(4, sa)
+	body = append(body, ikePayload(10, ke)...)
+	body = append(body, ikePayload(5, nonce)...)
+	body = append(body, ikePayload(0, ident)...)
+	return append(ikeV1Header(4, 1, body), body...)
+}
+
+func minimalV1MainMode(withLife bool) []byte {
+	sa := minimalV1SA(withLife)
+	body := ikePayload(0, sa)
+	hdr := ikeV1Header(2, 1, body)
+	return append(hdr, body...)
+}
+
+func minimalV1SA(withLife bool) []byte {
+	attrs := []byte{
+		0x80, 0x01, 0x00, 0x07, // AES_CBC
+		0x80, 0x0e, 0x01, 0x00, // key length 256
+		0x80, 0x02, 0x00, 0x04, // SHA2_256
+		0x80, 0x03, 0x00, 0x01, // PSK
+		0x80, 0x04, 0x00, 0x0e, // MODP_2048
+	}
+	if withLife {
+		attrs = append(attrs, 0x80, 0x0b, 0x00, 0x01, 0x00, 0x0c, 0x00, 0x04, 0x00, 0x00, 0x70, 0x80)
+	}
+	tr := []byte{0, 0, 0, byte(8 + len(attrs)), 1, 1, 0, 0}
+	tr = append(tr, attrs...)
+	prop := []byte{0, 0, 0, byte(8 + len(tr)), 1, 1, 0, 1}
+	prop = append(prop, tr...)
+	sa := []byte{0, 0, 0, 1, 0, 0, 0, 1} // DOI, situation
+	return append(sa, prop...)
+}
+
+func ikePayload(next byte, body []byte) []byte {
+	p := []byte{next, 0, 0, 0}
+	binary.BigEndian.PutUint16(p[2:4], uint16(4+len(body)))
+	return append(p, body...)
+}
+
+func ikeV1Header(exchange, first byte, body []byte) []byte {
+	h := make([]byte, 28)
+	copy(h, []byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88})
+	h[16] = first
+	h[17] = 0x10
+	h[18] = exchange
+	binary.BigEndian.PutUint32(h[24:28], uint32(28+len(body)))
+	return h
 }
 
 func TestHandleIKETruncatedStillProduces(t *testing.T) {
@@ -272,13 +428,18 @@ func TestHandleIKEPrefixedNoReply(t *testing.T) {
 	require.Equal(t, "ike", h.produced[0].handler)
 	require.Equal(t, ikePrefixedRead1, h.produced[0].payload)
 	require.Equal(t, []parsedIKE{{
-		Direction: "read",
-		Command:   "IDENTITY_PROTECTION",
-		Version:   "1.0",
-		SPIi:      "32646a3172646e32",
-		SPIr:      "0000000000000000",
-		Prefix:    "3030303030303030396d6234716c7665",
-		Payload:   ikePrefixedRead1,
+		Direction:  "read",
+		Command:    "IDENTITY_PROTECTION",
+		Version:    "1.0",
+		SPIi:       "32646a3172646e32",
+		SPIr:       "0000000000000000",
+		Encryption: []string{"AES_CBC_256", "AES_CBC_128", "3DES", "DES"},
+		DHGroups:   []string{"MODP_1024", "MODP_2048", "MODP_1536", "ECP_256", "MODP_768"},
+		Hash:       []string{"SHA2_384", "SHA2_256", "SHA1", "MD5"},
+		AuthMethod: []string{"PSK", "UNKNOWN_10", "RSA_SIG"},
+		Life:       []string{"28800"},
+		Prefix:     "3030303030303030396d6234716c7665",
+		Payload:    ikePrefixedRead1,
 	}}, h.produced[0].decoded)
 }
 
