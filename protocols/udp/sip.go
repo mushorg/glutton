@@ -101,15 +101,6 @@ func beginSIPVisit(ip net.IP, logger interfaces.Logger) sipproto.Visit {
 	return sipproto.BeginVisit(sipRecall, ip, logger)
 }
 
-// sipTag records the visit on a write frame.
-func sipTag(v sipproto.Visit, frame parsedSIP) parsedSIP {
-	if v.Number > 0 {
-		frame.Variant = v.Variant.String()
-		frame.Visit = v.Number
-	}
-	return frame
-}
-
 // noteSIPVisit stores what the source did in this event.
 func noteSIPVisit(ip net.IP, v sipproto.Visit, events []parsedSIP) {
 	reads := make([]sipproto.VisitRead, 0, len(events))
@@ -121,14 +112,33 @@ func noteSIPVisit(ip net.IP, v sipproto.Visit, events []parsedSIP) {
 	v.Note(ip, reads)
 }
 
-// replySIP sends a SIP datagram to src and reports whether it left. A reply
-// the udp_reply_limit budget dropped is no error, but its write frame must
-// not read as sent; honeypots that cannot tell report every reply as sent.
-func replySIP(h interfaces.Honeypot, src, dst *net.UDPAddr, data []byte) (bool, error) {
-	if r, ok := h.(interfaces.UDPReplyReporter); ok {
-		return r.ReplyUDPSent(src, dst, data)
+// sendSIPReply sends data (msg parsed) to src and returns its write frame,
+// tagged with the visit. A reply the udp_reply_limit budget dropped is no
+// error, but its frame is marked dropped; honeypots that cannot tell report
+// every reply as sent.
+func sendSIPReply(h interfaces.Honeypot, logger interfaces.Logger, src, dst *net.UDPAddr, visit sipproto.Visit, data []byte, msg sip.Message) (parsedSIP, error) {
+	frame := sipDecoded("write", msg, data)
+	if visit.Number > 0 {
+		frame.Variant = visit.Variant.String()
+		frame.Visit = visit.Number
 	}
-	return true, h.ReplyUDP(src, dst, data)
+	sent, err := true, error(nil)
+	if r, ok := h.(interfaces.UDPReplyReporter); ok {
+		sent, err = r.ReplyUDPSent(src, dst, data)
+	} else {
+		err = h.ReplyUDP(src, dst, data)
+	}
+	if err != nil {
+		frame.Error = err.Error()
+		logger.Error("Failed to send SIP reply", slog.String("protocol", "sip"), producer.ErrAttr(err))
+		return frame, err
+	}
+	frame.Dropped = !sent
+	return frame, nil
+}
+
+func logSIPRequest(logger interfaces.Logger, method string) {
+	logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", method))
 }
 
 // sipResponder builds the UDP SIP replies; tests swap it for deterministic tags and nonces.
@@ -172,36 +182,46 @@ func HandleSIP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, 
 		return handleSIPDatagram(srcAddr, dstAddr, nil, frame, err, sipproto.Visit{}, md, logger, h)
 	}
 
-	// datagrams joining a dialog keep the visit the dialog started with
-	var visit sipproto.Visit
-	if frame.CallID != "" {
-		key := sipDialogKey(srcAddr, frame.CallID)
-		d := sipDialogs.get(key)
-		if req, ok := msg.(sip.Request); ok && d == nil && opensSIPDialog(req) {
-			visit = beginSIPVisit(srcAddr.IP, logger)
-			var evicted *sipDialog
-			d, evicted = sipDialogs.open(key, func() *sipDialog {
-				d := newSIPDialog(ctx, key, sipDialogs, srcAddr, dstAddr, md, logger, h)
-				if req.Method() == sip.INVITE {
-					d.reject = visit.RejectInvite(srcAddr.IP)
-				}
-				d.visit = visit
-				return d
-			})
-			if evicted != nil {
-				evicted.finish(connection.EndEvicted)
-			}
-		}
-		if d != nil {
-			if handled, err := d.handle(msg, frame); handled {
-				return err
-			}
-		}
+	visit, handled, err := joinSIPDialog(ctx, srcAddr, dstAddr, msg, frame, md, logger, h)
+	if handled {
+		return err
 	}
 	if visit.Number == 0 {
 		visit = beginSIPVisit(srcAddr.IP, logger)
 	}
 	return handleSIPDatagram(srcAddr, dstAddr, msg, frame, nil, visit, md, logger, h)
+}
+
+// joinSIPDialog hands a datagram to the open dialog of its source and
+// Call-ID, opening one first when msg starts a dialog. handled is false when
+// no dialog took the datagram. visit is the visit begun for a new dialog (a
+// datagram joining one keeps the visit the dialog started with), else zero.
+func joinSIPDialog(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, msg sip.Message, frame parsedSIP, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) (visit sipproto.Visit, handled bool, err error) {
+	if frame.CallID == "" {
+		return visit, false, nil
+	}
+	key := sipDialogKey(srcAddr, frame.CallID)
+	d := sipDialogs.get(key)
+	if req, ok := msg.(sip.Request); ok && d == nil && opensSIPDialog(req) {
+		visit = beginSIPVisit(srcAddr.IP, logger)
+		var evicted *sipDialog
+		d, evicted = sipDialogs.open(key, func() *sipDialog {
+			d := newSIPDialog(ctx, key, sipDialogs, srcAddr, dstAddr, md, logger, h)
+			if req.Method() == sip.INVITE {
+				d.reject = visit.RejectInvite(srcAddr.IP)
+			}
+			d.visit = visit
+			return d
+		})
+		if evicted != nil {
+			evicted.finish(connection.EndEvicted)
+		}
+	}
+	if d == nil {
+		return visit, false, nil
+	}
+	handled, err = d.handle(msg, frame)
+	return visit, handled, err
 }
 
 // opensSIPDialog reports whether req starts a dialog: an INVITE, or a REGISTER
@@ -250,16 +270,12 @@ func handleSIPDatagram(srcAddr, dstAddr *net.UDPAddr, msg sip.Message, frame par
 	if !ok {
 		return nil
 	}
-	logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
+	logSIPRequest(logger, string(req.Method()))
 
 	for _, resp := range sipResponder.Reply(req, srcAddr, dstAddr, visit.Variant) {
-		respBytes := []byte(resp.String())
-		frame := sipTag(visit, sipDecoded("write", resp, respBytes))
-		sent, err := replySIP(h, srcAddr, dstAddr, respBytes)
-		frame.Dropped = !sent && err == nil
+		frame, err := sendSIPReply(h, logger, srcAddr, dstAddr, visit, []byte(resp.String()), resp)
 		events = append(events, frame)
 		if err != nil {
-			logger.Error("Failed to send SIP reply", slog.String("protocol", "sip"), producer.ErrAttr(err))
 			endReason = connection.EndWriteError
 			return err
 		}

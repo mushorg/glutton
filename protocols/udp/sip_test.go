@@ -1610,6 +1610,22 @@ func (h *failingHoneypot) ReplyUDPSent(srcAddr, dstAddr *net.UDPAddr, payload []
 	return true, h.ReplyUDP(srcAddr, dstAddr, payload)
 }
 
+// a reply outside any dialog that fails to send ends the event as
+// write_error, and its frame says why it did not leave
+func TestHandleSIPDatagramFailedReply(t *testing.T) {
+	stubSIPResponder(t)
+	stubSIPDialogs(t)
+	h := &failingHoneypot{fail: []string{"SIP/2.0 200 OK"}}
+	require.Error(t, HandleSIP(context.Background(), pplsipSrc, pplsipDst, sipOptions(), connection.Metadata{}, testLogger{}, h))
+	require.Len(t, h.produced, 1)
+	require.Equal(t, connection.EndWriteError, h.produced[0].endReason)
+	events := h.produced[0].decoded.([]parsedSIP)
+	require.Len(t, events, 2)
+	require.Equal(t, "200", events[1].Status)
+	require.Equal(t, "dial: socket connect: address already in use", events[1].Error)
+	require.False(t, events[1].Dropped)
+}
+
 // a 200 OK that fails to send is resent like an unACKed one instead of
 // ending the call, and its frame says why it did not leave
 func TestHandleSIPDialogFailedOKResent(t *testing.T) {

@@ -6,7 +6,6 @@ import (
 	"math/rand/v2"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
@@ -45,6 +44,14 @@ var sipAfterFunc = func(d time.Duration, f func()) sipTimer {
 	return time.AfterFunc(d, f)
 }
 
+// stopSIPTimer stops *t, if set, and clears it.
+func stopSIPTimer(t *sipTimer) {
+	if *t != nil {
+		(*t).Stop()
+		*t = nil
+	}
+}
+
 // sipIdle overrides the dialog idle timeout in tests. When zero, production
 // uses conn_timeout (default 45s), but never less than 64*T1 so a caller that
 // never ACKs still sees every 200 OK resend in one event.
@@ -71,65 +78,12 @@ var sipRingDelay = func() time.Duration {
 	return 2*time.Second + rand.N(4*time.Second)
 }
 
-func sipDialogKey(src *net.UDPAddr, callID string) string {
-	return src.IP.String() + "|" + callID
-}
-
-type sipDialogTable struct {
-	mu      sync.Mutex
-	max     int
-	dialogs map[string]*sipDialog
-	// clock orders dialogs by last activity for eviction
-	clock atomic.Uint64
-}
-
-func newSIPDialogTable(max int) *sipDialogTable {
-	return &sipDialogTable{max: max, dialogs: map[string]*sipDialog{}}
-}
-
-// sipDialogs tracks open UDP SIP dialogs across datagrams.
-var sipDialogs = newSIPDialogTable(maxSIPDialogs)
-
-func (t *sipDialogTable) get(key string) *sipDialog {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.dialogs[key]
-}
-
-// open returns the dialog for key, creating it when absent. A full table
-// first evicts its least recently active dialog, which the caller must
-// finish.
-func (t *sipDialogTable) open(key string, create func() *sipDialog) (d, evicted *sipDialog) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if d := t.dialogs[key]; d != nil {
-		return d, nil
-	}
-	if len(t.dialogs) >= t.max {
-		for _, cand := range t.dialogs {
-			if evicted == nil || cand.lastSeen() < evicted.lastSeen() {
-				evicted = cand
-			}
-		}
-		if evicted != nil {
-			delete(t.dialogs, evicted.key)
-		}
-	}
-	d = create()
-	t.dialogs[key] = d
-	return d, evicted
-}
-
-func (t *sipDialogTable) remove(key string, expected *sipDialog) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if current, ok := t.dialogs[key]; ok && current == expected {
-		delete(t.dialogs, key)
-	}
-}
-
 // sipDialog collects the frames of one call (INVITE, ACK, BYE, retransmits) or
 // of a challenged REGISTER and its retry, and produces them as one event when it ends.
+//
+// Methods named *Locked expect d.mu held. The timer callbacks (answer,
+// referDone, resendFinal) and the datagram entry points (handle,
+// handleMedia) take it themselves; finish must run without it.
 type sipDialog struct {
 	mu       sync.Mutex
 	key      string
@@ -188,6 +142,11 @@ func (d *sipDialog) lastSeen() uint64 {
 	return d.seen
 }
 
+// fullLocked reports whether the dialog reached maxSIPDialogFrames.
+func (d *sipDialog) fullLocked() bool {
+	return len(d.events) >= maxSIPDialogFrames
+}
+
 // handle records one datagram of the dialog and answers it. It returns
 // false when the dialog was already produced, so the caller handles the
 // datagram on its own.
@@ -206,7 +165,7 @@ func (d *sipDialog) handle(msg sip.Message, frame parsedSIP) (bool, error) {
 	if req, ok := msg.(sip.Request); ok {
 		endReason, err = d.requestLocked(req)
 	}
-	if endReason == "" && len(d.events) >= maxSIPDialogFrames {
+	if endReason == "" && d.fullLocked() {
 		endReason = connection.EndMaxFrames
 	}
 	d.mu.Unlock()
@@ -219,25 +178,13 @@ func (d *sipDialog) handle(msg sip.Message, frame parsedSIP) (bool, error) {
 
 // requestLocked answers req and returns the endReason when req ends the dialog.
 func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
-	seq := uint32(0)
+	var seq uint32
 	if cseq, ok := req.CSeq(); ok {
 		seq = cseq.SeqNo
 	}
 	switch req.Method() {
 	case sip.ACK:
-		if d.final == nil || d.acked {
-			return "", nil
-		}
-		d.acked = true
-		d.stopResendLocked()
-		// an answered call now waits for its BYE (see armIdleLocked)
-		d.armIdleLocked()
-		// the ACK to a 404, 486 or 487 completes the failed call; after a
-		// 401/407 the caller retries the INVITE with credentials in this dialog
-		if !d.final.IsSuccess() && !isAuthChallenge(d.final) {
-			return connection.EndClientClose, nil
-		}
-		return "", nil
+		return d.ackLocked(), nil
 	case sip.INVITE:
 		// a retransmitted INVITE gets the latest response again (180 while
 		// ringing, then the final), as a real UAS's transaction layer would,
@@ -264,9 +211,9 @@ func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
 		}
 	}
 
-	d.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
+	logSIPRequest(d.logger, string(req.Method()))
 	for _, resp := range sipResponder.Reply(req, d.src, d.dst, d.visit.Variant) {
-		if err := d.writeLocked([]byte(resp.String()), resp); err != nil {
+		if err := d.respondLocked(resp); err != nil {
 			return connection.EndWriteError, err
 		}
 	}
@@ -283,33 +230,52 @@ func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
 	return "", nil
 }
 
+// ackLocked stops the final response resends and returns the endReason when
+// the ACK completes a failed call.
+func (d *sipDialog) ackLocked() string {
+	if d.final == nil || d.acked {
+		return ""
+	}
+	d.acked = true
+	stopSIPTimer(&d.resend)
+	// an answered call now waits for its BYE (see armIdleLocked)
+	d.armIdleLocked()
+	// the ACK to a 404, 486 or 487 completes the failed call; after a
+	// 401/407 the caller retries the INVITE with credentials in this dialog
+	if !d.final.IsSuccess() && !isAuthChallenge(d.final) {
+		return connection.EndClientClose
+	}
+	return ""
+}
+
 // inviteLocked answers a new INVITE: 100 Trying, then 404 when the dialog
 // was picked for rejection, else 180 Ringing (183 Session Progress with SDP
 // in the progress variant, which already starts the media recording) and the
 // final response after sipRingDelay (200 OK, or 486 Busy Here in the busy
-// variant). In the auth
-// variant an INVITE without credentials gets a 401 challenge instead.
+// variant). In the auth variant an INVITE without credentials gets a 401
+// challenge instead.
 func (d *sipDialog) inviteLocked(seq uint32, req sip.Request) (string, error) {
-	d.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
+	logSIPRequest(d.logger, string(req.Method()))
 	first := d.invite == nil
 	d.stopRingLocked()
-	d.stopResendLocked()
+	stopSIPTimer(&d.resend)
 	d.invite, d.inviteSeq, d.final, d.acked = req, seq, nil, false
 
 	reject := first && d.reject
 	if !reject && d.visit.Variant == sipproto.Auth && sipproto.Credentials(req) == "" {
 		// Asterisk challenges without a 100 Trying
-		return d.sendFinalLocked(sipResponder.Challenge(req, d.src), connection.EndTimeout)
+		d.sendFinalLocked(sipResponder.Challenge(req, d.src), connection.EndTimeout)
+		return "", nil
 	}
 
 	trying, ringing, ok := sipResponder.Answer(req, d.src, d.dst, d.visit.Variant)
-	if err := d.writeLocked([]byte(trying.String()), trying); err != nil {
+	if err := d.respondLocked(trying); err != nil {
 		return connection.EndWriteError, err
 	}
 	if reject {
 		// what Asterisk sends when no dialplan extension matches the number
-		notFound := sipResponder.Final(req, d.src, 404, "Not Found", "")
-		return d.sendFinalLocked(notFound, connection.EndTimeout)
+		d.sendFinalLocked(sipResponder.Final(req, d.src, 404, "Not Found", ""), connection.EndTimeout)
+		return "", nil
 	}
 	d.tag = sipToTag(ringing)
 	ringingBytes := []byte(ringing.String())
@@ -331,15 +297,15 @@ func (d *sipDialog) inviteLocked(seq uint32, req sip.Request) (string, error) {
 // cancelLocked ends a ringing INVITE: 200 OK to the CANCEL, then 487 to the
 // INVITE, resent until the caller ACKs it (RFC 3261 §9.2).
 func (d *sipDialog) cancelLocked(req sip.Request) (string, error) {
-	d.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
+	logSIPRequest(d.logger, string(req.Method()))
 	d.stopRingLocked()
-	cancelOK := sipResponder.Final(req, d.src, 200, "OK", d.tag)
-	if err := d.writeLocked([]byte(cancelOK.String()), cancelOK); err != nil {
+	if err := d.respondLocked(sipResponder.Final(req, d.src, 200, "OK", d.tag)); err != nil {
 		return connection.EndWriteError, err
 	}
 	terminated := sipResponder.Final(d.invite, d.src, 487, "Request Terminated", d.tag)
 	// the caller hung up, so an unACKed 487 still ends as client_close
-	return d.sendFinalLocked(terminated, connection.EndClientClose)
+	d.sendFinalLocked(terminated, connection.EndClientClose)
+	return "", nil
 }
 
 // answeredLocked reports whether the call was answered (a 2xx went out),
@@ -352,10 +318,11 @@ func (d *sipDialog) answeredLocked() bool {
 // 200 OK and the same SDP answer, resent until ACKed like the first 200,
 // instead of ringing it as a new call.
 func (d *sipDialog) reInviteLocked(seq uint32, req sip.Request) (string, error) {
-	d.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", "re-INVITE"))
+	logSIPRequest(d.logger, "re-INVITE")
 	ok := sipResponder.ReInviteOK(req, d.src, d.final)
 	d.invite, d.inviteSeq = req, seq
-	return d.sendFinalLocked(ok, connection.EndTimeout)
+	d.sendFinalLocked(ok, connection.EndTimeout)
+	return "", nil
 }
 
 // referLocked accepts a transfer in the answered call: 202 Accepted, a
@@ -364,22 +331,20 @@ func (d *sipDialog) reInviteLocked(seq uint32, req sip.Request) (string, error) 
 // Refer-To number is only recorded (called_number on the read frame). A
 // REFER without Refer-To gets 400, as Asterisk answers it.
 func (d *sipDialog) referLocked(req sip.Request) (string, error) {
-	d.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
+	logSIPRequest(d.logger, string(req.Method()))
 	if len(req.GetHeaders("Refer-To")) == 0 {
-		bad := sipResponder.Final(req, d.src, 400, "Bad Request", d.tag)
-		if err := d.writeLocked([]byte(bad.String()), bad); err != nil {
+		if err := d.respondLocked(sipResponder.Final(req, d.src, 400, "Bad Request", d.tag)); err != nil {
 			return connection.EndWriteError, err
 		}
 		return "", nil
 	}
-	accepted := sipResponder.Final(req, d.src, 202, "Accepted", d.tag)
-	if err := d.writeLocked([]byte(accepted.String()), accepted); err != nil {
+	if err := d.respondLocked(sipResponder.Final(req, d.src, 202, "Accepted", d.tag)); err != nil {
 		return connection.EndWriteError, err
 	}
 	if err := d.notifyReferLocked(false); err != nil {
 		return connection.EndWriteError, err
 	}
-	d.stopReferLocked()
+	stopSIPTimer(&d.refer)
 	d.referGen++
 	gen := d.referGen
 	d.refer = sipAfterFunc(sipRingDelay(), func() { d.referDone(gen) })
@@ -397,7 +362,7 @@ func (d *sipDialog) notifyReferLocked(done bool) error {
 	if notify == nil {
 		return nil
 	}
-	return d.writeLocked([]byte(notify.String()), notify)
+	return d.respondLocked(notify)
 }
 
 // referDone fires when the pretend transfer target answers and sends the
@@ -412,20 +377,13 @@ func (d *sipDialog) referDone(gen uint64) {
 	endReason := ""
 	if err := d.notifyReferLocked(true); err != nil {
 		endReason = connection.EndWriteError
-	} else if len(d.events) >= maxSIPDialogFrames {
+	} else if d.fullLocked() {
 		endReason = connection.EndMaxFrames
 	}
 	d.mu.Unlock()
 
 	if endReason != "" {
 		d.finish(endReason)
-	}
-}
-
-func (d *sipDialog) stopReferLocked() {
-	if d.refer != nil {
-		d.refer.Stop()
-		d.refer = nil
 	}
 }
 
@@ -442,37 +400,32 @@ func (d *sipDialog) answer(gen uint64) {
 	d.pendingFinal = nil
 	// the final response resends run up to 64*T1 from here
 	d.armIdleLocked()
-	endReason, _ := d.sendFinalLocked(final, connection.EndTimeout)
-	if endReason == "" && len(d.events) >= maxSIPDialogFrames {
-		endReason = connection.EndMaxFrames
-	}
+	d.sendFinalLocked(final, connection.EndTimeout)
+	full := d.fullLocked()
 	d.mu.Unlock()
 
-	if endReason != "" {
-		d.finish(endReason)
+	if full {
+		d.finish(connection.EndMaxFrames)
 	}
 }
 
 func (d *sipDialog) stopRingLocked() {
-	if d.ring != nil {
-		d.ring.Stop()
-		d.ring = nil
-	}
+	stopSIPTimer(&d.ring)
 	d.pendingFinal = nil
 }
 
 // sendFinalLocked sends the INVITE's final response and resends it at T1
 // backoff until an ACK arrives. unacked is the endReason if none does. A
-// silent source (see sipproto.Visit.Silent) gets it once: the timer waits out
-// the 64*T1 window in one step, so the unACKed count, the BYE after a 200 and
-// the endReason stay the same without the resends.
-func (d *sipDialog) sendFinalLocked(final sip.Response, unacked string) (string, error) {
+// failed send ends nothing: the resends retry it, and the call ends as
+// write_error only if it never left (see resendFinal). A silent source (see
+// sipproto.Visit.Silent) gets it once: the timer waits out the 64*T1 window
+// in one step, so the unACKed count, the BYE after a 200 and the endReason
+// stay the same without the resends.
+func (d *sipDialog) sendFinalLocked(final sip.Response, unacked string) {
 	data := []byte(final.String())
-	// a failed send ends nothing: the resends below retry it, and the call
-	// ends as write_error only if it never left (see resendFinal)
 	d.finalSent = d.writeLocked(data, final) == nil
 	d.bindMediaLocked(final)
-	d.stopResendLocked()
+	stopSIPTimer(&d.resend)
 	d.last = data
 	d.final = final
 	d.finalBytes = data
@@ -484,7 +437,6 @@ func (d *sipDialog) sendFinalLocked(final sip.Response, unacked string) (string,
 	}
 	d.waited = 0
 	d.resend = sipAfterFunc(d.interval, d.resendFinal)
-	return "", nil
 }
 
 func isAuthChallenge(res sip.Response) bool {
@@ -501,30 +453,24 @@ func sipToTag(msg sip.Message) string {
 	return ""
 }
 
+// respondLocked sends msg to the caller and records it.
+func (d *sipDialog) respondLocked(msg sip.Message) error {
+	return d.writeLocked([]byte(msg.String()), msg)
+}
+
 // writeLocked sends data to the caller and records it. msg is the parsed
 // form of data, or nil to re-parse it.
 func (d *sipDialog) writeLocked(data []byte, msg sip.Message) error {
 	if msg == nil {
 		msg, _ = parseSIP(data, true)
 	}
-	frame := sipTag(d.visit, sipDecoded("write", msg, data))
-	sent, err := replySIP(d.h, d.src, d.dst, data)
-	frame.Dropped = !sent && err == nil
-	if err != nil {
-		frame.Error = err.Error()
-	}
+	frame, err := sendSIPReply(d.h, d.logger, d.src, d.dst, d.visit, data, msg)
 	d.events = append(d.events, frame)
-	if err != nil {
-		d.logger.Error("Failed to send SIP reply", slog.String("protocol", "sip"), producer.ErrAttr(err))
-		return err
-	}
-	return nil
+	return err
 }
 
 func (d *sipDialog) armIdleLocked() {
-	if d.idle != nil {
-		d.idle.Stop()
-	}
+	stopSIPTimer(&d.idle)
 	idle := sipIdleDuration()
 	if d.acked && d.answeredLocked() {
 		// dialers hang up answered calls minutes later; keep the BYE in
@@ -532,13 +478,6 @@ func (d *sipDialog) armIdleLocked() {
 		idle = max(idle, sipAnsweredHold())
 	}
 	d.idle = sipAfterFunc(idle, func() { d.finish(connection.EndTimeout) })
-}
-
-func (d *sipDialog) stopResendLocked() {
-	if d.resend != nil {
-		d.resend.Stop()
-		d.resend = nil
-	}
 }
 
 // resendFinal fires on the resend timer: it sends the final response again
@@ -564,7 +503,7 @@ func (d *sipDialog) resendFinal() {
 		_ = d.visit.NoteUnacked(d.src.IP, int(d.final.StatusCode()), d.logger)
 		if d.final.IsSuccess() {
 			if bye := sipResponder.AckTimeoutBye(d.invite, d.final, d.dst, "UDP"); bye != nil {
-				if err := d.writeLocked([]byte(bye.String()), bye); err != nil {
+				if err := d.respondLocked(bye); err != nil {
 					endReason = connection.EndWriteError
 				}
 			}
@@ -574,7 +513,7 @@ func (d *sipDialog) resendFinal() {
 		if d.writeLocked(d.finalBytes, d.final) == nil {
 			d.finalSent = true
 		}
-		if len(d.events) >= maxSIPDialogFrames {
+		if d.fullLocked() {
 			endReason = connection.EndMaxFrames
 		} else {
 			d.interval = min(2*d.interval, sipT2)
@@ -596,13 +535,10 @@ func (d *sipDialog) finish(endReason string) {
 		return
 	}
 	d.produced = true
-	if d.idle != nil {
-		d.idle.Stop()
-		d.idle = nil
-	}
-	d.stopResendLocked()
+	stopSIPTimer(&d.idle)
+	stopSIPTimer(&d.resend)
+	stopSIPTimer(&d.refer)
 	d.stopRingLocked()
-	d.stopReferLocked()
 	if d.stopCtx != nil {
 		d.stopCtx()
 	}
