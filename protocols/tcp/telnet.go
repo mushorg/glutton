@@ -63,11 +63,18 @@ const (
 // (each may buffer maxTelnetSample); a download beyond it is skipped.
 var telnetFetchSlots = make(chan struct{}, 32)
 
+// telnetOptionRequests opens the session: IAC DO TERMINAL-TYPE, TERMINAL-SPEED,
+// X-DISPLAY-LOCATION and NEW-ENVIRON.
+const telnetOptionRequests = "\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27"
+
+// telnetPrompt is written after each shell line.
+const telnetPrompt = "> "
+
 // telnetShPrompt is written after commands once `sh` has switched the
 // session into the BusyBox shell. Same bytes as the pre-sh prompt: this fleet
 // answers `> ` for enable/linuxshell/system/shell and stalls on anything else
 // after `sh` (`$ `, `~ # `, `\r\n> `; Ochi event 1997a98e-cfb2-48dc-88bf-d487b3a0a3c9).
-const telnetShPrompt = "> "
+const telnetShPrompt = telnetPrompt
 
 // telnetShReply is unused as a distinct write: `sh` is silent like enable
 // (the loop writes telnetShPrompt). Kept so skipPrompt can still mark inSh
@@ -202,20 +209,22 @@ func normalizeTelnetCommand(cmd string) string {
 // the same command without a `/bin/busybox ` prefix. elf is true when the
 // reply is an ELF header of arch.
 func telnetLookup(cmd string, arch telnetArch) (resp []string, elf, ok bool) {
-	for _, c := range []string{cmd, ""} {
-		if c == "" {
-			rest, found := strings.CutPrefix(cmd, "/bin/busybox ")
-			if !found {
-				break
-			}
-			c = normalizeTelnetCommand(rest)
-		}
-		if resp, ok := telnetReplies[c]; ok {
-			return resp, false, true
-		}
-		if prefix, ok := telnetELFReplies[c]; ok {
-			return []string{prefix + arch.elfHeader()}, true, true
-		}
+	if resp, elf, ok := telnetLookupExact(cmd, arch); ok {
+		return resp, elf, true
+	}
+	if rest, found := strings.CutPrefix(cmd, "/bin/busybox "); found {
+		return telnetLookupExact(normalizeTelnetCommand(rest), arch)
+	}
+	return nil, false, false
+}
+
+// telnetLookupExact finds a canned or ELF reply for exactly cmd.
+func telnetLookupExact(cmd string, arch telnetArch) (resp []string, elf, ok bool) {
+	if resp, ok := telnetReplies[cmd]; ok {
+		return resp, false, true
+	}
+	if prefix, ok := telnetELFReplies[cmd]; ok {
+		return []string{prefix + arch.elfHeader()}, true, true
 	}
 	return nil, false, false
 }
@@ -273,6 +282,7 @@ func telnetReply(cmd string, arch telnetArch) (telnetResponse, error) {
 	if line == "" {
 		return telnetResponse{}, nil
 	}
+	// Try the whole line first, then each `||` alternative in order.
 	candidates := []string{line}
 	alts := []string{line}
 	if strings.Contains(line, "||") {
@@ -360,6 +370,13 @@ func (s *telnetServer) add(ev parsedTelnet) {
 	s.events = append(s.events, ev)
 }
 
+// tagLast stamps the last write frame with the visit's variant.
+func (s *telnetServer) tagLast() {
+	ev := &s.events[len(s.events)-1]
+	ev.Variant = s.arch.name
+	ev.Visit = s.visit
+}
+
 // telnetRecall remembers each source's last visit; tests swap it for a store
 // with a fake clock.
 var telnetRecall = recall.Shared
@@ -399,7 +416,7 @@ func (s *telnetServer) note() {
 			}
 			switch e.Command {
 			case "username":
-				sum.AddUsername(telnetCredential(e.Message))
+				sum.AddUsername(trimTelnetLine(e.Message))
 			case "password":
 			default:
 				sum.AddCommand(e.Command)
@@ -428,11 +445,14 @@ func (a telnetArch) styleNotFound(reply string) (string, bool) {
 	return out, out != reply
 }
 
-// tagLast stamps the last write frame with the visit's variant.
-func (s *telnetServer) tagLast() {
-	ev := &s.events[len(s.events)-1]
-	ev.Variant = s.arch.name
-	ev.Visit = s.visit
+// restyleNotFound adapts a bash-style "not found" reply to the session's
+// shell: BusyBox ash once inside `sh`, otherwise the architecture's persona.
+// restyled reports a persona-dependent change.
+func (s *telnetServer) restyleNotFound(reply string) (out string, restyled bool) {
+	if s.inSh {
+		return ashNotFound(reply), false
+	}
+	return s.arch.styleNotFound(reply)
 }
 
 // ashNotFound rewrites a bash-style "-bash: X: command not found" reply as the
@@ -449,9 +469,10 @@ func ashNotFound(reply string) string {
 	return "sh: " + name + ": not found\r\n"
 }
 
+// telnetShellCommand returns the first word of a shell line, recorded as the
+// read frame's command.
 func telnetShellCommand(msg string) string {
-	line := strings.TrimRight(msg, "\r\n\x00")
-	line = strings.TrimSpace(line)
+	line := strings.TrimSpace(trimTelnetLine(msg))
 	if line == "" {
 		return ""
 	}
@@ -462,7 +483,8 @@ func telnetShellCommand(msg string) string {
 	return line
 }
 
-func telnetCredential(msg string) string {
+// trimTelnetLine drops the line terminator (CR, LF, NUL) from a read line.
+func trimTelnetLine(msg string) string {
 	return strings.TrimRight(msg, "\r\n\x00")
 }
 
@@ -479,7 +501,7 @@ func telnetWriteCommand(msg string) string {
 
 // telnetDownloadURL extracts an http(s) URL from a wget/curl shell line.
 func telnetDownloadURL(cmd string) (string, bool) {
-	line := strings.TrimRight(cmd, "\r\n\x00")
+	line := trimTelnetLine(cmd)
 	lower := strings.ToLower(line)
 	if !strings.Contains(lower, "wget") && !strings.Contains(lower, "curl") {
 		return "", false
@@ -510,12 +532,23 @@ func (s *telnetServer) write(msg string) error {
 	return nil
 }
 
+// Telnet command octets (RFC 854).
+const (
+	telnetIAC  = 0xff // interpret as command
+	telnetSE   = 240  // end of subnegotiation
+	telnetSB   = 250  // start of subnegotiation
+	telnetWILL = 251
+	telnetWONT = 252
+	telnetDO   = 253
+	telnetDONT = 254
+)
+
 // stripTelnetIAC removes telnet negotiation sequences from data.
 // Negotiation octets are returned separately so they can be recorded as their own frames.
 func stripTelnetIAC(data []byte) (cleaned, negotiation []byte) {
 	cleaned = make([]byte, 0, len(data))
 	for i := 0; i < len(data); {
-		if data[i] != 0xff {
+		if data[i] != telnetIAC {
 			cleaned = append(cleaned, data[i])
 			i++
 			continue
@@ -524,23 +557,19 @@ func stripTelnetIAC(data []byte) (cleaned, negotiation []byte) {
 			negotiation = append(negotiation, data[i])
 			break
 		}
-		cmd := data[i+1]
-		switch cmd {
-		case 0xff: // escaped 0xff data byte
-			cleaned = append(cleaned, 0xff)
+		switch data[i+1] {
+		case telnetIAC: // escaped 0xff data byte
+			cleaned = append(cleaned, telnetIAC)
 			i += 2
-		case 251, 252, 253, 254: // WILL / WONT / DO / DONT + option
-			end := i + 3
-			if end > len(data) {
-				end = len(data)
-			}
+		case telnetWILL, telnetWONT, telnetDO, telnetDONT: // + option byte
+			end := min(i+3, len(data))
 			negotiation = append(negotiation, data[i:end]...)
 			i = end
-		case 250: // SB ... IAC SE
+		case telnetSB: // SB ... IAC SE
 			start := i
 			i += 2
 			for i < len(data) {
-				if data[i] == 0xff && i+1 < len(data) && data[i+1] == 240 {
+				if data[i] == telnetIAC && i+1 < len(data) && data[i+1] == telnetSE {
 					i += 2
 					break
 				}
@@ -548,10 +577,7 @@ func stripTelnetIAC(data []byte) (cleaned, negotiation []byte) {
 			}
 			negotiation = append(negotiation, data[start:i]...)
 		default: // two-byte IAC command
-			end := i + 2
-			if end > len(data) {
-				end = len(data)
-			}
+			end := min(i+2, len(data))
 			negotiation = append(negotiation, data[i:end]...)
 			i = end
 		}
@@ -561,7 +587,7 @@ func stripTelnetIAC(data []byte) (cleaned, negotiation []byte) {
 
 // telnetTextStart reports whether b can open a telnet session: IAC or text.
 func telnetTextStart(b byte) bool {
-	return b == 0xff || b == '\r' || b == '\n' || b == '\t' || b == 0 || (b >= 0x20 && b < 0x7f)
+	return b == telnetIAC || b == '\r' || b == '\n' || b == '\t' || b == 0 || (b >= 0x20 && b < 0x7f)
 }
 
 // readBinary records whatever the client sent as a single unlabeled frame.
@@ -579,26 +605,24 @@ func (s *telnetServer) readBinary() error {
 	return err
 }
 
-// read reads a telnet message from a connection
+// read reads one line, recording any IAC negotiation and the remaining text as
+// separate read frames, and returns the text.
 func (s *telnetServer) read() (string, error) {
 	line, truncated, err := helpers.ReadLine(s.reader, maxTelnetLine)
-	msg := string(line)
-	if len(msg) > 0 {
-		cleaned, negotiation := stripTelnetIAC([]byte(msg))
-		if len(negotiation) > 0 {
-			s.add(parsedTelnet{Direction: "read", Message: string(negotiation)})
+	cleaned, negotiation := stripTelnetIAC(line)
+	if len(negotiation) > 0 {
+		s.add(parsedTelnet{Direction: "read", Message: string(negotiation)})
+	}
+	msg := string(cleaned)
+	if msg != "" {
+		var cmd string
+		switch s.step {
+		case "username", "password":
+			cmd = s.step
+		default:
+			cmd = telnetShellCommand(msg)
 		}
-		if len(cleaned) > 0 {
-			cmd := ""
-			switch s.step {
-			case "username", "password":
-				cmd = s.step
-			default:
-				cmd = telnetShellCommand(string(cleaned))
-			}
-			s.add(parsedTelnet{Direction: "read", Command: cmd, Message: string(cleaned), Truncated: truncated})
-		}
-		return string(cleaned), err
+		s.add(parsedTelnet{Direction: "read", Command: cmd, Message: msg, Truncated: truncated})
 	}
 	return msg, err
 }
@@ -709,32 +733,49 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 
 	host, srcPort, _ := net.SplitHostPort(s.conn.RemoteAddr().String())
 	destPort := strconv.Itoa(int(md.TargetPort))
+	connAttrs := func(extra ...any) []any {
+		return append([]any{
+			slog.String("handler", "telnet"),
+			slog.String("src_ip", host),
+			slog.String("src_port", srcPort),
+			slog.String("dest_port", destPort),
+		}, extra...)
+	}
 
-	if err := h.UpdateConnectionTimeout(ctx, s.conn); err != nil {
+	// Each way the session can end records its reason for the produced event.
+	// Timeouts and read errors are expected attacker behavior, not failures.
+	timedOut := func(err error) error {
 		logger.Debug("Failed to set connection timeout", slog.String("protocol", "telnet"), producer.ErrAttr(err))
 		endReason = connection.EndTimeout
 		return nil
 	}
-
-	// TODO (glaslos): Add device banner
-
-	// telnet window size negotiation response
-	if err := s.write("\xff\xfd\x18\xff\xfd\x20\xff\xfd\x23\xff\xfd\x27"); err != nil {
+	readFailed := func(err error) error {
+		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
+		endReason = connection.EndReasonFromRead(err)
+		return nil
+	}
+	writeFailed := func(err error) error {
 		endReason = connection.EndWriteError
 		return err
 	}
 
-	// User name prompt
+	if err := h.UpdateConnectionTimeout(ctx, s.conn); err != nil {
+		return timedOut(err)
+	}
+
+	// TODO (glaslos): Add device banner
+
+	if err := s.write(telnetOptionRequests); err != nil {
+		return writeFailed(err)
+	}
+
 	if err := s.write("Username: "); err != nil {
-		endReason = connection.EndWriteError
-		return err
+		return writeFailed(err)
 	}
 	s.step = "username"
 	first, err := s.reader.Peek(1)
 	if err != nil {
-		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
-		endReason = connection.EndReasonFromRead(err)
-		return nil
+		return readFailed(err)
 	}
 	if !telnetTextStart(first[0]) {
 		// Not telnet (e.g. a TLS ClientHello): do not treat it as credentials.
@@ -744,35 +785,24 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 	}
 	userMsg, err := s.read()
 	if err != nil {
-		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
-		endReason = connection.EndReasonFromRead(err)
-		return nil
+		return readFailed(err)
 	}
-	username := telnetCredential(userMsg)
+
 	if err := s.write("Password: "); err != nil {
-		endReason = connection.EndWriteError
-		return err
+		return writeFailed(err)
 	}
 	s.step = "password"
 	passMsg, err := s.read()
 	if err != nil {
-		logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
-		endReason = connection.EndReasonFromRead(err)
-		return nil
+		return readFailed(err)
 	}
-	password := telnetCredential(passMsg)
-	logger.Info(
-		"telnet login",
-		slog.String("handler", "telnet"),
-		slog.String("src_ip", host),
-		slog.String("src_port", srcPort),
-		slog.String("dest_port", destPort),
-		slog.String("username", username),
-		slog.String("password", password),
-	)
+
+	logger.Info("telnet login", connAttrs(
+		slog.String("username", trimTelnetLine(userMsg)),
+		slog.String("password", trimTelnetLine(passMsg)),
+	)...)
 	if err := s.write(s.arch.greeting); err != nil {
-		endReason = connection.EndWriteError
-		return err
+		return writeFailed(err)
 	}
 	if s.arch.greeting != telnetGreeting {
 		s.tagLast()
@@ -788,85 +818,65 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 			return nil
 		}
 		if err := h.UpdateConnectionTimeout(ctx, s.conn); err != nil {
-			logger.Debug("Failed to set connection timeout", slog.String("protocol", "telnet"), producer.ErrAttr(err))
-			endReason = connection.EndTimeout
-			return nil
+			return timedOut(err)
 		}
 		msg, err := s.read()
 		if err != nil {
-			logger.Debug("Failed to read from connection", slog.String("protocol", "telnet"), producer.ErrAttr(err))
-			endReason = connection.EndReasonFromRead(err)
-			return nil
+			return readFailed(err)
 		}
-		logger.Debug(
-			"telnet command",
-			slog.String("handler", "telnet"),
-			slog.String("src_ip", host),
-			slog.String("src_port", srcPort),
-			slog.String("dest_port", destPort),
+		logger.Debug("telnet command", connAttrs(
 			slog.String("command", telnetShellCommand(msg)),
-			slog.String("message", telnetCredential(msg)),
-		)
-		if url, ok := telnetDownloadURL(msg); ok {
-			if idx := s.lastReadEventIndex(); idx >= 0 {
-				s.events[idx].Path = url
-				s.startSampleFetch(idx, url, logger)
-			}
+			slog.String("message", trimTelnetLine(msg)),
+		)...)
+		if err := s.runShellLine(msg, logger); err != nil {
+			return writeFailed(err)
 		}
-		skipPrompt := false
-		for _, cmd := range strings.Split(msg, ";") {
-			if strings.TrimRight(cmd, "") == " rm /dev/.t" {
-				continue
-			}
-			if strings.TrimRight(cmd, "\r\n") == " rm /dev/.sh" {
-				continue
-			}
-			if strings.TrimRight(cmd, "\r\n") == "cd /dev/" {
-				if err := s.write("ECCHI: applet not found\r\n"); err != nil {
-					return err
-				}
+	}
+}
 
-				if err := s.write(busyboxBanner); err != nil {
-					return err
-				}
-				continue
-			}
-
-			resp, err := telnetReply(cmd, s.arch)
-			if err != nil {
+// runShellLine answers one shell line: the replies for each `;`-separated
+// command, then the prompt. A wget/curl URL on the line starts a sample fetch.
+func (s *telnetServer) runShellLine(msg string, logger interfaces.Logger) error {
+	if url, ok := telnetDownloadURL(msg); ok {
+		if idx := s.lastReadEventIndex(); idx >= 0 {
+			s.events[idx].Path = url
+			s.startSampleFetch(idx, url, logger)
+		}
+	}
+	skipPrompt := false
+	for _, cmd := range strings.Split(msg, ";") {
+		if strings.TrimRight(cmd, "\r\n") == "cd /dev/" {
+			if err := s.write("ECCHI: applet not found\r\n"); err != nil {
 				return err
 			}
-			skipPrompt = skipPrompt || resp.skipPrompt
-			for _, reply := range resp.out {
-				restyled := false
-				if s.inSh {
-					reply = ashNotFound(reply)
-				} else {
-					reply, restyled = s.arch.styleNotFound(reply)
-				}
-				if err := s.write(reply); err != nil {
-					return err
-				}
-				if resp.variant || restyled {
-					s.tagLast()
-				}
-			}
-		}
-		if skipPrompt {
-			s.inSh = true
-		}
-		if s.inSh {
-			// Once in the BusyBox shell every command ends with its prompt.
-			if skipPrompt {
-				continue
-			}
-			if err := s.write(telnetShPrompt); err != nil {
+			if err := s.write(busyboxBanner); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := s.write("> "); err != nil {
+
+		resp, err := telnetReply(cmd, s.arch)
+		if err != nil {
 			return err
 		}
+		skipPrompt = skipPrompt || resp.skipPrompt
+		for _, reply := range resp.out {
+			reply, restyled := s.restyleNotFound(reply)
+			if err := s.write(reply); err != nil {
+				return err
+			}
+			if resp.variant || restyled {
+				s.tagLast()
+			}
+		}
 	}
+	if skipPrompt {
+		// sh printed its own prompt and switched the session into the BusyBox shell.
+		s.inSh = true
+		return nil
+	}
+	if s.inSh {
+		return s.write(telnetShPrompt)
+	}
+	return s.write(telnetPrompt)
 }
