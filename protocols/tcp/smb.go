@@ -1,5 +1,15 @@
 package tcp
 
+// The SMB handler is split by concern:
+//
+//	smb.go             session state, framing, the read loop, dispatch by dialect
+//	smb_commands.go    SMB1 request annotation and per-command replies
+//	smb_transaction.go TRANS/TRANS2/NT_TRANSACT payload reassembly and capture
+//	smb_doublepulsar.go DoublePulsar backdoor emulation and XOR-key recovery
+//	smb_handles.go     open files and named pipes (uploads, DCERPC)
+//
+// Byte-level parsing and response construction live in protocols/tcp/smb.
+
 import (
 	"bytes"
 	"context"
@@ -26,7 +36,15 @@ const (
 	maxSMBTxBuffer   = 4 * 1024 * 1024
 )
 
-var smbStore = helpers.Store
+var maxSMBFileBuffer = 8 * 1024 * 1024
+
+// Seams for tests: artifact storage, randomness (NTLM challenge, DoublePulsar
+// signature), and the visit memory (swapped for a store with a fake clock).
+var (
+	smbStore    = helpers.Store
+	smbReadRand = rand.Read
+	smbRecall   = recall.Shared
+)
 
 type parsedSMB struct {
 	Direction      string        `json:"direction,omitempty"`
@@ -61,36 +79,22 @@ type parsedSMB struct {
 	Visit          int           `json:"visit,omitempty"`   // source's visit number, on emulated replies only
 }
 
-// txKind distinguishes how a reassembled transaction payload should be handled
-// once complete.
-type txKind int
-
-const (
-	txNtTransact   txKind = iota // NT_TRANSACT overflow data, captured as-is
-	txDoublePulsar               // TRANS2 SESSION_SETUP data, XOR-obfuscated
-)
-
-var smbReadRand = rand.Read
-
-// smbRecall remembers each source's last visit; tests swap it for a store with
-// a fake clock.
-var smbRecall = recall.Shared
-
 type smbServer struct {
-	events       []parsedSMB
-	conn         net.Conn
+	events []parsedSMB
+	conn   net.Conn
+	logger interfaces.Logger
+
+	// Session state handed out to the client.
 	uid          uint16
 	tid          uint16
 	fid          uint16
-	txTotal      uint32
-	txOpen       bool
-	txBuf        []byte
-	txEvent      int
-	txKind       txKind
 	tidIsIPC     map[uint16]bool
 	handles      map[uint16]*smbHandle
 	challenge    [8]byte
 	challengeSet bool
+
+	// tx is the transaction payload currently being reassembled.
+	tx smbTx
 
 	// Recall: the variant is picked once per connection.
 	srcIP   net.IP
@@ -99,18 +103,214 @@ type smbServer struct {
 	store   *recall.Store
 
 	// DoublePulsar emulation state.
-	dpKey      uint32 // XOR key derived from the signature we sent in the ping reply
-	dpKeySet   bool
-	dpArchX64  bool
-	dpOps      []string // opcodes seen, for the recall summary
-	txOpcode   byte     // opcode of the open DoublePulsar transaction
-	txParamKey uint32   // key the operator embedded in the exec parameters
-	txParamSet bool
+	dpKey     uint32 // XOR key derived from the signature we sent in the ping reply
+	dpKeySet  bool
+	dpArchX64 bool
+	dpOps     []string // opcodes seen, for the recall summary
+}
+
+// smbFrame is one NBSS packet as read off the wire: the 4-byte NBSS header
+// followed by (at most maxSMBMessage bytes of) the message.
+type smbFrame struct {
+	payload   []byte
+	truncated bool
+}
+
+// pdu is the message after the NBSS header.
+func (f smbFrame) pdu() []byte {
+	if len(f.payload) <= 4 {
+		return nil
+	}
+	return f.payload[4:]
+}
+
+// HandleSMB takes a net.Conn and does basic SMB communication
+func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
+	server := &smbServer{
+		events:   []parsedSMB{},
+		conn:     conn,
+		logger:   logger,
+		tidIsIPC: map[uint16]bool{},
+		handles:  map[uint16]*smbHandle{},
+		srcIP:    remoteIP(conn),
+	}
+	server.begin()
+	endReason := connection.EndHandlerClose
+	defer func() {
+		md.EndReason = endReason
+		server.flushTx()
+		server.note()
+		if err := h.ProduceTCP("smb", conn, md, helpers.FirstOrEmpty[parsedSMB](server.events).Payload, server.events); err != nil {
+			logger.Error("Failed to produce message", slog.String("protocol", "smb"), producer.ErrAttr(err))
+		}
+
+		if err := conn.Close(); err != nil {
+			logger.Debug("Failed to close SMB connection", producer.ErrAttr(err), slog.String("protocol", "smb"))
+		}
+	}()
+
+	for i := 0; i < maxSMBMessages; i++ {
+		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+			logger.Debug("Failed to set connection timeout", slog.String("protocol", "smb"), producer.ErrAttr(err))
+			endReason = connection.EndTimeout
+			return nil
+		}
+		frame, err := server.read()
+		if err != nil {
+			logger.Debug("Failed to read data", slog.String("protocol", "smb"), producer.ErrAttr(err))
+			endReason = connection.EndReasonFromRead(err)
+			return nil
+		}
+		if err := server.handleFrame(frame); err != nil {
+			endReason = connection.EndWriteError
+			return err
+		}
+	}
+	endReason = connection.EndMaxFrames
+	return nil
+}
+
+// handleFrame records one NBSS packet and answers it by dialect.
+func (ss *smbServer) handleFrame(frame smbFrame) error {
+	pdu := frame.pdu()
+	switch {
+	case frame.payload[0] != smb.NBSSSessionMessage:
+		return ss.handleNBSS(frame)
+	case bytes.HasPrefix(pdu, []byte("\xffSMB")):
+		return ss.handleSMB1(frame)
+	case bytes.HasPrefix(pdu, []byte("\xfeSMB")):
+		return ss.handleSMB2(frame)
+	case bytes.HasPrefix(pdu, []byte("\xfdSMB")):
+		// Encrypted SMB3: nothing to parse without the session key.
+		ss.recordRead(frame, parsedSMB{Command: "SMB3_TRANSFORM"})
+	default:
+		ss.recordRead(frame, parsedSMB{})
+	}
+	return nil
+}
+
+// handleNBSS records a NetBIOS session control packet (port 139 framing) and
+// accepts session requests so the client continues with SMB Negotiate.
+func (ss *smbServer) handleNBSS(frame smbFrame) error {
+	ev := parsedSMB{Command: smb.NBSSTypeName(frame.payload[0])}
+	if frame.payload[0] != smb.NBSSSessionRequest {
+		ss.recordRead(frame, ev)
+		return nil
+	}
+	ev.CalledName, ev.CallingName, _ = smb.ParseSessionRequest(frame.pdu())
+	ss.recordRead(frame, ev)
+	return ss.writeNBSS(smb.MakePositiveSessionResponse())
+}
+
+func (ss *smbServer) handleSMB2(frame smbFrame) error {
+	pdu := frame.pdu()
+	ss.ensureChallenge()
+	name, resp, ok := smb.MakeSMB2Reply(pdu, ss.challenge)
+	if name == "" {
+		name = "SMB2"
+	}
+	readIdx := ss.recordRead(frame, parsedSMB{Command: name})
+	// Record the identity from an SMB2 NTLMSSP AUTHENTICATE (no secrets).
+	if ntlm, found := smb.FindNTLMSSP(pdu); found && smb.NTLMMessageType(ntlm) == 3 {
+		ss.recordNTLMIdentity(smb.ParseAuthenticate(ntlm), readIdx)
+	}
+	if !ok {
+		return nil
+	}
+	return ss.writePDU(name, smb.SMBHeader{}, resp)
+}
+
+func (ss *smbServer) read() (smbFrame, error) {
+	var hdr [4]byte
+	if _, err := io.ReadFull(ss.conn, hdr[:]); err != nil {
+		return smbFrame{}, err
+	}
+	n := int(hdr[1])<<16 | int(hdr[2])<<8 | int(hdr[3])
+	// Only NBSS control packets (keepalive) may be empty.
+	if n > maxSMBClaimedLen || (n == 0 && hdr[0] == smb.NBSSSessionMessage) {
+		return smbFrame{}, fmt.Errorf("invalid SMB message length: %d", n)
+	}
+	store := min(n, maxSMBMessage)
+	truncated := store < n
+	payload := make([]byte, 4+store)
+	copy(payload[:4], hdr[:])
+	if _, err := io.ReadFull(ss.conn, payload[4:]); err != nil {
+		return smbFrame{}, err
+	}
+	if truncated {
+		if _, err := io.CopyN(io.Discard, ss.conn, int64(n-store)); err != nil {
+			return smbFrame{}, err
+		}
+	}
+	return smbFrame{payload: payload, truncated: truncated}, nil
+}
+
+// recordRead appends ev as a read frame carrying the raw frame bytes and
+// returns its index, so later processing can annotate it.
+func (ss *smbServer) recordRead(frame smbFrame, ev parsedSMB) int {
+	ev.Direction = "read"
+	ev.Payload = frame.payload
+	ev.Truncated = frame.truncated
+	ss.events = append(ss.events, ev)
+	return len(ss.events) - 1
+}
+
+// event returns the frame at idx, or nil when idx is out of range. Indexes
+// stay valid as events are appended; pointers do not, so callers must not
+// hold on to the result across an append.
+func (ss *smbServer) event(idx int) *parsedSMB {
+	if idx < 0 || idx >= len(ss.events) {
+		return nil
+	}
+	return &ss.events[idx]
+}
+
+func (ss *smbServer) write(header smb.SMBHeader, data []byte) error {
+	return ss.writePDU(smb.CommandName(header.Command), header, data)
+}
+
+func (ss *smbServer) writePDU(command string, header smb.SMBHeader, data []byte) error {
+	framed := smb.WrapSessionMessage(data)
+	if _, err := ss.conn.Write(framed); err != nil {
+		return err
+	}
+	ss.events = append(ss.events, parsedSMB{
+		Direction: "write",
+		Header:    header,
+		Command:   command,
+		Status:    smb.StatusName(header),
+		NTStatus:  smb.NTStatus(header),
+		Payload:   framed,
+	})
+	return nil
+}
+
+// writeNBSS sends a NetBIOS session control packet (already framed).
+func (ss *smbServer) writeNBSS(data []byte) error {
+	if _, err := ss.conn.Write(data); err != nil {
+		return err
+	}
+	ss.events = append(ss.events, parsedSMB{
+		Direction: "write",
+		Command:   smb.NBSSTypeName(data[0]),
+		Payload:   data,
+	})
+	return nil
+}
+
+// storePayload saves a captured artifact and returns its content hash.
+func (ss *smbServer) storePayload(data []byte, what string) (string, bool) {
+	hash, err := smbStore(data, filepath.Join("payloads", "smb"))
+	if err != nil {
+		ss.logger.Error("Failed to store "+what, slog.String("protocol", "smb"), producer.ErrAttr(err))
+		return "", false
+	}
+	return hash, true
 }
 
 // begin picks the response variant once per connection: a source returning
 // after recall.visit_gap gets the next smb.Variants entry.
-func (ss *smbServer) begin(logger interfaces.Logger) {
+func (ss *smbServer) begin() {
 	if ss.visit > 0 {
 		return
 	}
@@ -118,7 +318,7 @@ func (ss *smbServer) begin(logger interfaces.Logger) {
 	v := ss.store.Begin("smb", ss.srcIP, len(smb.Variants))
 	ss.visit, ss.variant = v.Number, smb.Variants[v.Variant]
 	if v.Started && v.Number > 1 {
-		logger.Info("returning SMB source",
+		ss.logger.Info("returning SMB source",
 			slog.String("protocol", "smb"),
 			slog.String("src_ip", ss.srcIP.String()),
 			slog.Int("visit", v.Number),
@@ -150,44 +350,6 @@ func (ss *smbServer) note() {
 	})
 }
 
-// writeDP sends a DoublePulsar emulation reply and stamps its frame with the
-// variant and visit.
-func (ss *smbServer) writeDP(header smb.SMBHeader, data []byte) error {
-	if err := ss.write(header, data); err != nil {
-		return err
-	}
-	ev := &ss.events[len(ss.events)-1]
-	ev.Variant = ss.variant.String()
-	ev.Visit = ss.visit
-	return nil
-}
-
-func dpOpName(op byte) string {
-	switch op {
-	case smb.DPOpPing:
-		return "doublepulsar_ping"
-	case smb.DPOpExec:
-		return "doublepulsar_exec"
-	case smb.DPOpKill:
-		return "doublepulsar_kill"
-	}
-	return ""
-}
-
-// smbHandle is an open NT Create AndX file or named pipe.
-type smbHandle struct {
-	name      string
-	isPipe    bool
-	createEvt int    // index of the NT Create read frame
-	fileBuf   []byte // captured file-write bytes (non-pipe)
-	rpcIn     []byte // buffered inbound DCERPC
-	rpcOut    []byte // pending DCERPC reply, served on the next READ_ANDX
-	iface     string // bound interface UUID
-	ifaceVer  string
-}
-
-var maxSMBFileBuffer = 8 * 1024 * 1024
-
 func (ss *smbServer) ensureChallenge() {
 	if !ss.challengeSet {
 		_, _ = smbReadRand(ss.challenge[:])
@@ -202,62 +364,6 @@ func (ss *smbServer) sessionUID(header smb.SMBHeader) uint16 {
 		return uid
 	}
 	return ss.nextUID()
-}
-
-type smbFrame struct {
-	payload   []byte
-	truncated bool
-}
-
-func (ss *smbServer) read() (smbFrame, error) {
-	var hdr [4]byte
-	if _, err := io.ReadFull(ss.conn, hdr[:]); err != nil {
-		return smbFrame{}, err
-	}
-	n := int(hdr[1])<<16 | int(hdr[2])<<8 | int(hdr[3])
-	// Only NBSS control packets (keepalive) may be empty.
-	if n > maxSMBClaimedLen || (n == 0 && hdr[0] == smb.NBSSSessionMessage) {
-		return smbFrame{}, fmt.Errorf("invalid SMB message length: %d", n)
-	}
-	store := n
-	truncated := false
-	if store > maxSMBMessage {
-		store = maxSMBMessage
-		truncated = true
-	}
-	body := make([]byte, store)
-	if _, err := io.ReadFull(ss.conn, body); err != nil {
-		return smbFrame{}, err
-	}
-	if truncated {
-		if _, err := io.CopyN(io.Discard, ss.conn, int64(n-store)); err != nil {
-			return smbFrame{}, err
-		}
-	}
-	payload := make([]byte, 4+store)
-	copy(payload[:4], hdr[:])
-	copy(payload[4:], body)
-	return smbFrame{payload: payload, truncated: truncated}, nil
-}
-
-func (ss *smbServer) write(header smb.SMBHeader, data []byte) error {
-	return ss.writePDU(smb.CommandName(header.Command), header, data)
-}
-
-func (ss *smbServer) writePDU(command string, header smb.SMBHeader, data []byte) error {
-	framed := smb.WrapSessionMessage(data)
-	if _, err := ss.conn.Write(framed); err != nil {
-		return err
-	}
-	ss.events = append(ss.events, parsedSMB{
-		Direction: "write",
-		Header:    header,
-		Command:   command,
-		Status:    smb.StatusName(header),
-		NTStatus:  smb.NTStatus(header),
-		Payload:   framed,
-	})
-	return nil
 }
 
 func (ss *smbServer) nextUID() uint16 {
@@ -275,623 +381,16 @@ func (ss *smbServer) nextFID() uint16 {
 	return ss.fid
 }
 
-// flushTx stores the reassembled transaction data and tags the read frame that
-// started it with the content hash. NT_TRANSACT overflow data (EternalBlue) is
-// stored as seen; TRANS2 SESSION_SETUP data (DoublePulsar) is also XOR-recovered
-// and the de-obfuscated payload stored alongside it. Either way the captured
-// bytes are scanned for shellcode.
-func (ss *smbServer) flushTx(logger interfaces.Logger) {
-	buf := ss.txBuf
-	kind := ss.txKind
-	paramKey, paramSet := ss.txParamKey, ss.txParamSet
-	ss.txOpcode, ss.txParamKey, ss.txParamSet = 0, 0, false
-	ss.txBuf = nil
-	ss.txKind = txNtTransact
-	ss.txOpen = false
-	if len(buf) == 0 {
-		return
-	}
-	hash := helpers.SHA256Hex(buf)
-	if _, err := smbStore(buf, filepath.Join("payloads", "smb")); err != nil {
-		logger.Error("Failed to store SMB transaction payload", slog.String("protocol", "smb"), producer.ErrAttr(err))
-		return
-	}
-	if ss.txEvent < 0 || ss.txEvent >= len(ss.events) {
-		return
-	}
-	ev := &ss.events[ss.txEvent]
-	ev.PayloadHash = hash
-	if res := helpers.DetectShellcode(buf); len(res.Indicators) > 0 {
-		ev.Shellcode = res.Indicators
-	}
-	if kind != txDoublePulsar {
-		return
-	}
-	var (
-		key   uint32
-		plain []byte
-		ok    bool
-	)
-	if ss.dpKeySet {
-		// We chose the signature in the ping reply, so the key is known.
-		key, plain, ok = ss.dpKey, smb.XORApply(buf, ss.dpKey), true
-	} else {
-		// No ping handshake: try the key the operator embedded in the exec
-		// parameters, then fall back to the brute force.
-		if paramSet {
-			probe := buf
-			if len(probe) > dpProbeLen {
-				probe = probe[:dpProbeLen]
-			}
-			if helpers.DetectShellcode(smb.XORApply(probe, paramKey)).Score >= dpMinScore {
-				key, plain, ok = paramKey, smb.XORApply(buf, paramKey), true
-			}
-		}
-		if !ok {
-			key, plain, ok = recoverDoublePulsarXOR(buf)
-		}
-	}
-	if !ok {
-		return
-	}
-	ev.XORKey = fmt.Sprintf("%08x", key)
-	if dh, err := smbStore(plain, filepath.Join("payloads", "smb")); err != nil {
-		logger.Error("Failed to store decoded DoublePulsar payload", slog.String("protocol", "smb"), producer.ErrAttr(err))
-	} else {
-		ev.DecodedHash = dh
-	}
-	if res := helpers.DetectShellcode(plain); len(res.Indicators) > 0 {
-		ev.Shellcode = res.Indicators
-	}
-}
-
-const (
-	// dpProbeLen bounds how many leading bytes the XOR-key search inspects. The
-	// DoublePulsar key repeats every 4 bytes, so a prefix is enough to find it.
-	dpProbeLen = 1024
-	// dpMinScore is the shellcode score a decoded probe must reach for the
-	// recovered key to be accepted, keeping false positives from the 64K-seed
-	// brute force low.
-	dpMinScore = 3
-	// dpGoodScore stops the search early once a key decodes to an obviously
-	// executable payload.
-	dpGoodScore = 6
-)
-
-// recoverDoublePulsarXOR brute-forces the DoublePulsar XOR key over every
-// signature seed and keeps the one whose plaintext looks most like an executable
-// payload. It returns the recovered key and the fully de-obfuscated buffer, or
-// ok=false when no seed produces a convincing decode.
-func recoverDoublePulsarXOR(buf []byte) (key uint32, plain []byte, ok bool) {
-	probe := buf
-	if len(probe) > dpProbeLen {
-		probe = probe[:dpProbeLen]
-	}
-	scratch := make([]byte, len(probe))
-	bestScore := 0
-	var bestKey uint32
-	for s := 0; s <= 0xffff; s++ {
-		candidate := smb.DoublePulsarXORKey(uint32(s))
-		smb.XORInto(scratch, probe, candidate)
-		if res := helpers.DetectShellcode(scratch); res.Score > bestScore {
-			bestScore = res.Score
-			bestKey = candidate
-			if bestScore >= dpGoodScore {
-				break
-			}
-		}
-	}
-	if bestScore < dpMinScore {
-		return 0, nil, false
-	}
-	return bestKey, smb.XORApply(buf, bestKey), true
-}
-
-// beginDoublePulsar starts reassembling a DoublePulsar TRANS2 SESSION_SETUP
-// payload. The data arrives XOR-obfuscated, in the initial request and (for
-// larger payloads) across TRANSACTION2_SECONDARY fragments. It is stored and
-// decoded by flushTx once the final fragment lands, or at connection end.
-func (ss *smbServer) beginDoublePulsar(total uint32, op byte, readIdx int, pdu []byte, truncated bool, logger interfaces.Logger) {
-	ss.flushTx(logger) // flush any prior transaction first
-	ss.txOpcode = op
-	if p := smb.Trans2Parameters(pdu); len(p) >= 4 {
-		ss.txParamKey, ss.txParamSet = binary.LittleEndian.Uint32(p[len(p)-4:]), true
-	}
-	ss.txTotal = total
-	ss.txEvent = readIdx
-	ss.txKind = txDoublePulsar
-	ss.txOpen = false
-	if total == 0 || total > maxSMBTxBuffer || truncated {
-		return
-	}
-	ss.txBuf = make([]byte, total)
-	n := copy(ss.txBuf, smb.Trans2Data(pdu))
-	if uint32(n) >= total {
-		ss.flushTx(logger) // single-fragment payload: complete now
-		return
-	}
-	ss.txOpen = true
-}
-
-// writeNBSS sends a NetBIOS session control packet (already framed).
-func (ss *smbServer) writeNBSS(data []byte) error {
-	if _, err := ss.conn.Write(data); err != nil {
-		return err
-	}
-	ss.events = append(ss.events, parsedSMB{
-		Direction: "write",
-		Command:   smb.NBSSTypeName(data[0]),
-		Payload:   data,
-	})
-	return nil
-}
-
-// handleNBSS records a NetBIOS session control packet (port 139 framing) and
-// accepts session requests so the client continues with SMB Negotiate.
-func (ss *smbServer) handleNBSS(frame smbFrame) error {
-	ev := parsedSMB{
-		Direction: "read",
-		Command:   smb.NBSSTypeName(frame.payload[0]),
-		Payload:   frame.payload,
-		Truncated: frame.truncated,
-	}
-	if frame.payload[0] != smb.NBSSSessionRequest {
-		ss.events = append(ss.events, ev)
-		return nil
-	}
-	ev.CalledName, ev.CallingName, _ = smb.ParseSessionRequest(smbPDU(frame))
-	ss.events = append(ss.events, ev)
-	return ss.writeNBSS(smb.MakePositiveSessionResponse())
-}
-
-func smbPDU(frame smbFrame) []byte {
-	if len(frame.payload) <= 4 {
-		return nil
-	}
-	return frame.payload[4:]
-}
-
-// feedPipe buffers DCERPC data written to a named pipe, and when a full
-// fragment has arrived accepts a bind or faults a request. It never emulates an
-// RPC service: binds are acknowledged and requests are logged then faulted
-// (srvsvc NetrShareEnum alone is answered from a fake share table), so
-// the honeypot captures which interface and operation were called (and the
-// request stub) without acting as a working backend. readIdx is the WRITE_ANDX
-// read frame to annotate.
-func (ss *smbServer) feedPipe(hn *smbHandle, data []byte, readIdx int, logger interfaces.Logger) {
-	if len(data) == 0 {
-		return
-	}
-	hn.rpcIn = append(hn.rpcIn, data...)
-	hdr, ok := smb.ParseDCERPCHeader(hn.rpcIn)
-	if !ok {
-		if len(hn.rpcIn) >= 16 {
-			hn.rpcIn = nil // not DCERPC: drop it (the frame payload keeps the bytes)
-		}
-		return
-	}
-	if len(hn.rpcIn) < int(hdr.FragLen) || hdr.FragLen < 16 {
-		return // wait for the rest of the fragment
-	}
-	pdu := hn.rpcIn[:hdr.FragLen]
-	hn.rpcIn = hn.rpcIn[hdr.FragLen:]
-
-	if readIdx >= 0 && readIdx < len(ss.events) {
-		ss.events[readIdx].DCERPC = smb.DCERPCName(hdr.PType)
-	}
-	switch hdr.PType {
-	case smb.PTypeBind:
-		ctxs, ok := smb.ParseBind(pdu)
-		if !ok {
-			return
-		}
-		hn.iface = ctxs[0].InterfaceUUID()
-		hn.ifaceVer = ctxs[0].InterfaceVersion()
-		if readIdx >= 0 && readIdx < len(ss.events) {
-			ss.events[readIdx].Interface = hn.iface
-			ss.events[readIdx].InterfaceVer = hn.ifaceVer
-		}
-		hn.rpcOut = smb.BuildBindAck(hdr.CallID, `\PIPE`+hn.name, ctxs)
-	case smb.PTypeRequest:
-		opnum, ctxID, stub, ok := smb.ParseRequest(pdu)
-		if !ok {
-			return
-		}
-		if readIdx >= 0 && readIdx < len(ss.events) {
-			op := opnum
-			ss.events[readIdx].Opnum = &op
-			ss.events[readIdx].Interface = hn.iface
-			ss.events[readIdx].InterfaceVer = hn.ifaceVer
-			if len(stub) > 0 {
-				if hash, err := smbStore(stub, filepath.Join("payloads", "smb")); err != nil {
-					logger.Error("Failed to store DCERPC stub", slog.String("protocol", "smb"), producer.ErrAttr(err))
-				} else {
-					ss.events[readIdx].PayloadHash = hash
-				}
-			}
-		}
-		hn.rpcOut = smb.BuildFault(hdr.CallID)
-		if hn.iface == smb.SrvsvcUUID && opnum == smb.SrvsvcOpNetrShareEnum {
-			if level, ok := smb.ParseNetShareEnumLevel(stub); ok {
-				if resp, ok := smb.BuildNetShareEnumResponse(hdr.CallID, ctxID, level, smb.Shares); ok {
-					hn.rpcOut = resp
-				}
-			}
-		}
-	}
-}
-
-// captureFile appends file-write bytes to an open disk-file handle, bounded.
-func (hn *smbHandle) captureFile(data []byte) {
-	if hn.isPipe || len(data) == 0 {
-		return
-	}
-	if room := maxSMBFileBuffer - len(hn.fileBuf); room > 0 {
-		if len(data) > room {
-			data = data[:room]
-		}
-		hn.fileBuf = append(hn.fileBuf, data...)
-	}
-}
-
-// closeHandle stores a captured upload and tags its NT Create read frame.
-func (ss *smbServer) closeHandle(fid uint16, logger interfaces.Logger) {
-	hn := ss.handles[fid]
-	if hn == nil {
-		return
-	}
-	delete(ss.handles, fid)
-	if hn.isPipe || len(hn.fileBuf) == 0 {
-		return
-	}
-	hash, err := smbStore(hn.fileBuf, filepath.Join("payloads", "smb"))
-	if err != nil {
-		logger.Error("Failed to store SMB upload", slog.String("protocol", "smb"), producer.ErrAttr(err))
-		return
-	}
-	if hn.createEvt >= 0 && hn.createEvt < len(ss.events) {
-		ss.events[hn.createEvt].PayloadHash = hash
-	}
-}
-
-// smbTargetName is the NTLM/SPNEGO target name advertised in challenges; it
-// matches the NetBIOS server name used elsewhere.
-const smbTargetName = "SERVER"
-
-// sessionSetup answers an SMB1 Session Setup AndX. Extended-security requests
-// (WordCount 12) drive the NTLMSSP challenge/accept exchange and record the
-// authenticating identity; basic requests get the plain response.
-func (ss *smbServer) sessionSetup(header smb.SMBHeader, body []byte, readIdx int) (smb.SMBHeader, []byte, error) {
-	var wc byte
-	if len(body) > 0 {
-		wc = body[0]
-	}
-	if wc != 12 {
-		return smb.MakeSessionSetupAndXResponse(header, ss.nextUID())
-	}
-	ntlm, ok := smb.FindNTLMSSP(body)
-	if !ok {
-		// Extended security without NTLMSSP (e.g. Kerberos): accept.
-		return smb.MakeSessionSetupESecResponse(header, ss.sessionUID(header), smb.SPNEGOAccept(), false)
-	}
-	switch smb.NTLMMessageType(ntlm) {
-	case 1:
-		ss.ensureChallenge()
-		blob := smb.SPNEGOChallenge(smb.BuildChallenge(ss.challenge, smbTargetName))
-		return smb.MakeSessionSetupESecResponse(header, ss.sessionUID(header), blob, true)
-	case 3:
-		ss.recordNTLMIdentity(smb.ParseAuthenticate(ntlm), readIdx)
-		return smb.MakeSessionSetupESecResponse(header, ss.sessionUID(header), smb.SPNEGOAccept(), false)
-	default:
-		return smb.MakeSessionSetupESecResponse(header, ss.sessionUID(header), smb.SPNEGOAccept(), false)
-	}
-}
-
 // recordNTLMIdentity sets the NTLMSSP Type 3 identity fields on a read frame.
 // The NTLM responses stay in the raw payload.
 func (ss *smbServer) recordNTLMIdentity(id smb.NTLMIdentity, readIdx int) {
-	if readIdx < 0 || readIdx >= len(ss.events) {
+	ev := ss.event(readIdx)
+	if ev == nil {
 		return
 	}
 	if id.User != "" {
-		ss.events[readIdx].Account = id.User
+		ev.Account = id.User
 	}
-	ss.events[readIdx].Domain = id.Domain
-	ss.events[readIdx].Workstation = id.Workstation
-}
-
-// HandleSMB takes a net.Conn and does basic SMB communication
-func HandleSMB(ctx context.Context, conn net.Conn, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
-	server := &smbServer{
-		events:   []parsedSMB{},
-		conn:     conn,
-		tidIsIPC: map[uint16]bool{},
-		handles:  map[uint16]*smbHandle{},
-		srcIP:    remoteIP(conn),
-	}
-	server.begin(logger)
-	endReason := connection.EndHandlerClose
-	defer func() {
-		md.EndReason = endReason
-		server.flushTx(logger)
-		server.note()
-		if err := h.ProduceTCP("smb", conn, md, helpers.FirstOrEmpty[parsedSMB](server.events).Payload, server.events); err != nil {
-			logger.Error("Failed to produce message", slog.String("protocol", "smb"), producer.ErrAttr(err))
-		}
-
-		if err := conn.Close(); err != nil {
-			logger.Debug("Failed to close SMB connection", producer.ErrAttr(err), slog.String("protocol", "smb"))
-		}
-	}()
-
-	i := 0
-	for ; i < maxSMBMessages; i++ {
-		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
-			logger.Debug("Failed to set connection timeout", slog.String("protocol", "smb"), producer.ErrAttr(err))
-			endReason = connection.EndTimeout
-			return nil
-		}
-		frame, err := server.read()
-		if err != nil {
-			logger.Debug("Failed to read data", slog.String("protocol", "smb"), producer.ErrAttr(err))
-			endReason = connection.EndReasonFromRead(err)
-			break
-		}
-		pdu := smbPDU(frame)
-
-		switch {
-		case frame.payload[0] != smb.NBSSSessionMessage:
-			if err := server.handleNBSS(frame); err != nil {
-				endReason = connection.EndWriteError
-				return err
-			}
-		case bytes.HasPrefix(pdu, []byte("\xffSMB")):
-			if err := server.handleSMB1(frame, pdu, logger); err != nil {
-				endReason = connection.EndWriteError
-				return err
-			}
-		case bytes.HasPrefix(pdu, []byte("\xfeSMB")):
-			if err := server.handleSMB2(frame, pdu); err != nil {
-				endReason = connection.EndWriteError
-				return err
-			}
-		case bytes.HasPrefix(pdu, []byte("\xfdSMB")):
-			server.events = append(server.events, parsedSMB{
-				Direction: "read",
-				Command:   "SMB3_TRANSFORM",
-				Payload:   frame.payload,
-				Truncated: frame.truncated,
-			})
-		default:
-			server.events = append(server.events, parsedSMB{
-				Direction: "read",
-				Payload:   frame.payload,
-				Truncated: frame.truncated,
-			})
-		}
-	}
-	if i >= maxSMBMessages {
-		endReason = connection.EndMaxFrames
-	}
-	return nil
-}
-
-func (ss *smbServer) handleSMB1(frame smbFrame, pdu []byte, logger interfaces.Logger) error {
-	smbBuf := bytes.NewBuffer(pdu)
-	header := smb.SMBHeader{}
-	if err := smb.ParseHeader(smbBuf, &header); err != nil {
-		ss.events = append(ss.events, parsedSMB{
-			Direction: "read",
-			Payload:   frame.payload,
-			Truncated: frame.truncated,
-		})
-		logger.Debug("Failed to parse SMB header", slog.String("protocol", "smb"), producer.ErrAttr(err))
-		return nil
-	}
-
-	path := ""
-	setup := ""
-	var id smb.SessionSetupFields
-	var totalDataCount uint32
-	switch header.Command {
-	case smb.CmdNtCreateAndX:
-		path = smb.NtCreateAndXName(header, smbBuf.Bytes())
-	case smb.CmdTreeConnectAndX:
-		path = smb.TreeConnectShare(header, smbBuf.Bytes())
-	case smb.CmdSessionSetupAndX:
-		id = smb.SessionSetupIdentity(header, smbBuf.Bytes())
-	case smb.CmdTransaction2:
-		if s, ok := smb.Trans2Setup(smbBuf.Bytes()); ok {
-			setup = smb.Trans2SetupName(s)
-			if s == smb.Trans2SessionSetup {
-				totalDataCount = smb.Trans2TotalDataCount(smbBuf.Bytes())
-			}
-		}
-	case smb.CmdNtTransact:
-		totalDataCount = smb.NtTransactTotalDataCount(smbBuf.Bytes())
-	}
-	ss.events = append(ss.events, parsedSMB{
-		Direction:      "read",
-		Header:         header,
-		Command:        smb.CommandName(header.Command),
-		Path:           path,
-		Setup:          setup,
-		Account:        id.Account,
-		Password:       id.Password,
-		LMResponse:     id.LMResponse,
-		NTLMResponse:   id.NTLMResponse,
-		NativeOS:       id.NativeOS,
-		NativeLanMan:   id.NativeLanMan,
-		TotalDataCount: totalDataCount,
-		Payload:        frame.payload,
-		Truncated:      frame.truncated,
-	})
-	logger.Debug("SMB Header", slog.Any("header", header), slog.String("protocol", "smb"))
-	readIdx := len(ss.events) - 1
-	body := smbBuf.Bytes()
-
-	var (
-		responseHeader smb.SMBHeader
-		resp           []byte
-		err            error
-	)
-	switch header.Command {
-	case smb.CmdNegotiate:
-		var dialects []byte
-		if req, err := smb.ParseNegotiateProtocolRequest(smbBuf, header); err == nil {
-			dialects = req.Data.DialectString
-		}
-		responseHeader, resp, err = smb.MakeNegotiateProtocolResponse(header, dialects)
-	case smb.CmdSessionSetupAndX:
-		responseHeader, resp, err = ss.sessionSetup(header, body, readIdx)
-	case smb.CmdTreeConnectAndX:
-		share := smb.TreeConnectShare(header, body)
-		if smb.IsProbeShare(share) {
-			responseHeader, resp, err = smb.MakeBadNetworkNameResponse(header)
-		} else {
-			tid := ss.nextTID()
-			ss.tidIsIPC[tid] = smb.IsIPCShare(share)
-			responseHeader, resp, err = smb.MakeTreeConnectAndXResponse(header, tid, share)
-		}
-	case smb.CmdNtCreateAndX:
-		tid := binary.LittleEndian.Uint16(header.TID[:])
-		isPipe := ss.tidIsIPC[tid]
-		fid := ss.nextFID()
-		ss.handles[fid] = &smbHandle{name: path, isPipe: isPipe, createEvt: readIdx}
-		responseHeader, resp, err = smb.MakeNtCreateAndXResponse(header, fid, isPipe)
-	case smb.CmdTreeDisconnect, smb.CmdLogoffAndX:
-		responseHeader, resp, err = smb.MakeHeaderResponse(header)
-	case smb.CmdTransaction2:
-		setup, setupOK := smb.Trans2Setup(smbBuf.Bytes())
-		if setupOK && setup == smb.Trans2SessionSetup {
-			// DoublePulsar smuggles its (XOR-obfuscated) payload here, split
-			// across TRANS2 SESSION_SETUP + TRANSACTION2_SECONDARY fragments.
-			// Capture is independent of the variant; only the reply differs.
-			op := smb.DoublePulsarOpcode(smb.Trans2Timeout(body))
-			if name := dpOpName(op); name != "" {
-				ss.dpOps = append(ss.dpOps, name)
-			}
-			if totalDataCount > 0 {
-				ss.beginDoublePulsar(totalDataCount, op, readIdx, pdu, frame.truncated, logger)
-			}
-			if ss.variant == smb.Infected {
-				switch {
-				case op == smb.DPOpPing:
-					var sig [8]byte
-					_, _ = smbReadRand(sig[:])
-					s := binary.LittleEndian.Uint64(sig[:])
-					ss.dpKey, ss.dpKeySet, ss.dpArchX64 = smb.DoublePulsarXORKey64(s), true, smb.DoublePulsarArchX64(s)
-					responseHeader, resp, err = smb.MakeDoublePulsarPingResponse(header, sig)
-					return ss.finishDP(responseHeader, resp, err)
-				case op == smb.DPOpExec && !ss.txOpen:
-					responseHeader, resp, err = smb.MakeDoublePulsarExecResponse(header)
-					return ss.finishDP(responseHeader, resp, err)
-				case op == smb.DPOpKill:
-					ss.dpKeySet = false
-					responseHeader, resp, err = smb.MakeDoublePulsarKillResponse(header)
-					return ss.finishDP(responseHeader, resp, err)
-				}
-			}
-		}
-		responseHeader, resp, err = smb.MakeComTransaction2Reply(header, setup, setupOK)
-	case smb.CmdTransaction:
-		responseHeader, resp, err = smb.MakeComTransactionResponse(header)
-	case smb.CmdNtTransact:
-		responseHeader, resp, err = smb.MakeComNtTransactionResponse(header)
-		ss.flushTx(logger)
-		ss.txTotal = totalDataCount
-		ss.txOpen = totalDataCount > 0
-		ss.txEvent = len(ss.events) - 1
-		ss.txKind = txNtTransact
-		if ss.txOpen && totalDataCount <= maxSMBTxBuffer && !frame.truncated {
-			ss.txBuf = make([]byte, totalDataCount)
-			copy(ss.txBuf, smb.NtTransactData(pdu))
-		}
-	case smb.CmdNtTransactSecondary, smb.CmdTransactionSecondary, smb.CmdTransaction2Secondary:
-		disp, count, ok := smb.SecondaryDataRange(header.Command, smbBuf.Bytes())
-		if ss.txOpen && ss.txBuf != nil && !frame.truncated {
-			if d, data, dok := smb.SecondaryData(header.Command, pdu); dok && uint64(d)+uint64(len(data)) <= uint64(len(ss.txBuf)) {
-				copy(ss.txBuf[d:], data)
-			}
-		}
-		if !ss.txOpen || !ok || uint64(disp)+uint64(count) < uint64(ss.txTotal) {
-			return nil // middle fragment: no reply
-		}
-		ss.txOpen = false
-		dpExec := ss.txKind == txDoublePulsar && ss.txOpcode == smb.DPOpExec && ss.variant == smb.Infected
-		ss.flushTx(logger)
-		if dpExec {
-			responseHeader, resp, err = smb.MakeDoublePulsarExecResponse(header)
-			return ss.finishDP(responseHeader, resp, err)
-		}
-		responseHeader, resp, err = smb.MakeTransactionCompleteResponse(header)
-	case smb.CmdWriteAndX:
-		fid := smb.WriteAndXFID(body)
-		data := smb.WriteAndXData(pdu)
-		if hn := ss.handles[fid]; hn != nil {
-			if hn.isPipe {
-				ss.feedPipe(hn, data, readIdx, logger)
-			} else {
-				hn.captureFile(data)
-			}
-		}
-		count := smb.WriteAndXDataLength(body)
-		responseHeader, resp, err = smb.MakeWriteAndXResponse(header, count)
-	case smb.CmdWrite:
-		data := smb.WriteData(pdu)
-		if hn := ss.handles[smb.WriteFID(body)]; hn != nil && !hn.isPipe {
-			hn.captureFile(data)
-		}
-		responseHeader, resp, err = smb.MakeWriteResponse(header, uint16(len(data)))
-	case smb.CmdReadAndX:
-		fid := smb.ReadAndXFID(body)
-		if hn := ss.handles[fid]; hn != nil && hn.isPipe && len(hn.rpcOut) > 0 {
-			out := hn.rpcOut
-			hn.rpcOut = nil
-			responseHeader, resp, err = smb.MakeReadAndXDataResponse(header, out)
-		} else {
-			responseHeader, resp, err = smb.MakeReadAndXResponse(header)
-		}
-	case smb.CmdClose:
-		ss.closeHandle(smb.CloseFID(body), logger)
-		responseHeader, resp, err = smb.MakeHeaderResponse(header)
-	case smb.CmdEcho:
-		responseHeader, resp, err = smb.MakeEchoResponse(header, body)
-	default:
-		responseHeader, resp, err = smb.MakeHeaderResponse(header)
-	}
-	if err != nil {
-		return err
-	}
-	return ss.write(responseHeader, resp)
-}
-
-// finishDP writes a DoublePulsar emulation reply.
-func (ss *smbServer) finishDP(header smb.SMBHeader, resp []byte, err error) error {
-	if err != nil {
-		return err
-	}
-	return ss.writeDP(header, resp)
-}
-
-func (ss *smbServer) handleSMB2(frame smbFrame, pdu []byte) error {
-	ss.ensureChallenge()
-	name, resp, ok := smb.MakeSMB2Reply(pdu, ss.challenge)
-	if name == "" {
-		name = "SMB2"
-	}
-	ss.events = append(ss.events, parsedSMB{
-		Direction: "read",
-		Command:   name,
-		Payload:   frame.payload,
-		Truncated: frame.truncated,
-	})
-	// Record the identity from an SMB2 NTLMSSP AUTHENTICATE (no secrets).
-	if ntlm, found := smb.FindNTLMSSP(pdu); found && smb.NTLMMessageType(ntlm) == 3 {
-		ss.recordNTLMIdentity(smb.ParseAuthenticate(ntlm), len(ss.events)-1)
-	}
-	if !ok {
-		return nil
-	}
-	return ss.writePDU(name, smb.SMBHeader{}, resp)
+	ev.Domain = id.Domain
+	ev.Workstation = id.Workstation
 }
