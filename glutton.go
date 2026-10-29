@@ -646,7 +646,7 @@ func (g *Glutton) ReplyUDPSent(srcAddr, dstAddr *net.UDPAddr, payload []byte) (b
 		}
 		return false, nil
 	}
-	conn, err := tproxy.DialUDP("udp4", dstAddr, srcAddr)
+	conn, err := dialTProxyUDP(dstAddr, srcAddr)
 	if err != nil {
 		return false, err
 	}
