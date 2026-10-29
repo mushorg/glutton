@@ -77,13 +77,13 @@ func TestHandleRPCBindShodanDump(t *testing.T) {
 	reply := readRPCReply(t, client)
 	require.Equal(t, rpcWords(0xe877bb11, 1, 0, 0, 0, 0), reply[4:28], "echoed XID, accepted, SUCCESS")
 
-	// pmaplist: 8 entries of {1, prog, vers, prot, port} then 0.
+	// pmaplist: one {1, prog, vers, prot, port} entry per mapping then 0.
+	maps := oncrpc.Mappings([]byte("198.51.100.1"))
 	list := reply[28:]
-	require.Len(t, list, 8*20+4)
+	require.Len(t, list, len(maps)*20+4)
 	require.Equal(t, rpcWords(1, 100000, 4, 6, 111), list[:20])
 	require.Equal(t, rpcWords(0), list[len(list)-4:])
-	statd := oncrpc.Mappings([]byte("198.51.100.1"))[6]
-	require.Equal(t, rpcWords(1, 100024, 1, 17, uint32(statd.Port)), list[120:140])
+	require.Equal(t, rpcWords(1, 100024, 1, 17, uint32(maps[6].Port)), list[120:140])
 
 	require.NoError(t, client.Close())
 	produced, err := waitRPCBind(t, hp, done)
@@ -107,7 +107,14 @@ func TestHandleRPCBindGetPortThenNFS(t *testing.T) {
 	_, err := client.Write(getportWire)
 	require.NoError(t, err)
 	first := readRPCReply(t, client)
-	require.Equal(t, rpcWords(7, 1, 0, 0, 0, 0, 0), first[4:], "mountd not registered: port 0")
+	var mountTCP uint32
+	for _, m := range oncrpc.Mappings([]byte("198.51.100.1")) {
+		if m.Program == 100005 && m.Prot == 6 {
+			mountTCP = uint32(m.Port)
+			break
+		}
+	}
+	require.Equal(t, rpcWords(7, 1, 0, 0, 0, 0, mountTCP), first[4:], "mountd advertised on its ephemeral port")
 
 	nfs := oncrpc.Frame(rpcWords(8, 0, 2, 100003, 3, 0, 0, 0, 0, 0))
 	_, err = client.Write(nfs)
@@ -124,6 +131,22 @@ func TestHandleRPCBindGetPortThenNFS(t *testing.T) {
 		{Direction: "write", Command: "PMAPPROC_GETPORT", XID: 7, Status: "SUCCESS", Payload: first},
 		{Direction: "read", Command: "CALL", XID: 8, Program: 100003, Version: 3, Auth: "AUTH_NONE", Payload: nfs},
 		{Direction: "write", Command: "CALL", XID: 8, Status: "PROG_UNAVAIL", Payload: second},
+	}, produced.decoded)
+}
+
+func TestHandleRPCBindCallitCapturedNoReply(t *testing.T) {
+	client, hp, done := startRPCBind(t)
+	// v2 CALLIT asking the portmapper to relay to mountd (100005 v3): the
+	// target is captured but the call is never forwarded, so there is no write.
+	callit := oncrpc.Frame(rpcWords(0x2a, 0, 2, 100000, 2, 5, 0, 0, 0, 0, 100005, 3, 0, 0))
+	_, err := client.Write(callit)
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
+
+	produced, err := waitRPCBind(t, hp, done)
+	require.NoError(t, err)
+	require.Equal(t, []parsedRPCBind{
+		{Direction: "read", Command: "PMAPPROC_CALLIT", XID: 0x2a, Program: 100000, Version: 2, Procedure: 5, Auth: "AUTH_NONE", TargetProgram: 100005, TargetVersion: 3, Payload: callit},
 	}, produced.decoded)
 }
 

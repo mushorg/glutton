@@ -19,7 +19,10 @@ const (
 	MsgReply = 1
 
 	ProgPortmap = 100000
-	ProgStatus  = 100024
+	// ProgNFS (100003) is declared in nfs.go.
+	ProgMount    = 100005
+	ProgNLockMgr = 100021
+	ProgStatus   = 100024
 
 	ProtTCP = 6
 	ProtUDP = 17
@@ -238,8 +241,19 @@ func (c *Call) Command() string {
 	return prefix + strconv.FormatUint(uint64(c.Procedure), 10)
 }
 
-// ParseQuery decodes the arguments of SET, UNSET, GETPORT, GETADDR and
-// GETVERSADDR. It returns nil, nil for other portmapper procedures.
+// isRemoteCall reports whether c is a portmapper remote-call procedure:
+// CALLIT (proc 5, any version) or INDIRECT (proc 10, rpcbind v3/v4). Both
+// carry rmtcallargs and ask the portmapper to relay to another program.
+func isRemoteCall(c *Call) bool {
+	if c.Program != ProgPortmap || c.Version < 2 || c.Version > 4 {
+		return false
+	}
+	return c.Procedure == 5 || (c.Version >= 3 && c.Procedure == 10)
+}
+
+// ParseQuery decodes the arguments of SET, UNSET, GETPORT, GETADDR,
+// GETVERSADDR and the CALLIT/INDIRECT remote-call procedures (target program
+// and version only). It returns nil, nil for other portmapper procedures.
 func ParseQuery(c *Call) (*Query, error) {
 	if c.MsgType != MsgCall || c.Program != ProgPortmap {
 		return nil, nil
@@ -270,6 +284,17 @@ func ParseQuery(c *Call) (*Query, error) {
 			}
 		}
 		return q, nil
+	case isRemoteCall(c):
+		// CALLIT (proc 5) and INDIRECT (v3/v4 proc 10) rmtcallargs begin
+		// prog, vers, proc. Capture the target program/version only; the
+		// call is never forwarded, so the remaining args are ignored.
+		var proc uint32
+		for _, f := range []*uint32{&q.Program, &q.Version, &proc} {
+			if *f, err = d.u32(); err != nil {
+				return nil, err
+			}
+		}
+		return q, nil
 	}
 	return nil, nil
 }
@@ -293,9 +318,21 @@ type Mapping struct {
 	Owner   string
 }
 
-// Mappings returns the registered services in rpcinfo -p order: rpcbind
-// v4/v3/v2 on 111 and rpc.statd on ports derived from seed (a stable
-// per-sensor value), so sensors do not share one statd port pair.
+// ephemeralPort derives a stable port in the Linux ephemeral range
+// (32768-60999) from seed and a per-service salt, so sensors do not share
+// ports and a service keeps the same port across a sensor's lifetime.
+func ephemeralPort(seed []byte, salt string) uint16 {
+	h := fnv.New64a()
+	_, _ = h.Write(seed)
+	_, _ = h.Write([]byte(salt))
+	return uint16(32768 + h.Sum64()%28232)
+}
+
+// Mappings returns the registered services of a plausible NFS server, derived
+// from seed (a stable per-sensor value). rpcbind v4/v3/v2 sit on 111 and nfs
+// on the canonical 2049; rpc.statd, mountd and nlockmgr get per-sensor
+// ephemeral ports, so sensors do not share one port set. The first eight
+// entries (rpcbind + statd) keep their historical order and ports.
 func Mappings(seed []byte) []Mapping {
 	h := fnv.New64a()
 	_, _ = h.Write(seed)
@@ -312,10 +349,32 @@ func Mappings(seed []byte) []Mapping {
 			m = append(m, Mapping{Program: ProgPortmap, Version: v, Prot: prot, Port: 111, Owner: "superuser"})
 		}
 	}
-	return append(m,
+	m = append(m,
 		Mapping{Program: ProgStatus, Version: 1, Prot: ProtUDP, Port: udpPort, Owner: "29"},
 		Mapping{Program: ProgStatus, Version: 1, Prot: ProtTCP, Port: tcpPort, Owner: "29"},
 	)
+	// A real NFS host also advertises mountd, nfs and nlockmgr. mountd and
+	// nlockmgr take per-sensor ephemeral ports (one port per service, shared
+	// by its tcp/udp registrations, as the kernel registers them); nfs is on
+	// the canonical 2049.
+	mountPort := ephemeralPort(seed, "mountd")
+	lockPort := ephemeralPort(seed, "nlockmgr")
+	for _, prot := range []uint32{ProtUDP, ProtTCP} {
+		for _, v := range []uint32{1, 2, 3} {
+			m = append(m, Mapping{Program: ProgMount, Version: v, Prot: prot, Port: mountPort, Owner: "superuser"})
+		}
+	}
+	for _, prot := range []uint32{ProtTCP, ProtUDP} {
+		for _, v := range []uint32{3, 4} {
+			m = append(m, Mapping{Program: ProgNFS, Version: v, Prot: prot, Port: 2049, Owner: "superuser"})
+		}
+	}
+	for _, prot := range []uint32{ProtUDP, ProtTCP} {
+		for _, v := range []uint32{1, 3, 4} {
+			m = append(m, Mapping{Program: ProgNLockMgr, Version: v, Prot: prot, Port: lockPort, Owner: "superuser"})
+		}
+	}
+	return m
 }
 
 // Env is the server state a reply depends on.
@@ -446,6 +505,13 @@ func Reply(c *Call, env Env) ([]byte, string) {
 		e.u32(0)
 	case c.Procedure == 6:
 		e.u32(uint32(env.Now.Unix()))
+	case isRemoteCall(c):
+		// CALLIT (proc 5) / INDIRECT (v3/v4 proc 10): real rpcbind relays the
+		// call to the target program and sends nothing when the target does
+		// not answer. We never forward, so drop silently rather than return
+		// PROC_UNAVAIL (which both misrepresents rpcbind and is an easy
+		// honeypot tell).
+		return nil, ""
 	default:
 		return accepted(c.XID, acceptProcUnavail).b, "PROC_UNAVAIL"
 	}

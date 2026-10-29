@@ -93,12 +93,13 @@ func TestReplyDumpV2(t *testing.T) {
 	require.Equal(t, be(0xe877bb11, MsgReply, 0, 0, 0, 0), body[:24], "echoed XID, MSG_ACCEPTED, AUTH_NONE verf, SUCCESS")
 
 	list := pmaplist(t, body[24:])
-	require.Len(t, list, 8)
+	require.Len(t, list, len(env.Mappings))
 	require.Equal(t, Mapping{Program: ProgPortmap, Version: 4, Prot: ProtTCP, Port: 111}, list[0])
 	require.Equal(t, Mapping{Program: ProgPortmap, Version: 2, Prot: ProtUDP, Port: 111}, list[5])
 	require.Equal(t, uint32(ProgStatus), list[6].Program)
 	require.Equal(t, env.Mappings[6].Port, list[6].Port)
-	require.Less(t, len(body), 200)
+	require.Contains(t, list, Mapping{Program: ProgNFS, Version: 4, Prot: ProtTCP, Port: 2049})
+	require.Less(t, len(body), 700)
 
 	framed := Frame(body)
 	require.Equal(t, uint32(0x80000000|len(body)), binary.BigEndian.Uint32(framed))
@@ -124,8 +125,9 @@ func TestReplyGetPortV2(t *testing.T) {
 	}{
 		{be(ProgPortmap, 2, ProtTCP, 0), 111},
 		{be(ProgStatus, 1, ProtTCP, 0), uint32(statd.Port)},
-		{be(ProgStatus, 9, ProtTCP, 0), uint32(statd.Port)}, // any version, like rpcbind
-		{be(100003, 3, ProtTCP, 0), 0},                      // NFS is not registered
+		{be(ProgStatus, 9, ProtTCP, 0), uint32(statd.Port)},          // any version, like rpcbind
+		{be(ProgNFS, 3, ProtTCP, 0), 2049},                           // NFS is advertised on 2049
+		{be(ProgMount, 3, ProtTCP, 0), uint32(env.Mappings[8].Port)}, // mountd on its ephemeral port
 	} {
 		c, err := Parse(call(ProgPortmap, 2, 3, tc.args))
 		require.NoError(t, err)
@@ -171,7 +173,7 @@ func TestReplyRPCBindV3(t *testing.T) {
 		}
 		entries++
 	}
-	require.Equal(t, 8, entries)
+	require.Equal(t, len(env.Mappings), entries)
 	require.Equal(t, len(body)-24, d.off)
 
 	c, err = Parse(call(ProgPortmap, 3, 6))
@@ -191,7 +193,6 @@ func TestReplyErrors(t *testing.T) {
 	}{
 		{"null", call(ProgPortmap, 2, 0), "SUCCESS", be(0, 0, 0, 0)},
 		{"set refused", call(ProgPortmap, 2, 1, be(100003, 3, ProtTCP, 2049)), "SUCCESS", be(0, 0, 0, 0, 0)},
-		{"callit", call(ProgPortmap, 2, 5, be(100003, 3, 0, 0)), "PROC_UNAVAIL", be(0, 0, 0, 3)},
 		{"nfs program", call(100003, 3, 0), "PROG_UNAVAIL", be(0, 0, 0, 1)},
 		{"version 5", call(ProgPortmap, 5, 4), "PROG_MISMATCH", be(0, 0, 0, 2, 2, 4)},
 		{"garbage args", call(ProgPortmap, 2, 3, be(1)), "GARBAGE_ARGS", be(0, 0, 0, 4)},
@@ -216,6 +217,46 @@ func TestReplyErrors(t *testing.T) {
 	require.Equal(t, "REPLY", c.Command())
 	body, _ = Reply(c, env)
 	require.Nil(t, body)
+}
+
+func TestRemoteCallCapturedAndDropped(t *testing.T) {
+	env := testEnv()
+	// rmtcallargs: prog, vers, proc, then opaque args.
+	for _, tc := range []struct {
+		name    string
+		version uint32
+		proc    uint32
+		command string
+	}{
+		{"callit v2", 2, 5, "PMAPPROC_CALLIT"},
+		{"callit v3", 3, 5, "RPCBPROC_CALLIT"},
+		{"indirect v4", 4, 10, "RPCBPROC_INDIRECT"},
+	} {
+		msg := call(ProgPortmap, tc.version, tc.proc, be(ProgMount, 3, 0), xdrStr("relay me"))
+		c, err := Parse(msg)
+		require.NoError(t, err, tc.name)
+		require.Equal(t, tc.command, c.Command(), tc.name)
+
+		q, err := ParseQuery(c)
+		require.NoError(t, err, tc.name)
+		require.NotNil(t, q, tc.name)
+		require.Equal(t, uint32(ProgMount), q.Program, tc.name)
+		require.Equal(t, uint32(3), q.Version, tc.name)
+
+		// Never forwarded: no reply, as rpcbind drops a relayed call whose
+		// target does not answer.
+		body, status := Reply(c, env)
+		require.Nil(t, body, tc.name)
+		require.Empty(t, status, tc.name)
+	}
+
+	// A truncated rmtcall (no vers) is rejected as garbage, not relayed.
+	short := call(ProgPortmap, 2, 5, be(ProgMount))
+	c, err := Parse(short)
+	require.NoError(t, err)
+	body, status := Reply(c, env)
+	require.Equal(t, "GARBAGE_ARGS", status)
+	require.Equal(t, append(be(0x01020304, MsgReply), be(0, 0, 0, 4)...), body)
 }
 
 func TestParseAuthSys(t *testing.T) {
