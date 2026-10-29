@@ -3,6 +3,7 @@ package udp
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	l2tpproto "github.com/mushorg/glutton/protocols/udp/l2tp"
 )
 
 const (
@@ -23,19 +25,26 @@ const (
 	l2tpAVPLenMask = 0x03ff
 
 	// IETF AVP attribute types (RFC 2661).
-	l2tpAttrMessageType      = 0
-	l2tpAttrProtocolVersion  = 2
-	l2tpAttrFramingCaps      = 3
-	l2tpAttrBearerCaps       = 4
-	l2tpAttrFirmwareRevision = 6
-	l2tpAttrHostName         = 7
-	l2tpAttrVendorName       = 8
-	l2tpAttrAssignedTunnelID = 9
+	l2tpAttrMessageType       = 0
+	l2tpAttrProtocolVersion   = 2
+	l2tpAttrFramingCaps       = 3
+	l2tpAttrBearerCaps        = 4
+	l2tpAttrFirmwareRevision  = 6
+	l2tpAttrHostName          = 7
+	l2tpAttrVendorName        = 8
+	l2tpAttrAssignedTunnelID  = 9
+	l2tpAttrAssignedSessionID = 14
 
-	l2tpMsgSCCRQ = 1
-	l2tpMsgSCCRP = 2
+	l2tpMsgSCCRQ   = 1
+	l2tpMsgSCCRP   = 2
+	l2tpMsgSCCCN   = 3
+	l2tpMsgStopCCN = 4
+	l2tpMsgHELLO   = 6
+	l2tpMsgICRQ    = 10
+	l2tpMsgICRP    = 11
+	l2tpMsgICCN    = 12
+	l2tpMsgCDN     = 14
 
-	l2tpHoneypotTunnelID   = 0x0001
 	l2tpHoneypotHostName   = "vpn"
 	l2tpHoneypotVendorName = "linux"
 )
@@ -58,19 +67,27 @@ var l2tpMessageNames = map[uint16]string{
 }
 
 type parsedL2TP struct {
-	Direction        string `json:"direction,omitempty"`
-	Command          string `json:"command,omitempty"`
-	Status           string `json:"status,omitempty"`
-	MessageType      uint16 `json:"message_type,omitempty"`
-	MessageName      string `json:"message_name,omitempty"`
-	HostName         string `json:"host_name,omitempty"`
-	VendorName       string `json:"vendor_name,omitempty"`
-	TunnelID         uint16 `json:"tunnel_id,omitempty"`
-	AssignedTunnelID uint16 `json:"assigned_tunnel_id,omitempty"`
-	Ns               uint16 `json:"ns,omitempty"`
-	Nr               uint16 `json:"nr,omitempty"`
-	Payload          []byte `json:"payload,omitempty"`
-	Truncated        bool   `json:"truncated,omitempty"`
+	Direction         string `json:"direction,omitempty"`
+	Command           string `json:"command,omitempty"`
+	Status            string `json:"status,omitempty"`
+	MessageType       uint16 `json:"message_type,omitempty"`
+	MessageName       string `json:"message_name,omitempty"`
+	HostName          string `json:"host_name,omitempty"`
+	VendorName        string `json:"vendor_name,omitempty"`
+	TunnelID          uint16 `json:"tunnel_id,omitempty"`
+	SessionID         uint16 `json:"session_id,omitempty"`
+	AssignedTunnelID  uint16 `json:"assigned_tunnel_id,omitempty"`
+	AssignedSessionID uint16 `json:"assigned_session_id,omitempty"`
+	Ns                uint16 `json:"ns,omitempty"`
+	Nr                uint16 `json:"nr,omitempty"`
+	// PPP inside data messages
+	PPPProtocol  string `json:"ppp_protocol,omitempty"`  // LCP, PAP, CHAP
+	AuthProtocol string `json:"auth_protocol,omitempty"` // PAP, CHAP-MD5, MS-CHAPv2
+	Username     string `json:"username,omitempty"`
+	Password     string `json:"password,omitempty"`
+	CHAPResponse string `json:"chap_response,omitempty"` // hex CHAP Response value
+	Payload      []byte `json:"payload,omitempty"`
+	Truncated    bool   `json:"truncated,omitempty"`
 }
 
 func l2tpMessageName(msgType uint16) string {
@@ -105,7 +122,8 @@ func parseL2TP(data []byte) (parsedL2TP, error) {
 		return frame, fmt.Errorf("truncated L2TP tunnel/session IDs")
 	}
 	frame.TunnelID = binary.BigEndian.Uint16(data[off : off+2])
-	off += 4 // skip tunnel ID + session ID
+	frame.SessionID = binary.BigEndian.Uint16(data[off+2 : off+4])
+	off += 4
 	if flags&l2tpFlagS != 0 {
 		if len(data) < off+4 {
 			return frame, fmt.Errorf("truncated L2TP sequence numbers")
@@ -113,6 +131,12 @@ func parseL2TP(data []byte) (parsedL2TP, error) {
 		frame.Ns = binary.BigEndian.Uint16(data[off : off+2])
 		frame.Nr = binary.BigEndian.Uint16(data[off+2 : off+4])
 		off += 4
+	}
+	if off == len(data) {
+		// Zero-Length Body: a bare acknowledgement
+		frame.MessageName = "ZLB"
+		frame.Command = "ZLB"
+		return frame, nil
 	}
 
 	for off+6 <= len(data) {
@@ -144,6 +168,10 @@ func parseL2TP(data []byte) (parsedL2TP, error) {
 			if len(value) >= 2 {
 				frame.AssignedTunnelID = binary.BigEndian.Uint16(value[:2])
 			}
+		case l2tpAttrAssignedSessionID:
+			if len(value) >= 2 {
+				frame.AssignedSessionID = binary.BigEndian.Uint16(value[:2])
+			}
 		}
 	}
 	if frame.MessageType == 0 && frame.MessageName == "" {
@@ -165,70 +193,84 @@ func encodeL2TPAVP(mandatory bool, attr uint16, value []byte) []byte {
 	return out
 }
 
-// buildSCCRP builds an RFC 2661 Start-Control-Connection-Reply that scanners
-// (nmap -sU -sV and internet-wide L2TP probes) treat as evidence of an LNS.
-func buildSCCRP(peerAssignedTID, peerNs uint16) []byte {
-	u16 := func(v uint16) []byte {
-		b := make([]byte, 2)
-		binary.BigEndian.PutUint16(b, v)
-		return b
-	}
-	u32 := func(v uint32) []byte {
-		b := make([]byte, 4)
-		binary.BigEndian.PutUint32(b, v)
-		return b
-	}
+func l2tpU16(v uint16) []byte {
+	return binary.BigEndian.AppendUint16(nil, v)
+}
 
-	avps := append([]byte{}, encodeL2TPAVP(true, l2tpAttrMessageType, u16(l2tpMsgSCCRP))...)
-	avps = append(avps, encodeL2TPAVP(true, l2tpAttrProtocolVersion, []byte{0x01, 0x00})...)
-	avps = append(avps, encodeL2TPAVP(true, l2tpAttrFramingCaps, u32(3))...)
-	avps = append(avps, encodeL2TPAVP(true, l2tpAttrBearerCaps, u32(3))...)
-	avps = append(avps, encodeL2TPAVP(true, l2tpAttrHostName, []byte(l2tpHoneypotHostName))...)
-	avps = append(avps, encodeL2TPAVP(true, l2tpAttrAssignedTunnelID, u16(l2tpHoneypotTunnelID))...)
-	avps = append(avps, encodeL2TPAVP(false, l2tpAttrFirmwareRevision, u16(1))...)
-	avps = append(avps, encodeL2TPAVP(false, l2tpAttrVendorName, []byte(l2tpHoneypotVendorName))...)
-
+// buildL2TPControl frames AVPs as a control message; with no AVPs it is a
+// ZLB acknowledgement.
+func buildL2TPControl(tunnelID, sessionID, ns, nr uint16, avps []byte) []byte {
 	total := 12 + len(avps)
 	out := make([]byte, total)
 	binary.BigEndian.PutUint16(out[0:2], l2tpFlagT|l2tpFlagL|l2tpFlagS|2)
 	binary.BigEndian.PutUint16(out[2:4], uint16(total))
-	binary.BigEndian.PutUint16(out[4:6], peerAssignedTID) // peer's Assigned Tunnel ID
-	// session ID stays 0
-	binary.BigEndian.PutUint16(out[8:10], 0)         // Ns
-	binary.BigEndian.PutUint16(out[10:12], peerNs+1) // Nr
+	binary.BigEndian.PutUint16(out[4:6], tunnelID)
+	binary.BigEndian.PutUint16(out[6:8], sessionID)
+	binary.BigEndian.PutUint16(out[8:10], ns)
+	binary.BigEndian.PutUint16(out[10:12], nr)
 	copy(out[12:], avps)
 	return out
 }
 
-// HandleL2TP parses an L2TP UDP datagram, answers SCCRQ with SCCRP, and emits
-// one producer event with message type / host / vendor tagged in decoded.
+// buildSCCRP builds an RFC 2661 Start-Control-Connection-Reply that scanners
+// (nmap -sU -sV and internet-wide L2TP probes) treat as evidence of an LNS.
+// peerTID is the client's Assigned Tunnel ID, localTID the honeypot's.
+func buildSCCRP(peerTID, localTID, ns, nr uint16) []byte {
+	avps := encodeL2TPAVP(true, l2tpAttrMessageType, l2tpU16(l2tpMsgSCCRP))
+	avps = append(avps, encodeL2TPAVP(true, l2tpAttrProtocolVersion, []byte{0x01, 0x00})...)
+	avps = append(avps, encodeL2TPAVP(true, l2tpAttrFramingCaps, binary.BigEndian.AppendUint32(nil, 3))...)
+	avps = append(avps, encodeL2TPAVP(true, l2tpAttrBearerCaps, binary.BigEndian.AppendUint32(nil, 3))...)
+	avps = append(avps, encodeL2TPAVP(true, l2tpAttrHostName, []byte(l2tpHoneypotHostName))...)
+	avps = append(avps, encodeL2TPAVP(true, l2tpAttrAssignedTunnelID, l2tpU16(localTID))...)
+	avps = append(avps, encodeL2TPAVP(false, l2tpAttrFirmwareRevision, l2tpU16(1))...)
+	avps = append(avps, encodeL2TPAVP(false, l2tpAttrVendorName, []byte(l2tpHoneypotVendorName))...)
+	return buildL2TPControl(peerTID, 0, ns, nr, avps)
+}
+
+// buildICRP builds an Incoming-Call-Reply assigning the honeypot's session ID.
+func buildICRP(peerTID, peerSID, localSID, ns, nr uint16) []byte {
+	avps := encodeL2TPAVP(true, l2tpAttrMessageType, l2tpU16(l2tpMsgICRP))
+	avps = append(avps, encodeL2TPAVP(true, l2tpAttrAssignedSessionID, l2tpU16(localSID))...)
+	return buildL2TPControl(peerTID, peerSID, ns, nr, avps)
+}
+
+// HandleL2TP handles one L2TP UDP datagram. An SCCRQ opens a tunnel that
+// collects the control connection, its sessions and the PPP negotiation
+// (including PAP/CHAP attempts) into one event; datagrams that match no
+// tunnel are produced on their own.
 func HandleL2TP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot) error {
 	payload := make([]byte, min(len(data), maxL2TPPayload))
 	copy(payload, data[:len(payload)])
-
-	events := []parsedL2TP{}
-	endReason := connection.EndHandlerClose
-	defer func() {
-		md.EndReason = endReason
-		if err := h.ProduceUDP("l2tp", srcAddr, dstAddr, md, helpers.FirstOrEmpty[parsedL2TP](events).Payload, events); err != nil {
-			logger.Error("Failed to produce message", slog.String("protocol", "l2tp"), producer.ErrAttr(err))
-		}
-	}()
+	truncated := len(data) > maxL2TPPayload
 
 	if len(payload) == 0 {
-		return nil
+		return produceL2TPDatagram(srcAddr, dstAddr, md, logger, h, nil)
+	}
+
+	if len(payload) >= 2 && binary.BigEndian.Uint16(payload[0:2])&l2tpFlagT == 0 {
+		frame, hdr, pkt, err := parseL2TPData(payload)
+		frame.Truncated = truncated
+		if err == nil {
+			if t := l2tpTunnels.get(l2tpTunnelKey(srcAddr, hdr.TunnelID)); t != nil {
+				if handled, err := t.handleData(frame, hdr, pkt); handled {
+					return err
+				}
+			}
+		} else {
+			logger.Debug("Failed to parse L2TP data message", slog.String("protocol", "l2tp"), producer.ErrAttr(err))
+		}
+		return produceL2TPDatagram(srcAddr, dstAddr, md, logger, h, []parsedL2TP{frame})
 	}
 
 	frame, err := parseL2TP(payload)
-	frame.Truncated = len(data) > maxL2TPPayload
-	events = append(events, frame)
+	frame.Truncated = truncated
 	if err != nil {
 		logger.Debug("Failed to parse L2TP control message",
 			slog.String("protocol", "l2tp"),
 			producer.ErrAttr(err),
 			slog.Int("bytes", len(payload)),
 		)
-		return nil
+		return produceL2TPDatagram(srcAddr, dstAddr, md, logger, h, []parsedL2TP{frame})
 	}
 
 	logger.Info("L2TP UDP packet received",
@@ -241,29 +283,62 @@ func HandleL2TP(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte,
 		slog.String("vendor_name", frame.VendorName),
 	)
 
-	if frame.MessageType != l2tpMsgSCCRQ {
-		return nil
+	if frame.MessageType == l2tpMsgSCCRQ && frame.TunnelID == 0 {
+		return openL2TPTunnel(ctx, srcAddr, dstAddr, md, logger, h, frame)
 	}
+	if t := l2tpTunnels.get(l2tpTunnelKey(srcAddr, frame.TunnelID)); t != nil {
+		if handled, err := t.handleControl(frame); handled {
+			return err
+		}
+	}
+	return produceL2TPDatagram(srcAddr, dstAddr, md, logger, h, []parsedL2TP{frame})
+}
 
-	resp := buildSCCRP(frame.AssignedTunnelID, frame.Ns)
-	events = append(events, parsedL2TP{
-		Direction:        "write",
-		Command:          l2tpMessageName(l2tpMsgSCCRP),
-		Status:           "SCCRP",
-		MessageType:      l2tpMsgSCCRP,
-		MessageName:      l2tpMessageName(l2tpMsgSCCRP),
-		HostName:         l2tpHoneypotHostName,
-		VendorName:       l2tpHoneypotVendorName,
-		TunnelID:         frame.AssignedTunnelID,
-		AssignedTunnelID: l2tpHoneypotTunnelID,
-		Ns:               0,
-		Nr:               frame.Ns + 1,
-		Payload:          resp,
-	})
-	if err := h.ReplyUDP(srcAddr, dstAddr, resp); err != nil {
-		logger.Error("Failed to reply to L2TP SCCRQ", slog.String("protocol", "l2tp"), producer.ErrAttr(err))
-		endReason = connection.EndWriteError
-		return err
+// produceL2TPDatagram emits a datagram that belongs to no tunnel as its own
+// event, without replying.
+func produceL2TPDatagram(srcAddr, dstAddr *net.UDPAddr, md connection.Metadata, logger interfaces.Logger, h interfaces.Honeypot, events []parsedL2TP) error {
+	if events == nil {
+		events = []parsedL2TP{}
+	}
+	md.EndReason = connection.EndHandlerClose
+	if err := h.ProduceUDP("l2tp", srcAddr, dstAddr, md, helpers.FirstOrEmpty[parsedL2TP](events).Payload, events); err != nil {
+		logger.Error("Failed to produce message", slog.String("protocol", "l2tp"), producer.ErrAttr(err))
 	}
 	return nil
+}
+
+// parseL2TPData parses a data message and the PPP control packet it carries.
+func parseL2TPData(data []byte) (parsedL2TP, l2tpproto.DataHeader, l2tpproto.Packet, error) {
+	frame := parsedL2TP{Direction: "read", Payload: data}
+	hdr, ppp, err := l2tpproto.ParseData(data)
+	if err != nil {
+		return frame, hdr, l2tpproto.Packet{}, err
+	}
+	frame.TunnelID = hdr.TunnelID
+	frame.SessionID = hdr.SessionID
+	frame.Ns, frame.Nr = hdr.Ns, hdr.Nr
+	pkt, err := l2tpproto.ParsePPP(ppp)
+	if pkt.Protocol != 0 {
+		frame.PPPProtocol = l2tpproto.ProtocolName(pkt.Protocol)
+	}
+	if err != nil {
+		return frame, hdr, pkt, err
+	}
+	frame.Command = l2tpproto.Command(pkt.Protocol, pkt.Code)
+	switch {
+	case pkt.Protocol == l2tpproto.ProtoPAP && pkt.Code == l2tpproto.CodePAPAuthRequest:
+		frame.AuthProtocol = "PAP"
+		frame.Username, frame.Password, err = l2tpproto.ParsePAPRequest(pkt.Data)
+	case pkt.Protocol == l2tpproto.ProtoCHAP && pkt.Code == l2tpproto.CodeCHAPResponse:
+		var value []byte
+		value, frame.Username, err = l2tpproto.ParseCHAPResponse(pkt.Data)
+		frame.CHAPResponse = hex.EncodeToString(value)
+	case pkt.Protocol == l2tpproto.ProtoLCP && pkt.Code <= l2tpproto.CodeConfigureReject:
+		if opts, perr := l2tpproto.ParseOptions(pkt.Data); perr == nil {
+			if proto, alg, ok := l2tpproto.AuthOption(opts); ok {
+				frame.AuthProtocol = l2tpproto.AuthName(proto, alg)
+			}
+		}
+	}
+	return frame, hdr, pkt, err
 }
