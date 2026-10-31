@@ -69,6 +69,8 @@ type Event struct {
 	Scanner     string      `json:"scanner,omitempty"`
 	Decoded     interface{} `json:"decoded,omitempty"`
 	TLS         *TLSInfo    `json:"tls,omitempty"`
+	// MPTCP is true when the TCP connection negotiated Multipath TCP.
+	MPTCP bool `json:"mptcp,omitempty"`
 }
 
 // TLSInfo is set when the sensor terminated TLS before the handler ran.

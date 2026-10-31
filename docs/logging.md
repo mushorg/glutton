@@ -38,6 +38,7 @@ Producer events follow the `producer.Event` schema:
 | `payloadHash` | string (hex), optional | SHA-256 of the (sanitized) top-level payload. |
 | `frameCount` | number, optional | Number of decoded frames when `decoded` is a slice. Omitted when 0. |
 | `endReason` | string, optional | Why the session ended (`client_close`, `client_reset`, `timeout`, `handler_close`, `read_error`, `write_error`, `max_frames`, `evicted`). `client_reset` means the client aborted the connection with a TCP RST instead of closing it. `evicted` means the handler's session table was full and the least recently active session was flushed early. Omitted by handlers that do not set it. |
+| `mptcp` | boolean, optional | `true` when the TCP connection negotiated Multipath TCP (the client offered MP_CAPABLE and the sensor kernel supports MPTCP). The sensor's TCP listener is MPTCP-enabled (Go 1.24+ default). Omitted for plain TCP and UDP. |
 | `tls` | object, optional | Present only when the sensor terminated TLS. See [TLS details](#tls-details). |
 | `scanner` | string, optional | Scanner classification from `scanner.Classify(...)`, else a payload-hash fleet label, else a JA4 fleet label (from `tls.ja4`, per handler), else a behavioral label the handler set on the session (`ssh-authkeys-implant`). Omitted when empty. |
 | `decoded` | array, object or `null`, optional | Handler-specific decoded data. See [Decoded data](#decoded-data). |

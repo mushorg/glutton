@@ -428,6 +428,8 @@ func (g *Glutton) tcpListen() {
 			continue
 		}
 
+		md.MPTCP = isMultipathTCP(conn)
+
 		g.Logger.Debug("new connection", slog.String("addr", conn.LocalAddr().String()), slog.String("handler", rule.Target))
 
 		// Registered by its raw address above; from here on every write the
@@ -716,6 +718,18 @@ func (g *Glutton) applyRules(network string, srcAddr, dstAddr net.Addr) (*rules.
 		return match, err
 	}
 	return nil, nil
+}
+
+// isMultipathTCP reports whether conn negotiated MPTCP. The TCP listener is
+// MPTCP-enabled (Go's default), but a peer that does not offer MP_CAPABLE, or
+// a kernel without MPTCP, falls back to plain TCP. Call it before wrapping conn.
+func isMultipathTCP(conn net.Conn) bool {
+	tc, ok := conn.(*net.TCPConn)
+	if !ok {
+		return false
+	}
+	mp, err := tc.MultipathTCP()
+	return err == nil && mp
 }
 
 func (g *Glutton) applyRulesOnConn(conn net.Conn) (*rules.Rule, error) {

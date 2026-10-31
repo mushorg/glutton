@@ -3,6 +3,7 @@
 package glutton
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"syscall"
@@ -15,10 +16,21 @@ import (
 // Only IP_TRANSPARENT is required for TCP: the original destination is
 // exposed via Conn.LocalAddr() after accept. IP_RECVORIGDSTADDR is a UDP
 // cmsg option and returns EOPNOTSUPP on many kernels (including WSL2).
+//
+// The listener explicitly accepts Multipath TCP so scanners probing for MPTCP
+// listeners see one; events record it as mptcp. Kernels without MPTCP fall
+// back to plain TCP.
 func listenTProxyTCP(network string, laddr *net.TCPAddr) (net.Listener, error) {
-	listener, err := net.ListenTCP(network, laddr)
+	var lc net.ListenConfig
+	lc.SetMultipathTCP(true)
+	ln, err := lc.Listen(context.Background(), network, laddr.String())
 	if err != nil {
 		return nil, err
+	}
+	listener, ok := ln.(*net.TCPListener)
+	if !ok {
+		ln.Close()
+		return nil, &net.OpError{Op: "listen", Net: network, Source: nil, Addr: laddr, Err: fmt.Errorf("unexpected listener type %T", ln)}
 	}
 
 	fileDescriptorSource, err := listener.File()

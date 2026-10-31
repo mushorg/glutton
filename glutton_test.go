@@ -254,3 +254,23 @@ func TestAllowProduceDropsFloodingSource(t *testing.T) {
 	require.True(t, g.allowProduce("socks", net.ParseIP("198.51.100.8")), "other sources keep their budget")
 	require.True(t, g.allowProduce("socks", nil), "conns without an IP are not limited")
 }
+
+func TestIsMultipathTCP(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	require.False(t, isMultipathTCP(a), "net.Pipe is not a TCP conn")
+
+	var lc net.ListenConfig
+	lc.SetMultipathTCP(false)
+	ln, err := lc.Listen(context.Background(), "tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	client, err := net.Dial("tcp4", ln.Addr().String())
+	require.NoError(t, err)
+	defer client.Close()
+	server, err := ln.Accept()
+	require.NoError(t, err)
+	defer server.Close()
+	require.False(t, isMultipathTCP(server), "plain TCP listener must not report MPTCP")
+}

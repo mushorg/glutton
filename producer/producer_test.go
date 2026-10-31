@@ -97,6 +97,12 @@ func TestMakeEventTCPEnvelope(t *testing.T) {
 	require.Equal(t, hex.EncodeToString(sum[:]), ev.PayloadHash)
 	require.False(t, ev.StartedAt.IsZero())
 	require.GreaterOrEqual(t, ev.DurationMs, int64(1000))
+	require.False(t, ev.MPTCP)
+
+	md.MPTCP = true
+	ev, err = p.makeEventTCP("smb", conn, md, payload, decoded)
+	require.NoError(t, err)
+	require.True(t, ev.MPTCP)
 }
 
 func TestMakeEventUDPEnvelope(t *testing.T) {

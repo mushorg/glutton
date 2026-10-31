@@ -60,6 +60,7 @@ func durationMs(added time.Time) int64 {
 func fillEnvelope(event *Event, md connection.Metadata, payload []byte, decoded interface{}, sensorVersion string) {
 	event.SensorVersion = sensorVersion
 	event.EndReason = md.EndReason
+	event.MPTCP = md.MPTCP
 	event.PayloadHash = payloadHash(payload)
 	if n := sliceLen(decoded); n > 0 {
 		event.FrameCount = n

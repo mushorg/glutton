@@ -95,6 +95,8 @@ type Metadata struct {
 	Fleet string
 	// TLS is set when the sensor terminated TLS (rule option tls) before the handler.
 	TLS *TLSInfo
+	// MPTCP is set when the accepted connection negotiated Multipath TCP.
+	MPTCP bool
 	// Outer lists protocol layers a wrapper peeled off before the handler ran
 	// (e.g. "tls"), outermost first.
 	Outer []string
