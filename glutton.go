@@ -481,6 +481,11 @@ func (g *Glutton) Start() error {
 		return err
 	}
 
+	go func() {
+		defer g.recoverPanic("tcp", "ipopts")
+		g.watchIPOpts()
+	}()
+
 	wg := &sync.WaitGroup{}
 
 	wg.Add(1)

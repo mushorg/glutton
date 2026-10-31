@@ -119,6 +119,7 @@ Example shape:
 | --- | --- | --- |
 | `http` | TCP | [protocols/http.md](protocols/http.md) |
 | `tcp` | TCP | [protocols/tcp.md](protocols/tcp.md) |
+| `ipopts` | TCP (pcap) | [protocols/ipopts.md](protocols/ipopts.md) |
 | `udp` | UDP | [protocols/udp.md](protocols/udp.md) |
 | `proxy_tcp`, `proxy_udp` | TCP/UDP | [protocols/proxy.md](protocols/proxy.md) |
 | `sip` | TCP/UDP/TLS | [protocols/sip.md](protocols/sip.md) |

@@ -13,7 +13,7 @@ Glutton is a Linux-only Go binary that depends on iptables, libpcap, a C/C++ too
 | Requirement                     | Source of truth                                                                                                          |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | Go 1.26+                        | `go.mod` declares `go 1.26.5`; CI uses `^1.26`.                                                                          |
-| libpcap                         | Required by `github.com/google/gopacket/pcap`.                                                                           |
+| libpcap                         | Required by `github.com/google/gopacket/pcap` (iface address discovery, rule BPF matching, and the `ipopts` packet watcher). |
 | iptables                        | TPROXY rule management.                                                                                                  |
 | zlib + build-essential          | Spicy and cgo builds.                                                                                                    |
 | clang-17 / clang++-17           | `Makefile` uses `CC=clang-17 CXX=clang++-17`; CI installs clang 17. Unversioned `clang` on Ubuntu 22.04 is often too old. |
@@ -45,7 +45,7 @@ make build
 
 ## Run
 
-Glutton modifies iptables rules and needs root (or `CAP_NET_ADMIN`).
+Glutton modifies iptables rules and needs root (or `CAP_NET_ADMIN`). The optional `ipopts` watcher also needs capture privileges (`CAP_NET_RAW` / root) on `interface`; if pcap cannot open, Glutton logs a warning and continues without it.
 
 ```bash
 sudo bin/server --interface eth0 --confpath config/ --logpath /var/log/glutton.log

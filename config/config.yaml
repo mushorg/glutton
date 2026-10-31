@@ -33,6 +33,13 @@ dial_timeout: 5   # timeout in seconds for proxy target connection.
 capture_traffic:
   enabled: false
 
+ipopts_watch:   # passive pcap watcher for IPv4 TCP packets that carry IP options (CVE-2026-98432 visibility). Soft-fails if pcap cannot open.
+  enabled: true
+  idle_seconds: 5    # flush a flow after this many seconds of silence
+  max_flows: 1024
+  max_frames: 32     # per flow; flush early when reached
+  snaplen: 256
+
 storage:   # files handlers write under payloads/ and samples/ (uploads, fetched samples, RTP audio, tunnel bytes).
   max_bytes: 1073741824   # total size of stored files; the oldest are deleted first to make room. 0 disables.
   max_files: 100000       # stored files (each costs an inode); the oldest are deleted first. 0 disables.
