@@ -12,6 +12,7 @@ Transport: TCP. Shared encodings and frame fields are described in [Logging and 
 | `command` | reads | `username` / `password` on login reads; otherwise the first token of the shell line, cut at whitespace or a shell operator (`ping; sh` → `ping`). `tls_client_hello` or `binary` for non-telnet input. Login prompt writes also set `username` / `password`. |
 | `message` | all | Line as sent or written, CRLF and NUL terminators included. Credentials are recorded as sent. |
 | `path` | `wget` / `curl` reads | The http(s) URL from the command line. |
+| `commands` | shell reads of a chained line | First word of every `;`, `&&`, `\|\|` or `\|` separated command (at most 32), only set when the line has more than one. `command` keeps the first word, so a probe after it (e.g. `/bin/busybox HISILICON` after `cd /root/;`) stays queryable. |
 | `payload_hash` | `wget` / `curl` reads | SHA-256 of the fetched sample, set when the fetch succeeds. |
 | `offset_ms` | all | Milliseconds since the connection was accepted (omitted when 0). Shows how long a bot waits between a write and its next command. |
 | `truncated` | reads | The line was longer than 64 KiB and `message` holds its first 64 KiB (the rest is dropped; the next line is read normally), or this is the last read kept when the session hit its frame limit. |

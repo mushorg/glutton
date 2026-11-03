@@ -377,14 +377,14 @@ func TestHandleTelnetArchProbe(t *testing.T) {
 		{Direction: "write", Message: "> "},
 		{Direction: "read", Command: "shell", Message: "shell\r\n"},
 		{Direction: "write", Message: "> "},
-		{Direction: "read", Command: "ping", Message: "ping; sh\r\n"},
+		{Direction: "read", Command: "ping", Commands: []string{"ping", "sh"}, Message: "ping; sh\r\n"},
 		{Direction: "write", Message: busyboxPingUsage},
 		{Direction: "write", Message: "> "},
 		{Direction: "read", Command: "/bin/busybox", Message: "/bin/busybox HISILICON\r\n"},
 		{Direction: "write", Message: "HISILICON: applet not found\r\n"},
 		{Direction: "write", Message: busyboxBanner},
 		{Direction: "write", Message: telnetShPrompt},
-		{Direction: "read", Command: "/bin/busybox", Message: "/bin/busybox cat /proc/self/exe || cat /proc/self/exe\r\n"},
+		{Direction: "read", Command: "/bin/busybox", Commands: []string{"/bin/busybox", "cat"}, Message: "/bin/busybox cat /proc/self/exe || cat /proc/self/exe\r\n"},
 		{Direction: "write", Message: armELFHeader + "\r\n", Variant: "arm", Visit: 1},
 		{Direction: "write", Message: telnetShPrompt},
 	}, events)
@@ -838,4 +838,14 @@ func TestTelnetReplyCPUInfo(t *testing.T) {
 		require.NotContains(t, strings.ToLower(a.cpuinfo), "glutton")
 		require.NotContains(t, strings.ToLower(a.cpuinfo), "honeypot")
 	}
+}
+
+func TestTelnetLeafCommands(t *testing.T) {
+	require.Nil(t, telnetLeafCommands("enable\x00\r\n"))
+	require.Nil(t, telnetLeafCommands("/bin/busybox HISILICON\r\n"))
+	require.Equal(t, []string{"ping", "sh"}, telnetLeafCommands("ping; sh\r\n"))
+	require.Equal(t,
+		[]string{">/root/.f", "chmod", "/root/.f", "cd", "/bin/busybox"},
+		telnetLeafCommands(">/root/.f && chmod 777 /root/.f && /root/.f && cd /root/; /bin/busybox HISILICON\r\n"))
+	require.Len(t, telnetLeafCommands(strings.Repeat("a;", 100)), maxTelnetLeafCommands)
 }

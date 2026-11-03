@@ -322,15 +322,19 @@ func telnetReply(cmd string, arch telnetArch) (telnetResponse, error) {
 }
 
 type parsedTelnet struct {
-	Direction   string `json:"direction,omitempty"`
-	Command     string `json:"command,omitempty"`
-	Path        string `json:"path,omitempty"` // wget/curl URL when present
-	Message     string `json:"message,omitempty"`
-	PayloadHash string `json:"payload_hash,omitempty"`
-	Variant     string `json:"variant,omitempty"`   // architecture variant, on writes that depend on it
-	Visit       int    `json:"visit,omitempty"`     // source's visit number, on writes that depend on it
-	OffsetMs    int64  `json:"offset_ms,omitempty"` // milliseconds since the connection was accepted
-	Truncated   bool   `json:"truncated,omitempty"` // line cut at maxTelnetLine, or last read kept at maxTelnetFrames
+	Direction string `json:"direction,omitempty"`
+	Command   string `json:"command,omitempty"`
+	// Commands lists the first word of every `;`, `&&`, `||` or `|` separated
+	// command on a chained line (only set when there is more than one), so a
+	// probe after the first command is not lost behind Command.
+	Commands    []string `json:"commands,omitempty"`
+	Path        string   `json:"path,omitempty"` // wget/curl URL when present
+	Message     string   `json:"message,omitempty"`
+	PayloadHash string   `json:"payload_hash,omitempty"`
+	Variant     string   `json:"variant,omitempty"`   // architecture variant, on writes that depend on it
+	Visit       int      `json:"visit,omitempty"`     // source's visit number, on writes that depend on it
+	OffsetMs    int64    `json:"offset_ms,omitempty"` // milliseconds since the connection was accepted
+	Truncated   bool     `json:"truncated,omitempty"` // line cut at maxTelnetLine, or last read kept at maxTelnetFrames
 }
 
 type telnetServer struct {
@@ -488,6 +492,30 @@ func telnetShellCommand(msg string) string {
 	return line
 }
 
+// maxTelnetLeafCommands bounds parsedTelnet.Commands for one line.
+const maxTelnetLeafCommands = 32
+
+// telnetLeafCommands returns the first word of each command on a line chained
+// with `;`, `&&`, `||` or `|`. It returns nil unless the line has more than one
+// command.
+func telnetLeafCommands(msg string) []string {
+	line := trimTelnetLine(msg)
+	segments := strings.FieldsFunc(line, func(r rune) bool { return r == ';' || r == '&' || r == '|' })
+	var out []string
+	for _, seg := range segments {
+		if f := strings.Fields(seg); len(f) > 0 {
+			out = append(out, strings.TrimRight(f[0], "\x00"))
+		}
+		if len(out) >= maxTelnetLeafCommands {
+			break
+		}
+	}
+	if len(out) < 2 {
+		return nil
+	}
+	return out
+}
+
 // trimTelnetLine drops the line terminator (CR, LF, NUL) from a read line.
 func trimTelnetLine(msg string) string {
 	return strings.TrimRight(msg, "\r\n\x00")
@@ -627,7 +655,11 @@ func (s *telnetServer) read() (string, error) {
 		default:
 			cmd = telnetShellCommand(msg)
 		}
-		s.add(parsedTelnet{Direction: "read", Command: cmd, Message: msg, Truncated: truncated})
+		var cmds []string
+		if s.step != "username" && s.step != "password" {
+			cmds = telnetLeafCommands(msg)
+		}
+		s.add(parsedTelnet{Direction: "read", Command: cmd, Commands: cmds, Message: msg, Truncated: truncated})
 	}
 	return msg, err
 }
