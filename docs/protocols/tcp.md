@@ -77,8 +77,9 @@ Writes set `status` to the response name or `random`.
 | 9333 | `litecoin` | Sends nothing and hangs up, as litecoind does with bytes that are not its network magic |
 | 9530 | `xiongmai-9530` | Xiongmai macGuarder/dvrHelper backdoor port. `OpenTelnet:OpenOnce` gets `xiongmai-randnum`; anything else, including the client's challenge answer, is recorded without a reply and the connection stays open (a real device's failure string is not public) |
 | 21379 | `opc-tunneller` | MatrikonOPC Tunneller default port. Sends nothing but keeps the connection open, so the client hello and its follow-up frames are recorded; the real server's reply framing is not public |
+| 30005 | `port-30005` | No registered service, and the product behind it is unconfirmed. Sends nothing but keeps the connection open, as an HTTP-style listener does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request; HTTP requests go to the `http` handler |
 
-Silent responses (`mglndd`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin or Litecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 21379 (`opc-tunneller`), a KMP frame the meter does not answer (`kamstrup`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
+Silent responses (`mglndd`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin or Litecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 21379 (`opc-tunneller`) and 30005 (`port-30005`), a KMP frame the meter does not answer (`kamstrup`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
 
 ## TLS ClientHello
 

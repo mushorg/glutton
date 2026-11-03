@@ -275,6 +275,14 @@ func ForPort(port uint16) (Response, bool) {
 		// reply framing is not public, so record the hello and its follow-ups
 		// without answering rather than sending random bytes.
 		return Response{Name: "opc-tunneller", NoReply: true}, true
+	case 30005:
+		// No registered service (nmap-services "unknown"), and the product
+		// behind it is unconfirmed. Research scanners send a bare newline,
+		// which HTTP-style listeners skip (RFC 9112 §2.2) while they wait for
+		// a request, so record it unanswered and keep the connection open
+		// rather than sending random bytes. HTTP requests are still rerouted
+		// by the Spicy peek.
+		return Response{Name: "port-30005", NoReply: true}, true
 	case 9530:
 		// Xiongmai macGuarder: "OpenTelnet:OpenOnce" is matched in
 		// ForPayload; the client's challenge answer is recorded unanswered

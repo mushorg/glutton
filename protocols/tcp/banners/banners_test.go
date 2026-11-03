@@ -74,6 +74,10 @@ func TestForPort(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "xiongmai-9530", NoReply: true}, resp)
 
+	resp, ok = ForPort(30005)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "port-30005", NoReply: true}, resp)
+
 	_, ok = ForPort(9999)
 	require.False(t, ok)
 }
