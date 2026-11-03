@@ -173,6 +173,20 @@ func fillFromService(f *Frame, svc interface{}) {
 		f.Service = "CloseSession"
 	case *ua.ServiceFault:
 		f.Service = "ServiceFault"
+	case *ua.BrowseRequest, *ua.BrowseResponse:
+		f.Service = "Browse"
+	case *ua.BrowseNextRequest, *ua.BrowseNextResponse:
+		f.Service = "BrowseNext"
+	case *ua.ReadRequest, *ua.ReadResponse:
+		f.Service = "Read"
+	case *ua.WriteRequest, *ua.WriteResponse:
+		f.Service = "Write"
+	case *ua.CallRequest, *ua.CallResponse:
+		f.Service = "Call"
+	case *ua.TranslateBrowsePathsToNodeIDsRequest, *ua.TranslateBrowsePathsToNodeIDsResponse:
+		f.Service = "TranslateBrowsePaths"
+	case *ua.CreateSubscriptionRequest, *ua.CreateSubscriptionResponse:
+		f.Service = "CreateSubscription"
 	default:
 		if f.Service == "" {
 			f.Service = "UNKNOWN"

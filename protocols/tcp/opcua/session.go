@@ -1,6 +1,7 @@
 package opcua
 
 import (
+	"crypto/rand"
 	"time"
 
 	"github.com/gopcua/opcua/id"
@@ -14,11 +15,25 @@ const (
 	fakeTokenID   = 1
 )
 
-var sessionNonce = []byte{
-	0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-	0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-	0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-	0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+const (
+	nodeObjectsFolder = 85
+	nodeServer        = 2253
+	nodeOrganizes     = 35
+	nodeFolderType    = 61
+	nodeServerType    = 2004
+)
+
+// randRead fills the server nonce; tests swap it for determinism.
+var randRead = rand.Read
+
+func newNonce() []byte {
+	b := make([]byte, 32)
+	if _, err := randRead(b); err != nil {
+		for i := range b {
+			b[i] = byte(i + 1)
+		}
+	}
+	return b
 }
 
 // Session holds per-connection secure-channel state for None-security replies.
@@ -27,6 +42,7 @@ type Session struct {
 	channelID   uint32
 	tokenID     uint32
 	sequence    uint32
+	nonce       []byte
 }
 
 func NewSession(endpointURL string) *Session {
@@ -37,6 +53,7 @@ func NewSession(endpointURL string) *Session {
 		endpointURL: endpointURL,
 		channelID:   fakeChannelID,
 		tokenID:     fakeTokenID,
+		nonce:       newNonce(),
 	}
 }
 
@@ -148,7 +165,7 @@ func (s *Session) replyMSG(payload []byte) ([]byte, error) {
 			SessionID:             ua.NewNumericNodeID(1, 1),
 			AuthenticationToken:   ua.NewNumericNodeID(1, 2),
 			RevisedSessionTimeout: timeout,
-			ServerNonce:           sessionNonce,
+			ServerNonce:           s.nonce,
 			ServerEndpoints:       []*ua.EndpointDescription{s.endpoint()},
 			ServerSignature:       &ua.SignatureData{},
 			MaxRequestMessageSize: MaxMessageSize,
@@ -156,16 +173,55 @@ func (s *Session) replyMSG(payload []byte) ([]byte, error) {
 	case *ua.ActivateSessionRequest:
 		return s.encodeUASC(uasc.MessageTypeMessage, requestID(m), id.ActivateSessionResponse_Encoding_DefaultBinary, &ua.ActivateSessionResponse{
 			ResponseHeader: responseHeader(req),
-			ServerNonce:    sessionNonce,
+			ServerNonce:    s.nonce,
 		})
 	case *ua.CloseSessionRequest:
 		return s.encodeUASC(uasc.MessageTypeMessage, requestID(m), id.CloseSessionResponse_Encoding_DefaultBinary, &ua.CloseSessionResponse{
 			ResponseHeader: responseHeader(req),
 		})
+	case *ua.BrowseRequest:
+		results := make([]*ua.BrowseResult, 0, len(req.NodesToBrowse))
+		for _, n := range req.NodesToBrowse {
+			results = append(results, browseNode(n))
+		}
+		return s.encodeUASC(uasc.MessageTypeMessage, requestID(m), id.BrowseResponse_Encoding_DefaultBinary, &ua.BrowseResponse{
+			ResponseHeader: responseHeader(req),
+			Results:        results,
+		})
 	default:
 		return s.encodeUASC(uasc.MessageTypeMessage, requestID(m), id.ServiceFault_Encoding_DefaultBinary, &ua.ServiceFault{
 			ResponseHeader: responseHeaderFromAny(m.Service, ua.StatusBadServiceUnsupported),
 		})
+	}
+}
+
+func ref(idn uint32, name string, class ua.NodeClass, typeDef uint32) *ua.ReferenceDescription {
+	return &ua.ReferenceDescription{
+		ReferenceTypeID: ua.NewNumericNodeID(0, nodeOrganizes),
+		IsForward:       true,
+		NodeID:          ua.NewExpandedNodeID(ua.NewNumericNodeID(0, idn), "", 0),
+		BrowseName:      &ua.QualifiedName{NamespaceIndex: 0, Name: name},
+		DisplayName:     ua.NewLocalizedText(name),
+		NodeClass:       class,
+		TypeDefinition:  ua.NewExpandedNodeID(ua.NewNumericNodeID(0, typeDef), "", 0),
+	}
+}
+
+// browseNode answers one BrowseDescription. Only the Objects folder has
+// children; every other node is reported as unknown.
+func browseNode(d *ua.BrowseDescription) *ua.BrowseResult {
+	if d == nil || d.NodeID == nil || d.NodeID.Namespace() != 0 || d.NodeID.IntID() != nodeObjectsFolder {
+		return &ua.BrowseResult{StatusCode: ua.StatusBadNodeIDUnknown}
+	}
+	if d.BrowseDirection == ua.BrowseDirectionInverse {
+		return &ua.BrowseResult{StatusCode: ua.StatusGood}
+	}
+	return &ua.BrowseResult{
+		StatusCode: ua.StatusGood,
+		References: []*ua.ReferenceDescription{
+			ref(nodeServer, "Server", ua.NodeClassObject, nodeServerType),
+			ref(1000, "PLC", ua.NodeClassObject, nodeFolderType),
+		},
 	}
 }
 
