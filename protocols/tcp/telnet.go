@@ -140,14 +140,16 @@ type telnetArch struct {
 	// reported ("bash", "sh" or "ash"). arm keeps the original persona.
 	greeting string
 	errStyle string
+	// cpuinfo is the /proc/cpuinfo text (CRLF lines, no trailing newline).
+	cpuinfo string
 }
 
 // telnetArches is the rotation order for returning sources; arm (the
 // original persona) comes first.
 var telnetArches = []telnetArch{
-	{name: "arm", data: 1, machine: 0x28, entry: 0xb96c, flags: 0x05000200, greeting: telnetGreeting, errStyle: "bash"},       // EABI5 soft-float
-	{name: "mips", data: 2, machine: 0x08, entry: 0x400190, flags: 0x00001007, greeting: "Welcome\r\n> ", errStyle: "sh"},     // o32, noreorder, pic, cpic
-	{name: "mipsel", data: 1, machine: 0x08, entry: 0x400190, flags: 0x00001007, greeting: "Welcome!\r\n> ", errStyle: "ash"}, // o32, noreorder, pic, cpic
+	{name: "arm", data: 1, machine: 0x28, entry: 0xb96c, flags: 0x05000200, greeting: telnetGreeting, errStyle: "bash", cpuinfo: "Processor\t: ARMv7 Processor rev 5 (v7l)\r\nBogoMIPS\t: 1593.34\r\nFeatures\t: swp half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt\r\nCPU implementer\t: 0x41\r\nCPU architecture: 7\r\nCPU variant\t: 0x0\r\nCPU part\t: 0xc07\r\nCPU revision\t: 5\r\n\r\nHardware\t: hi3516dv100\r\nRevision\t: 0000\r\nSerial\t\t: 0000000000000000"},                                                                                                                                                      // EABI5 soft-float
+	{name: "mips", data: 2, machine: 0x08, entry: 0x400190, flags: 0x00001007, greeting: "Welcome\r\n> ", errStyle: "sh", cpuinfo: "system type\t\t: Hi3520\r\nmachine\t\t\t: Unknown\r\nprocessor\t\t: 0\r\ncpu model\t\t: MIPS 24Kc V7.4\r\nBogoMIPS\t\t: 332.60\r\nwait instruction\t: yes\r\nmicrosecond timers\t: yes\r\ntlb_entries\t\t: 16\r\nextra interrupt vector\t: yes\r\nhardware watchpoint\t: yes\r\nisa\t\t\t: mips1 mips2 mips32r1 mips32r2\r\nASEs implemented\t:\r\nshadow register sets\t: 1\r\nkscratch registers\t: 0\r\ncore\t\t\t: 0\r\nVCED exceptions\t\t: not available\r\nVCEI exceptions\t\t: not available"},     // o32, noreorder, pic, cpic
+	{name: "mipsel", data: 1, machine: 0x08, entry: 0x400190, flags: 0x00001007, greeting: "Welcome!\r\n> ", errStyle: "ash", cpuinfo: "system type\t\t: Hi3520\r\nmachine\t\t\t: Unknown\r\nprocessor\t\t: 0\r\ncpu model\t\t: MIPS 24Kc V7.4\r\nBogoMIPS\t\t: 332.60\r\nwait instruction\t: yes\r\nmicrosecond timers\t: yes\r\ntlb_entries\t\t: 16\r\nextra interrupt vector\t: yes\r\nhardware watchpoint\t: yes\r\nisa\t\t\t: mips1 mips2 mips32r1 mips32r2\r\nASEs implemented\t:\r\nshadow register sets\t: 1\r\nkscratch registers\t: 0\r\ncore\t\t\t: 0\r\nVCED exceptions\t\t: not available\r\nVCEI exceptions\t\t: not available"}, // o32, noreorder, pic, cpic
 }
 
 // elfHeader returns the 52-byte ELF32 header of the fake BusyBox static executable.
@@ -222,6 +224,9 @@ func telnetLookup(cmd string, arch telnetArch) (resp []string, elf, ok bool) {
 func telnetLookupExact(cmd string, arch telnetArch) (resp []string, elf, ok bool) {
 	if resp, ok := telnetReplies[cmd]; ok {
 		return resp, false, true
+	}
+	if cmd == "cat /proc/cpuinfo" {
+		return []string{arch.cpuinfo}, true, true
 	}
 	if prefix, ok := telnetELFReplies[cmd]; ok {
 		return []string{prefix + arch.elfHeader()}, true, true

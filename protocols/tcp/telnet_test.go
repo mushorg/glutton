@@ -814,3 +814,28 @@ func TestTelnetSampleFetchSkippedWhenSlotsFull(t *testing.T) {
 	require.Zero(t, server.fetches)
 	require.Contains(t, logger.debugs, "Skipping sample fetch, too many in flight")
 }
+
+func TestTelnetReplyCPUInfo(t *testing.T) {
+	for _, arch := range telnetArches {
+		want := []string{arch.cpuinfo + "\r\n"}
+		for _, cmd := range []string{
+			"cat /proc/cpuinfo",
+			"/bin/busybox cat /proc/cpuinfo\x00",
+			"/bin/busybox cat /proc/cpuinfo || cat /proc/cpuinfo\r\n",
+		} {
+			resp, err := telnetReply(cmd, arch)
+			require.NoError(t, err, arch.name+" "+cmd)
+			require.Equal(t, want, resp.out, arch.name+" "+cmd)
+			require.True(t, resp.variant, arch.name+" "+cmd)
+			require.NotContains(t, resp.out[0], "No such file")
+		}
+	}
+	require.Contains(t, telnetArches[0].cpuinfo, "Hardware\t: hi3516")
+	require.Contains(t, telnetArches[0].cpuinfo, "ARMv7")
+	require.Contains(t, telnetArches[1].cpuinfo, "MIPS 24Kc")
+	// Not a persona tell.
+	for _, a := range telnetArches {
+		require.NotContains(t, strings.ToLower(a.cpuinfo), "glutton")
+		require.NotContains(t, strings.ToLower(a.cpuinfo), "honeypot")
+	}
+}

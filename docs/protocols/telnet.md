@@ -27,6 +27,8 @@ Transport: TCP. Shared encodings and frame fields are described in [Logging and 
 
 **BusyBox applets.** `/bin/busybox <TOKEN>` gets `<TOKEN>: applet not found` plus the ash banner only when `<TOKEN>` is not a known applet (Mirai's BusyBox liveness check). `cat` of an unknown file gets `cat: <file>: No such file or directory`.
 
+**CPU info.** `cat /proc/cpuinfo` (also `/bin/busybox cat /proc/cpuinfo`, and `a || b` chains resolve to the first alternative) prints a per-architecture `/proc/cpuinfo` matching the visit's ELF persona: ARMv7 / `Hardware : hi3516dv100` for `arm`, a HiSilicon `Hi3520` MIPS 24Kc for `mips` and `mipsel`. The write frame carries `variant` and `visit` like the ELF replies. Older sensors (up to v1.0.1+a14c3ee) answered with `cat: /proc/cpuinfo: No such file or directory`, which contradicted the `/proc/mounts` reply and ended the session (Ochi event d8d09e26-2661-4a60-af43-8a659d368918).
+
 **Architecture probes.** These commands all print the same 52-byte ELF32 header of the fake BusyBox static executable, which Mirai reads to pick its loader:
 
 - `cat /proc/self/exe`
