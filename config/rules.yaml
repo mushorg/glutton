@@ -123,7 +123,7 @@ rules:
   - match: tcp dst port 5555 or port 5037
     type: conn_handler
     target: adb
-  - match: tcp dst port 104 or port 11112 or port 2761 or port 2762
+  - match: tcp dst port 104 or port 2345 or port 11112 or port 2761 or port 2762
     type: conn_handler
     target: dicom
     tls: auto
