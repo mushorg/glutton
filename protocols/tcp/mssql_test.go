@@ -577,3 +577,26 @@ func TestHandleMSSQLRequestCap(t *testing.T) {
 	require.Equal(t, connection.EndMaxFrames, produced.endReason)
 	require.Len(t, produced.decoded.([]parsedMSSQL), 2+2*maxMSSQLRequests)
 }
+
+func TestHandleMSSQLReplyVariantAdvancesWithVisit(t *testing.T) {
+	now := time.Now()
+	store := recall.NewWithClock(recall.DefaultConfig(), func() time.Time { return now })
+	useMSSQLRecall(t, store)
+	setMSSQLViper(t, "mssql.accept_after", 0)
+	computer, _ := rdp.Identity()
+	const query = "exec sp_addlogin Mssql,x;"
+	batch := tdsPacket(mssql.TypeSQLBatch, ntlm.EncodeUTF16LE(query))
+
+	for visit, variant := range []int{0, 1} {
+		client, hp, done := startMSSQLSession(t)
+		bruteMSSQLLogin(t, client)
+		writeTDS(t, client, batch)
+		want, _ := mssql.BuildBatchReply(query, mssql.QueryOptions{TDSVersion: 0x71000001, Server: computer, Variant: variant})
+		require.Equal(t, want, readTDS(t, client).Raw)
+		_, events := finishMSSQL(t, client, hp, done)
+		require.Len(t, events, 6)
+		require.Equal(t, visit+1, events[3].Visit)
+		require.Equal(t, parsedMSSQL{Direction: "write", Status: mssql.StatusDone, Payload: want, Variant: variant}, events[5])
+		now = now.Add(time.Hour) // past recall.visit_gap: the next connection is a new visit
+	}
+}

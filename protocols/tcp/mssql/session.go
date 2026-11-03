@@ -84,6 +84,9 @@ type tokenWriter struct {
 	b           []byte
 	legacy      bool
 	noCollation bool
+	// procDone makes a bare statement that calls a stored procedure
+	// (EXEC / sp_*) reply RETURNSTATUS 0 + DONEPROC, as SQL Server does.
+	procDone bool
 }
 
 func newTokenWriter(tdsVersion uint32) *tokenWriter {
@@ -252,7 +255,17 @@ type QueryOptions struct {
 	// Server is the computer name for @@SERVERNAME, hostname and INFO
 	// messages.
 	Server string
+	// Variant picks the reply flavor for a source that returns: 0 answers
+	// statements without a result with a bare DONE, 1 answers stored procedure
+	// calls with RETURNSTATUS + DONEPROC.
+	Variant int
 }
+
+// Variants is how many reply variants QueryOptions.Variant selects from.
+const Variants = 2
+
+// procCallRe finds a statement that calls a stored procedure.
+var procCallRe = regexp.MustCompile(`(?i)(?:^|[;\s])(?:exec(?:ute)?\s+(?:\[?\w+\]?\.)*\[?\w+|sp_\w+|xp_\w+)`)
 
 // Reply status names.
 const (
@@ -310,6 +323,11 @@ func (w *tokenWriter) statements(query string, server string, more bool) (result
 		if more {
 			status = doneMore
 		}
+		if w.procDone && !more && procCallRe.MatchString(query) {
+			w.returnStatus()
+			w.done(tokenDoneProc, status, curCmdExecute, 0)
+			return false
+		}
 		w.done(tokenDone, status, 0, 0)
 		return false
 	}
@@ -365,6 +383,7 @@ func (w *tokenWriter) statements(query string, server string, more bool) (result
 // StatusResult when a result set was sent, else StatusDone.
 func BuildBatchReply(query string, o QueryOptions) (data []byte, status string) {
 	w := newTokenWriter(o.TDSVersion)
+	w.procDone = o.Variant == 1
 	status = StatusDone
 	if w.statements(query, o.Server, false) {
 		status = StatusResult
@@ -376,6 +395,7 @@ func BuildBatchReply(query string, o QueryOptions) (data []byte, status string) 
 // statement (sp_executesql), then RETURNSTATUS 0 and a final DONEPROC.
 func BuildRPCReply(statement string, o QueryOptions) (data []byte, status string) {
 	w := newTokenWriter(o.TDSVersion)
+	w.procDone = o.Variant == 1
 	status = StatusDone
 	if statement != "" && w.statements(statement, o.Server, true) {
 		status = StatusResult

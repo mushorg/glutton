@@ -18,6 +18,7 @@ Transport: TCP (tcp/1433, and any port where the catch-all sees a TDS PRELOGIN).
 | `status` | write | `prelogin`, `sspi-challenge`, `login-failed`, `login-ok`; after login `result` (a result set was sent), `done`, `attention` |
 | `error_number` | write `login-failed` | `18456` (login failed for user) or `18452` (untrusted domain / anonymous integrated login) |
 | `visit` | write `login-failed` / `login-ok` | The source's `recall` visit number |
+| `variant` | write `result` / `done` after login | Reply variant of the source's `recall` visit (omitted for variant 0, the default) |
 
 `payload` holds the raw TDS packets, headers included; a multi-packet message is one frame. `truncated` is set when the client disconnected mid-message, sent an invalid packet header, or a message passed the cap (64 KiB before login, 1 MiB after); `payload` itself is kept up to 64 KiB, with `truncated` beyond it.
 
@@ -36,6 +37,7 @@ An accepted login gets the SQL Server login stream: ENVCHANGE database (`master`
 - `sp_configure '<option>', <n>` → INFO 15457 `Configuration option '<option>' changed from 0 to <n>. Run the RECONFIGURE statement to install.` (known option prefixes such as `show advanced` are expanded), RETURNSTATUS 0, DONEPROC.
 - `xp_cmdshell '<cmd>'` → an `output` column with `nt service\mssqlserver` for `whoami`, the computer name for `hostname`, then the NULL row xp_cmdshell always ends with.
 - Everything else (`RECONFIGURE`, `CREATE ASSEMBLY`, `sp_OACreate`, …) → a bare DONE. A batch with several of the statements above gets one reply per statement, in order.
+- Returning sources: the reply variant follows the `recall` visit (stable within a visit, advancing after `recall.visit_gap`). Variant 0 is the behavior above. Variant 1 answers a SQL batch that calls a stored procedure (`EXEC …`, `sp_*`, `xp_*`) and has no result set with RETURNSTATUS 0 + DONEPROC, as SQL Server does, instead of a bare DONE; its write frames carry `variant: 1`.
 - RPC → the reply to the `sp_executesql` statement, if any, then RETURNSTATUS 0 + DONEPROC. ATTENTION → DONE with DONE_ATTN. A PRELOGIN, LOGIN7 or SSPI after login closes the connection.
 
 Nmap `ms-sql-ntlm-info` (`app_name` `Nmap NSE`, `client_interface` `mssql.lua`) stops after the `sspi-challenge` write: it only wants the CHALLENGE TargetInfo.

@@ -95,7 +95,8 @@ type parsedMSSQL struct {
 	PayloadHash string `json:"payload_hash,omitempty"` // SHA-256 of the stored query text, when long or carrying a binary
 	// write
 	ErrorNumber uint32 `json:"error_number,omitempty"`
-	Visit       int    `json:"visit,omitempty"` // source's visit number, on login replies
+	Visit       int    `json:"visit,omitempty"`   // source's visit number, on login replies
+	Variant     int    `json:"variant,omitempty"` // reply variant (1+) used for this visit's requests; 0 is the default and omitted
 }
 
 type mssqlServer struct {
@@ -104,6 +105,8 @@ type mssqlServer struct {
 	logger interfaces.Logger
 	ip     net.IP
 	visit  int
+	// variant is the reply variant of the source's recall visit
+	variant int
 	// legacy is set by a pre-TDS 7.2 LOGIN7 and sizes the ERROR/DONE fields
 	legacy bool
 	// tdsVersion is the LOGIN7 TDSVersion
@@ -145,6 +148,16 @@ func (s *mssqlServer) write(data []byte, status string, errNumber uint32) error 
 		Payload:     data,
 		ErrorNumber: errNumber,
 	})
+	return nil
+}
+
+// writeVariant writes a reply to a request and tags it with the visit's reply
+// variant.
+func (s *mssqlServer) writeVariant(data []byte, status string) error {
+	if err := s.write(data, status, 0); err != nil {
+		return err
+	}
+	s.events[len(s.events)-1].Variant = s.variant
 	return nil
 }
 
@@ -237,14 +250,14 @@ func (s *mssqlServer) recordQuery(f *parsedMSSQL, query string) {
 // executed.
 func (s *mssqlServer) handleRequest(msg mssql.Message) error {
 	computer, _ := rdp.Identity()
-	opts := mssql.QueryOptions{TDSVersion: s.tdsVersion, Server: computer}
+	opts := mssql.QueryOptions{TDSVersion: s.tdsVersion, Server: computer, Variant: s.variant}
 	f := s.lastRead()
 	switch msg.Type {
 	case mssql.TypeSQLBatch:
 		query := mssql.ParseSQLBatch(msg.Data)
 		s.recordQuery(f, query)
 		resp, status := mssql.BuildBatchReply(query, opts)
-		return s.write(resp, status, 0)
+		return s.writeVariant(resp, status)
 	case mssql.TypeRPC:
 		call := mssql.ParseRPC(msg.Data)
 		if call.Proc != "" {
@@ -252,7 +265,7 @@ func (s *mssqlServer) handleRequest(msg mssql.Message) error {
 		}
 		s.recordQuery(f, call.Statement)
 		resp, status := mssql.BuildRPCReply(call.Statement, opts)
-		return s.write(resp, status, 0)
+		return s.writeVariant(resp, status)
 	case mssql.TypeAttention:
 		return s.write(mssql.BuildAttentionAck(s.tdsVersion), "attention", 0)
 	default:
@@ -369,7 +382,8 @@ func HandleMSSQL(ctx context.Context, conn net.Conn, md connection.Metadata, log
 	server := &mssqlServer{events: []parsedMSSQL{}, conn: conn, logger: logger}
 	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 	server.ip = net.ParseIP(host)
-	server.visit = mssqlRecall.Begin("mssql", server.ip, 0).Number
+	visit := mssqlRecall.Begin("mssql", server.ip, mssql.Variants)
+	server.visit, server.variant = visit.Number, visit.Variant
 	endReason := connection.EndHandlerClose
 	defer func() {
 		server.noteVisit()

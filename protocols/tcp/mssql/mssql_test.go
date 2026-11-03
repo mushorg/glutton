@@ -281,3 +281,38 @@ func TestTypeName(t *testing.T) {
 	require.Equal(t, "login7", TypeName(TypeLogin7))
 	require.Equal(t, "type_0x42", TypeName(0x42))
 }
+
+func TestBuildBatchReplyProcVariant(t *testing.T) {
+	const tds = 0x74000004
+	base := QueryOptions{TDSVersion: tds, Server: "WIN-TEST"}
+	variant := base
+	variant.Variant = 1
+
+	// variant 0 is the bare DONE for everything without a result
+	for _, q := range []string{"exec sp_addlogin x,y", "use master;DROP ASSEMBLY [a]", "EXEC sp_who"} {
+		got, status := BuildBatchReply(q, base)
+		require.Equal(t, StatusDone, status)
+		require.Equal(t, BuildDone(tds), got, q)
+	}
+
+	// variant 1 answers a procedure call with RETURNSTATUS 0 + DONEPROC
+	for _, q := range []string{"exec sp_addlogin x,y", "use msdb;EXEC dbo.sp_delete_job @job_name = 'a'", "execute [master].[dbo].[exeGod]"} {
+		got, status := BuildBatchReply(q, variant)
+		require.Equal(t, StatusDone, status)
+		body := got[HeaderLen:]
+		require.Equal(t, []byte{tokenReturnStatus, 0, 0, 0, 0}, body[:5], q)
+		require.Equal(t, byte(tokenDoneProc), body[5], q)
+	}
+
+	// other statements stay a bare DONE, and results are unchanged
+	got, _ := BuildBatchReply("DROP ASSEMBLY [a]", variant)
+	require.Equal(t, BuildDone(tds), got)
+	v0, _ := BuildBatchReply("select @@version", base)
+	v1, _ := BuildBatchReply("select @@version", variant)
+	require.Equal(t, v0, v1)
+
+	// an RPC already ends in RETURNSTATUS + DONEPROC; the variant adds nothing
+	r0, _ := BuildRPCReply("exec sp_who", base)
+	r1, _ := BuildRPCReply("exec sp_who", variant)
+	require.Equal(t, r0, r1)
+}
