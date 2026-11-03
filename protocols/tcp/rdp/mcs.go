@@ -29,6 +29,15 @@ func x224UserData(data []byte) []byte {
 	return data[off:]
 }
 
+// perLengthBytes encodes a PER length determinant (X.691 10.9): one byte below 128,
+// otherwise 0x80|hi, lo.
+func perLengthBytes(n int) []byte {
+	if n < 0x80 {
+		return []byte{byte(n)}
+	}
+	return []byte{0x80 | byte(n>>8), byte(n)}
+}
+
 func berLength(n int) []byte {
 	if n < 0x80 {
 		return []byte{byte(n)}
@@ -79,27 +88,30 @@ func MCSConnectResponse(selected uint32, channels int) (TKIPHeader, []byte) {
 	}
 	// TS_UD_SC_SEC1 (0x0c02): ENCRYPTION_METHOD_NONE / ENCRYPTION_LEVEL_NONE.
 	scSec := []byte{0x02, 0x0c, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-	blocks := append(append(append([]byte{}, scCore...), scNet...), scSec...)
+	// Windows orders the server blocks core, security, network.
+	blocks := append(append(append([]byte{}, scCore...), scSec...), scNet...)
 
 	// PER-aligned GCC Conference Create Response prefix from MS-RDPBCGR 4.1.4,
 	// then "McDn" and the concatenated server data blocks.
-	gccBody := []byte{0x14, 0x76, 0x0a, 0x01, 0x01, 0x00, 0x01, 0xc0, 0x00, 0x00, 0x4d, 0x63, 0x44, 0x6e}
-	gccBody = append(gccBody, berLength(len(blocks))...)
+	// Lengths inside the GCC PDU are PER, not BER.
+	gccBody := []byte{0x14, 0x76, 0x0a, 0x01, 0x01, 0x00, 0x01, 0xc0, 0x00, 0x4d, 0x63, 0x44, 0x6e}
+	gccBody = append(gccBody, perLengthBytes(len(blocks))...)
 	gccBody = append(gccBody, blocks...)
 
-	gcc := []byte{0x00, 0x05, 0x00, 0x14, 0x7c, 0x00}
-	gcc = append(gcc, berLength(len(gccBody))...)
+	// t124Identifier: choice 0 (object), 5-byte OID 0.0.20.124.0.1.
+	gcc := []byte{0x00, 0x05, 0x00, 0x14, 0x7c, 0x00, 0x01}
+	gcc = append(gcc, perLengthBytes(len(gccBody))...)
 	gcc = append(gcc, gccBody...)
 
 	domainParams := []byte{
-		0x30, 0x19,
+		0x30, 0x1a,
 		0x02, 0x01, 0x22, // maxChannelIds 34
-		0x02, 0x01, 0x02, // maxUserIds 2
+		0x02, 0x01, 0x03, // maxUserIds 3
 		0x02, 0x01, 0x00, // maxTokenIds 0
 		0x02, 0x01, 0x01, // numPriorities 1
 		0x02, 0x01, 0x00, // minThroughput 0
 		0x02, 0x01, 0x01, // maxHeight 1
-		0x02, 0x02, 0xff, 0xff, // maxMCSPDUSize
+		0x02, 0x03, 0x00, 0xff, 0xf8, // maxMCSPDUSize 65528 (4.1.4)
 		0x02, 0x01, 0x02, // protocolVersion 2
 	}
 

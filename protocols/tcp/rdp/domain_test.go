@@ -275,3 +275,38 @@ func TestParseClientInfoUTCTimeZone(t *testing.T) {
 	require.Equal(t, "UTC", ci.TZStandardName)
 	require.Empty(t, ci.TZDaylightName)
 }
+
+// TestMCSConnectResponseWellFormed pins the GCC/BER structure against
+// MS-RDPBCGR 4.1.4: the t124 OID is 0.0.20.124.0.1, there is no stray byte
+// before "McDn", maxMCSPDUSize is a positive INTEGER, and the PER user-data
+// length matches the server blocks. rdp-rs stalled on the old malformed form.
+func TestMCSConnectResponseWellFormed(t *testing.T) {
+	_, resp := MCSConnectResponse(ProtocolSSL, 0)
+	require.Equal(t, len(resp), int(binary.BigEndian.Uint16(resp[2:4])))
+	// X.224 DT, then MCS Connect-Response APPLICATION 102.
+	require.Equal(t, mustHex("02f080"), resp[4:7])
+	require.Equal(t, mustHex("7f66"), resp[7:9])
+	require.Equal(t, int(resp[9]), len(resp)-10, "BER length covers the rest")
+	body := resp[10:]
+	// result rt-successful, calledConnectId 0, then domainParameters.
+	require.Equal(t, mustHex("0a010002010030"), body[:7])
+	require.Equal(t, 0x1a, int(body[7]))
+	dp := body[8 : 8+0x1a]
+	require.Equal(t, mustHex("020300fff8"), dp[len(dp)-8:len(dp)-3], "maxMCSPDUSize 65528 as a 3-byte INTEGER")
+	ud := body[8+0x1a:]
+	require.Equal(t, byte(0x04), ud[0])
+	require.Equal(t, len(ud)-2, int(ud[1]))
+	gcc := ud[2:]
+	require.Equal(t, mustHex("000500147c0001"), gcc[:7])
+	n, hdr := perLength(gcc[7:])
+	require.Equal(t, len(gcc)-7-hdr, n, "ConnectData length covers the response")
+	pdu := gcc[7+hdr:]
+	require.Equal(t, mustHex("14760a01010001c0004d63446e"), pdu[:13])
+	un, uhdr := perLength(pdu[13:])
+	blocks := pdu[13+uhdr:]
+	require.Equal(t, len(blocks), un)
+	// Blocks: SC_CORE, SC_SECURITY, SC_NET.
+	require.Equal(t, uint16(0x0c01), binary.LittleEndian.Uint16(blocks[0:2]))
+	require.Equal(t, uint16(0x0c02), binary.LittleEndian.Uint16(blocks[16:18]))
+	require.Equal(t, uint16(0x0c03), binary.LittleEndian.Uint16(blocks[28:30]))
+}
