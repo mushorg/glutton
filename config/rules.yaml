@@ -222,6 +222,9 @@ rules:
   - match: udp dst port 6881
     type: conn_handler
     target: dht
+  - match: udp dst port 123
+    type: conn_handler
+    target: ntp
   - match: udp dst port 161
     type: conn_handler
     target: snmp

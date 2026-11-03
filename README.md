@@ -84,6 +84,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | iSCSI                       | block-storage target probes              |
 | BitTorrent                  | peer handshake traffic                   |
 | BitTorrent DHT              | BEP 5 `find_node`/`get_peers` on udp/6881 |
+| NTP                         | mode 3 client, mode 6/7 (monlist) probes on udp/123 |
 | Memcache                    | key-value cache commands                 |
 | Jabber/XMPP                 | instant messaging stream                 |
 | ADB                         | Android Debug Bridge connect, shell, push |
