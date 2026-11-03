@@ -116,6 +116,9 @@ rules:
   - match: tcp dst port 179
     type: conn_handler
     target: bgp
+  - match: tcp dst port 9160
+    type: conn_handler
+    target: cassandra
   - match: tcp dst port 554 or port 8554 or port 10554
     type: conn_handler
     target: rtsp

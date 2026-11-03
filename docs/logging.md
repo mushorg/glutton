@@ -72,7 +72,7 @@ Value encodings inside `decoded` follow Go's `encoding/json`:
 - Fields documented as "(hex)" are hex strings produced by the handler (`spi_i`, `spi_r`, `token`, `session_id` on `openvpn`, `challenge`, and so on).
 - Fixed-size byte arrays are JSON arrays of numbers 0–255. Today these are only the `bittorrent` fields `protocol_identifier`, `reserved`, `info_hash` and `peer_id`; show them as hex.
 - Every other array of numbers is a list of IDs, not bytes: `cipher_suites` and `extensions` (`dtls`, uint16), `etypes` (`kerberos`), `encodings` (`rfb`, int32, can be negative). Show these as lists; joining them as hex gives wrong values.
-- Nested objects (`header` on `smb`, `mongodb` and `bgp`, `open`/`notification` on `bgp`, `questions` on `mdns`, `submessages` on `rtps`) are JSON objects or arrays of objects.
+- Nested objects (`header` on `smb`, `mongodb` and `bgp`, `open`/`notification` on `bgp`, `message` on `cassandra`, `questions` on `mdns`, `submessages` on `rtps`) are JSON objects or arrays of objects.
 
 Array-of-frames `decoded` entries share these JSON names when the handler fills them: `direction`, `payload`, `command` (leaf operation), `path`, `status` (writes), `truncated`. Handler-specific fields sit beside them. A display that shows only the shared fields hides the most useful data for most handlers, so show every key a frame carries and use the per-handler page linked in the table below to order them. Some fields are easy to miss but matter for reading a session:
 
@@ -157,6 +157,7 @@ Example shape:
 | `dahua` | TCP | [protocols/dahua.md](protocols/dahua.md) |
 | `sofia` | TCP | [protocols/sofia.md](protocols/sofia.md) |
 | `bgp` | TCP | [protocols/bgp.md](protocols/bgp.md) |
+| `cassandra` | TCP | [protocols/cassandra.md](protocols/cassandra.md) |
 | `rtsp` | TCP | [protocols/rtsp.md](protocols/rtsp.md) |
 | `icap` | TCP | [protocols/icap.md](protocols/icap.md) |
 | `ipp` | TCP | [protocols/ipp.md](protocols/ipp.md) |
