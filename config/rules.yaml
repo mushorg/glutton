@@ -110,7 +110,7 @@ rules:
   - match: tcp dst port 37777
     type: conn_handler
     target: dahua
-  - match: tcp dst port 34567
+  - match: tcp dst port 34567 or port 34568
     type: conn_handler
     target: sofia
   - match: tcp dst port 179

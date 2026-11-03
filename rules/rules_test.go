@@ -367,3 +367,20 @@ func TestDefaultRulesRouteDICOMPorts(t *testing.T) {
 		require.Equal(t, TLSAuto, match.TLS, "port %d", port)
 	}
 }
+
+func TestDefaultRulesRouteSofiaPorts(t *testing.T) {
+	fh, err := os.Open("../config/rules.yaml")
+	require.NoError(t, err)
+	defer fh.Close()
+	rs, err := Init(fh)
+	require.NoError(t, err)
+
+	srcAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 50000}
+	for _, port := range []int{34567, 34568} {
+		dstAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
+		match, err := rs.Match("tcp", srcAddr, dstAddr)
+		require.NoError(t, err)
+		require.NotNil(t, match, "port %d", port)
+		require.Equal(t, "sofia", match.Target, "port %d", port)
+	}
+}
