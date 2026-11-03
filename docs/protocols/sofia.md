@@ -1,0 +1,9 @@
+# `sofia` decoded data
+
+Transport: TCP. Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
+
+**`decoded`:** Array of per-direction frames: `direction`, `header`, `command`, `username`, `password`, `status`, `payload`, `truncated`
+
+XiongMai (XMeye / NetSurveillance) DVR "Sofia" control protocol (tcp/34567). Each frame is a 20-byte little-endian header (`0xff` magic, version, session id, sequence, total/current packet, message id, body length) plus a JSON body ending in `\n\x00`. The layout is inferred from captured traffic, not from a vendor spec. `header` is the parsed header (`head`, `version`, `session_id`, `sequence`, `total_packet`, `cur_packet`, `msg_id`, `data_len`). `command` is the JSON `Name`, else `OprName`, else `msg-<id>`; the classic exploit is `Name` `DebugShell` with `OprName` `PingDev`, whose body carries a shell command (typically an NFS mount plus `sh`) that stays in `payload` and is never executed or fetched. `username` and `password` come from `UserName` / `PassWord` in login bodies and are recorded in plaintext (the device sends a hash-like string as the password).
+
+Every request gets a `write` with `status` `ok`: message id plus one, the request `Sequence` echoed, body `{"Ret":100,"SessionID":"0x........"}` (plus `Name` when the request had one). A login (`msg_id` 1000) is handed session `0x00000002`; otherwise the client's session id is echoed. A frame that does not start with `0xff` is recorded as a header-length `read` without parsed fields and ends the session (`read_error`). Bodies over 64 KiB are stored up to the cap with `truncated` and also end the session (`read_error`); after 20 requests the session ends with `max_frames`. No catch-all reroute exists, so the protocol on other ports stays in generic `tcp`.

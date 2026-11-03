@@ -88,6 +88,7 @@ func TestMapTCPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "opcua", "expected OPC UA handler")
 	require.Contains(t, m, "mctp", "expected MCTP handler")
 	require.Contains(t, m, "dahua", "expected Dahua handler")
+	require.Contains(t, m, "sofia", "expected Sofia handler")
 	require.Contains(t, m, "rtsp", "expected RTSP handler")
 	require.Contains(t, m, "hl7", "expected HL7 handler")
 	require.Contains(t, m, "ipp", "expected IPP handler")

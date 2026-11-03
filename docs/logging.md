@@ -155,6 +155,7 @@ Example shape:
 | `opcua` | TCP | [protocols/opcua.md](protocols/opcua.md) |
 | `mctp` | TCP | [protocols/mctp.md](protocols/mctp.md) |
 | `dahua` | TCP | [protocols/dahua.md](protocols/dahua.md) |
+| `sofia` | TCP | [protocols/sofia.md](protocols/sofia.md) |
 | `rtsp` | TCP | [protocols/rtsp.md](protocols/rtsp.md) |
 | `icap` | TCP | [protocols/icap.md](protocols/icap.md) |
 | `ipp` | TCP | [protocols/ipp.md](protocols/ipp.md) |
