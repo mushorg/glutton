@@ -249,6 +249,9 @@ rules:
   - match: udp dst port 111
     type: conn_handler
     target: rpcbind
+  - match: udp dst port 53
+    type: conn_handler
+    target: dns
   - match: udp
     type: conn_handler
     target: udp

@@ -1,6 +1,6 @@
 # `dns` decoded data
 
-Transport: TCP. Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
+Transport: TCP and UDP. Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
 
 **`decoded`:** Array of per-direction frames: `direction`, `id`, `opcode`, `command`, `class`, `path`, `status`, `payload`, `truncated`
 
@@ -17,4 +17,6 @@ The honeypot answers like a non-recursive name server and never resolves or forw
 
 The reply echoes the question as sent and, for an EDNS query, an empty OPT record (UDP size 1232), so it is never larger than the query. A message with the `QR` bit set is a response; it is recorded but not answered. Up to 8 messages are answered per connection (`endReason` `max_frames` after that). A message shorter than a 12-byte header is recorded and the connection closes with no reply. If the client announces a length but stops early (a non-DNS protocol on port 53, such as HTTP), the bytes that arrived are stored in one `read` frame with `truncated` set and `endReason` `read_error`. A client that sends nothing yields an empty array.
 
-UDP port 53 is not handled here; datagrams there reach the generic `udp` handler.
+## UDP
+
+Datagrams on udp/53 (`protocols/udp/dns.go`) produce the same frame shape, one event per datagram: a `read` frame with the raw datagram in `payload` (no length prefix) and, when answered, one `write` frame with the same `status` policy as above. The reply goes through `ReplyUDP` (charged to `udp_reply_limit`), echoes the ID and question, carries no records and is never larger than the query, so `ANY`/EDNS queries cannot be used for amplification. A datagram shorter than a header or with `QR` set gets no reply; a datagram over 1232 bytes is captured up to that size with `truncated` set. Nothing is resolved, forwarded or looked up.

@@ -113,6 +113,7 @@ func MapUDPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"sip":         bindUDP(udp.HandleSIP, log, h),
 		"openvpn":     bindUDP(udp.HandleOpenVPN, log, h),
 		"mdns":        bindUDP(udp.HandleMDNS, log, h),
+		"dns":         bindUDP(udp.HandleDNS, log, h),
 		"l2tp":        bindUDP(udp.HandleL2TP, log, h),
 		"raknet":      bindUDP(udp.HandleRakNet, log, h),
 		"kerberos":    bindUDP(udp.HandleKerberos, log, h),

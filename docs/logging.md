@@ -186,7 +186,7 @@ Example shape:
 | `whois` | TCP | [protocols/whois.md](protocols/whois.md) |
 | `ident` | TCP | [protocols/ident.md](protocols/ident.md) |
 | `rsync` | TCP | [protocols/rsync.md](protocols/rsync.md) |
-| `dns` | TCP | [protocols/dns.md](protocols/dns.md) |
+| `dns` | TCP, UDP | [protocols/dns.md](protocols/dns.md) |
 | `acpp` | TCP | [protocols/acpp.md](protocols/acpp.md) |
 | `rpcbind` | TCP/UDP | [protocols/rpcbind.md](protocols/rpcbind.md) |
 | `nfs` | TCP | [protocols/nfs.md](protocols/nfs.md) |
