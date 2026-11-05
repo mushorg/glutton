@@ -20,6 +20,7 @@ import (
 	spicyHandlers "github.com/mushorg/glutton/protocols/spicy/handlers"
 	"github.com/mushorg/glutton/protocols/tcp"
 	"github.com/mushorg/glutton/protocols/tcp/adb"
+	"github.com/mushorg/glutton/protocols/tcp/dnp3"
 	"github.com/mushorg/glutton/protocols/tcp/firebird"
 	"github.com/mushorg/glutton/protocols/tcp/hl7"
 	"github.com/mushorg/glutton/protocols/tcp/mctp"
@@ -489,6 +490,14 @@ var catchAllMatchers = []catchAllMatcher{
 		peek:   fixedPeek(hl7PeekLen, func(snip []byte) bool { return snip[0] == hl7.StartBlock || snip[0] == 'M' }),
 		match:  hl7.LooksLikeHL7,
 		handle: asBuffered(tcp.HandleHL7),
+	},
+	{
+		// ICS scanners (Censys) sweep DNP3 link addresses with Request Link
+		// Status frames on any port; the header CRC tells it apart
+		name:   "dnp3",
+		peek:   fixedPeek(dnp3.HeaderSize, dnp3.MayStart),
+		match:  dnp3.LooksLikeFrame,
+		handle: asBuffered(tcp.HandleDNP3),
 	},
 	{
 		// HTTP on any port goes to the HTTP handler, with or without Spicy;

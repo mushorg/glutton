@@ -92,6 +92,22 @@ func ParseHeader(b []byte) (Header, error) {
 	return h, nil
 }
 
+// MayStart reports whether b (the first client bytes) could begin a link
+// frame: the start bytes and, when present, a LENGTH of at least MinLength.
+func MayStart(b []byte) bool {
+	if len(b) < 2 || b[0] != 0x05 || b[1] != 0x64 {
+		return false
+	}
+	return len(b) < 3 || b[2] >= MinLength
+}
+
+// LooksLikeFrame reports whether b starts with a link header whose CRC
+// verifies, which a two-byte start sequence alone would not show.
+func LooksLikeFrame(b []byte) bool {
+	_, err := ParseHeader(b)
+	return err == nil
+}
+
 // DIR is true for frames sent by a master.
 func (h Header) DIR() bool { return h.Control&0x80 != 0 }
 

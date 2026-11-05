@@ -54,6 +54,21 @@ func TestParseHeaderErrors(t *testing.T) {
 	require.ErrorIs(t, err, ErrLength)
 }
 
+func TestMayStartAndLooksLikeFrame(t *testing.T) {
+	// Censys sweep frame from tcp/16464: REQUEST_LINK_STATUS to dest 0
+	frame := []byte{0x05, 0x64, 0x05, 0xc9, 0x00, 0x00, 0x00, 0x00, 0x36, 0x4c}
+	require.False(t, MayStart(frame[:1]))
+	require.True(t, MayStart(frame[:2]))
+	require.True(t, MayStart(frame[:4]))
+	require.False(t, MayStart([]byte{0x05, 0x64, 0x04}))
+	require.False(t, MayStart([]byte("GET ")))
+	require.True(t, LooksLikeFrame(frame))
+	require.False(t, LooksLikeFrame(frame[:9]))
+	bad := append([]byte(nil), frame...)
+	bad[8] ^= 0xff
+	require.False(t, LooksLikeFrame(bad))
+}
+
 func TestBodySize(t *testing.T) {
 	for length, want := range map[byte]int{5: 0, 6: 3, 21: 18, 22: 21, 255: 250 + 2*16} {
 		require.Equal(t, want, Header{Length: length}.BodySize(), "length %d", length)
