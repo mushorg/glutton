@@ -311,7 +311,8 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 		return Response{Name: "ssh", Data: sshBanner}, bytes.HasPrefix(data, []byte("SSH-"))
 	},
 	func(data []byte) (Response, bool) {
-		return Response{Name: "tls-alert", Data: tlsAlert}, helpers.LooksLikeTLSHandshakeRecord(data)
+		// the alert is fatal: a real TLS stack hangs up after sending it
+		return Response{Name: "tls-alert", Data: tlsAlert, Close: true}, helpers.LooksLikeTLSHandshakeRecord(data)
 	},
 	func(data []byte) (Response, bool) {
 		return Response{Name: "http2-settings", Data: h2Reply}, bytes.HasPrefix(data, h2Preface)

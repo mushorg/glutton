@@ -29,7 +29,7 @@ Writes set `status` to the response name or `random`.
 | Client sends | Response | Reply |
 | --- | --- | --- |
 | `SSH-` | `ssh` | SSH banner. The catch-all dispatcher routes `SSH-` to the [`ssh`](ssh.md) handler first, so this only applies when another dispatcher's fallback (e.g. `mctp`, `rtsp`) hands SSH to the catch-all |
-| TLS handshake record (`16 03 00`–`04`, or TLCP `16 01 01` from GmSSL/Tongsuo) that is not a complete ClientHello | `tls-alert` | TLS alert |
+| TLS handshake record (`16 03 00`–`04`, or TLCP `16 01 01` from GmSSL/Tongsuo) that is not a complete ClientHello | `tls-alert` | fatal TLS alert, then the connection is closed |
 | Complete TLS ClientHello | `tls-clienthello` | TLS handshake, see [TLS ClientHello](#tls-clienthello) |
 | HTTP/2 client preface `PRI * HTTP/2.0` (h2c prior knowledge) | `http2-settings` | nginx-style SETTINGS, WINDOW_UPDATE, SETTINGS ACK and GOAWAY (NO_ERROR) on stream 0 |
 | Oracle TNS CONNECT (packet type `01`, version 300–319, connect descriptor in the packet) | `tns-refuse` | Oracle 19c listener REFUSE (`ERR=12504`, `VSNNUM=318767104`), then the connection closes |
@@ -83,7 +83,7 @@ Silent responses (`mglndd`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin
 
 ## TLS ClientHello
 
-A complete ClientHello is tagged `tls-clienthello`. The handler then:
+A read that starts with a TLS handshake record header keeps reading until the record's declared length has arrived (bounded by `max_tcp_payload`), so a ClientHello split over several TCP segments is one read frame holding the raw bytes of all of them. A complete ClientHello is tagged `tls-clienthello`. The handler then:
 
 - finishes the handshake with the shared self-signed certificate (`helpers.TerminateTLSFrom`) and sets the event's `tls` object;
 - records a `write` frame with `status` `tls-handshake` for the server's handshake flight (also when the client hangs up mid-handshake or crypto/tls sends a fatal alert). If a handshake write fails, the frame is still recorded, with an `error` field (`reply over budget` for a `tcp_reply_limit` drop, otherwise `write failed`) and only the bytes that went out, and the event's `endReason` is `write_error`;

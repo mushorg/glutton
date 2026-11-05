@@ -938,6 +938,129 @@ func TestHandleTCPTLSAlertMalformedHello(t *testing.T) {
 	require.Nil(t, events[0].ClientHello)
 }
 
+func TestHandleTCPTLSAlertClosesSession(t *testing.T) {
+	// glutton-capture-loop event 7 (Censys, tcp/26265): after the fatal
+	// alert the catch-all read the client's next 319 bytes and answered with
+	// random bytes; a real TLS stack hangs up after a fatal alert.
+	client, hp, done := startCatchAll(t, 26265)
+	hello := []byte{0x16, 0x03, 0x01, 0x00, 0x05, 0x01, 0x00, 0x00, 0x01, 0x03}
+	_, err := client.Write(hello)
+	require.NoError(t, err)
+	alert := readAll(t, client, 7)
+	require.Equal(t, []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28}, alert)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not hang up after the fatal alert")
+	}
+	// the connection is closed: more client data is not read
+	_, err = client.Write([]byte("more"))
+	require.Error(t, err)
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "tcp", produced.protocol)
+	require.Empty(t, hp.produced, "exactly one event per session")
+	require.Equal(t, connection.EndHandlerClose, produced.endReason)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Command: "tls-alert", Payload: hello, PayloadHash: helpers.SHA256Hex(hello)},
+		{Direction: "write", Status: "tls-alert", Payload: alert, PayloadHash: helpers.SHA256Hex(alert)},
+	}, produced.decoded.([]parsedTCP))
+}
+
+func TestHandleTCPTLSClientHelloSplitAcrossWrites(t *testing.T) {
+	// glutton-capture-loop event 7: the 1767-byte ClientHello arrived as
+	// 1448 + 319 bytes; only the first segment was parsed, so it got an alert
+	client, hp, done := startCatchAll(t, 26265)
+	hello := tlsMidhsOchi406ec717
+	for _, part := range [][]byte{hello[:100], hello[100:]} {
+		_, err := client.Write(part)
+		require.NoError(t, err)
+	}
+	// a ServerHello record, not an alert
+	require.Equal(t, byte(0x16), readAll(t, client, 5)[0])
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 2)
+	require.Equal(t, "tls-clienthello", events[0].Command)
+	require.Equal(t, hello, events[0].Payload, "raw wire bytes of both segments")
+	require.Equal(t, helpers.SHA256Hex(hello), events[0].PayloadHash)
+	require.NotNil(t, events[0].ClientHello)
+	require.Equal(t, "t12i4905h1_730fb1b0ac6a_22a92d800fe4", events[0].ClientHello.JA4)
+	requireTLSHandshakeWrite(t, events[1])
+}
+
+// splitFirstWrite sends the first write in two segments with a pause, as a
+// ClientHello larger than one TCP segment arrives.
+type splitFirstWrite struct {
+	net.Conn
+	done bool
+}
+
+func (c *splitFirstWrite) Write(b []byte) (int, error) {
+	if c.done || len(b) < 20 {
+		return c.Conn.Write(b)
+	}
+	c.done = true
+	n, err := c.Conn.Write(b[:10])
+	if err != nil {
+		return n, err
+	}
+	time.Sleep(20 * time.Millisecond)
+	m, err := c.Conn.Write(b[10:])
+	return n + m, err
+}
+
+func TestHandleTCPTLSSplitClientHelloTerminates(t *testing.T) {
+	raw, hp, done := startCatchAllTCP(t, 26265)
+	client := tls.Client(&splitFirstWrite{Conn: raw}, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // test client for a self-signed cert
+	require.NoError(t, client.Handshake())
+
+	produced := finishCatchAllProduced(t, client, hp, done)
+	require.NotNil(t, produced.tls, "the split hello was terminated")
+	events := produced.decoded.([]parsedTCP)
+	require.Len(t, events, 2)
+	require.Equal(t, "tls-clienthello", events[0].Command)
+	require.NotNil(t, events[0].ClientHello)
+	requireTLSHandshakeWrite(t, events[1])
+}
+
+func TestIncompleteTLSRecord(t *testing.T) {
+	require.False(t, incompleteTLSRecord([]byte("GET / HTTP/1.1\r\n")))
+	require.True(t, incompleteTLSRecord([]byte{0x16, 0x03, 0x01}))
+	require.True(t, incompleteTLSRecord([]byte{0x16, 0x03, 0x01, 0x06, 0xe2, 0x01}))
+	require.False(t, incompleteTLSRecord([]byte{0x16, 0x03, 0x01, 0x00, 0x01, 0x01}))
+	require.False(t, incompleteTLSRecord(tlsMidhsOchi406ec717))
+	require.True(t, incompleteTLSRecord(tlsMidhsOchi406ec717[:len(tlsMidhsOchi406ec717)-1]))
+}
+
+func TestHandleTCPTLSRecordCapped(t *testing.T) {
+	// a record header declaring more than max_tcp_payload cannot stall the read
+	client, hp, done := startCatchAll(t, 26265)
+	header := []byte{0x16, 0x03, 0x01, 0xff, 0xff}
+	_, err := client.Write(append(header, bytes.Repeat([]byte{0x01}, 1019)...))
+	require.NoError(t, err)
+	for range 4 {
+		_, err = client.Write(bytes.Repeat([]byte{0x01}, 1024))
+		require.NoError(t, err)
+	}
+	readAll(t, client, 7) // alert for the unparseable hello
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	produced := waitProduced(t, hp)
+	require.Equal(t, connection.EndMaxFrames, produced.endReason)
+	events := produced.decoded.([]parsedTCP)
+	require.Len(t, events, 2)
+	require.Equal(t, "tls-alert", events[0].Command)
+	require.Len(t, events[0].Payload, 5*1024)
+}
+
 func TestHandleTCPSilentGreetsIdlePort(t *testing.T) {
 	client, hp, done := startCatchAllWith(t, 4444, HandleTCPSilent)
 

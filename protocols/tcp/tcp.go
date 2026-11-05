@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -145,8 +146,23 @@ func (s *tcpServer) captureRead(data []byte, payloadHash, command string, hello 
 	s.events = append(s.events, ev)
 }
 
-// readPayload reads one client message: until a short read, a read error, or
-// the max_tcp_payload cap. endReason is set when the read ended the session;
+// incompleteTLSRecord reports whether data starts with a TLS handshake record
+// whose declared length has not fully arrived yet. A ClientHello split over
+// TCP segments (Censys sends 1767-byte hellos as 1448 + 319) must be read
+// whole before it can be parsed and terminated.
+func incompleteTLSRecord(data []byte) bool {
+	if !helpers.LooksLikeTLSHandshakeRecord(data) {
+		return false
+	}
+	if len(data) < 5 {
+		return true
+	}
+	return len(data) < 5+int(binary.BigEndian.Uint16(data[3:5]))
+}
+
+// readPayload reads one client message: until a short read (that does not
+// end inside a TLS handshake record), a read error, or the max_tcp_payload
+// cap. endReason is set when the read ended the session;
 // err is only returned when the connection timeout could not be set.
 func (s *tcpServer) readPayload(ctx context.Context, h interfaces.Honeypot, logger interfaces.Logger) (data []byte, endReason string, err error) {
 	buffer := make([]byte, maxBufferSize)
@@ -160,7 +176,7 @@ func (s *tcpServer) readPayload(ctx context.Context, h interfaces.Honeypot, logg
 			return data, connection.EndReasonFromRead(err), nil
 		}
 		data = append(data, buffer[:n]...)
-		if n < maxBufferSize {
+		if n < maxBufferSize && !incompleteTLSRecord(data) {
 			return data, "", nil
 		}
 		if len(data) > viper.GetInt("max_tcp_payload") {
