@@ -54,6 +54,7 @@ Writes set `status` to the response name or `random`.
 | KMP login (CID `92`, BE u16 PIN) | `kamstrup-login` | `40 3f 92 01` (denied); the PIN is recorded as `password` on the read |
 | A CRC-valid KMP frame for another address or command | `kamstrup` | None, the connection stays open |
 | `MGLNDD_<ip>_<port>` scanner probe | `mglndd` | None |
+| Bracket-framed probe: `00 00 00`, `[<n>]\0` with n covering the rest, a NUL-terminated tag, then `[<n>]\0<n bytes>` fields (Shodan sends `[38]\0d\0` + three base64 "Remote"/"remote" fields to tcp/55000; target service unidentified) | `bracket-probe` | None |
 
 ### Port responses
 
@@ -79,7 +80,7 @@ Writes set `status` to the response name or `random`.
 | 21379 | `opc-tunneller` | MatrikonOPC Tunneller default port. Sends nothing but keeps the connection open, so the client hello and its follow-up frames are recorded; the real server's reply framing is not public |
 | 30005 | `port-30005` | No registered service, and the product behind it is unconfirmed. Sends nothing but keeps the connection open, as an HTTP-style listener does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request; HTTP requests go to the `http` handler |
 
-Silent responses (`mglndd`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin or Litecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 21379 (`opc-tunneller`) and 30005 (`port-30005`), a KMP frame the meter does not answer (`kamstrup`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
+Silent responses (`mglndd`, `bracket-probe`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin or Litecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 21379 (`opc-tunneller`) and 30005 (`port-30005`), a KMP frame the meter does not answer (`kamstrup`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
 
 ## TLS ClientHello
 

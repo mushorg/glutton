@@ -331,6 +331,9 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 		return Response{Name: "mglndd", Silent: true}, mglnddProbe.Match(data)
 	},
 	func(data []byte) (Response, bool) {
+		return Response{Name: "bracket-probe", Silent: true}, bracketProbe(data)
+	},
+	func(data []byte) (Response, bool) {
 		msgID, ok := ldapRootDSEQuery(data)
 		if !ok {
 			return Response{}, false

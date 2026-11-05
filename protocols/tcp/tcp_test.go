@@ -445,6 +445,8 @@ func TestHandleTCPSilentReplies(t *testing.T) {
 		// Ochi event 326742f1-0f6b-42c7-891f-c01081fc0166
 		{"mglndd on ldap", 389, []byte("MGLNDD_1.2.3.4_389\n"), "mglndd"},
 		{"mglndd elsewhere", 9999, []byte("MGLNDD_1.2.3.4_9999\n"), "mglndd"},
+		// Shodan-tagged probe on tcp/55000 (209.38.70.156)
+		{"bracket probe", 55000, []byte("\x00\x00\x00[38]\x00d\x00[8]\x00UmVtb3Rl[8]\x00cmVtb3Rl[8]\x00UmVtb3Rl"), "bracket-probe"},
 		{"non-ber on ldap", 389, []byte("GET / HTTP/1.0\r\n\r\n"), ""},
 		{"no magic on bitcoin", 8333, []byte("\x16\x00junk\r\n"), ""},
 		{"no fox hello on niagara", 1911, []byte("GET / HTTP/1.0\r\n\r\n"), ""},
