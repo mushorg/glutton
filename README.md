@@ -101,7 +101,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | RTSP (IP cameras)           | OPTIONS/DESCRIBE and credential attempts on tcp/554, 8554, 10554 |
 | rsync daemon                | module listing and AUTHREQD login attempts on tcp/873, any port |
 | Catch-all service banners   | POP3/RFB greetings, MSSQL/AJP/RPC replies |
-| DICOM                       | PACS associations, C-FIND search keys, C-STORE uploads on tcp/104, 11112, 2761, 2762 |
+| DICOM                       | PACS associations, C-FIND search keys, C-STORE uploads on tcp/104, 2345, 11112, 2761, 2762, 4242 |
 | HL7 v2 (MLLP)               | ADT/ORU/QRY messages to interface engines on tcp/2575, any port |
 | ICAP                        | OPTIONS/REQMOD/RESPMOD on tcp/1344, 11344 |
 | IPP / CUPS                  | Get-Printer-Attributes, print jobs, CUPS admin and credential attempts on tcp/631 |

@@ -358,7 +358,7 @@ func TestDefaultRulesRouteDICOMPorts(t *testing.T) {
 	require.NoError(t, err)
 
 	srcAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 50000}
-	for _, port := range []int{104, 11112, 2761, 2762} {
+	for _, port := range []int{104, 2345, 11112, 2761, 2762, 4242} {
 		dstAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
 		match, err := rs.Match("tcp", srcAddr, dstAddr)
 		require.NoError(t, err)

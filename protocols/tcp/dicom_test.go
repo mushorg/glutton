@@ -158,6 +158,47 @@ func TestHandleDICOMIssue50FindSession(t *testing.T) {
 	}, ev.decoded)
 }
 
+// dicomPort4242RQ is the findscu A-ASSOCIATE-RQ captured on tcp/4242 (the
+// Orthanc default port), which used to fall through to the tcp catch-all.
+var dicomPort4242RQ = []byte("\x01\x00\x00\x00\x01\x00\x00\x01\x00\x00ANY-SCP         FINDSCU         \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00\x151.2.840.10008.3.1.1.1 \x00\x00a\x01\x00\xff\x000\x00\x00\x161.2.840.10008.5.1.4.31@\x00\x00\x131.2.840.10008.1.2.1@\x00\x00\x131.2.840.10008.1.2.2@\x00\x00\x111.2.840.10008.1.2P\x00\x00:Q\x00\x00\x04\x00\x00@\x00R\x00\x00\x1b1.2.276.0.7230010.3.0.3.6.0U\x00\x00\x0fOFFIS_DCMTK_360")
+
+func TestHandleDICOMPort4242Associate(t *testing.T) {
+	client, serverConn := net.Pipe()
+	t.Cleanup(func() { client.Close() })
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleDICOM(context.Background(), serverConn, connection.Metadata{TargetPort: 4242}, &recordingLogger{}, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+
+	ac := dicomRoundTrip(t, client, dicomPort4242RQ)
+	require.Equal(t, dicom.PDUAssociateAC, ac[0])
+	rq, err := dicom.ParseAssociateRQ(dicomPort4242RQ)
+	require.NoError(t, err)
+	require.Equal(t, dicom.BuildAssociateAC(rq), ac)
+	require.NoError(t, client.Close())
+
+	ev := waitDICOM(t, hp, done)
+	require.Equal(t, []parsedDICOM{
+		{
+			Direction:              "read",
+			Command:                "A-ASSOCIATE-RQ",
+			Path:                   "ANY-SCP",
+			PDUType:                "A-ASSOCIATE-RQ",
+			CalledAE:               "ANY-SCP",
+			CallingAE:              "FINDSCU",
+			ApplicationContext:     dicom.ApplicationContextUID,
+			AbstractSyntaxes:       []string{worklistFind},
+			TransferSyntaxes:       []string{dicom.ExplicitVRLittleEndian, "1.2.840.10008.1.2.2", dicom.ImplicitVRLittleEndian},
+			ImplementationClassUID: "1.2.276.0.7230010.3.0.3.6.0",
+			ImplementationVersion:  "OFFIS_DCMTK_360",
+			Payload:                dicomPort4242RQ,
+		},
+		{Direction: "write", Command: "A-ASSOCIATE-AC", PDUType: "A-ASSOCIATE-AC", Status: "Accepted", Payload: ac},
+	}, ev.decoded)
+}
+
 func TestHandleDICOMStoreAndEcho(t *testing.T) {
 	var mu sync.Mutex
 	var stored [][]byte
