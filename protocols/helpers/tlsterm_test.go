@@ -140,6 +140,54 @@ func TestTerminateTLSFingerprintsRejectedHello(t *testing.T) {
 	require.Regexp(t, `^t13d0204`, info.JA4)
 }
 
+// serverHelloRandomTail sends hello to TerminateTLS and returns the last 8
+// bytes of the ServerHello random.
+func serverHelloRandomTail(t *testing.T, hello []byte, version uint16) []byte {
+	t.Helper()
+	client, server := net.Pipe()
+	defer client.Close()
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	require.NoError(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+	go func() {
+		_, _, _ = TerminateTLS(server)
+		_ = server.Close()
+	}()
+	_, err := client.Write(hello)
+	require.NoError(t, err)
+	// record header (5) + handshake header (4) + version (2) + random (32)
+	resp := make([]byte, 43)
+	_, err = io.ReadFull(client, resp)
+	require.NoError(t, err)
+	require.Equal(t, byte(0x16), resp[0], "handshake record")
+	require.Equal(t, byte(0x02), resp[5], "ServerHello")
+	require.Equal(t, []byte{byte(version >> 8), byte(version)}, resp[9:11], "negotiated version")
+	return resp[35:43]
+}
+
+// RFC 8446 §4.1.3: a TLS 1.3 capable server that negotiates TLS 1.2 sets the
+// DOWNGRD\x01 sentinel whatever the client offered, as OpenSSL does. Captured
+// scanners (ja4 t12i880600, no supported_versions) see the same sentinel a
+// stock nginx/OpenSSL server would send them, so it is not a sensor tell.
+func TestTerminateTLSDowngradeSentinel(t *testing.T) {
+	common := []testExt{
+		uint16ListExt(extSupportedGroups, 0x0017, 0x0018),
+		{extECPointFormats, []byte{1, 0}},
+		uint16ListExt(extSignatureAlgorithms, 0x0401, 0x0804, 0x0403),
+	}
+	sentinel := []byte("DOWNGRD\x01")
+
+	legacy := buildHello(t, tls.VersionTLS12, []uint16{0xc02f, 0x009c}, common)
+	require.Equal(t, sentinel, serverHelloRandomTail(t, legacy, tls.VersionTLS12), "no supported_versions")
+
+	offered := buildHello(t, tls.VersionTLS12, []uint16{0xc02f, 0x009c},
+		append(append([]testExt{}, common...), versionsExt(0x0303)))
+	require.Equal(t, sentinel, serverHelloRandomTail(t, offered, tls.VersionTLS12), "supported_versions without 1.3")
+
+	// TLS 1.0 (kept for old RDP clients) carries the DOWNGRD\x00 variant.
+	old := buildHello(t, tls.VersionTLS10, []uint16{0xc013, 0x002f}, common[:2])
+	require.Equal(t, []byte("DOWNGRD\x00"), serverHelloRandomTail(t, old, tls.VersionTLS10))
+}
+
 func TestTerminateTLSSilentClient(t *testing.T) {
 	client, server := net.Pipe()
 	require.NoError(t, client.Close())

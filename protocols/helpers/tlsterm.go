@@ -9,13 +9,17 @@ import (
 	"github.com/mushorg/glutton/connection"
 )
 
-// NOTE on the TLS 1.0 downgrade sentinel: Go's crypto/tls inserts the RFC 8446
-// DOWNGRD\0 sentinel into ServerHello.random when negotiating TLS 1.0 or 1.1.
-// Windows Schannel is believed not to send this sentinel, which could allow
-// fingerprinting the sensor via JA3S or similar analysis. MinVersion is kept at
-// TLS 1.0 because some old RDP clients require it; raise it to tls.VersionTLS12
-// if future testing confirms Schannel behavior, as that would also eliminate the
-// sentinel.
+// NOTE on the RFC 8446 §4.1.3 downgrade sentinel: because the server supports
+// TLS 1.3, crypto/tls ends ServerHello.random with DOWNGRD\x01 whenever it
+// negotiates TLS 1.2 and with DOWNGRD\x00 for TLS 1.0/1.1. It does this whatever
+// the client offered, including hellos with no supported_versions extension.
+// That is what the RFC requires and what OpenSSL-based servers (nginx, Apache)
+// with TLS 1.3 enabled send, so the 1.2 sentinel is deliberately kept: removing
+// it would need a forked TLS stack and would make the sensor look less like
+// them. Windows Schannel is believed not to send the 1.0/1.1 sentinel, which
+// could fingerprint RDP. MinVersion is kept at TLS 1.0 because some old RDP
+// clients require it; raise it to tls.VersionTLS12 if future testing confirms
+// Schannel behavior, as that would also eliminate the DOWNGRD\x00 sentinel.
 
 // tlsCertName is the subject of the shared self-signed server certificate.
 const tlsCertName = "localhost"
