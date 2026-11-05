@@ -347,6 +347,31 @@ func TestForPayloadHTTP2SettingsFollowUp(t *testing.T) {
 	}
 }
 
+func TestForPayloadHTTP2GoAway(t *testing.T) {
+	// client GOAWAY, NO_ERROR, after the SETTINGS exchange (Censys, tcp/64961 over TLS)
+	goaway, err := hex.DecodeString("0000080700000000000000000000000000")
+	require.NoError(t, err)
+	resp, ok := ForPayload(goaway)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "http2-goaway", Silent: true}, resp)
+
+	// with debug data
+	resp, ok = ForPayload(append(append([]byte{0, 0, 10, 7, 0, 0, 0, 0, 0}, goaway[9:]...), 'h', 'i'))
+	require.True(t, ok)
+	require.Equal(t, "http2-goaway", resp.Name)
+
+	// short payload, stream id set, flags set and length mismatch are not GOAWAY
+	for _, data := range [][]byte{
+		{0, 0, 4, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		append([]byte{0, 0, 8, 7, 0, 0, 0, 0, 1}, goaway[9:]...),
+		append([]byte{0, 0, 8, 7, 1, 0, 0, 0, 0}, goaway[9:]...),
+		goaway[:16],
+	} {
+		_, ok := ForPayload(data)
+		require.False(t, ok, "%x", data)
+	}
+}
+
 func TestApcupsdStatus(t *testing.T) {
 	prevNow := now
 	now = func() time.Time { return time.Date(2026, 10, 22, 18, 30, 41, 0, time.UTC) }

@@ -393,6 +393,32 @@ func TestHandleTCPHTTP2Preface(t *testing.T) {
 	}, events)
 }
 
+func TestHandleTCPHTTP2GoAwayCloses(t *testing.T) {
+	// Censys on tcp/64961 sends GOAWAY after the SETTINGS exchange; it used
+	// to get random bytes where a real HTTP/2 server hangs up
+	client, hp, done := startCatchAll(t, 64961)
+
+	probe := []byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+	_, err := client.Write(probe)
+	require.NoError(t, err)
+	reply, ok := banners.ForPayload(probe)
+	require.True(t, ok)
+	require.Equal(t, reply.Data, readAll(t, client, len(reply.Data)))
+
+	goaway := []byte{0, 0, 8, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	_, err = client.Write(goaway)
+	require.NoError(t, err)
+	_, err = client.Read(make([]byte, 1))
+	require.ErrorIs(t, err, io.EOF, "no reply after GOAWAY, connection closed")
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Command: "http2-settings", Payload: probe, PayloadHash: helpers.SHA256Hex(probe)},
+		{Direction: "write", Status: "http2-settings", Payload: reply.Data, PayloadHash: helpers.SHA256Hex(reply.Data)},
+		{Direction: "read", Command: "http2-goaway", Payload: goaway, PayloadHash: helpers.SHA256Hex(goaway)},
+	}, events)
+}
+
 func TestHandleTCPX11Denied(t *testing.T) {
 	// X11 setup from Ochi event bf678cc5-ae8d-4ea2-8d97-02ca98d6e37c (tcp/6029)
 	client, hp, done := startCatchAll(t, 6029)

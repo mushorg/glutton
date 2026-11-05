@@ -147,6 +147,17 @@ func h2SettingsFrame(data []byte) (ack, ok bool) {
 	return data[4]&1 != 0, true
 }
 
+// isH2GoAway reports whether data is exactly one HTTP/2 GOAWAY frame (RFC
+// 9113 6.8): type 0x7, no flags, stream 0, a payload of at least the 8-byte
+// last-stream-id and error code.
+func isH2GoAway(data []byte) bool {
+	if len(data) < 17 || data[3] != 7 || data[4] != 0 || data[5]&0x7f|data[6]|data[7]|data[8] != 0 {
+		return false
+	}
+	n := int(data[0])<<16 | int(data[1])<<8 | int(data[2])
+	return n >= 8 && len(data) == 9+n
+}
+
 // x11Reason is Xorg's refusal for a client without authorization; nmap
 // reports it as "X11 (access denied)".
 const x11Reason = "No protocol specified\n"
@@ -326,6 +337,11 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 			return Response{Name: "http2-settings-ack", NoReply: true}, true
 		}
 		return Response{Name: "http2-settings-ack", Data: h2SettingsAck}, true
+	},
+	func(data []byte) (Response, bool) {
+		// the client is done: a real HTTP/2 server sends nothing more and
+		// closes (Censys, tcp/64961 over TLS)
+		return Response{Name: "http2-goaway", Silent: true}, isH2GoAway(data)
 	},
 	func(data []byte) (Response, bool) {
 		return Response{Name: "mglndd", Silent: true}, mglnddProbe.Match(data)
