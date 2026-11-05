@@ -3,13 +3,16 @@ package tcp
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/stretchr/testify/require"
 )
 
@@ -481,4 +484,77 @@ func TestHandleSMTPDataAtLineCap(t *testing.T) {
 	data := s.finish()[7]
 	require.False(t, data.Truncated)
 	require.Equal(t, strings.Repeat("line\r\n", maxDataRead)+".\r\n", string(data.Payload))
+}
+
+// TestHandleSMTPImplicitTLS covers SMTPS on tcp/465 (rule tls: true): the
+// wrapper terminates TLS first, then the handler greets and answers EHLO over
+// the decrypted connection. The EHLO line is from a captured onyphe session.
+func TestHandleSMTPImplicitTLS(t *testing.T) {
+	client, serverConn := net.Pipe()
+	defer client.Close()
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		// mirrors protocols.finishTLS for a tls: true rule
+		tlsConn, info, err := helpers.TerminateTLS(serverConn)
+		if err != nil {
+			done <- err
+			return
+		}
+		md := connection.Metadata{TLS: info, Outer: []string{"tls"}}
+		server := newSMTPServer(tlsConn)
+		server.sleep = func() error { return nil }
+		done <- handleSMTP(context.Background(), server, md, &recordingLogger{}, hp)
+	}()
+
+	tc := tls.Client(client, &tls.Config{InsecureSkipVerify: true, ServerName: "mail.example.com"})
+	require.NoError(t, tc.Handshake())
+	r := bufio.NewReader(tc)
+	line, err := r.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "220 mail.localdomain ESMTP ready\r\n", line)
+
+	_, err = io.WriteString(tc, "EHLO 1.2.3.4\r\n")
+	require.NoError(t, err)
+	ehlo := ehloReply("mail.localdomain", "1.2.3.4") + "\r\n"
+	got := make([]byte, len(ehlo))
+	_, err = io.ReadFull(r, got)
+	require.NoError(t, err)
+	require.Equal(t, ehlo, string(got))
+
+	_, err = io.WriteString(tc, "QUIT\r\n")
+	require.NoError(t, err)
+	line, err = r.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "221 Bye\r\n", line)
+	// net.Pipe is unbuffered: drain so the server's close_notify does not block
+	go func() { _, _ = io.Copy(io.Discard, tc) }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	produced := waitProduced(t, hp)
+	require.Equal(t, "smtp", produced.protocol)
+	require.NotNil(t, produced.tls)
+	require.Equal(t, "mail.example.com", produced.tls.ServerName)
+	require.NotEmpty(t, produced.tls.JA4)
+	require.Contains(t, produced.stack, "tls")
+	require.Equal(t, []byte("220 mail.localdomain ESMTP ready\r\n"), produced.payload)
+	require.Equal(t, []parsedSMTP{
+		{Direction: "write", Status: "220", Payload: []byte("220 mail.localdomain ESMTP ready\r\n")},
+		{Direction: "read", Command: "EHLO", Payload: []byte("EHLO 1.2.3.4\r\n")},
+		{Direction: "write", Status: "250", Payload: []byte(ehlo)},
+		{Direction: "read", Command: "QUIT", Payload: []byte("QUIT\r\n")},
+		{Direction: "write", Status: "221", Payload: []byte("221 Bye\r\n")},
+	}, produced.decoded)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
 }

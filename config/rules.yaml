@@ -13,6 +13,10 @@ rules:
   - match: tcp dst port 25
     type: conn_handler
     target: smtp
+  - match: tcp dst port 465
+    type: conn_handler
+    target: smtp
+    tls: true
   - match: tcp dst port 3389
     type: conn_handler
     target: rdp

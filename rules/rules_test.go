@@ -350,6 +350,24 @@ func TestRuleTLSMode(t *testing.T) {
 	require.ErrorContains(t, err, "only supported on conn_handler")
 }
 
+func TestDefaultRulesRouteSMTPS(t *testing.T) {
+	fh, err := os.Open("../config/rules.yaml")
+	require.NoError(t, err)
+	defer fh.Close()
+	rs, err := Init(fh)
+	require.NoError(t, err)
+
+	srcAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 50000}
+	for port, mode := range map[int]TLSMode{25: TLSOff, 465: TLSOn} {
+		dstAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
+		match, err := rs.Match("tcp", srcAddr, dstAddr)
+		require.NoError(t, err)
+		require.NotNil(t, match, "port %d", port)
+		require.Equal(t, "smtp", match.Target, "port %d", port)
+		require.Equal(t, mode, match.TLS, "port %d", port)
+	}
+}
+
 func TestDefaultRulesRouteDICOMPorts(t *testing.T) {
 	fh, err := os.Open("../config/rules.yaml")
 	require.NoError(t, err)
