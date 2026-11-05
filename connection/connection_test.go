@@ -113,6 +113,32 @@ func TestFlushOlderThan(t *testing.T) {
 	require.Empty(t, m)
 }
 
+func TestFlushOlderThanKeepsRecent(t *testing.T) {
+	table := New(context.Background())
+	_, err := table.Register("127.0.0.1", "1234", 4321, "192.0.2.1", &rules.Rule{Target: "tcp"})
+	require.NoError(t, err)
+	_, err = table.Register("127.0.0.1", "1235", 4321, "192.0.2.1", &rules.Rule{Target: "tcp"})
+	require.NoError(t, err)
+	table.mtx.Lock()
+	md := table.table[localhost1234Key]
+	md.Added = time.Now().Add(-10 * time.Minute)
+	table.table[localhost1234Key] = md
+	table.mtx.Unlock()
+
+	table.FlushOlderThan(5 * time.Minute)
+
+	require.Equal(t, 1, table.Len())
+	require.Empty(t, table.Get(localhost1234Key))
+	recentKey, err := NewConnKeyByString("127.0.0.1", "1235")
+	require.NoError(t, err)
+	require.Equal(t, "tcp", table.Get(recentKey).Rule.Target)
+
+	// the table keeps working after the swap
+	_, err = table.Register("127.0.0.1", "1236", 4321, "192.0.2.1", &rules.Rule{})
+	require.NoError(t, err)
+	require.Equal(t, 2, table.Len())
+}
+
 func TestEndReasonFromRead(t *testing.T) {
 	for _, tc := range []struct {
 		err  error

@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -178,7 +179,9 @@ func (t *ConnTable) RegisterConn(conn net.Conn, rule *rules.Rule) (Metadata, err
 	if err != nil {
 		return Metadata{}, fmt.Errorf("failed to parse dstPort: %w", err)
 	}
-	return t.Register(srcIP, srcPort, uint16(port), dstHost, rule)
+	// dstHost is a substring of LocalAddr().String(); clone it so the table
+	// entry does not keep the whole "ip:port" string alive.
+	return t.Register(srcIP, srcPort, uint16(port), strings.Clone(dstHost), rule)
 }
 
 // Register a connection in the table
@@ -212,17 +215,30 @@ func NewMetadata(dstPort uint16, dstHost string, rule *rules.Rule) Metadata {
 	}
 }
 
+// FlushOlderThan drops entries added more than s ago. It copies the survivors
+// into a new map instead of deleting in place: Go maps never shrink, and with
+// hundreds of new source ports a second the churn kept growing the old map's
+// memory even though the number of live entries stayed bounded.
 func (t *ConnTable) FlushOlderThan(s time.Duration) {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
 	threshold := time.Now().Add(-1 * s)
 
+	keep := make(map[CKey]Metadata, len(t.table)/2)
 	for ck, md := range t.table {
-		if md.Added.Before(threshold) {
-			delete(t.table, ck)
+		if !md.Added.Before(threshold) {
+			keep[ck] = md
 		}
 	}
+	t.table = keep
+}
+
+// Len returns the number of registered connections.
+func (t *ConnTable) Len() int {
+	t.mtx.RLock()
+	defer t.mtx.RUnlock()
+	return len(t.table)
 }
 
 // TODO: what happens when I return a *Metadata and then FlushOlderThan() deletes it?
