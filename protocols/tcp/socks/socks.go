@@ -189,6 +189,17 @@ func ReadGreeting(r *bufio.Reader) (Greeting, error) {
 	if len(methods) == 0 {
 		return Greeting{Raw: rc.raw}, ErrNoMethods
 	}
+	// a line terminator already buffered with the greeting (Shodan sends
+	// 05 01 00 0a) belongs to it; left behind it would be read as the
+	// request's version byte. Only already-buffered bytes are checked, so
+	// this never blocks.
+	buffered, _ := r.Peek(min(r.Buffered(), 2))
+	switch {
+	case bytes.HasPrefix(buffered, []byte("\r\n")):
+		_, _ = rc.full(2)
+	case bytes.HasPrefix(buffered, []byte("\n")):
+		_, _ = rc.full(1)
+	}
 	return Greeting{Methods: methods, Raw: rc.raw}, nil
 }
 
@@ -363,7 +374,9 @@ func LooksLikeHTTPRequest(b []byte) bool {
 // hostname in a later segment) or a
 // SOCKS5 method-selection message with exactly NMETHODS known method bytes.
 // Clients send this message and then wait for the reply, so the first
-// segment holds it alone; extra bytes mean another protocol.
+// segment holds it alone; extra bytes mean another protocol. The one
+// exception is a trailing LF or CRLF after a SOCKS5 greeting: line-based
+// scanners (Shodan) terminate their probe that way.
 func LooksLikeSOCKS(data []byte) bool {
 	if len(data) < 3 {
 		return false
@@ -372,6 +385,10 @@ func LooksLikeSOCKS(data []byte) bool {
 	case Version4:
 		return looksLikeSOCKS4(data)
 	case Version5:
+		data = trimLineEnd(data)
+		if len(data) < 3 {
+			return false
+		}
 		n := int(data[1])
 		if n == 0 || len(data) != 2+n {
 			return false
@@ -385,6 +402,15 @@ func LooksLikeSOCKS(data []byte) bool {
 		return true
 	}
 	return false
+}
+
+// trimLineEnd drops one trailing LF or CRLF. Neither 0x0a nor 0x0d is a
+// valid SOCKS5 method, so trimming never removes a real method byte.
+func trimLineEnd(data []byte) []byte {
+	if bytes.HasSuffix(data, []byte("\r\n")) {
+		return data[:len(data)-2]
+	}
+	return bytes.TrimSuffix(data, []byte("\n"))
 }
 
 func looksLikeSOCKS4(data []byte) bool {

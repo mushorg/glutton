@@ -245,6 +245,21 @@ func TestCatchAllRoutesSOCKS5Greeting(t *testing.T) {
 	require.Equal(t, "socks", finishCatchAllDispatch(t, client, hp, done))
 }
 
+func TestCatchAllRoutesSOCKS5GreetingWithLF(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 11288)
+
+	// Shodan probe on tcp/11288 (2026-11-05): no-auth greeting plus LF,
+	// previously answered with random bytes by the catch-all
+	_, err := client.Write([]byte{0x05, 0x01, 0x00, 0x0a})
+	require.NoError(t, err)
+	reply := make([]byte, 2)
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x05, 0x00}, reply)
+
+	require.Equal(t, "socks", finishCatchAllDispatch(t, client, hp, done))
+}
+
 func TestCatchAllSOCKSLookalikeStaysTCP(t *testing.T) {
 	client, hp, done := startCatchAllDispatch(t, 9999)
 

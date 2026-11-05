@@ -263,6 +263,21 @@ func TestHandleSOCKS5UserPassRecordsPassword(t *testing.T) {
 	require.Equal(t, "192.0.2.1:443", frames[4].Path)
 }
 
+// Shodan probe on tcp/11288 (2026-11-05): no-auth greeting terminated by LF,
+// then the client closes; the LF stays in the greeting frame
+func TestHandleSOCKS5GreetingWithLF(t *testing.T) {
+	client, hp, done := startSOCKS(t, 4096)
+	require.Equal(t, []byte{0x05, 0x00}, socksExchange(t, client, []byte{0x05, 0x01, 0x00, 0x0a}, 2))
+	frames := finishSOCKS(t, client, hp, done)
+	require.Len(t, frames, 3)
+	require.Equal(t, []parsedSOCKS{
+		{Direction: "read", Command: "socks5-greeting", Version: 5, Methods: []int{0}, Payload: []byte{0x05, 0x01, 0x00, 0x0a}},
+		{Direction: "write", Command: "socks5-greeting", Status: "no-auth", Payload: []byte{0x05, 0x00}},
+	}, frames[:2])
+	// the LF was not left behind as the next request's version byte
+	require.Empty(t, frames[2].Payload)
+}
+
 func TestHandleSOCKS5NoAcceptableMethod(t *testing.T) {
 	client, hp, done := startSOCKS(t, 4096)
 	require.Equal(t, []byte{0x05, 0xff}, socksExchange(t, client, []byte{0x05, 0x01, 0x01}, 2))

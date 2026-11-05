@@ -87,6 +87,19 @@ func TestReadGreetingAuthRequest(t *testing.T) {
 	require.Equal(t, []byte{MethodNoAuth, MethodUserPass}, g.Methods)
 	require.Equal(t, []byte("\x05\x02\x00\x02"), g.Raw)
 
+	// a buffered line terminator belongs to the greeting, a pipelined request does not
+	g, err = ReadGreeting(reader([]byte("\x01\x00\n")))
+	require.NoError(t, err)
+	require.Equal(t, []byte("\x05\x01\x00\n"), g.Raw)
+	r = reader([]byte("\x01\x00\r\n\x05\x01"))
+	g, err = ReadGreeting(r)
+	require.NoError(t, err)
+	require.Equal(t, []byte("\x05\x01\x00\r\n"), g.Raw)
+	require.Equal(t, 2, r.Buffered())
+	g, err = ReadGreeting(reader([]byte("\x01\x00\x05\x01\x00")))
+	require.NoError(t, err)
+	require.Equal(t, []byte("\x05\x01\x00"), g.Raw)
+
 	_, err = ReadGreeting(reader([]byte("\x00")))
 	require.ErrorIs(t, err, ErrNoMethods)
 
@@ -144,6 +157,9 @@ func TestLooksLikeSOCKS(t *testing.T) {
 		"socks5 no-auth":  {0x05, 0x01, 0x00},
 		"socks5 multi":    {0x05, 0x03, 0x00, 0x01, 0x02},
 		"socks5 private":  {0x05, 0x01, 0x80},
+		// Shodan 2026-11-05 on tcp/11288: greeting terminated by LF
+		"socks5 lf":   {0x05, 0x01, 0x00, 0x0a},
+		"socks5 crlf": {0x05, 0x01, 0x00, 0x0d, 0x0a},
 	} {
 		require.True(t, LooksLikeSOCKS(data), name)
 	}
@@ -152,6 +168,8 @@ func TestLooksLikeSOCKS(t *testing.T) {
 		"socks5 extra":       {0x05, 0x01, 0x00, 0x00},
 		"socks5 zero":        {0x05, 0x00, 0x00},
 		"socks5 bad method":  {0x05, 0x01, 0x42},
+		"socks5 lf only":     {0x05, 0x0d, 0x0a},
+		"socks5 double lf":   {0x05, 0x01, 0x00, 0x0a, 0x0a},
 		"socks4 no nul":      []byte("\x04\x01\x00\x50\x01\x02\x03\x04root"),
 		"socks4 bad cmd":     []byte("\x04\x03\x00\x50\x01\x02\x03\x04\x00"),
 		"socks4 zero port":   []byte("\x04\x01\x00\x00\x01\x02\x03\x04\x00"),
