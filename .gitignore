@@ -28,3 +28,7 @@ protocols/spicy/parsers/*.h
 # Agents
 .cursor/
 .claude/
+
+# Python
+__pycache__/
+*.py[cod]
