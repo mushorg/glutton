@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +134,55 @@ func TestHandleUDPPeeksBareLFSIP(t *testing.T) {
 	require.Equal(t, "sip", h.produced[0].handler)
 	require.Len(t, h.replies, 1)
 	require.Contains(t, string(h.replies[0]), "SIP/2.0 200 OK\r\n")
+}
+
+// read frame 1 of capture run-1793913250-1 (INVITE to udp/38478 with a space
+// after "sip:" in the Request-URI and To, User-Agent zxcvfdf11)
+var spacedURIInviteRead1 = []byte("INVITE sip: 442037692911@1.2.3.4 SIP/2.0\r\nVia: SIP/2.0/UDP 62.210.114.228:57569;branch=z9hG4bK1932596430\r\nMax-Forwards: 70\r\nFrom: <sip:102@1.2.3.4>;tag=1153977767\r\nTo: <sip: 442037692911@1.2.3.4>\r\nCall-ID: 980844013-1687954028-1703531389\r\nCSeq: 1 INVITE\r\nContact: <sip:102@62.210.114.228:57569>\r\nContent-Type: application/sdp\r\nContent-Length: 207\r\nAllow: ACK, BYE, CANCEL, INFO, INVITE, MESSAGE, NOTIFY, OPTIONS, PRACK, REFER, REGISTER, SUBSCRIBE, UPDATE, PUBLISH\r\nUser-Agent: zxcvfdf11\r\n\r\nv=0\r\no=102 16264 18299 IN IP4 192.168.1.83\r\ns=call\r\nc=IN IP4 192.168.1.83\r\nt=0 0\r\nm=audio 25282 RTP/AVP 0 101\r\na=rtpmap:0 pcmu/8000\r\na=rtpmap:8 pcma/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-11\r\n")
+
+func TestHandleUDPPeeksSpacedURISIP(t *testing.T) {
+	stubSIPResponder(t)
+	timers := stubSIPDialogs(t)
+	h := &recordingHoneypot{}
+	src := &net.UDPAddr{IP: net.ParseIP("62.210.114.228"), Port: 57569}
+	dst := &net.UDPAddr{IP: net.ParseIP("1.2.3.4"), Port: 38478}
+
+	err := HandleUDP(context.Background(), src, dst, spacedURIInviteRead1, connection.Metadata{}, testLogger{}, h)
+	require.NoError(t, err)
+	// routed to sip and answered as a call: 100 and 180 at once, 200 after ringing
+	require.Len(t, h.replies, 2)
+	require.True(t, strings.HasPrefix(string(h.replies[0]), "SIP/2.0 100 Trying\r\n"))
+	require.True(t, strings.HasPrefix(string(h.replies[1]), "SIP/2.0 180 Ringing\r\n"))
+	timers.fire(t, sipRing)
+	timers.fire(t, time.Minute)
+	require.Len(t, h.produced, 1)
+	require.Equal(t, "sip", h.produced[0].handler)
+	// the raw datagram is kept as sent, space included
+	require.Equal(t, spacedURIInviteRead1, h.produced[0].payload)
+	require.Len(t, h.replies, 3)
+
+	events, ok := h.produced[0].decoded.([]parsedSIP)
+	require.True(t, ok)
+	require.Len(t, events, 4)
+	require.Equal(t, parsedSIP{
+		Direction: "read",
+		Command:   "INVITE",
+		Path:      "sip:442037692911@1.2.3.4",
+		From:      "sip:102@1.2.3.4",
+		// gosip keeps the To header's stray space, percent-escaped
+		To:        "sip:%20442037692911@1.2.3.4",
+		CallID:    "980844013-1687954028-1703531389",
+		UserAgent: "zxcvfdf11",
+		Payload:   spacedURIInviteRead1,
+
+		CalledNumber: "442037692911",
+		Tool:         "zxcvfdf",
+	}, events[0])
+	for i, status := range []string{"100", "180", "200"} {
+		require.Equal(t, "write", events[i+1].Direction)
+		require.Equal(t, status, events[i+1].Status)
+		require.Equal(t, h.replies[i], events[i+1].Payload)
+	}
 }
 
 func TestHandleUDPDoesNotPeekHTTPAsSIP(t *testing.T) {

@@ -414,6 +414,8 @@ func TestLooksLikeSIP(t *testing.T) {
 		[]byte("SIP/2.0 200 OK\r\nCSeq: 1 OPTIONS\r\n\r\n"),
 		[]byte("REGISTER sip:201@1.2.3.4 SIP/2.0\nTo: 201 <sip:201@1.2.3.4>\n"), // bare LF
 		[]byte("SIP/2.0 200 OK\nCSeq: 1 OPTIONS\n"),
+		[]byte("INVITE sip: 442037692911@1.2.3.4 SIP/2.0\r\n"), // space after scheme colon (zxcvfdf11 dialer)
+		[]byte("OPTIONS  sip:100@1.2.3.4\tSIP/2.0\r\n"),        // runs of whitespace
 	} {
 		require.True(t, LooksLikeSIP(data), "%q", data)
 	}
@@ -426,6 +428,9 @@ func TestLooksLikeSIP(t *testing.T) {
 		[]byte("INVITE http://1.2.3.4/ SIP/2.0\r\n"),         // wrong scheme
 		[]byte("SIP/2.0 OK\r\n"),                             // no status code
 		[]byte("SIP/2.0 999 Nope\r\n"),                       // status out of range
+		[]byte("INVITE foo SIP/2.0\r\n"),                     // no URI scheme
+		[]byte("INVITE http: //1.2.3.4/ SIP/2.0\r\n"),        // spaced, wrong scheme
+		[]byte("INVITE sip: 1 2 SIP/2.0\r\n"),                // too many parts
 		append([]byte("INVITE sip:"), make([]byte, 1024)...), // line end beyond scan window
 		{0x30, 0x82, 0x01, 0x0a, 0x02, 0x01, 0x05, 0xa1, 0x03, 0x02},
 	} {
@@ -452,6 +457,10 @@ func TestNormalizeHeaders(t *testing.T) {
 		{"stream: lf converted", "REGISTER sip:1 SIP/2.0\nCSeq: 1 REGISTER\n\n", false, "REGISTER sip:1 SIP/2.0\r\nCSeq: 1 REGISTER\r\n\r\n"},
 		{"stream: end not guessed", "REGISTER sip:1 SIP/2.0\nCSeq: 1 REG", false, "REGISTER sip:1 SIP/2.0\r\nCSeq: 1 REG"},
 		{"stream: no empty line", "REGISTER sip:1 SIP/2.0\nCSeq: 1 REGISTER\n", false, "REGISTER sip:1 SIP/2.0\r\nCSeq: 1 REGISTER\r\n"},
+		{"space after scheme colon", "INVITE sip: 44@1.2.3.4 SIP/2.0\r\nTo: <sip: 44@1.2.3.4>\r\n\r\n", true, "INVITE sip:44@1.2.3.4 SIP/2.0\r\nTo: <sip: 44@1.2.3.4>\r\n\r\n"},
+		{"start line whitespace runs", "OPTIONS  sip:1\tSIP/2.0 \nCSeq: 1 OPTIONS\n\n", true, "OPTIONS sip:1 SIP/2.0\r\nCSeq: 1 OPTIONS\r\n\r\n"},
+		{"single spaced line", "INVITE sip: 44@1.2.3.4 SIP/2.0", true, "INVITE sip:44@1.2.3.4 SIP/2.0\r\n\r\n"},
+		{"non-request start line kept", "SIP/2.0  200 OK\r\n\r\n", true, "SIP/2.0  200 OK\r\n\r\n"},
 	} {
 		in := []byte(c.in)
 		orig := string(in)
@@ -460,6 +469,9 @@ func TestNormalizeHeaders(t *testing.T) {
 	}
 	// the normalized LF message parses
 	parseRequest(t, NormalizeHeaders([]byte("OPTIONS sip:100@1.2.3.4 SIP/2.0\nVia: SIP/2.0/UDP 1.2.3.4:5060;branch=z9hG4bK1\nFrom: <sip:a@1.2.3.4>;tag=1\nTo: <sip:100@1.2.3.4>\nCall-ID: x\nCSeq: 1 OPTIONS\n"), true))
+	// the spaced request line parses once normalized
+	req := parseRequest(t, NormalizeHeaders([]byte("INVITE sip: 442037692911@1.2.3.4 SIP/2.0\r\nVia: SIP/2.0/UDP 62.210.114.228:57569;branch=z9hG4bK1\r\nFrom: <sip:102@1.2.3.4>;tag=1\r\nTo: <sip: 442037692911@1.2.3.4>\r\nCall-ID: x\r\nCSeq: 1 INVITE\r\nContent-Length: 0\r\n\r\n"), true))
+	require.Equal(t, "sip:442037692911@1.2.3.4", req.Recipient().String())
 }
 
 func TestAckTimeoutBye(t *testing.T) {

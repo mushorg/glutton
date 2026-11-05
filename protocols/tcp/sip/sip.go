@@ -972,7 +972,8 @@ func Describe(msg gosip.Message) Info {
 // With terminate set, a message with no empty line has its headers ended at
 // the end of data: a datagram without Content-Length carries its body to the
 // end of the packet (RFC 3261 section 18.3), so it may omit the empty line too.
-// Well-formed CRLF messages come back byte-identical.
+// A sloppy request line (see requestLine) is rewritten to canonical form so the
+// message still parses. Well-formed CRLF messages come back byte-identical.
 func NormalizeHeaders(data []byte, terminate bool) []byte {
 	if len(data) == 0 {
 		return data
@@ -985,10 +986,17 @@ func NormalizeHeaders(data []byte, terminate bool) []byte {
 			if !terminate {
 				return append(out, rest...)
 			}
-			out = append(out, bytes.TrimSuffix(line, []byte("\r"))...)
+			line = bytes.TrimSuffix(line, []byte("\r"))
+			if len(out) == 0 {
+				line = canonicalStartLine(line)
+			}
+			out = append(out, line...)
 			return append(out, "\r\n\r\n"...)
 		}
 		line = bytes.TrimSuffix(line, []byte("\r"))
+		if len(out) == 0 {
+			line = canonicalStartLine(line)
+		}
 		out = append(append(out, line...), '\r', '\n')
 		rest = tail
 		if len(line) == 0 {
@@ -1020,12 +1028,42 @@ func LooksLikeSIP(data []byte) bool {
 		n, err := strconv.Atoi(code)
 		return err == nil && len(code) == 3 && n >= 100 && n <= 699
 	}
-	parts := strings.Split(start, " ")
-	if len(parts) != 3 || parts[2] != "SIP/2.0" || !isMethod(parts[0]) {
-		return false
+	_, _, ok := requestLine(start)
+	return ok
+}
+
+// requestLine splits a SIP request line into method and Request-URI. It
+// tolerates runs of whitespace between the parts and a space after the URI
+// scheme colon ("INVITE sip: 4420...@1.2.3.4 SIP/2.0", sent by some toll-fraud
+// dialers), which it folds back into the URI.
+func requestLine(line string) (method, uri string, ok bool) {
+	parts := strings.Fields(line)
+	if len(parts) == 4 && strings.HasSuffix(parts[1], ":") {
+		parts = []string{parts[0], parts[1] + parts[2], parts[3]}
 	}
-	scheme, _, ok := strings.Cut(strings.ToLower(parts[1]), ":")
-	return ok && (scheme == "sip" || scheme == "sips" || scheme == "tel")
+	if len(parts) != 3 || parts[2] != "SIP/2.0" || !isMethod(parts[0]) {
+		return "", "", false
+	}
+	scheme, _, found := strings.Cut(strings.ToLower(parts[1]), ":")
+	if !found || (scheme != "sip" && scheme != "sips" && scheme != "tel") {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+// canonicalStartLine rewrites a request line LooksLikeSIP accepts but the
+// strict gosip parser rejects (extra whitespace, a space after the scheme
+// colon) to "METHOD URI SIP/2.0". Any other line is returned unchanged.
+func canonicalStartLine(line []byte) []byte {
+	method, uri, ok := requestLine(string(line))
+	if !ok {
+		return line
+	}
+	canonical := method + " " + uri + " SIP/2.0"
+	if canonical == string(line) {
+		return line
+	}
+	return []byte(canonical)
 }
 
 // startMethods are the request methods (and the response prefix) MayStart

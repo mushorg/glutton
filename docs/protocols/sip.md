@@ -224,7 +224,13 @@ datagram that was not truncated may omit the empty line after the headers.
 one `read` frame with no `command` and `endReason` `read_error`.
 
 Generic UDP peeks the SIP start line (CRLF or LF) and reroutes it here from any
-port.
+port. The request line may have runs of whitespace between its parts and a
+space after the URI scheme colon (`INVITE sip: 4420…@host SIP/2.0`, sent by some
+toll-fraud dialers). It is folded to canonical form before parsing, so such an
+INVITE is answered as a call and `path` is the joined URI
+(`sip:4420…@host`). `payload` keeps the raw bytes. gosip percent-escapes a
+spaced URI in a header, so `to` reads `sip:%204420…@host` and the replies echo
+it that way.
 
 ## Returning sources
 
