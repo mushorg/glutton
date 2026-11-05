@@ -184,6 +184,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"modbus":     bindTCP(tcp.HandleModbus, log, h),
 		"dnp3":       bindTCP(tcp.HandleDNP3, log, h),
 		"dahua":      bindTCP(tcp.HandleDahua, log, h),
+		"tuya":       bindTCP(tcp.HandleTuya, log, h),
 		"sofia":      bindTCP(tcp.HandleSofia, log, h),
 		"bgp":        bindTCP(tcp.HandleBGP, log, h),
 		"cassandra":  bindTCP(tcp.HandleCassandra, log, h),

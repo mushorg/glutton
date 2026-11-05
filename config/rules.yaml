@@ -172,6 +172,9 @@ rules:
   - match: tcp dst port 22 or port 2222
     type: conn_handler
     target: ssh
+  - match: tcp dst port 6668
+    type: conn_handler
+    target: tuya
   - match: tcp dst port 873
     type: conn_handler
     target: rsync

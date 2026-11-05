@@ -89,6 +89,7 @@ func TestMapTCPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "opcua", "expected OPC UA handler")
 	require.Contains(t, m, "mctp", "expected MCTP handler")
 	require.Contains(t, m, "dahua", "expected Dahua handler")
+	require.Contains(t, m, "tuya", "expected Tuya handler")
 	require.Contains(t, m, "sofia", "expected Sofia handler")
 	require.Contains(t, m, "bgp", "expected BGP handler")
 	require.Contains(t, m, "cassandra", "expected Cassandra handler")

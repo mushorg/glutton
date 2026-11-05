@@ -98,6 +98,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | ONC RPC portmapper/rpcbind  | `rpcinfo`-style DUMP/GETPORT probes on tcp/111, udp/111 |
 | HiSilicon DVR (MCTP)        | `HI_SRDK_*` control calls on tcp/9000    |
 | Dahua DVR/NVR (DVRIP)       | login attempts (plaintext credentials) on tcp/37777 |
+| Tuya local protocol (IoT)   | DP_QUERY/control frames to smart plugs and bulbs on tcp/6668 |
 | RTSP (IP cameras)           | OPTIONS/DESCRIBE and credential attempts on tcp/554, 8554, 10554 |
 | rsync daemon                | module listing and AUTHREQD login attempts on tcp/873, any port |
 | Catch-all service banners   | POP3/RFB greetings, MSSQL/AJP/RPC replies |
