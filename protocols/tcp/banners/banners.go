@@ -294,6 +294,14 @@ func ForPort(port uint16) (Response, bool) {
 		// rather than sending random bytes. HTTP requests are still rerouted
 		// by the Spicy peek.
 		return Response{Name: "port-30005", NoReply: true}, true
+	case 50070:
+		// Hadoop 2.x HDFS NameNode web UI (dfs.namenode.http-address default),
+		// served by Jetty 6. Research scanners send a bare newline, which Jetty
+		// skips (RFC 9112 §2.2) while it waits for a request line, so record it
+		// unanswered and keep the connection open rather than sending random
+		// bytes. HTTP requests (WebHDFS, /jmx) are still rerouted by the Spicy
+		// peek.
+		return Response{Name: "hadoop-namenode", NoReply: true}, true
 	case 9530:
 		// Xiongmai macGuarder: "OpenTelnet:OpenOnce" is matched in
 		// ForPayload; the client's challenge answer is recorded unanswered
