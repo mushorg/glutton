@@ -20,14 +20,14 @@ upx:
 default: build
 
 build:
-	CC=clang-17 CXX=clang++-17 go build -ldflags=$(LDFLAGS) -o bin/server app/server.go
+	CC=clang-17 CXX=clang++-17 go build -ldflags=$(LDFLAGS) -o bin/server ./app
 
 .PHONY: spicy
 spicy:
 	cd protocols/spicy && make
 
 static:
-	go build --ldflags '-extldflags "-static"' -o bin/server app/server.go
+	go build --ldflags '-extldflags "-static"' -o bin/server ./app
 	upx -1 bin/server
 
 # Local-only deploy target; see .env.deploy.example (file is gitignored).

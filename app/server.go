@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -57,6 +58,14 @@ func main() {
 	g, err := glutton.New(context.Background())
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	if viper.GetBool("pprof.enabled") {
+		ln, err := startPprof(viper.GetString("pprof.addr"))
+		if err != nil {
+			log.Fatal("Failed to start pprof: ", err)
+		}
+		g.Logger.Info("Serving pprof", slog.String("addr", ln.Addr().String()), slog.String("reporter", "glutton"))
 	}
 
 	if err := g.Init(); err != nil {

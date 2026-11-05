@@ -45,6 +45,10 @@ storage:   # files handlers write under payloads/ and samples/ (uploads, fetched
   max_files: 100000       # stored files (each costs an inode); the oldest are deleted first. 0 disables.
   tunnel_payloads: true   # store CONNECT/SOCKS tunnel reads in payloads/ (TLS ClientHellos are never stored).
 
+pprof:   # Go runtime profiles (heap, goroutine, CPU) over HTTP; loopback only, reach it with ssh -L 6060:127.0.0.1:6060 <host>.
+  enabled: false
+  addr: 127.0.0.1:6060   # must be a loopback address; startup fails otherwise.
+
 recall:   # per-source memory: a source returning after visit_gap gets the next response variant (SIP).
   enabled: true
   visit_gap: 1800     # seconds of silence after which a returning source starts a new visit.
