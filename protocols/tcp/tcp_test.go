@@ -997,6 +997,63 @@ func TestHandleTCPTLSAlertClosesSession(t *testing.T) {
 	}, produced.decoded.([]parsedTCP))
 }
 
+// glutton-capture-loop run-1793998041 events 4 and 5 (Censys, tcp/43560,
+// same JA4 t13i190800_9dc949149365_97f8aa674fd9): the scanner probes which
+// key-exchange groups the server supports, offering a single group per hello.
+// SecP256r1MLKEM768 (0x11eb) completes; pure ML-KEM-1024 (0x0202) is not a
+// crypto/tls group (nor in OpenSSL's default server list), so the fatal
+// handshake_failure alert is the expected answer, not a sensor tell.
+func TestHandleTCPTLSCensysGroupProbe(t *testing.T) {
+	t.Run("SecP256r1MLKEM768 completes", func(t *testing.T) {
+		hello, err := os.ReadFile("../helpers/testdata/clienthello_censys_p256mlkem768.bin")
+		require.NoError(t, err)
+		client, hp, done := startCatchAll(t, 43560)
+		_, err = client.Write(hello)
+		require.NoError(t, err)
+		require.Equal(t, byte(0x16), readAll(t, client, 5)[0], "ServerHello, not an alert")
+
+		events := finishCatchAll(t, client, hp, done)
+		require.Len(t, events, 2)
+		require.Equal(t, "tls-clienthello", events[0].Command)
+		require.Equal(t, []uint16{0x11eb}, events[0].ClientHello.Groups)
+		requireTLSHandshakeWrite(t, events[1])
+	})
+
+	t.Run("pure ML-KEM-1024 gets handshake_failure", func(t *testing.T) {
+		hello, err := os.ReadFile("../helpers/testdata/clienthello_censys_mlkem1024.bin")
+		require.NoError(t, err)
+		client, hp, done := startCatchAll(t, 43560)
+		_, err = client.Write(hello)
+		require.NoError(t, err)
+		alert := readAll(t, client, 7)
+		require.Equal(t, []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28}, alert)
+
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(2 * time.Second):
+			t.Fatal("handler did not hang up after the fatal alert")
+		}
+		produced := waitProduced(t, hp)
+		require.Equal(t, "tcp", produced.protocol)
+		require.Empty(t, hp.produced, "exactly one event per session")
+		require.Nil(t, produced.tls, "no TLS session was established")
+		events := produced.decoded.([]parsedTCP)
+		require.Len(t, events, 2)
+		require.Equal(t, "read", events[0].Direction)
+		require.Equal(t, "tls-clienthello", events[0].Command)
+		require.Equal(t, hello, events[0].Payload)
+		require.Equal(t, []uint16{0x0202}, events[0].ClientHello.Groups)
+		require.Equal(t, "t13i190800_9dc949149365_97f8aa674fd9", events[0].ClientHello.JA4)
+		require.Equal(t, parsedTCP{
+			Direction:   "write",
+			Status:      "tls-handshake",
+			Payload:     alert,
+			PayloadHash: helpers.SHA256Hex(alert),
+		}, events[1])
+	})
+}
+
 func TestHandleTCPTLSClientHelloSplitAcrossWrites(t *testing.T) {
 	// glutton-capture-loop event 7: the 1767-byte ClientHello arrived as
 	// 1448 + 319 bytes; only the first segment was parsed, so it got an alert
