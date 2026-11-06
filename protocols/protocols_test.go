@@ -99,6 +99,7 @@ func TestMapTCPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "ipp", "expected IPP handler")
 	require.Contains(t, m, "icap", "expected ICAP handler")
 	require.Contains(t, m, "ssh", "expected SSH handler")
+	require.Contains(t, m, "slp", "expected SLP TCP handler")
 	require.Contains(t, m, "adb", "expected ADB handler")
 	require.Contains(t, m, "nvms9000", "expected NVMS-9000 handler")
 	require.Contains(t, m, "pcom", "expected PCOM handler")

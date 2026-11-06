@@ -114,3 +114,57 @@ func TestNames(t *testing.T) {
 	require.Equal(t, "SCOPE_NOT_SUPPORTED", ErrorName(4))
 	require.Equal(t, "error_99", ErrorName(99))
 }
+
+// Shodan DAAdvert probe captured on tcp/427 (run-1793999100-4 event #7, sha256
+// 27ff9600…940c), with the sensor address scrubbed to 1.2.3.4. Scrubbing kept
+// the original length (0x3d) and URL length (0x16); repairedDAAdvert fixes
+// them to 0x35 and 0x0e so the message parses.
+var capturedDAAdvert = []byte{
+	0x02, 0x08, 0x00, 0x00, 0x3d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x65, 0x6e,
+	0x00, 0x00, 0x6a, 0xee, 0x41, 0x2b, 0x00, 0x16, 0x68, 0x74, 0x74, 0x70, 0x3a, 0x2f, 0x2f, 0x31,
+	0x2e, 0x32, 0x2e, 0x33, 0x2e, 0x34, 0x00, 0x07, 0x44, 0x45, 0x46, 0x41, 0x55, 0x4c, 0x54, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00,
+}
+
+func repairedDAAdvert() []byte {
+	b := append([]byte(nil), capturedDAAdvert...)
+	b[4] = byte(len(b))
+	b[23] = byte(len("http://1.2.3.4"))
+	return b
+}
+
+func TestMessageLength(t *testing.T) {
+	n, err := MessageLength(capturedDAAdvert, 4096)
+	require.NoError(t, err)
+	require.Equal(t, 0x3d, n)
+
+	_, err = MessageLength([]byte{0x02, 0x08}, 4096)
+	require.ErrorIs(t, err, ErrShort)
+	_, err = MessageLength([]byte{0x16, 0x03, 0x01, 0x02, 0x00}, 4096)
+	require.ErrorIs(t, err, ErrVersion)
+	_, err = MessageLength([]byte{0x02, 0x01, 0x00, 0x00, 0x05}, 4096)
+	require.ErrorIs(t, err, ErrLength)
+	_, err = MessageLength([]byte{0x02, 0x01, 0xff, 0xff, 0xff}, 4096)
+	require.ErrorIs(t, err, ErrLength)
+}
+
+func TestParseDAAdvert(t *testing.T) {
+	b := repairedDAAdvert()
+	h, err := ParseHeader(b)
+	require.NoError(t, err)
+	require.Equal(t, uint8(FuncDAAdvert), h.Function)
+	q, err := ParseRequest(b, h)
+	require.NoError(t, err)
+	require.Equal(t, Request{URL: "http://1.2.3.4", Scope: "DEFAULT"}, q)
+
+	reply, _ := Reply(h, q)
+	require.Nil(t, reply, "DAAdverts are never answered")
+
+	// body cut off inside the boot timestamp
+	short := append([]byte(nil), b[:20]...)
+	short[4] = 20
+	h, err = ParseHeader(short)
+	require.NoError(t, err)
+	_, err = ParseRequest(short, h)
+	require.ErrorIs(t, err, ErrBody)
+}

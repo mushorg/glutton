@@ -178,6 +178,9 @@ rules:
   - match: tcp dst port 873
     type: conn_handler
     target: rsync
+  - match: tcp dst port 427
+    type: conn_handler
+    target: slp
   - match: tcp
     type: conn_handler
     target: tcp

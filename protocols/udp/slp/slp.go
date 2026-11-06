@@ -95,6 +95,28 @@ func ErrorName(c uint16) string {
 	return fmt.Sprintf("error_%d", c)
 }
 
+// PrefixLen is how many bytes MessageLength needs: version, function and the
+// 24-bit length field.
+const PrefixLen = 5
+
+// MessageLength validates the first PrefixLen bytes of a stream-framed (TCP)
+// SLPv2 message and returns its total length, header included. Messages
+// shorter than the fixed header or longer than max are rejected with
+// ErrLength.
+func MessageLength(prefix []byte, max int) (int, error) {
+	if len(prefix) < PrefixLen {
+		return 0, ErrShort
+	}
+	if prefix[0] != 2 {
+		return 0, ErrVersion
+	}
+	n := int(prefix[2])<<16 | int(prefix[3])<<8 | int(prefix[4])
+	if n < fixedHeader || n > max {
+		return n, ErrLength
+	}
+	return n, nil
+}
+
 // ParseHeader decodes the common header. The length field must equal the
 // datagram length; on ErrLength or ErrBody the returned header is still
 // populated so the caller can record what was readable.
@@ -148,7 +170,8 @@ func (r *reader) str() string {
 	return s
 }
 
-// ParseRequest decodes the body of SrvRqst, SrvTypeRqst and AttrRqst. h must
+// ParseRequest decodes the body of SrvRqst, SrvTypeRqst, AttrRqst and the URL
+// and scope list of a DAAdvert. h must
 // come from a successful ParseHeader of b.
 func ParseRequest(b []byte, h Header) (Request, error) {
 	r := &reader{b: b[h.bodyOff:]}
@@ -170,6 +193,14 @@ func ParseRequest(b []byte, h Header) (Request, error) {
 		q.Scope = r.str()
 		r.str() // tag list
 		r.str() // SPI
+	case FuncDAAdvert:
+		// error code (2) and DA stateless boot timestamp (4) precede the URL
+		if len(r.b) < 6 {
+			return q, ErrBody
+		}
+		r.b = r.b[6:]
+		q.URL = r.str()
+		q.Scope = r.str()
 	default:
 		return q, nil
 	}
