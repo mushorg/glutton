@@ -133,6 +133,7 @@ func MapUDPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"tftp":        bindUDP(udp.HandleTFTP, log, h),
 		"dht":         bindUDP(udp.HandleDHT, log, h),
 		"ntp":         bindUDP(udp.HandleNTP, log, h),
+		"stun":        bindUDP(udp.HandleSTUN, log, h),
 		"snmp":        bindUDP(udp.HandleSNMP, log, h),
 		"dtls":        bindUDP(udp.HandleDTLS, log, h),
 		"rtps":        bindUDP(udp.HandleRTPS, log, h),

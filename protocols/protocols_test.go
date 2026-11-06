@@ -63,6 +63,7 @@ func TestMapUDPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "tftp", "expected TFTP UDP handler")
 	require.Contains(t, m, "dht", "expected BitTorrent DHT UDP handler")
 	require.Contains(t, m, "ntp", "expected NTP UDP handler")
+	require.Contains(t, m, "stun", "expected STUN UDP handler")
 	require.Contains(t, m, "snmp", "expected SNMP UDP handler")
 	require.Contains(t, m, "dtls", "expected DTLS UDP handler")
 	require.Contains(t, m, "wsdiscovery", "expected WS-Discovery UDP handler")

@@ -85,6 +85,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | BitTorrent                  | peer handshake traffic                   |
 | BitTorrent DHT              | BEP 5 `find_node`/`get_peers` on udp/6881 |
 | NTP                         | mode 3 client, mode 6/7 (monlist) probes on udp/123 |
+| STUN                        | Binding Request on udp/3478 and any catch-all port |
 | Memcache                    | key-value cache commands                 |
 | Jabber/XMPP                 | instant messaging stream                 |
 | ADB                         | Android Debug Bridge connect, shell, push |

@@ -142,6 +142,7 @@ Example shape:
 | `tftp` | UDP | [protocols/tftp.md](protocols/tftp.md) |
 | `dht` | UDP | [protocols/dht.md](protocols/dht.md) |
 | `ntp` | UDP | [protocols/ntp.md](protocols/ntp.md) |
+| `stun` | UDP | [protocols/stun.md](protocols/stun.md) |
 | `snmp` | UDP | [protocols/snmp.md](protocols/snmp.md) |
 | `hiflying` | UDP | [protocols/hiflying.md](protocols/hiflying.md) |
 | `dtls` | UDP | [protocols/dtls.md](protocols/dtls.md) |

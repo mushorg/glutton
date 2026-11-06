@@ -241,6 +241,9 @@ rules:
   - match: udp dst port 123
     type: conn_handler
     target: ntp
+  - match: udp dst port 3478
+    type: conn_handler
+    target: stun
   - match: udp dst port 161
     type: conn_handler
     target: snmp
