@@ -244,6 +244,10 @@ func ForPort(port uint16) (Response, bool) {
 		return Response{Name: "pop3", Data: pop3Banner, ServerFirst: true}, true
 	case 5900:
 		return Response{Name: "rfb", Data: rfbBanner, ServerFirst: true}, true
+	case 4222:
+		// nats-server greets with INFO on connect; the client's reply is
+		// answered by NATSFollowUp
+		return Response{Name: "nats-info", Data: natsInfo(), ServerFirst: true}, true
 	case 80:
 		return Response{Name: "http", Data: httpResponse(), Close: true}, true
 	case 135:

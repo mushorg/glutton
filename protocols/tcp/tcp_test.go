@@ -291,6 +291,41 @@ func TestHandleTCPRFBFollowUp(t *testing.T) {
 	}
 }
 
+func TestHandleTCPNATS(t *testing.T) {
+	require.True(t, HasServerBanner(4222))
+	for _, tc := range []struct {
+		name   string
+		send   string
+		status string
+		want   []byte
+	}{
+		// binaryedge sends a bare CRLF CRLF after connecting
+		{"crlf", "\r\n\r\n", "nats-err", []byte("-ERR 'Unknown Protocol Operation'\r\n")},
+		{"ping", "CONNECT {\"verbose\":false}\r\nPING\r\n", "nats-pong", []byte("PONG\r\n")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, hp, done := startCatchAll(t, 4222)
+
+			// INFO arrives before the client sends anything
+			banner := readReply(t, client)
+			require.True(t, bytes.HasPrefix(banner, []byte("INFO {")), "%q", banner)
+			require.True(t, bytes.HasSuffix(banner, []byte("}\r\n")), "%q", banner)
+			_, err := client.Write([]byte(tc.send))
+			require.NoError(t, err)
+			reply := readAll(t, client, len(tc.want))
+			require.Equal(t, tc.want, reply)
+
+			events := finishCatchAll(t, client, hp, done)
+			require.Len(t, events, 3)
+			require.Equal(t, parsedTCP{Direction: "write", Status: "nats-info", Payload: banner, PayloadHash: helpers.SHA256Hex(banner)}, events[0])
+			require.Equal(t, "read", events[1].Direction)
+			require.Equal(t, "nats-info", events[1].Command)
+			require.Equal(t, []byte(tc.send), events[1].Payload)
+			require.Equal(t, parsedTCP{Direction: "write", Status: tc.status, Payload: tc.want, PayloadHash: helpers.SHA256Hex(tc.want)}, events[2])
+		})
+	}
+}
+
 func TestHandleTCPRFBNonVersionGetsRandom(t *testing.T) {
 	client, hp, done := startCatchAll(t, 5900)
 

@@ -72,6 +72,7 @@ Writes set `status` to the response name or `random`.
 | 1433 | `mssql-prelogin` | Only on sensors without the `mssql` rule, and only for the first message; the next one (a LOGIN7) ends the session instead of getting the PRELOGIN reply again. A TDS PRELOGIN on any port goes to the [`mssql`](mssql.md) handler |
 | 2404 | `iec104` | IEC 60870-5-104. Sends nothing but keeps the connection open, so I-format ASDUs (general interrogation) and other bytes are recorded instead of answered with random bytes; U-format frames get `iec104-*` |
 | 3299 | `saprouter-timeout` | `NI_RTERR` "connection timed out" (rc -5, `no route received within 5s`), which nmap reports as `SAProuter 40.4 SP3`: sent to a client that stays silent for 2s, or as the reply to bytes that match no signature; the connection closes after it |
+| 4222 | `nats-info` | See [Server-first banners](#server-first-banners) |
 | 4369 | `epmd` | Sends nothing and closes, as epmd does with a request it cannot parse; `NAMES_REQ` and `PORT_PLEASE2_REQ` get `epmd-names` / `epmd-port2` |
 | 1911 | `niagara-fox` | Sends nothing and hangs up on bytes that are not a Fox hello (including Fox messages after the hello), as a Niagara station does before a session is open |
 | 4444 | `cmd-shell` | See [Server-first banners](#server-first-banners) |
@@ -121,13 +122,15 @@ Parsing uses `helpers.ParseClientHello`, a lenient parser that reassembles a hel
 
 ## Server-first banners
 
-- **110 (`pop3`), 5900 (`rfb`):** banner sent on connect, before any read. 22 / 2222 (`ssh`) get the SSH banner the same way only without the `ssh` rule; the default rules send them to the [`ssh`](ssh.md) handler.
+- **110 (`pop3`), 5900 (`rfb`), 4222 (`nats-info`):** banner sent on connect, before any read. The 4222 greeting is a nats-server 2.10.22 `INFO {...}\r\n` line with a `server_id` that is random per sensor run and a `client_id` that counts up per connection. Spicy rerouting does not peek on these ports. 22 / 2222 (`ssh`) get the SSH banner the same way only without the `ssh` rule; the default rules send them to the [`ssh`](ssh.md) handler.
 - **4444 (`cmd-shell`, a Windows Server 2003 `cmd.exe` prompt):** waits 2s for the client first.
   - A silent client gets the prompt as `decoded[0]` (a `write`).
   - A client that speaks first is routed by its bytes as on any catch-all port (HTTP to `http`), and otherwise gets the prompt as the reply.
 - **5938 (`teamviewer-identify`, a TeamViewer `CMD_IDENTIFY` that nmap `-sV` reports as `TeamViewer`):** waits 2s for the client first, like 4444. Bytes 5–8 are random per connection. A `CMD_PING` (Shodan) is answered with `teamviewer-pingok` whether or not the greeting was sent. Other client bytes get `CMD_IDENTIFY` once, and the next message ends the session.
 
 After a greeting, the client's messages get random bytes unless a payload signature matches (no shell is emulated).
+
+On 4222, the client's first message after the NATS `INFO` greeting is tagged `command` `nats-info`. It gets `-ERR 'Unknown Protocol Operation'\r\n` and the connection closes (`nats-err`) when it does not start with a NATS operation (scanners such as BinaryEdge send a bare `\r\n\r\n`). It gets `PONG\r\n` (`nats-pong`) when it holds a `PING` line, and otherwise no reply (`nats`: `CONNECT`, `SUB`, `PUB` with verbose off). Later messages get random bytes.
 
 On 5900, a valid RFB ProtocolVersion reply is tagged `command` `rfb` and answered with the security handshake instead of random bytes (`status` `rfb-security`: `02 02 01` for 3.7/3.8, `00 00 00 02` for 3.3). The `rfb` handler (routed by default) takes the session further.
 

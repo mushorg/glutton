@@ -32,6 +32,7 @@ func TestForPort(t *testing.T) {
 		{8009, "ajp-404", false, false, []byte("AB\x00\x36\x04\x01\x94")},
 		{8126, "statsd-stats", false, false, []byte("uptime: ")},
 		{4444, "cmd-shell", false, true, []byte("Microsoft Windows [Version 5.2.3790]\r\n")},
+		{4222, "nats-info", true, false, []byte(`INFO {"server_id":"N`)},
 	}
 	for _, c := range cases {
 		resp, ok := ForPort(c.port)
