@@ -97,6 +97,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | Minecraft (Java)            | server-list ping, login attempts on tcp/25565 |
 | SOCKS 4/4a/5 proxy          | open-proxy checks on tcp/1080, 4145, any port |
 | ONC RPC portmapper/rpcbind  | `rpcinfo`-style DUMP/GETPORT probes on tcp/111, udp/111 |
+| VxWorks WDB debug agent     | WDB RPC target-connect probes on udp/17185 |
 | HiSilicon DVR (MCTP)        | `HI_SRDK_*` control calls on tcp/9000    |
 | Dahua DVR/NVR (DVRIP)       | login attempts (plaintext credentials) on tcp/37777 |
 | Tuya local protocol (IoT)   | DP_QUERY/control frames to smart plugs and bulbs on tcp/6668 |

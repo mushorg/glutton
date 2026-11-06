@@ -69,6 +69,7 @@ func TestMapUDPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "wsdiscovery", "expected WS-Discovery UDP handler")
 	require.Contains(t, m, "hiflying", "expected Hi-Flying UDP handler")
 	require.Contains(t, m, "rpcbind", "expected rpcbind UDP handler")
+	require.Contains(t, m, "wdb", "expected WDB UDP handler")
 	require.Contains(t, m, "proxy_udp", "expected proxy_udp handler")
 	ctx := context.Background()
 	err := m["udp"](ctx, &net.UDPAddr{}, &net.UDPAddr{}, []byte{}, connection.Metadata{})
