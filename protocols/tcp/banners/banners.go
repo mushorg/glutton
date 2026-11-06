@@ -273,6 +273,9 @@ func ForPort(port uint16) (Response, bool) {
 	case 9333:
 		// litecoind drops a peer whose first bytes are not its network magic
 		return Response{Name: "litecoin", Silent: true}, true
+	case 22556:
+		// dogecoind drops a peer whose first bytes are not its network magic
+		return Response{Name: "dogecoin", Silent: true}, true
 	case 1911:
 		// a Niagara station drops a connection that does not open with a Fox
 		// hello; the hello itself is matched in ForPayload
@@ -394,6 +397,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	},
 	bitcoinReply,
 	litecoinReply,
+	dogecoinReply,
 	kamstrupReply,
 	iec104Reply,
 	func(data []byte) (Response, bool) {

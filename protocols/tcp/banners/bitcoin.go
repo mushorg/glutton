@@ -9,8 +9,8 @@ import (
 
 // Bitcoin P2P wire format: every message is a 24-byte header (network magic,
 // NUL-padded command, little-endian payload length, double-SHA256 checksum)
-// followed by the payload. Litecoin Core speaks the same framing with its own
-// magic, so both are described by a btcNetwork.
+// followed by the payload. Litecoin Core and Dogecoin Core speak the same
+// framing with their own magic, so each is described by a btcNetwork.
 const (
 	btcHeaderLen = 24
 	// btcMaxPayload is Bitcoin Core's MAX_PROTOCOL_MESSAGE_LENGTH.
@@ -60,6 +60,23 @@ var litecoinNet = btcNetwork{
 	anchorHeight:    2520000,
 	anchorTime:      1690977600,
 	blockSeconds:    150,
+}
+
+// dogecoinNet is Dogecoin Core 1.14.9 (client name "Shibetoshi"). The magic
+// is from a captured Shodan probe on tcp/22556; the protocol version (70015,
+// the same as the probe), services NODE_NETWORK | NODE_BLOOM (1.14 is based on
+// Bitcoin Core 0.14 and leaves segwit off) and the anchor (block 5,000,000
+// around December 2023, one-minute blocks) are from memory of the Dogecoin
+// sources and public explorers, not from a captured node.
+var dogecoinNet = btcNetwork{
+	name:            "dogecoin",
+	magic:           []byte{0xc0, 0xc0, 0xc0, 0xc0},
+	protocolVersion: 70015,
+	services:        1 | 4,
+	userAgent:       "/Shibetoshi:1.14.9/",
+	anchorHeight:    5000000,
+	anchorTime:      1703116800,
+	blockSeconds:    60,
 }
 
 // btcCommands are the message types that name the response; anything else
@@ -183,3 +200,5 @@ func btcReply(n btcNetwork, data []byte) (Response, bool) {
 func bitcoinReply(data []byte) (Response, bool) { return btcReply(bitcoinNet, data) }
 
 func litecoinReply(data []byte) (Response, bool) { return btcReply(litecoinNet, data) }
+
+func dogecoinReply(data []byte) (Response, bool) { return btcReply(dogecoinNet, data) }
