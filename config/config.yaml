@@ -49,6 +49,14 @@ pprof:   # Go runtime profiles (heap, goroutine, CPU) over HTTP; loopback only, 
   enabled: false
   addr: 127.0.0.1:6060   # must be a loopback address; startup fails otherwise.
 
+memwatch:   # writes goroutine stacks, memory status and heap/allocs profiles when RSS spikes, so a fast spike is profiled before the OOM killer acts.
+  enabled: false
+  threshold: 629145600   # RSS bytes (600 MiB) that trigger the first dump; re-arms once RSS falls back below it.
+  step: 268435456        # further RSS growth (256 MiB) that triggers another dump during the same spike.
+  interval_ms: 1000      # RSS sampling period.
+  dir: ""                # empty: <var-dir>/memwatch
+  max_dumps: 10          # dump directories kept on disk, oldest removed first.
+
 recall:   # per-source memory: a source returning after visit_gap gets the next response variant (SIP).
   enabled: true
   visit_gap: 1800     # seconds of silence after which a returning source starts a new visit.

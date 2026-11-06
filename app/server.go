@@ -7,8 +7,10 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"syscall"
+	"time"
 
 	"github.com/mushorg/glutton"
 
@@ -66,6 +68,26 @@ func main() {
 			log.Fatal("Failed to start pprof: ", err)
 		}
 		g.Logger.Info("Serving pprof", slog.String("addr", ln.Addr().String()), slog.String("reporter", "glutton"))
+	}
+
+	if viper.GetBool("memwatch.enabled") {
+		dir := viper.GetString("memwatch.dir")
+		if dir == "" {
+			dir = filepath.Join(viper.GetString("var-dir"), "memwatch")
+		}
+		w, err := newMemWatcher(memWatchConfig{
+			Threshold: viper.GetUint64("memwatch.threshold"),
+			Step:      viper.GetUint64("memwatch.step"),
+			Interval:  time.Duration(viper.GetInt("memwatch.interval_ms")) * time.Millisecond,
+			Dir:       dir,
+			MaxDumps:  viper.GetInt("memwatch.max_dumps"),
+		}, g.Logger)
+		if err != nil {
+			log.Fatal("Failed to start memwatch: ", err)
+		}
+		go w.run(context.Background())
+		g.Logger.Info("Watching memory", slog.String("reporter", "glutton"), slog.String("dir", dir),
+			slog.Uint64("threshold_mib", w.cfg.Threshold>>20), slog.Uint64("step_mib", w.cfg.Step>>20))
 	}
 
 	if err := g.Init(); err != nil {
