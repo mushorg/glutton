@@ -196,6 +196,27 @@ func TestDefaultRulesRoutePOP3(t *testing.T) {
 	}
 }
 
+// tcp/990 is implicit FTPS: terminate TLS, then the ftp handler greets. Before
+// this rule the catch-all tcp handler waited silently after the handshake.
+func TestDefaultRulesRouteFTP(t *testing.T) {
+	rs, err := rules.Init(bytes.NewReader(defaultRules))
+	require.NoError(t, err)
+	src := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 50000}
+	for _, tc := range []struct {
+		port int
+		tls  rules.TLSMode
+	}{
+		{21, rules.TLSOff},
+		{990, rules.TLSOn},
+	} {
+		match, err := rs.Match("tcp", src, &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: tc.port})
+		require.NoError(t, err)
+		require.NotNil(t, match, "port %d", tc.port)
+		require.Equal(t, "ftp", match.Target, "port %d", tc.port)
+		require.Equal(t, tc.tls, match.TLS, "port %d", tc.port)
+	}
+}
+
 func TestRecoverPanicWritesLog(t *testing.T) {
 	dir := t.TempDir()
 	viper.Set("var-dir", dir)

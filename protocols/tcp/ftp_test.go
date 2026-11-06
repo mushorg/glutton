@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mushorg/glutton/connection"
+	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,6 +73,67 @@ func TestHandleFTPLoginAndQuit(t *testing.T) {
 		{Direction: "read", Command: "QUIT", Payload: []byte("QUIT\r\n")},
 		{Direction: "write", Status: "221", Payload: []byte("221 Goodbye.\r\n")},
 	}, events)
+}
+
+// TestHandleFTPImplicitTLS covers implicit FTPS on tcp/990 (rule tls: true):
+// the wrapper terminates TLS, then the handler sends its 220 greeting over the
+// decrypted connection. A captured TLS 1.3 client on tcp/990 completed the
+// handshake and then waited ~10 s for that greeting before closing.
+func TestHandleFTPImplicitTLS(t *testing.T) {
+	client, serverConn := net.Pipe()
+	defer client.Close()
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		// mirrors protocols.finishTLS for a tls: true rule
+		tlsConn, info, err := helpers.TerminateTLS(serverConn)
+		if err != nil {
+			done <- err
+			return
+		}
+		md := connection.Metadata{TLS: info, Outer: []string{"tls"}}
+		done <- HandleFTP(context.Background(), tlsConn, md, &recordingLogger{}, hp)
+	}()
+
+	tc := tls.Client(client, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})
+	require.NoError(t, tc.Handshake())
+	r := bufio.NewReader(tc)
+	line, err := r.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "220 Welcome\r\n", line)
+
+	_, err = io.WriteString(tc, "QUIT\r\n")
+	require.NoError(t, err)
+	line, err = r.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "221 Goodbye.\r\n", line)
+	// net.Pipe is unbuffered: drain so the server's close_notify does not block
+	go func() { _, _ = io.Copy(io.Discard, tc) }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	produced := waitProduced(t, hp)
+	require.Equal(t, "ftp", produced.protocol)
+	require.NotNil(t, produced.tls)
+	require.NotEmpty(t, produced.tls.JA4)
+	require.Contains(t, produced.stack, "tls")
+	require.Equal(t, []byte("220 Welcome\r\n"), produced.payload)
+	require.Equal(t, []parsedFTP{
+		{Direction: "write", Status: "220", Payload: []byte("220 Welcome\r\n")},
+		{Direction: "read", Command: "QUIT", Payload: []byte("QUIT\r\n")},
+		{Direction: "write", Status: "221", Payload: []byte("221 Goodbye.\r\n")},
+	}, produced.decoded)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
 }
 
 func TestHandleFTPClientDisconnect(t *testing.T) {
