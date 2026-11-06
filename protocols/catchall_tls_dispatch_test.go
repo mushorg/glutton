@@ -41,6 +41,13 @@ func (h *catchAllHoneypot) ProduceTCP(protocol string, _ net.Conn, md connection
 // catch-all, lets client drive it, and returns the single produced event.
 func dispatchCatchAll(t *testing.T, port uint16, client func(net.Conn)) catchAllProduced {
 	t.Helper()
+	return dispatchCatchAllTarget(t, "tcp", port, client)
+}
+
+// dispatchCatchAllTarget is dispatchCatchAll for a handler target that
+// falls back to the catch-all (e.g. "mctp" on tcp/9000).
+func dispatchCatchAllTarget(t *testing.T, target string, port uint16, client func(net.Conn)) catchAllProduced {
+	t.Helper()
 	t.Chdir(t.TempDir()) // HandleTCP stores payloads in ./payloads
 	prevMax := viper.GetInt("max_tcp_payload")
 	viper.Set("max_tcp_payload", 4096)
@@ -59,7 +66,7 @@ func dispatchCatchAll(t *testing.T, port uint16, client func(net.Conn)) catchAll
 	defer l.Close()
 
 	hp := &catchAllHoneypot{events: make(chan catchAllProduced, 4)}
-	handler := MapTCPProtocolHandlers(nopLogger{}, hp)["tcp"]
+	handler := MapTCPProtocolHandlers(nopLogger{}, hp)[target]
 	require.NotNil(t, handler)
 
 	done := make(chan error, 1)

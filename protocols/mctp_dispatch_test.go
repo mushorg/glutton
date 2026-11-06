@@ -1,8 +1,11 @@
 package protocols
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,6 +121,26 @@ func TestMCTPTargetFallsBackToTCP(t *testing.T) {
 		_, _ = c.Read(make([]byte, 4096)) // one random-bytes reply
 	})
 	require.Equal(t, []string{"tcp"}, names)
+}
+
+func TestMCTPTargetRoutesHTTP(t *testing.T) {
+	// Cortex Xpanse-style GET / on :9000 got random bytes from the plain TCP
+	// fallback; it now reaches the HTTP handler through the catch-all.
+	req := "GET / HTTP/1.1\r\nHost: 192.0.2.1:9000\r\nUser-Agent: scanner\r\nAccept-Encoding: gzip\r\n\r\n"
+	ev := dispatchCatchAllTarget(t, "mctp", 9000, func(c net.Conn) {
+		_, err := c.Write([]byte(req))
+		require.NoError(t, err)
+		line, err := bufio.NewReader(c).ReadString('\n')
+		require.NoError(t, err)
+		require.True(t, strings.HasPrefix(line, "HTTP/1.1 "), line)
+	})
+	require.Equal(t, "http", ev.protocol)
+	require.NotEmpty(t, ev.frames)
+	require.Equal(t, "read", ev.frames[0]["direction"])
+	require.Equal(t, base64.StdEncoding.EncodeToString([]byte(req)), ev.frames[0]["payload"])
+	for _, f := range ev.frames {
+		require.NotEqual(t, "random", f["status"])
+	}
 }
 
 func TestMCTPTargetShortPayloadFallsBackToTCP(t *testing.T) {

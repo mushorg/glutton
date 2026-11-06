@@ -592,9 +592,11 @@ func waitForClient(conn net.Conn, wait time.Duration) (BufferedConn, bool, error
 }
 
 // mctpOrTCP serves the DVR port (tcp/9000): MCTP requests go to the MCTP
-// handler; anything else (FastCGI, MinIO, Portainer probes, ...) falls back to
-// the generic TCP handler so it is still stored.
+// handler; anything else (FastCGI, MinIO/Portainer HTTP probes, ...) goes
+// through the catch-all dispatch so HTTP gets an HTTP reply instead of random
+// bytes and everything is still stored.
 func mctpOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
+	catchAll := catchAllTCP(log, h)
 	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			log.Debug("failed to set connection timeout", producer.ErrAttr(err))
@@ -613,7 +615,7 @@ func mctpOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		if snip, err := bufConn.peek(mctpPeekLen); err == nil && mctp.LooksLikeMCTP(snip) {
 			return tcp.HandleMCTP(ctx, bufConn, md, log, h)
 		}
-		return tcp.HandleTCPWith(ctx, bufConn, md, log, h, tcp.Options{AfterTLS: httpAfterTLS(log, h)})
+		return catchAll(ctx, bufConn, md)
 	}
 }
 
