@@ -277,6 +277,11 @@ func ForPort(port uint16) (Response, bool) {
 		// a Niagara station drops a connection that does not open with a Fox
 		// hello; the hello itself is matched in ForPayload
 		return Response{Name: "niagara-fox", Silent: true}, true
+	case 2404:
+		// IEC 60870-5-104: U-format frames are matched in ForPayload; I-format
+		// ASDUs (general interrogation) need a session, so record them and keep
+		// the connection open rather than sending random bytes
+		return Response{Name: "iec104", NoReply: true}, true
 	case 3551:
 		// apcupsd ignores input that is not a NIS command; "status" is
 		// matched in ForPayload
@@ -378,6 +383,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	bitcoinReply,
 	litecoinReply,
 	kamstrupReply,
+	iec104Reply,
 	func(data []byte) (Response, bool) {
 		if !isFoxHello(data) {
 			return Response{}, false

@@ -53,6 +53,8 @@ Writes set `status` to the response name or `random`.
 | Kamstrup Meter Protocol GetRegister (KMP, tcp/1025: `80`, address `3f`, CID `10`, count, BE u16 register IDs, CRC-16/CCITT, `0d`, with `06 0d 1b 40 80` stuffed as `1b <b^ff>`; the read must be only complete CRC-valid frames, several may be pipelined; Shodan reads registers 1, 2, 13, 14, 1054, 1055) | `kamstrup-getregister` | One `40 3f 10` reply per frame with unit, length, SiEx and value for each known register (energy import/export in kWh at 0.1 and 0.0001 resolution, voltage L1/L2); import grows from a per-run base with a per-run load, voltage jitters 226..235 V; unknown registers are left out |
 | KMP login (CID `92`, BE u16 PIN) | `kamstrup-login` | `40 3f 92 01` (denied); the PIN is recorded as `password` on the read |
 | A CRC-valid KMP frame for another address or command | `kamstrup` | None, the connection stays open |
+| IEC 60870-5-104 U-format frames only (`68 04 <ctrl> 00 00 00`, several may be pipelined; Shodan sends TESTFR act `68 04 43 00 00 00` to tcp/2404) | `iec104-testfr` / `iec104-startdt` / `iec104-stopdt` (named after the first act frame) | One confirmation per act frame: TESTFR con `68 04 83 00 00 00`, STARTDT con `68 04 0b …`, STOPDT con `68 04 23 …` |
+| IEC 104 U-format confirmations only (`0b`, `23`, `83`) | `iec104` | None, the connection stays open |
 | `MGLNDD_<ip>_<port>` scanner probe | `mglndd` | None |
 | Bracket-framed probe: `00 00 00`, `[<n>]\0` with n covering the rest, a NUL-terminated tag, then `[<n>]\0<n bytes>` fields (Shodan sends `[38]\0d\0` + three base64 "Remote"/"remote" fields to tcp/55000; target service unidentified) | `bracket-probe` | None |
 
@@ -66,6 +68,7 @@ Writes set `status` to the response name or `random`.
 | 139 | `netbios-session` | |
 | 389 | `ldap` | Sends nothing, as an LDAP server does with input it cannot parse |
 | 1433 | `mssql-prelogin` | Only on sensors without the `mssql` rule, and only for the first message; the next one (a LOGIN7) ends the session instead of getting the PRELOGIN reply again. A TDS PRELOGIN on any port goes to the [`mssql`](mssql.md) handler |
+| 2404 | `iec104` | IEC 60870-5-104. Sends nothing but keeps the connection open, so I-format ASDUs (general interrogation) and other bytes are recorded instead of answered with random bytes; U-format frames get `iec104-*` |
 | 3299 | `saprouter-timeout` | `NI_RTERR` "connection timed out" (rc -5, `no route received within 5s`), which nmap reports as `SAProuter 40.4 SP3`: sent to a client that stays silent for 2s, or as the reply to bytes that match no signature; the connection closes after it |
 | 4369 | `epmd` | Sends nothing and closes, as epmd does with a request it cannot parse; `NAMES_REQ` and `PORT_PLEASE2_REQ` get `epmd-names` / `epmd-port2` |
 | 1911 | `niagara-fox` | Sends nothing and hangs up on bytes that are not a Fox hello (including Fox messages after the hello), as a Niagara station does before a session is open |
@@ -81,7 +84,7 @@ Writes set `status` to the response name or `random`.
 | 30005 | `port-30005` | No registered service, and the product behind it is unconfirmed. Sends nothing but keeps the connection open, as an HTTP-style listener does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request; HTTP requests go to the `http` handler |
 | 50070 | `hadoop-namenode` | Hadoop 2.x HDFS NameNode web UI (Jetty). Sends nothing but keeps the connection open, as Jetty does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request line; HTTP requests (WebHDFS, `/jmx`) go to the `http` handler |
 
-Silent responses (`mglndd`, `bracket-probe`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin or Litecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 21379 (`opc-tunneller`), 30005 (`port-30005`) and 50070 (`hadoop-namenode`), a KMP frame the meter does not answer (`kamstrup`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
+Silent responses (`mglndd`, `bracket-probe`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin or Litecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 2404 (`iec104`), 21379 (`opc-tunneller`), 30005 (`port-30005`) and 50070 (`hadoop-namenode`), a KMP frame the meter does not answer (`kamstrup`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
 
 ## TLS ClientHello
 
