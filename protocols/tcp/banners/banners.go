@@ -318,6 +318,11 @@ func ForPort(port uint16) (Response, bool) {
 		// Xiongmai macGuarder: "OpenTelnet:OpenOnce" is matched in
 		// ForPayload; the client's challenge answer is recorded unanswered
 		return Response{Name: "xiongmai-9530", NoReply: true}, true
+	case 5025:
+		// SCPI raw socket: an instrument answers queries only, so commands
+		// get no reply and the connection stays open; "*IDN?" is matched in
+		// ForPayload
+		return Response{Name: "scpi", NoReply: true}, true
 	case 3299:
 		// saprouter sends this to a client that sends no complete route
 		// request in time (nmap's NULL probe), then closes; unframed router
@@ -427,6 +432,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	epmdReply,
 	saprouterReply,
 	xiongmaiReply,
+	scpiReply,
 	func(data []byte) (Response, bool) {
 		order, ok := isX11Setup(data)
 		if !ok {
