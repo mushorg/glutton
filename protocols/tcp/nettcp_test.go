@@ -23,14 +23,29 @@ var nettcpCapturedPreamble = []byte{
 	0x0c,
 }
 
+// Captured from 216.25.90.83 on tcp/4025: the same msvsmon preamble with the
+// Via naming port 4025.
+var nettcpCaptured4025Preamble = []byte{
+	0x00, 0x01, 0x00, 0x01, 0x02, 0x02, 0x37, 0x6e, 0x65, 0x74, 0x2e, 0x74, 0x63, 0x70, 0x3a, 0x2f,
+	0x2f, 0x31, 0x32, 0x37, 0x2e, 0x30, 0x2e, 0x30, 0x2e, 0x31, 0x3a, 0x34, 0x30, 0x32, 0x35, 0x2f,
+	0x4d, 0x69, 0x63, 0x72, 0x6f, 0x73, 0x6f, 0x66, 0x74, 0x2f, 0x56, 0x69, 0x73, 0x75, 0x61, 0x6c,
+	0x53, 0x74, 0x75, 0x64, 0x69, 0x6f, 0x2f, 0x6d, 0x73, 0x76, 0x73, 0x6d, 0x6f, 0x6e, 0x03, 0x08,
+	0x0c,
+}
+
 func startNetTcp(t *testing.T) (net.Conn, *fakeHoneypot, chan error) {
+	t.Helper()
+	return startNetTcpOnPort(t, 4026)
+}
+
+func startNetTcpOnPort(t *testing.T, port uint16) (net.Conn, *fakeHoneypot, chan error) {
 	t.Helper()
 	client, serverConn := net.Pipe()
 	t.Cleanup(func() { client.Close() })
 	hp := newFakeHoneypot()
 	done := make(chan error, 1)
 	go func() {
-		done <- HandleNetTcp(context.Background(), serverConn, connection.Metadata{TargetPort: 4026}, &recordingLogger{}, hp)
+		done <- HandleNetTcp(context.Background(), serverConn, connection.Metadata{TargetPort: port}, &recordingLogger{}, hp)
 	}()
 	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
 	return client, hp, done
@@ -88,6 +103,32 @@ func TestHandleNetTcpCapturedPreamble(t *testing.T) {
 		parsedNetTcp{Direction: "write", Command: "End", Payload: []byte{0x07}},
 	)
 	require.Equal(t, want, ev.decoded)
+	require.Empty(t, hp.produced)
+}
+
+func TestHandleNetTcpCaptured4025Preamble(t *testing.T) {
+	client, hp, done := startNetTcpOnPort(t, 4025)
+	_, err := client.Write(nettcpCaptured4025Preamble)
+	require.NoError(t, err)
+
+	ack := make([]byte, 1)
+	_, err = io.ReadFull(client, ack)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x0b}, ack)
+	require.NoError(t, client.Close())
+
+	ev := waitNetTcpEvent(t, hp, done)
+	require.Equal(t, "nettcp", ev.protocol)
+	require.Equal(t, []byte{0x00, 0x01, 0x00}, ev.payload)
+	via := "net.tcp://127.0.0.1:4025/Microsoft/VisualStudio/msvsmon"
+	require.Equal(t, []parsedNetTcp{
+		{Direction: "read", Command: "Version", Version: "1.0", Payload: []byte{0x00, 0x01, 0x00}},
+		{Direction: "read", Command: "Mode", Mode: "duplex", Payload: []byte{0x01, 0x02}},
+		{Direction: "read", Command: "Via", Path: via, Payload: append([]byte{0x02, 0x37}, via...)},
+		{Direction: "read", Command: "KnownEncoding", ContentType: "application/soap+msbinsession1", Payload: []byte{0x03, 0x08}},
+		{Direction: "read", Command: "PreambleEnd", Payload: []byte{0x0c}},
+		{Direction: "write", Command: "PreambleAck", Payload: []byte{0x0b}},
+	}, ev.decoded)
 	require.Empty(t, hp.produced)
 }
 

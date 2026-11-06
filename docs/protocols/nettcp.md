@@ -1,6 +1,6 @@
 # `nettcp` decoded data
 
-Transport: TCP (default rule: tcp/4026, Visual Studio remote debugger `msvsmon`). Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
+Transport: TCP (default rule: tcp/4025 and tcp/4026, Visual Studio remote debugger `msvsmon`; the handler does not depend on the port, the Via is read from the preamble). Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
 
 **`decoded`:** Array of per-record frames: `direction`, `command`, `path`, `status`, `version`, `mode`, `content_type`, `fault`, `payload`, `truncated`
 
