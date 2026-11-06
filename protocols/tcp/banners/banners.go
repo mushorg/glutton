@@ -291,6 +291,13 @@ func ForPort(port uint16) (Response, bool) {
 		// reply framing is not public, so record the hello and its follow-ups
 		// without answering rather than sending random bytes.
 		return Response{Name: "opc-tunneller", NoReply: true}, true
+	case 9998:
+		// Idera up.time agent (nmap service uptime-agent). The agent reads one
+		// newline-terminated command ("ver", "sysinfo", ...); scanners send
+		// "sysinfo" with no terminator and wait, as they would on a real agent
+		// still waiting for the end of the line. Record it unanswered and keep
+		// the connection open rather than sending random bytes.
+		return Response{Name: "uptime-agent", NoReply: true}, true
 	case 30005:
 		// No registered service (nmap-services "unknown"), and the product
 		// behind it is unconfirmed. Research scanners send a bare newline,
