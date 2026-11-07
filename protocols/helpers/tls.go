@@ -2,6 +2,9 @@ package helpers
 
 import (
 	"container/list"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -30,6 +33,23 @@ func SelfSignedCertificate(subject pkix.Name, dnsNames ...string) (tls.Certifica
 	e := v.(*certEntry)
 	e.once.Do(func() {
 		e.cert, e.err = generateCertificate(subject, dnsNames, nil)
+	})
+	return e.cert, e.err
+}
+
+// SelfSignedCertificateECDSA is SelfSignedCertificate with an ECDSA P-256 key.
+// It is the fallback for clients whose signature_algorithms list no RSA scheme
+// (ECDSA/EdDSA-only hellos), which an RSA-only server can only answer with a
+// handshake_failure alert.
+func SelfSignedCertificateECDSA(subject pkix.Name, dnsNames ...string) (tls.Certificate, error) {
+	v, _ := selfSignedCerts.LoadOrStore("ecdsa:"+subject.String(), &certEntry{})
+	e := v.(*certEntry)
+	e.once.Do(func() {
+		var key *ecdsa.PrivateKey
+		if key, e.err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); e.err != nil {
+			return
+		}
+		e.cert, e.err = signCertificate(key, subject, dnsNames, nil)
 	})
 	return e.cert, e.err
 }
@@ -122,8 +142,9 @@ func generateCertificate(subject pkix.Name, dnsNames []string, ips []net.IP) (tl
 	return signCertificate(key, subject, dnsNames, ips)
 }
 
-// signCertificate creates a self-signed server certificate for key.
-func signCertificate(key *rsa.PrivateKey, subject pkix.Name, dnsNames []string, ips []net.IP) (tls.Certificate, error) {
+// signCertificate creates a self-signed server certificate for key (RSA or
+// ECDSA).
+func signCertificate(key crypto.Signer, subject pkix.Name, dnsNames []string, ips []net.IP) (tls.Certificate, error) {
 	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
 	if err != nil {
 		return tls.Certificate{}, err
@@ -135,11 +156,14 @@ func signCertificate(key *rsa.PrivateKey, subject pkix.Name, dnsNames []string, 
 		IPAddresses:           ips,
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if _, ok := key.(*rsa.PrivateKey); ok {
+		tmpl.KeyUsage |= x509.KeyUsageKeyEncipherment
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
 	if err != nil {
 		return tls.Certificate{}, err
 	}

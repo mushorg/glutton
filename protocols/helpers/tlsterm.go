@@ -83,7 +83,26 @@ func TerminateTLSFrom(conn net.Conn, r io.Reader) (net.Conn, *connection.TLSInfo
 	if err != nil {
 		return nil, &connection.TLSInfo{}, err
 	}
-	return TerminateTLSFromWith(cert, conn, r)
+	ecCert, err := SelfSignedCertificateECDSA(pkix.Name{CommonName: tlsCertName}, tlsCertName)
+	if err != nil {
+		return nil, &connection.TLSInfo{}, err
+	}
+	return terminateTLS([]tls.Certificate{cert, ecCert}, conn, r)
+}
+
+// pickCertificate serves the first of certs the client can verify and falls
+// back to certs[0]. The RSA certificate comes first, so only clients that
+// cannot verify an RSA signature (ECDSA/EdDSA-only signature_algorithms, or
+// only ECDHE_ECDSA suites) get the ECDSA one instead of a handshake_failure.
+func pickCertificate(certs []tls.Certificate) func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	return func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		for i := range certs {
+			if hello.SupportsCertificate(&certs[i]) == nil {
+				return &certs[i], nil
+			}
+		}
+		return &certs[0], nil
+	}
 }
 
 // TerminateTLSFromWith is like TerminateTLSFrom but serves cert instead of the
@@ -91,17 +110,27 @@ func TerminateTLSFrom(conn net.Conn, r io.Reader) (net.Conn, *connection.TLSInfo
 // protocol-specific certificate (e.g. RDP uses a cert whose CN matches the
 // sensor's computer name so it is consistent with the NTLM Challenge identity).
 func TerminateTLSFromWith(cert tls.Certificate, conn net.Conn, r io.Reader) (net.Conn, *connection.TLSInfo, error) {
+	return terminateTLS([]tls.Certificate{cert}, conn, r)
+}
+
+// terminateTLS runs the server handshake with certs, picking one per client
+// when there is more than one (see pickCertificate).
+func terminateTLS(certs []tls.Certificate, conn net.Conn, r io.Reader) (net.Conn, *connection.TLSInfo, error) {
 	info := &connection.TLSInfo{}
 	rec := &helloRecorder{r: r, limit: TLSHelloLimit}
-	tlsConn := tls.Server(&recordedConn{Conn: conn, r: rec}, &tls.Config{
-		Certificates: []tls.Certificate{cert},
+	cfg := &tls.Config{
+		Certificates: certs,
 		MinVersion:   tls.VersionTLS10, // see sentinel note at top of file
 		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 			info.ServerName = hello.ServerName
 			info.ALPN = append([]string(nil), hello.SupportedProtos...)
 			return nil, nil
 		},
-	})
+	}
+	if len(certs) > 1 {
+		cfg.GetCertificate = pickCertificate(certs)
+	}
+	tlsConn := tls.Server(&recordedConn{Conn: conn, r: rec}, cfg)
 	err := tlsConn.Handshake()
 	info.Hello = rec.buf
 	info.Truncated = rec.truncated

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
 	"io"
 	"net"
 	"testing"
@@ -250,6 +252,79 @@ func TestTerminateTLSFromWith(t *testing.T) {
 	require.NoError(t, tc.Handshake())
 	_ = tc.Close()
 	require.NoError(t, <-res)
+}
+
+// ecdsaOnlyHello is a TLS 1.3 ClientHello captured on tcp/6036: its
+// signature_algorithms list only ed448, ed25519 and ECDSA schemes (no RSA), so
+// an RSA-only server answered it with a fatal handshake_failure alert.
+const ecdsaOnlyHello = "FgMBAkIBAAI+AwNkenWsFwDcNuSvRCgL4l1A3QwW9dYo4SJKesPwn/cbXiA0pk9yIN8ZBR22Vnhc6z9EDcGgQmnXmJlZk6w7sqqxqQAGEwMTAhMBAQAB7wArAAMCAwQACgAGAAQAFwAdADMARwBFABcAQQS3+6b49M48S2Omw1PCKYERz04xUHhczSLFqA8GuWkpjfXRDGcuX13KzexnkiZb8MzucPak8Uuey9iuLYWaEkGWAA0ADAAKCAgIBwYDBQMEAwAQAXkBdwhodHRwLzAuOQhodHRwLzEuMAZzcGR5LzEGc3BkeS8yBnNwZHkvMwlzdHVuLnR1cm4Sc3R1bi5uYXQtZGlzY292ZXJ5A2gyYwZ3ZWJydGMIYy13ZWJydGMDZnRwBGltYXAEcG9wMwttYW5hZ2VzaWV2ZQRjb2FwAmNvC3htcHAtY2xpZW50C3htcHAtc2VydmVyCmFjbWUtdGxzLzEEbXF0dANkb3QHbnRza2UvMQZzdW5ycGMDc21iA2lyYwRubnRwBG5uc3ADZG9xBXNpcC8yB3Rkcy84LjAFZGljb20JcG9zdHJlc3FsCnJhZGl1cy8xLjAKcmFkaXVzLzEuMRRuZXRwZXJmbWV0ZXIvY29udHJvbBFuZXRwZXJmbWV0ZXIvZGF0YQZsaWJwMnADcXJ0AndxBHBlcmYDbW9xBG1vcXQGaDMtZXh0CmhxLWludGVyb3AHaDMtUTA0NgVoMy0yNwVoMy0yOQJoMwJoMghodHRwLzEuMQA6AAIEAA=="
+
+// firstServerRecord sends the captured ecdsaOnlyHello to terminate and returns
+// the first 6 bytes the server answers with.
+func firstServerRecord(t *testing.T, terminate func(net.Conn)) []byte {
+	t.Helper()
+	hello, err := base64.StdEncoding.DecodeString(ecdsaOnlyHello)
+	require.NoError(t, err)
+
+	client, server := net.Pipe()
+	defer client.Close()
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	require.NoError(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+
+	go func() {
+		terminate(server)
+		_ = server.Close()
+	}()
+	go func() { _, _ = client.Write(hello) }()
+
+	hdr := make([]byte, 6)
+	_, err = io.ReadFull(client, hdr)
+	require.NoError(t, err)
+	return hdr
+}
+
+func TestTerminateTLSECDSAOnlyClient(t *testing.T) {
+	rsaCert, err := SelfSignedCertificate(pkix.Name{CommonName: tlsCertName}, tlsCertName)
+	require.NoError(t, err)
+	// control: an RSA-only server can only refuse this hello
+	hdr := firstServerRecord(t, func(c net.Conn) { _, _, _ = TerminateTLSFromWith(rsaCert, c, c) })
+	require.Equal(t, []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02}, hdr, "fatal alert")
+
+	// the shared certificate set answers with a ServerHello instead
+	hdr = firstServerRecord(t, func(c net.Conn) { _, _, _ = TerminateTLS(c) })
+	require.Equal(t, byte(0x16), hdr[0], "handshake record, not an alert")
+	require.Equal(t, byte(0x02), hdr[5], "ServerHello")
+}
+
+func TestTerminateTLSPrefersRSA(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	require.NoError(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+
+	res := make(chan error, 1)
+	go func() {
+		_, _, err := TerminateTLS(server)
+		res <- err
+	}()
+	tc := tls.Client(client, &tls.Config{InsecureSkipVerify: true})
+	require.NoError(t, tc.Handshake())
+	leaf := tc.ConnectionState().PeerCertificates[0]
+	require.Equal(t, x509.RSA, leaf.PublicKeyAlgorithm, "clients that accept RSA keep getting the RSA cert")
+	require.Equal(t, "localhost", leaf.Subject.CommonName)
+	require.NoError(t, <-res)
+}
+
+func TestSelfSignedCertificateECDSA(t *testing.T) {
+	cert, err := SelfSignedCertificateECDSA(pkix.Name{CommonName: "localhost"}, "localhost")
+	require.NoError(t, err)
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	require.NoError(t, err)
+	require.Equal(t, x509.ECDSA, leaf.PublicKeyAlgorithm)
+	require.Equal(t, x509.KeyUsageDigitalSignature, leaf.KeyUsage)
+	again, err := SelfSignedCertificateECDSA(pkix.Name{CommonName: "localhost"}, "localhost")
+	require.NoError(t, err)
+	require.Equal(t, cert.Certificate[0], again.Certificate[0], "cached per subject")
 }
 
 func TestSelfSignedCertificateRDP(t *testing.T) {
