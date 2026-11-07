@@ -95,6 +95,10 @@ func TestForPort(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "homebridge-ui", NoReply: true}, resp)
 
+	resp, ok = ForPort(7777)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "oracle-http-server", NoReply: true}, resp)
+
 	resp, ok = ForPort(4321)
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "rwhois", Data: rwhoisBanner, GreetWhenIdle: true, Once: true}, resp)
