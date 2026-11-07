@@ -324,6 +324,16 @@ func ForPort(port uint16) (Response, bool) {
 		// rather than sending random bytes. HTTP requests are still rerouted
 		// by the Spicy peek.
 		return Response{Name: "port-30005", NoReply: true}, true
+	case 8024:
+		// No registered service (not in nmap-services), and the product
+		// behind it is unconfirmed. The only traffic seen is one scanner's
+		// own "TST" probe ("TST " 00 00 00 CRLF CRLF, the framing it also
+		// sends to 4321 and 4444), which matches no nmap probe. A service
+		// that does not speak that framing waits for more input instead of
+		// answering, so record it unanswered and keep the connection open
+		// rather than sending random bytes. HTTP requests are still rerouted
+		// by the Spicy peek.
+		return Response{Name: "port-8024", NoReply: true}, true
 	case 50070:
 		// Hadoop 2.x HDFS NameNode web UI (dfs.namenode.http-address default),
 		// served by Jetty 6. Research scanners send a bare newline, which Jetty

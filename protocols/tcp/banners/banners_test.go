@@ -87,6 +87,14 @@ func TestForPort(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "port-30005", NoReply: true}, resp)
 
+	resp, ok = ForPort(8024)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "port-8024", NoReply: true}, resp)
+	// the scanner's "TST" probe matches no payload signature, so the port
+	// entry answers it
+	_, ok = ForPayload([]byte("TST \x00\x00\x00\r\n\r\n"))
+	require.False(t, ok)
+
 	resp, ok = ForPort(50070)
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "hadoop-namenode", NoReply: true}, resp)
