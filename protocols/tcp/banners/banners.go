@@ -460,6 +460,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	saprouterReply,
 	xiongmaiReply,
 	scpiReply,
+	jsonrpcReply,
 	func(data []byte) (Response, bool) {
 		order, ok := isX11Setup(data)
 		if !ok {
