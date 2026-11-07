@@ -82,6 +82,7 @@ Writes set `status` to the response name or `random`.
 | 8009 | `ajp-404` | |
 | 8126 | `statsd-stats` | Etsy statsd management console `stats` block ending in `END\n\n`, with uptime and `last_*` deltas from the clock |
 | 8333 | `bitcoin` | Sends nothing and hangs up, as bitcoind does with bytes that are not its network magic |
+| 8581 | `homebridge-ui` | Homebridge Config UI X web UI (Node.js, its default port). Sends nothing but keeps the connection open, as Node's HTTP parser does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request line; HTTP requests go to the `http` handler |
 | 9333 | `litecoin` | Sends nothing and hangs up, as litecoind does with bytes that are not its network magic |
 | 9530 | `xiongmai-9530` | Xiongmai macGuarder/dvrHelper backdoor port. `OpenTelnet:OpenOnce` gets `xiongmai-randnum`; anything else, including the client's challenge answer, is recorded without a reply and the connection stays open (a real device's failure string is not public) |
 | 9998 | `uptime-agent` | Idera up.time agent. Sends nothing but keeps the connection open, as the agent does while it waits for the newline that ends a command; scanners send `sysinfo` with no terminator |
@@ -90,7 +91,7 @@ Writes set `status` to the response name or `random`.
 | 30005 | `port-30005` | No registered service, and the product behind it is unconfirmed. Sends nothing but keeps the connection open, as an HTTP-style listener does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request; HTTP requests go to the `http` handler |
 | 50070 | `hadoop-namenode` | Hadoop 2.x HDFS NameNode web UI (Jetty). Sends nothing but keeps the connection open, as Jetty does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request line; HTTP requests (WebHDFS, `/jmx`) go to the `http` handler |
 
-Silent responses (`mglndd`, `bracket-probe`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `dogecoin` on 22556, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin, Litecoin or Dogecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 2404 (`iec104`), 9998 (`uptime-agent`), 21379 (`opc-tunneller`), 30005 (`port-30005`) and 50070 (`hadoop-namenode`), a KMP frame the meter does not answer (`kamstrup`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
+Silent responses (`mglndd`, `bracket-probe`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `dogecoin` on 22556, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin, Litecoin or Dogecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 2404 (`iec104`), 9998 (`uptime-agent`), 21379 (`opc-tunneller`), 8581 (`homebridge-ui`), 30005 (`port-30005`) and 50070 (`hadoop-namenode`), a KMP frame the meter does not answer (`kamstrup`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
 
 ## TLS ClientHello
 

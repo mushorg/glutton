@@ -321,6 +321,14 @@ func ForPort(port uint16) (Response, bool) {
 		// bytes. HTTP requests (WebHDFS, /jmx) are still rerouted by the Spicy
 		// peek.
 		return Response{Name: "hadoop-namenode", NoReply: true}, true
+	case 8581:
+		// Homebridge Config UI X web UI (its default port; not in
+		// nmap-services), served by Node.js. Research scanners send a bare
+		// newline, which Node's HTTP parser skips (RFC 9112 §2.2) while it
+		// waits for a request line, so record it unanswered and keep the
+		// connection open rather than sending random bytes. HTTP requests are
+		// still rerouted by the Spicy peek.
+		return Response{Name: "homebridge-ui", NoReply: true}, true
 	case 9530:
 		// Xiongmai macGuarder: "OpenTelnet:OpenOnce" is matched in
 		// ForPayload; the client's challenge answer is recorded unanswered
