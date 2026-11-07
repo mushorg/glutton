@@ -353,6 +353,10 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 				server.events = append(server.events, frame)
 			}
 			if err != nil {
+				// No tls object without a session: the hello is already
+				// fingerprinted in the read frame. A hello whose only group
+				// crypto/tls lacks (Censys's pure ML-KEM-1024 probe) lands here
+				// with handshake_failure, as it would on a default OpenSSL server.
 				logger.Debug("TLS handshake failed", slog.String("protocol", "tcp"), producer.ErrAttr(err))
 				if rec.err != nil {
 					endReason = connection.EndWriteError
