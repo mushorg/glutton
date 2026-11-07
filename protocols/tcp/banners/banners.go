@@ -358,6 +358,14 @@ func ForPort(port uint16) (Response, bool) {
 		// open rather than sending random bytes. HTTP requests are still
 		// rerouted by the Spicy peek.
 		return Response{Name: "oracle-http-server", NoReply: true}, true
+	case 5555:
+		// Android adbd over TCP. CNXN/smart-socket clients go to the adb
+		// handler before this is consulted; anything else (research scanners
+		// send a bare newline) is a partial 24-byte ADB message header to
+		// adbd, which keeps waiting for the rest without replying, so record
+		// it unanswered and keep the connection open rather than sending
+		// random bytes.
+		return Response{Name: "adbd", NoReply: true}, true
 	case 8090:
 		// Atlassian Confluence Server/Data Center default HTTP connector
 		// (bundled Tomcat). Research scanners send a bare CRLF pair, which

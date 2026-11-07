@@ -80,6 +80,7 @@ Writes set `status` to the response name or `random`.
 | 4444 | `cmd-shell` | See [Server-first banners](#server-first-banners) |
 | 4899 | `radmin` | |
 | 5025 | `scpi` | SCPI raw socket on a test and measurement instrument. Sends nothing but keeps the connection open, as an instrument does with commands that are not queries; `*IDN?` gets `scpi-idn` |
+| 5555 | `adbd` | Android adbd over TCP, for bytes that are not ADB (the `adb` rule sends `CNXN` and smart-socket clients to the `adb` handler first). Sends nothing but keeps the connection open, as adbd does while it waits for the rest of a 24-byte message header (the bare newline research-scanner probe) |
 | 5938 | `teamviewer-identify` | See [Server-first banners](#server-first-banners) |
 | 7777 | `oracle-http-server` | Oracle HTTP Server (Apache-based, its default port in Oracle Application Server / Fusion Middleware). Sends nothing but keeps the connection open, as Apache does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request line; HTTP requests go to the `http` handler |
 | 8009 | `ajp-404` | |
@@ -96,7 +97,7 @@ Writes set `status` to the response name or `random`.
 | 30005 | `port-30005` | No registered service, and the product behind it is unconfirmed. Sends nothing but keeps the connection open, as an HTTP-style listener does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request; HTTP requests go to the `http` handler |
 | 50070 | `hadoop-namenode` | Hadoop 2.x HDFS NameNode web UI (Jetty). Sends nothing but keeps the connection open, as Jetty does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request line; HTTP requests (WebHDFS, `/jmx`) go to the `http` handler |
 
-Silent responses (`mglndd`, `bracket-probe`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `dogecoin` on 22556, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin, Litecoin or Dogecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 2404 (`iec104`), 9998 (`uptime-agent`), 21379 (`opc-tunneller`), 7777 (`oracle-http-server`), 8581 (`homebridge-ui`), 8024 (`port-8024`), 8090 (`confluence`), 30005 (`port-30005`) and 50070 (`hadoop-namenode`), a KMP frame the meter does not answer (`kamstrup`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
+Silent responses (`mglndd`, `bracket-probe`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `dogecoin` on 22556, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin, Litecoin or Dogecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 2404 (`iec104`), 9998 (`uptime-agent`), 21379 (`opc-tunneller`), 5555 (`adbd`), 7777 (`oracle-http-server`), 8581 (`homebridge-ui`), 8024 (`port-8024`), 8090 (`confluence`), 30005 (`port-30005`) and 50070 (`hadoop-namenode`), a KMP frame the meter does not answer (`kamstrup`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
 
 ## TLS ClientHello
 

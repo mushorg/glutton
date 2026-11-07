@@ -95,6 +95,14 @@ func TestForPort(t *testing.T) {
 	_, ok = ForPayload([]byte("TST \x00\x00\x00\r\n\r\n"))
 	require.False(t, ok)
 
+	resp, ok = ForPort(5555)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "adbd", NoReply: true}, resp)
+	// the scanner's bare newline matches no payload signature, so the port
+	// entry answers it
+	_, ok = ForPayload([]byte("\n"))
+	require.False(t, ok)
+
 	resp, ok = ForPort(8090)
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "confluence", NoReply: true}, resp)
