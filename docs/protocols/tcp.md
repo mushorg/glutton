@@ -73,6 +73,7 @@ Writes set `status` to the response name or `random`.
 | 2404 | `iec104` | IEC 60870-5-104. Sends nothing but keeps the connection open, so I-format ASDUs (general interrogation) and other bytes are recorded instead of answered with random bytes; U-format frames get `iec104-*` |
 | 3299 | `saprouter-timeout` | `NI_RTERR` "connection timed out" (rc -5, `no route received within 5s`), which nmap reports as `SAProuter 40.4 SP3`: sent to a client that stays silent for 2s, or as the reply to bytes that match no signature; the connection closes after it |
 | 4222 | `nats-info` | See [Server-first banners](#server-first-banners) |
+| 4321 | `rwhois` | See [Server-first banners](#server-first-banners) |
 | 4369 | `epmd` | Sends nothing and closes, as epmd does with a request it cannot parse; `NAMES_REQ` and `PORT_PLEASE2_REQ` get `epmd-names` / `epmd-port2` |
 | 1911 | `niagara-fox` | Sends nothing and hangs up on bytes that are not a Fox hello (including Fox messages after the hello), as a Niagara station does before a session is open |
 | 4444 | `cmd-shell` | See [Server-first banners](#server-first-banners) |
@@ -127,6 +128,7 @@ Parsing uses `helpers.ParseClientHello`, a lenient parser that reassembles a hel
 - **4444 (`cmd-shell`, a Windows Server 2003 `cmd.exe` prompt):** waits 2s for the client first.
   - A silent client gets the prompt as `decoded[0]` (a `write`).
   - A client that speaks first is routed by its bytes as on any catch-all port (HTTP to `http`), and otherwise gets the prompt as the reply.
+- **4321 (`rwhois`, the RWhois greeting `%rwhois V-1.5:003fff:00 … (by Network Solutions, Inc. V-1.5.9.6)\r\n` that nmap `-sV` reports as `rwhois`):** waits 2s for the client first, like 4444. A client that speaks first (a scanner sends `TST`-prefixed frames here and to 4444) gets the greeting once as the reply, and its next message ends the session.
 - **5938 (`teamviewer-identify`, a TeamViewer `CMD_IDENTIFY` that nmap `-sV` reports as `TeamViewer`):** waits 2s for the client first, like 4444. Bytes 5–8 are random per connection. A `CMD_PING` (Shodan) is answered with `teamviewer-pingok` whether or not the greeting was sent. Other client bytes get `CMD_IDENTIFY` once, and the next message ends the session.
 
 After a greeting, the client's messages get random bytes unless a payload signature matches (no shell is emulated).

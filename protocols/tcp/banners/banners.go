@@ -70,6 +70,11 @@ var (
 		"(C) Copyright 1985-2003 Microsoft Corp.\r\n\r\n" +
 		"C:\\WINDOWS\\system32>")
 
+	// RWhois (RFC 2167 §3.1) greeting of Network Solutions' reference rwhoisd
+	// 1.5.9.6, the server behind nmap-services' rwhois on tcp/4321. nmap
+	// match: whois p/rwhois/ v/$2/ h/$1/. The host name is made up.
+	rwhoisBanner = []byte("%rwhois V-1.5:003fff:00 rwhois.corp-net.local (by Network Solutions, Inc. V-1.5.9.6)\r\n")
+
 	// DCE/RPC bind_ack (honeytrap 135_tcp).
 	dcerpcBindAck = mustHex(
 		"05000c03100000003c00000001000000d016d016acd80000040031333500c501" +
@@ -264,6 +269,12 @@ func ForPort(port uint16) (Response, bool) {
 		return Response{Name: "statsd-stats", Data: statsdStats()}, true
 	case 4444:
 		return Response{Name: "cmd-shell", Data: cmdShellBanner, GreetWhenIdle: true}, true
+	case 4321:
+		// rwhoisd greets on connect. Clients that speak first (a scanner
+		// sends "TST"-prefixed frames to 4321 and 4444) get the greeting as
+		// the reply, once, instead of random bytes; HTTP is still rerouted
+		// by the Spicy peek
+		return Response{Name: "rwhois", Data: rwhoisBanner, GreetWhenIdle: true, Once: true}, true
 	case 49:
 		// tac_plus disconnects without a reply on a bad header; AUTHEN
 		// STARTs are matched in ForPayload

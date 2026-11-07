@@ -1252,6 +1252,39 @@ func TestHandleTCPTeamViewer(t *testing.T) {
 	require.False(t, HasServerBanner(5938))
 }
 
+func TestHandleTCPRWhois(t *testing.T) {
+	greeting := []byte("%rwhois V-1.5:003fff:00 rwhois.corp-net.local (by Network Solutions, Inc. V-1.5.9.6)\r\n")
+	// "TST" + length-prefixed version strings, zero-padded (45.61.139.15,
+	// tcp/4321; the same client probes 4444)
+	tst := append([]byte("TST\x06\x00\x00\x000.26.0\x07\x00\x00\x000.26.1"), bytes.Repeat([]byte("0"), 33)...)
+	require.Len(t, tst, 56)
+
+	// a client that speaks first gets the greeting once instead of random
+	// bytes; its next message ends the session
+	client, hp, done := startCatchAll(t, 4321)
+	_, err := client.Write(tst)
+	require.NoError(t, err)
+	require.Equal(t, greeting, readAll(t, client, len(greeting)))
+	_, err = client.Write([]byte("TST91f0e93c45d1399d892642ae46d6f951"))
+	require.NoError(t, err)
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 3)
+	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, tst, events[0].Payload)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "rwhois", Payload: greeting, PayloadHash: helpers.SHA256Hex(greeting)}, events[1])
+	require.Equal(t, "read", events[2].Direction)
+
+	// a silent client (nmap -sV NULL probe) is greeted on connect
+	client, hp, done = startCatchAllWith(t, 4321, HandleTCPSilent)
+	require.Equal(t, greeting, readAll(t, client, len(greeting)))
+	events = finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 1)
+	require.Equal(t, "rwhois", events[0].Status)
+
+	require.True(t, GreetsWhenIdle(4321))
+	require.False(t, HasServerBanner(4321))
+}
+
 func TestHandleTCPSaprouter(t *testing.T) {
 	// Shodan's unframed ROUTER_ADM info request: saprouter reads "ROUT" as
 	// the NI length and refuses it

@@ -95,6 +95,13 @@ func TestForPort(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "homebridge-ui", NoReply: true}, resp)
 
+	resp, ok = ForPort(4321)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "rwhois", Data: rwhoisBanner, GreetWhenIdle: true, Once: true}, resp)
+	require.True(t, bytes.HasPrefix(resp.Data, []byte("%rwhois V-1.5:")))
+	require.True(t, bytes.HasSuffix(resp.Data, []byte(")\r\n")))
+	require.Equal(t, 1, bytes.Count(resp.Data, []byte("\n")))
+
 	_, ok = ForPort(9999)
 	require.False(t, ok)
 }
