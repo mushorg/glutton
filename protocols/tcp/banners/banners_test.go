@@ -95,6 +95,14 @@ func TestForPort(t *testing.T) {
 	_, ok = ForPayload([]byte("TST \x00\x00\x00\r\n\r\n"))
 	require.False(t, ok)
 
+	resp, ok = ForPort(8090)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "confluence", NoReply: true}, resp)
+	// the scanner's bare CRLF pair matches no payload signature, so the port
+	// entry answers it
+	_, ok = ForPayload([]byte("\r\n\r\n"))
+	require.False(t, ok)
+
 	resp, ok = ForPort(50070)
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "hadoop-namenode", NoReply: true}, resp)

@@ -358,6 +358,14 @@ func ForPort(port uint16) (Response, bool) {
 		// open rather than sending random bytes. HTTP requests are still
 		// rerouted by the Spicy peek.
 		return Response{Name: "oracle-http-server", NoReply: true}, true
+	case 8090:
+		// Atlassian Confluence Server/Data Center default HTTP connector
+		// (bundled Tomcat). Research scanners send a bare CRLF pair, which
+		// Tomcat's request-line parser skips (RFC 9112 §2.2) while it waits
+		// for a request line, so record it unanswered and keep the connection
+		// open rather than sending random bytes. HTTP requests are still
+		// rerouted by the Spicy peek.
+		return Response{Name: "confluence", NoReply: true}, true
 	case 9530:
 		// Xiongmai macGuarder: "OpenTelnet:OpenOnce" is matched in
 		// ForPayload; the client's challenge answer is recorded unanswered
