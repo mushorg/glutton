@@ -182,6 +182,37 @@ func TestCatchAllTLSHandshakeOnly(t *testing.T) {
 	require.Equal(t, "tls-handshake", ev.frames[1]["status"])
 }
 
+// A TLS 1.2 client with an SNI and only ECDHE_ECDSA suites (as captured on
+// tcp/7999, ja4 t12d3511h9_66c735deec94_52c4d8bb91c9) used to get a fatal
+// handshake_failure because the RSA cert was served whenever the SNI did not
+// match the localhost certificates.
+func TestCatchAllTLSECDSASuitesWithSNI(t *testing.T) {
+	ev := dispatchCatchAll(t, 7999, func(c net.Conn) {
+		tc := tls.Client(c, &tls.Config{ //nolint:gosec // test client for a self-signed cert
+			InsecureSkipVerify: true,
+			ServerName:         "host.example.net",
+			MaxVersion:         tls.VersionTLS12,
+			CipherSuites: []uint16{
+				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
+			},
+		})
+		require.NoError(t, tc.Handshake())
+		require.Equal(t, uint16(tls.VersionTLS12), tc.ConnectionState().Version)
+	})
+	require.Equal(t, "tcp", ev.protocol)
+	require.NotNil(t, ev.md.TLS)
+	require.Equal(t, "TLS 1.2", ev.md.TLS.Version)
+	require.Equal(t, "host.example.net", ev.md.TLS.ServerName)
+	require.Len(t, ev.frames, 2)
+	require.Equal(t, "tls-clienthello", ev.frames[0]["command"])
+	require.Equal(t, "write", ev.frames[1]["direction"])
+	require.Equal(t, "tls-handshake", ev.frames[1]["status"])
+	written := payloadOf(t, ev.frames[1])
+	require.Equal(t, "\x16\x03\x03", written[:3], "ServerHello flight, not an alert")
+}
+
 func TestCatchAllUppercaseNonHTTPStaysTCP(t *testing.T) {
 	// starts like "HEAD " but is not a request line
 	ev := dispatchCatchAll(t, 9999, func(c net.Conn) {

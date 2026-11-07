@@ -90,14 +90,20 @@ func TerminateTLSFrom(conn net.Conn, r io.Reader) (net.Conn, *connection.TLSInfo
 	return terminateTLS([]tls.Certificate{cert, ecCert}, conn, r)
 }
 
-// pickCertificate serves the first of certs the client can verify and falls
-// back to certs[0]. The RSA certificate comes first, so only clients that
-// cannot verify an RSA signature (ECDSA/EdDSA-only signature_algorithms, or
-// only ECDHE_ECDSA suites) get the ECDSA one instead of a handshake_failure.
+// pickCertificate serves the first of certs the client can use and falls back
+// to certs[0]. The RSA certificate comes first, so only clients that cannot
+// use it (ECDSA/EdDSA-only signature_algorithms, or no enabled ECDHE_RSA
+// suite) get the ECDSA one instead of a handshake_failure. The certificates
+// are self-signed for localhost and do not match a client's SNI, so the check
+// runs on a copy of the hello without a server name: otherwise
+// SupportsCertificate rejects every certificate for any client sending SNI and
+// the RSA one is always served.
 func pickCertificate(certs []tls.Certificate) func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	return func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		anyName := *hello
+		anyName.ServerName = ""
 		for i := range certs {
-			if hello.SupportsCertificate(&certs[i]) == nil {
+			if anyName.SupportsCertificate(&certs[i]) == nil {
 				return &certs[i], nil
 			}
 		}
