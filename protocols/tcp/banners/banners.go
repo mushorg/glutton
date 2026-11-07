@@ -392,6 +392,10 @@ func ForPort(port uint16) (Response, bool) {
 		// epmd closes a connection whose request it cannot parse;
 		// NAMES_REQ and PORT_PLEASE2_REQ are matched in ForPayload
 		return Response{Name: "epmd", Silent: true}, true
+	case 1801:
+		// an MSMQ queue manager drops a connection whose first bytes are not
+		// a valid session packet; EstablishConnection is matched in ForPayload
+		return Response{Name: "msmq", Silent: true}, true
 	case 5938:
 		// TeamViewer greets a silent client (nmap -sV); CMD_PING is matched
 		// in ForPayload
@@ -491,6 +495,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	zookeeperReply,
 	nomachineReply,
 	epmdReply,
+	msmqReply,
 	saprouterReply,
 	xiongmaiReply,
 	scpiReply,
