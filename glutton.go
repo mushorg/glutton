@@ -76,7 +76,6 @@ func New(ctx context.Context) (*Glutton, error) {
 	}
 	g.ctx, g.cancel = context.WithCancel(ctx)
 
-	g.connTable = connection.New(ctx)
 	if err := g.makeID(); err != nil {
 		return nil, err
 	}
@@ -87,6 +86,11 @@ func New(ctx context.Context) (*Glutton, error) {
 	if err := g.initConfig(); err != nil {
 		return nil, err
 	}
+
+	g.connTable = connection.New(ctx, viper.GetInt("conn_table_max_entries"), func(dropped, kept int) {
+		g.Logger.Warn("Connection table full, dropped oldest entries",
+			slog.String("reporter", "glutton"), slog.Int("dropped", dropped), slog.Int("kept", kept))
+	})
 
 	var rulesFile io.ReadCloser
 

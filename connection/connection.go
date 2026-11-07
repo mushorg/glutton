@@ -137,14 +137,32 @@ func (m *Metadata) AddInner(names ...string) {
 	}
 }
 
+// DefaultMaxEntries is the connection table cap used when the configured one
+// is not positive. An entry costs roughly 300 bytes with map overhead, so the
+// default bounds the table near 75-90 MB.
+const DefaultMaxEntries = 250_000
+
 type ConnTable struct {
-	table map[CKey]Metadata
-	mtx   sync.RWMutex
+	table      map[CKey]Metadata
+	mtx        sync.RWMutex
+	maxEntries int
+	evictions  uint64
+	// onEvict is called with the lock held after a full table dropped its
+	// oldest entries; it must not call back into the table.
+	onEvict func(dropped, kept int)
 }
 
-func New(ctx context.Context) *ConnTable {
+// New returns a connection table holding at most maxEntries entries
+// (DefaultMaxEntries when maxEntries <= 0). onEvict, when set, is told each
+// time a full table dropped its oldest half.
+func New(ctx context.Context, maxEntries int, onEvict func(dropped, kept int)) *ConnTable {
+	if maxEntries <= 0 {
+		maxEntries = DefaultMaxEntries
+	}
 	ct := &ConnTable{
-		table: make(map[CKey]Metadata, 1024),
+		table:      make(map[CKey]Metadata, 1024),
+		maxEntries: maxEntries,
+		onEvict:    onEvict,
 	}
 	// every 5 minutes using a ticker, flush the table
 
@@ -197,9 +215,48 @@ func (t *ConnTable) Register(srcIP, srcPort string, dstPort uint16, dstHost stri
 		return md, nil
 	}
 
+	if len(t.table) >= t.maxEntries {
+		t.evictOldestLocked(t.maxEntries / 2)
+	}
+
 	md := NewMetadata(dstPort, dstHost, rule)
 	t.table[ck] = md
 	return md, nil
+}
+
+// evictOldestLocked keeps the newest keep entries and drops the rest. Like
+// FlushOlderThan it rebuilds the map so the dropped entries' memory is
+// released. Halving on overflow keeps the sort amortized over keep inserts.
+func (t *ConnTable) evictOldestLocked(keep int) {
+	if len(t.table) <= keep {
+		return
+	}
+	added := make([]int64, 0, len(t.table))
+	for _, md := range t.table {
+		added = append(added, md.Added.UnixNano())
+	}
+	slices.Sort(added)
+	cutoff := added[len(added)-keep]
+
+	survivors := make(map[CKey]Metadata, keep)
+	for ck, md := range t.table {
+		if len(survivors) < keep && md.Added.UnixNano() >= cutoff {
+			survivors[ck] = md
+		}
+	}
+	dropped := len(t.table) - len(survivors)
+	t.table = survivors
+	t.evictions += uint64(dropped)
+	if t.onEvict != nil {
+		t.onEvict(dropped, len(survivors))
+	}
+}
+
+// Evictions returns how many entries were dropped because the table was full.
+func (t *ConnTable) Evictions() uint64 {
+	t.mtx.RLock()
+	defer t.mtx.RUnlock()
+	return t.evictions
 }
 
 // NewMetadata returns metadata for a flow that starts now. UDP datagrams use

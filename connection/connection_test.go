@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -56,12 +57,12 @@ func TestNewConnKeyFromNetConn(t *testing.T) {
 }
 
 func TestNewConnTable(t *testing.T) {
-	table := New(context.Background())
+	table := New(context.Background(), 0, nil)
 	require.NotNil(t, table)
 }
 
 func TestRegister(t *testing.T) {
-	table := New(context.Background())
+	table := New(context.Background(), 0, nil)
 	targetPort := 4321
 	m1, err := table.Register("127.0.0.1", "1234", uint16(targetPort), "192.0.2.1", &rules.Rule{})
 	require.NoError(t, err)
@@ -74,7 +75,7 @@ func TestRegister(t *testing.T) {
 }
 
 func TestNewMetadataIgnoresTable(t *testing.T) {
-	table := New(context.Background())
+	table := New(context.Background(), 0, nil)
 	old, err := table.Register("127.0.0.1", "1234", 5060, "192.0.2.1", &rules.Rule{Target: "sip"})
 	require.NoError(t, err)
 
@@ -90,7 +91,7 @@ func TestNewMetadataIgnoresTable(t *testing.T) {
 
 func TestRegisterConn(t *testing.T) {
 	conn, ck := testTCPConn(t)
-	table := New(context.Background())
+	table := New(context.Background(), 0, nil)
 	md, err := table.RegisterConn(conn, &rules.Rule{Target: "tcp"})
 	require.NoError(t, err)
 	require.NotNil(t, md)
@@ -103,7 +104,7 @@ func TestRegisterConn(t *testing.T) {
 }
 
 func TestFlushOlderThan(t *testing.T) {
-	table := New(context.Background())
+	table := New(context.Background(), 0, nil)
 	targetPort := 4321
 	md, err := table.Register("127.0.0.1", "1234", uint16(targetPort), "", &rules.Rule{})
 	require.NoError(t, err)
@@ -114,7 +115,7 @@ func TestFlushOlderThan(t *testing.T) {
 }
 
 func TestFlushOlderThanKeepsRecent(t *testing.T) {
-	table := New(context.Background())
+	table := New(context.Background(), 0, nil)
 	_, err := table.Register("127.0.0.1", "1234", 4321, "192.0.2.1", &rules.Rule{Target: "tcp"})
 	require.NoError(t, err)
 	_, err = table.Register("127.0.0.1", "1235", 4321, "192.0.2.1", &rules.Rule{Target: "tcp"})
@@ -190,4 +191,35 @@ func TestMetadataStack(t *testing.T) {
 	md.AddInner("tls", "http", "http")
 	require.Equal(t, []string{"tcp", "tls", "socks", "tls", "http"}, md.Stack("tcp", "socks"))
 	require.Equal(t, []string{"udp", "dns"}, Metadata{}.Stack("udp", "dns"))
+}
+
+func TestRegisterEvictsOldestWhenFull(t *testing.T) {
+	var dropped, kept int
+	table := New(context.Background(), 4, func(d, k int) { dropped, kept = d, k })
+	rule := &rules.Rule{Target: "default"}
+
+	for port := 1000; port < 1004; port++ {
+		_, err := table.Register("10.0.0.1", strconv.Itoa(port), 80, "10.0.0.2", rule)
+		require.NoError(t, err)
+		time.Sleep(time.Millisecond) // distinct Added times
+	}
+	require.Equal(t, 4, table.Len())
+	require.Zero(t, table.Evictions())
+
+	_, err := table.Register("10.0.0.1", "1004", 80, "10.0.0.2", rule)
+	require.NoError(t, err)
+	require.Equal(t, 3, table.Len()) // newest half (2) + the new entry
+	require.Equal(t, uint64(2), table.Evictions())
+	require.Equal(t, 2, dropped)
+	require.Equal(t, 2, kept)
+
+	for port, want := range map[string]bool{"1000": false, "1001": false, "1002": true, "1003": true, "1004": true} {
+		ck, err := NewConnKeyByString("10.0.0.1", port)
+		require.NoError(t, err)
+		require.Equal(t, want, table.Get(ck).Rule != nil, "port %s", port)
+	}
+}
+
+func TestNewDefaultsMaxEntries(t *testing.T) {
+	require.Equal(t, DefaultMaxEntries, New(context.Background(), 0, nil).maxEntries)
 }
