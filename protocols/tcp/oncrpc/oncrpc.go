@@ -328,12 +328,21 @@ func ephemeralPort(seed []byte, salt string) uint16 {
 	return uint16(32768 + h.Sum64()%28232)
 }
 
-// Mappings returns the registered services of a plausible NFS server, derived
-// from seed (a stable per-sensor value). rpcbind v4/v3/v2 sit on 111 and nfs
-// on the canonical 2049; rpc.statd, mountd and nlockmgr get per-sensor
-// ephemeral ports, so sensors do not share one port set. The first eight
-// entries (rpcbind + statd) keep their historical order and ports.
+// SensorSeed is a per-sensor secret mixed into every Mappings seed, so
+// sensors that share a target IP (e.g. the same private address behind NAT)
+// still advertise different ephemeral ports. Glutton sets it to the sensor ID
+// at startup; empty (tests) keeps ports a function of the target IP alone.
+var SensorSeed []byte
+
+// Mappings returns the registered services of a plausible Linux NFS server,
+// derived from seed (the target IP) and SensorSeed. rpcbind v4/v3/v2 sit on
+// 111; nfs v3/v4 and nfs_acl v3 on the canonical 2049, TCP only (nfs-utils
+// defaults to udp=n and NFSv4 is TCP-only); rpc.statd, mountd and nlockmgr
+// get per-sensor ephemeral ports, so sensors do not share one port set.
 func Mappings(seed []byte) []Mapping {
+	if len(SensorSeed) > 0 {
+		seed = append(append([]byte{}, SensorSeed...), seed...)
+	}
 	h := fnv.New64a()
 	_, _ = h.Write(seed)
 	sum := h.Sum64()
@@ -355,8 +364,7 @@ func Mappings(seed []byte) []Mapping {
 	)
 	// A real NFS host also advertises mountd, nfs and nlockmgr. mountd and
 	// nlockmgr take per-sensor ephemeral ports (one port per service, shared
-	// by its tcp/udp registrations, as the kernel registers them); nfs is on
-	// the canonical 2049.
+	// by its tcp/udp registrations, as the kernel registers them).
 	mountPort := ephemeralPort(seed, "mountd")
 	lockPort := ephemeralPort(seed, "nlockmgr")
 	for _, prot := range []uint32{ProtUDP, ProtTCP} {
@@ -364,11 +372,11 @@ func Mappings(seed []byte) []Mapping {
 			m = append(m, Mapping{Program: ProgMount, Version: v, Prot: prot, Port: mountPort, Owner: "superuser"})
 		}
 	}
-	for _, prot := range []uint32{ProtTCP, ProtUDP} {
-		for _, v := range []uint32{3, 4} {
-			m = append(m, Mapping{Program: ProgNFS, Version: v, Prot: prot, Port: 2049, Owner: "superuser"})
-		}
-	}
+	m = append(m,
+		Mapping{Program: ProgNFS, Version: 3, Prot: ProtTCP, Port: 2049, Owner: "superuser"},
+		Mapping{Program: ProgNFS, Version: 4, Prot: ProtTCP, Port: 2049, Owner: "superuser"},
+		Mapping{Program: ProgNFSACL, Version: 3, Prot: ProtTCP, Port: 2049, Owner: "superuser"},
+	)
 	for _, prot := range []uint32{ProtUDP, ProtTCP} {
 		for _, v := range []uint32{1, 3, 4} {
 			m = append(m, Mapping{Program: ProgNLockMgr, Version: v, Prot: prot, Port: lockPort, Owner: "superuser"})

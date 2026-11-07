@@ -374,3 +374,43 @@ func TestReplyUnknownProgram(t *testing.T) {
 	require.Equal(t, "PROG_UNAVAIL", status)
 	require.Equal(t, mustHex("cafecafe"+"00000001"+"00000000"+"00000000"+"00000000"+"00000001"), body)
 }
+
+func TestMappingsNFSTCPOnly(t *testing.T) {
+	env := testEnv()
+	var nfs []Mapping
+	for _, m := range env.Mappings {
+		if m.Program == ProgNFS || m.Program == ProgNFSACL {
+			nfs = append(nfs, Mapping{Program: m.Program, Version: m.Version, Prot: m.Prot, Port: m.Port})
+		}
+	}
+	require.Equal(t, []Mapping{
+		{Program: ProgNFS, Version: 3, Prot: ProtTCP, Port: 2049},
+		{Program: ProgNFS, Version: 4, Prot: ProtTCP, Port: 2049},
+		{Program: ProgNFSACL, Version: 3, Prot: ProtTCP, Port: 2049},
+	}, nfs, "nfs and nfs_acl are TCP-only, like nfs-utils with udp=n")
+
+	// GETPORT for NFS over UDP finds nothing, as on a host without UDP nfsd.
+	c, err := Parse(call(ProgPortmap, 2, 3, be(ProgNFS, 3, ProtUDP, 0)))
+	require.NoError(t, err)
+	body, status := Reply(c, env)
+	require.Equal(t, "SUCCESS", status)
+	require.Equal(t, append(be(0x01020304, 1, 0, 0, 0, 0), be(0)...), body)
+}
+
+func TestMappingsSensorSeed(t *testing.T) {
+	base := Mappings([]byte("10.0.0.5"))
+	t.Cleanup(func() { SensorSeed = nil })
+	SensorSeed = []byte("sensor-a")
+	a := Mappings([]byte("10.0.0.5"))
+	SensorSeed = []byte("sensor-b")
+	b := Mappings([]byte("10.0.0.5"))
+	require.Equal(t, b, Mappings([]byte("10.0.0.5")), "stable per sensor")
+	require.Len(t, a, len(base))
+	require.NotEqual(t, a[6].Port, b[6].Port, "sensors behind one NAT address get different statd ports")
+	require.NotEqual(t, base[6].Port, a[6].Port)
+	for i := range a {
+		if a[i].Program == ProgPortmap || a[i].Program == ProgNFS || a[i].Program == ProgNFSACL {
+			require.Equal(t, base[i].Port, a[i].Port, "well-known ports do not move")
+		}
+	}
+}

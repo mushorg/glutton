@@ -23,6 +23,7 @@ import (
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/recall"
 	"github.com/mushorg/glutton/protocols/spicy"
+	"github.com/mushorg/glutton/protocols/tcp/oncrpc"
 	"github.com/mushorg/glutton/rules"
 
 	"github.com/google/uuid"
@@ -80,6 +81,8 @@ func New(ctx context.Context) (*Glutton, error) {
 		return nil, err
 	}
 	g.Logger = producer.NewLogger(g.id.String())
+	// Per-sensor rpcbind ephemeral ports, even for sensors sharing a target IP.
+	oncrpc.SensorSeed = append([]byte{}, g.id[:]...)
 
 	// Loading the configuration
 	g.Logger.Info("Loading configurations", slog.String("reporter", "glutton"))

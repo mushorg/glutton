@@ -52,3 +52,25 @@ func TestReplyNFS(t *testing.T) {
 	require.Nil(t, body)
 	require.Empty(t, status)
 }
+
+func TestReplyNFSACL(t *testing.T) {
+	acl := func(vers, proc uint32) *Call {
+		return &Call{XID: 7, RPCVersion: 2, Program: ProgNFSACL, Version: vers, Procedure: proc}
+	}
+	require.Equal(t, "NFSACLPROC3_NULL", NFSCommand(acl(3, 0)))
+	require.Equal(t, "NFSACLPROC3_GETACL", NFSCommand(acl(3, 1)))
+	require.Equal(t, "NFSACLPROC3_9", NFSCommand(acl(3, 9)))
+	require.Equal(t, "CALL", NFSCommand(acl(2, 0)))
+
+	body, status := ReplyNFS(acl(3, 0))
+	require.Equal(t, "SUCCESS", status)
+	require.Equal(t, nfsWords(7, 1, 0, 0, 0, 0), body)
+
+	body, status = ReplyNFS(acl(2, 0))
+	require.Equal(t, "PROG_MISMATCH", status)
+	require.Equal(t, nfsWords(7, 1, 0, 0, 0, 2, 3, 3), body)
+
+	body, status = ReplyNFS(acl(3, 1))
+	require.Equal(t, "PROC_UNAVAIL", status)
+	require.Equal(t, nfsWords(7, 1, 0, 0, 0, 3), body)
+}

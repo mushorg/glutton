@@ -4,6 +4,8 @@ import "strconv"
 
 const (
 	ProgNFS = 100003
+	// ProgNFSACL is the Linux nfs_acl side program (v3) served by nfsd on 2049.
+	ProgNFSACL = 100227
 
 	nfsMinVersion = 3
 	nfsMaxVersion = 4
@@ -20,11 +22,19 @@ var nfs3Procs = []string{"NULL", "GETATTR", "SETATTR", "LOOKUP", "ACCESS", "READ
 
 var nfs4Procs = []string{"NULL", "COMPOUND"}
 
+var nfsACL3Procs = []string{"NULL", "GETACL", "SETACL"}
+
 // NFSCommand names an NFS call: NFSPROC3_* or NFSPROC4_*, CALL for a call to
 // another program and REPLY for a reply message.
 func NFSCommand(c *Call) string {
 	if c.MsgType == MsgReply {
 		return "REPLY"
+	}
+	if c.Program == ProgNFSACL && c.Version == 3 {
+		if int64(c.Procedure) < int64(len(nfsACL3Procs)) {
+			return "NFSACLPROC3_" + nfsACL3Procs[c.Procedure]
+		}
+		return "NFSACLPROC3_" + strconv.FormatUint(uint64(c.Procedure), 10)
 	}
 	if c.Program != ProgNFS {
 		return "CALL"
@@ -60,8 +70,9 @@ func NFSCompound(c *Call) (tag string, minor, ops uint32, err error) {
 // ReplyNFS builds the reply body (without record mark) for a call to the NFS
 // program and the outcome name for the write frame. It never exposes a file
 // system: NULL succeeds, file operations fail with an error status, and
-// versions other than 3 and 4 get PROG_MISMATCH. It returns nil for messages a
-// server does not answer.
+// versions other than 3 and 4 get PROG_MISMATCH. The nfs_acl program (v3,
+// advertised beside nfs on 2049) answers NULL only. It returns nil for messages
+// a server does not answer.
 func ReplyNFS(c *Call) ([]byte, string) {
 	if c == nil || c.MsgType != MsgCall {
 		return nil, ""
@@ -70,6 +81,17 @@ func ReplyNFS(c *Call) ([]byte, string) {
 		e := &encoder{}
 		e.u32(c.XID, MsgReply, msgDenied, rejectRPCMismatch, 2, 2)
 		return e.b, "RPC_MISMATCH"
+	}
+	if c.Program == ProgNFSACL {
+		switch {
+		case c.Version != 3:
+			e := accepted(c.XID, acceptProgMismatch)
+			e.u32(3, 3)
+			return e.b, "PROG_MISMATCH"
+		case c.Procedure == 0:
+			return accepted(c.XID, acceptSuccess).b, "SUCCESS"
+		}
+		return accepted(c.XID, acceptProcUnavail).b, "PROC_UNAVAIL"
 	}
 	if c.Program != ProgNFS {
 		return accepted(c.XID, acceptProgUnavail).b, "PROG_UNAVAIL"

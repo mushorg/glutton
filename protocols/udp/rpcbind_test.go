@@ -55,6 +55,38 @@ func TestHandleRPCBindUDPDump(t *testing.T) {
 	}, h.produced[0].decoded)
 }
 
+// 40-byte v2 PMAPPROC_DUMP reflector probe (AUTH_NONE, random XID) from Ochi
+// event c828c744-705b-4789-9323-620f76ebb540, the dominant udp/111 call.
+var rpcbindUDPReflectorDump = []byte{
+	0x0a, 0x97, 0x4f, 0xf6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+	0x00, 0x01, 0x86, 0xa0, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x04,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+}
+
+func TestHandleRPCBindUDPReflectorDumpNoUDPNFS(t *testing.T) {
+	h := &recordingHoneypot{}
+	src, dst := rpcbindAddrs()
+
+	require.NoError(t, HandleRPCBind(context.Background(), src, dst, rpcbindUDPReflectorDump, connection.Metadata{}, testLogger{}, h))
+	require.Len(t, h.produced, 1)
+	require.Len(t, h.replies, 1)
+	reply := h.replies[0]
+	// 24-byte accepted reply + 23 pmap entries + terminator (was 24 entries / 508 B).
+	require.Len(t, reply, 24+23*20+4)
+	for off := 24; off+20 <= len(reply); off += 20 {
+		prog := binary.BigEndian.Uint32(reply[off+4:])
+		prot := binary.BigEndian.Uint32(reply[off+12:])
+		if prog == 100003 || prog == 100227 {
+			require.Equal(t, uint32(oncrpc.ProtTCP), prot, "no NFS over UDP at offset %d", off)
+		}
+	}
+	require.Equal(t, []parsedRPCBind{
+		{Direction: "read", Command: "PMAPPROC_DUMP", XID: 0x0a974ff6, Program: 100000, Version: 2, Procedure: 4, Auth: "AUTH_NONE", Payload: rpcbindUDPReflectorDump},
+		{Direction: "write", Command: "PMAPPROC_DUMP", XID: 0x0a974ff6, Status: "SUCCESS", Payload: reply},
+	}, h.produced[0].decoded)
+}
+
 func TestHandleRPCBindUDPNoReply(t *testing.T) {
 	src, dst := rpcbindAddrs()
 	for _, tc := range []struct {
