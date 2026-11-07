@@ -471,8 +471,6 @@ func (g *Glutton) tcpListen() {
 
 // Start the listener, this blocks for new connections
 func (g *Glutton) Start() error {
-	g.startMonitor()
-
 	var err error
 	if g.ignorePorts, err = ignoredPortsFromConfig(); err != nil {
 		return err

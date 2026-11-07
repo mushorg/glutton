@@ -1,46 +1,12 @@
 package glutton
 
 import (
-	"errors"
 	"fmt"
 	"net"
-	"os"
-	"runtime"
 	"strings"
-	"time"
 
-	"github.com/glaslos/lsof"
 	"github.com/google/gopacket/pcap"
 )
-
-func countOpenFiles() (int, error) {
-	if runtime.GOOS == "linux" {
-		lines, err := lsof.ReadPID(os.Getpid())
-		return len(lines) - 1, err
-	}
-	return 0, errors.New("operating system type not supported for this command")
-}
-
-func (g *Glutton) startMonitor() {
-	ticker := time.NewTicker(10 * time.Second)
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				openFiles, err := countOpenFiles()
-				if err != nil {
-					fmt.Printf("Failed :%s", err)
-				}
-				runningRoutines := runtime.NumGoroutine()
-				g.Logger.Debug(fmt.Sprintf("running Go routines: %d, open files: %d", openFiles, runningRoutines))
-			case <-g.ctx.Done():
-				g.Logger.Info("Monitoring stopped...")
-				ticker.Stop()
-				return
-			}
-		}
-	}()
-}
 
 func getNonLoopbackIPs(ifaceName string) ([]net.IP, error) {
 	nonLoopback := []net.IP{}

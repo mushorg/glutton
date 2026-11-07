@@ -6,7 +6,6 @@ require (
 	github.com/coreos/go-iptables v0.8.0
 	github.com/d1str0/hpfeeds v0.1.6
 	github.com/ghettovoice/gosip v0.0.0-20250512091045-f65af91fc833
-	github.com/glaslos/lsof v0.0.0-20230723212405-b3baf9409e4b
 	github.com/google/gopacket v1.1.19
 	github.com/google/uuid v1.6.0
 	github.com/gopcua/opcua v0.9.1
@@ -24,14 +23,11 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
-	github.com/jedib0t/go-pretty/v6 v6.6.7 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sagikazarmark/locafero v0.9.0 // indirect
 	github.com/satori/go.uuid v1.2.1-0.20181028125025-b2ce2384e17b // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
