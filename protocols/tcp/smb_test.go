@@ -570,7 +570,7 @@ func TestHandleSMBCapturesLargeNtTransact(t *testing.T) {
 func TestHandleSMBTruncatesOversizedMessage(t *testing.T) {
 	client, hp, done := startHandleSMB(t)
 
-	n := maxSMBMessage + 64
+	n := smb.MaxMessage + 64
 	pdu := make([]byte, n)
 	copy(pdu, smbHeaderBytes(t, smbReqHeader(smb.CmdNtTransact, 1, 1, 1)))
 	writeSMBFrame(t, client, pdu)
@@ -583,7 +583,7 @@ func TestHandleSMBTruncatesOversizedMessage(t *testing.T) {
 	for _, f := range frames {
 		if f.Direction == "read" && f.Header.Command == smb.CmdNtTransact {
 			require.True(t, f.Truncated)
-			require.Equal(t, 4+maxSMBMessage, len(f.Payload))
+			require.Equal(t, 4+smb.MaxMessage, len(f.Payload))
 			sawTrunc = true
 		}
 	}

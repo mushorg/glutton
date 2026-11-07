@@ -16,7 +16,7 @@ import (
 const maxNBNSPayload = 512
 
 // nbnsNames is the node-status table. The names match the SMB target
-// (smbTargetName in protocols/tcp/smb.go).
+// (serverName in protocols/tcp/smb/smb.go).
 var nbnsNames = []nbns.NodeName{
 	{Name: "SERVER", Suffix: 0x00},
 	{Name: "SERVER", Suffix: 0x20},

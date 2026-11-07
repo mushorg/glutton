@@ -1,11 +1,10 @@
-package tcp
+package smb
 
 import (
 	"encoding/binary"
 	"fmt"
 
 	"github.com/mushorg/glutton/protocols/helpers"
-	"github.com/mushorg/glutton/protocols/tcp/smb"
 )
 
 const (
@@ -23,11 +22,11 @@ const (
 
 func dpOpName(op byte) string {
 	switch op {
-	case smb.DPOpPing:
+	case DPOpPing:
 		return "doublepulsar_ping"
-	case smb.DPOpExec:
+	case DPOpExec:
 		return "doublepulsar_exec"
-	case smb.DPOpKill:
+	case DPOpKill:
 		return "doublepulsar_kill"
 	}
 	return ""
@@ -37,39 +36,39 @@ func dpOpName(op byte) string {
 // command channel: the opcode is encoded in the Timeout field and the
 // (XOR-obfuscated) payload is split across TRANS2 SESSION_SETUP +
 // TRANSACTION2_SECONDARY fragments. The payload is captured regardless of the
-// variant; only the smb.Infected variant answers as an implanted host. It
+// variant; only the Infected variant answers as an implanted host. It
 // reports whether it wrote the reply.
-func (ss *smbServer) doublePulsar(req *smb1Request) (bool, error) {
-	op := smb.DoublePulsarOpcode(smb.Trans2Timeout(req.body))
+func (ss *Server) doublePulsar(req *smb1Request) (bool, error) {
+	op := DoublePulsarOpcode(Trans2Timeout(req.body))
 	if name := dpOpName(op); name != "" {
 		ss.dpOps = append(ss.dpOps, name)
 	}
 	if req.read(ss).TotalDataCount > 0 {
 		ss.beginDoublePulsar(req, op)
 	}
-	if ss.variant != smb.Infected {
+	if ss.variant != Infected {
 		return false, nil
 	}
 	switch {
-	case op == smb.DPOpPing:
+	case op == DPOpPing:
 		var sig [8]byte
-		_, _ = smbReadRand(sig[:])
+		_, _ = ss.readRand(sig[:])
 		s := binary.LittleEndian.Uint64(sig[:])
-		ss.dpKey, ss.dpKeySet, ss.dpArchX64 = smb.DoublePulsarXORKey64(s), true, smb.DoublePulsarArchX64(s)
-		return true, ss.replyDP(smb.MakeDoublePulsarPingResponse(req.header, sig))
-	case op == smb.DPOpExec && !ss.tx.open:
+		ss.dpKey, ss.dpKeySet, ss.dpArchX64 = DoublePulsarXORKey64(s), true, DoublePulsarArchX64(s)
+		return true, ss.replyDP(MakeDoublePulsarPingResponse(req.header, sig))
+	case op == DPOpExec && !ss.tx.open:
 		// Multi-fragment exec payloads are answered on the final secondary.
-		return true, ss.replyDP(smb.MakeDoublePulsarExecResponse(req.header))
-	case op == smb.DPOpKill:
+		return true, ss.replyDP(MakeDoublePulsarExecResponse(req.header))
+	case op == DPOpKill:
 		ss.dpKeySet = false
-		return true, ss.replyDP(smb.MakeDoublePulsarKillResponse(req.header))
+		return true, ss.replyDP(MakeDoublePulsarKillResponse(req.header))
 	}
 	return false, nil
 }
 
 // replyDP sends a DoublePulsar emulation reply and stamps its frame with the
 // variant and visit.
-func (ss *smbServer) replyDP(header smb.SMBHeader, resp []byte, err error) error {
+func (ss *Server) replyDP(header SMBHeader, resp []byte, err error) error {
 	if err := ss.reply(header, resp, err); err != nil {
 		return err
 	}
@@ -81,7 +80,7 @@ func (ss *smbServer) replyDP(header smb.SMBHeader, resp []byte, err error) error
 
 // decodeDoublePulsar recovers the XOR key of a captured DoublePulsar payload,
 // stores the de-obfuscated bytes, and records the key and decoded hash on ev.
-func (ss *smbServer) decodeDoublePulsar(tx smbTx, ev *parsedSMB) {
+func (ss *Server) decodeDoublePulsar(tx txState, ev *Event) {
 	key, plain, ok := ss.doublePulsarKey(tx)
 	if !ok {
 		return
@@ -98,15 +97,15 @@ func (ss *smbServer) decodeDoublePulsar(tx smbTx, ev *parsedSMB) {
 // doublePulsarKey finds the XOR key for a captured payload, cheapest source
 // first: the key implied by the signature we sent in a ping reply, then the key
 // the operator embedded in the exec parameters, then a brute force.
-func (ss *smbServer) doublePulsarKey(tx smbTx) (key uint32, plain []byte, ok bool) {
+func (ss *Server) doublePulsarKey(tx txState) (key uint32, plain []byte, ok bool) {
 	if ss.dpKeySet {
 		// We chose the signature in the ping reply, so the key is known.
-		return ss.dpKey, smb.XORApply(tx.buf, ss.dpKey), true
+		return ss.dpKey, XORApply(tx.buf, ss.dpKey), true
 	}
 	if tx.paramSet {
 		probe := tx.buf[:min(len(tx.buf), dpProbeLen)]
-		if helpers.DetectShellcode(smb.XORApply(probe, tx.paramKey)).Score >= dpMinScore {
-			return tx.paramKey, smb.XORApply(tx.buf, tx.paramKey), true
+		if helpers.DetectShellcode(XORApply(probe, tx.paramKey)).Score >= dpMinScore {
+			return tx.paramKey, XORApply(tx.buf, tx.paramKey), true
 		}
 	}
 	return recoverDoublePulsarXOR(tx.buf)
@@ -122,8 +121,8 @@ func recoverDoublePulsarXOR(buf []byte) (key uint32, plain []byte, ok bool) {
 	bestScore := 0
 	var bestKey uint32
 	for s := 0; s <= 0xffff; s++ {
-		candidate := smb.DoublePulsarXORKey(uint32(s))
-		smb.XORInto(scratch, probe, candidate)
+		candidate := DoublePulsarXORKey(uint32(s))
+		XORInto(scratch, probe, candidate)
 		if res := helpers.DetectShellcode(scratch); res.Score > bestScore {
 			bestScore = res.Score
 			bestKey = candidate
@@ -135,5 +134,5 @@ func recoverDoublePulsarXOR(buf []byte) (key uint32, plain []byte, ok bool) {
 	if bestScore < dpMinScore {
 		return 0, nil, false
 	}
-	return bestKey, smb.XORApply(buf, bestKey), true
+	return bestKey, XORApply(buf, bestKey), true
 }
