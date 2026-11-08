@@ -29,12 +29,15 @@ func TestHandleSTUNBinding(t *testing.T) {
 	require.Equal(t, stunBinding, h.produced[0].payload)
 	require.Equal(t, connection.EndHandlerClose, h.produced[0].endReason)
 
-	resp, _ := hex.DecodeString("0101000c2112a442307755703271327871716a6a" + "00200008000145f9ee48505b")
+	resp, _ := hex.DecodeString("010100382112a442307755703271327871716a6a" +
+		"00200008000145f9ee48505b" + "00010008000164ebcf5af419" +
+		"80220014436f7475726e2d342e362e322027476f72737427" + "80280004a29a2bb6")
 	require.Equal(t, [][]byte{resp}, h.replies)
 	require.Equal(t, []parsedSTUN{
 		{Direction: "read", Command: "binding-request", TransactionID: "307755703271327871716a6a", Payload: stunBinding},
 		{Direction: "write", Command: "binding-success", Status: "success", TransactionID: "307755703271327871716a6a",
-			Attributes: []string{"xor-mapped-address"}, Payload: resp},
+			Attributes: []string{"xor-mapped-address", "mapped-address", "software", "fingerprint"},
+			Software:   "Coturn-4.6.2 'Gorst'", Payload: resp},
 	}, h.produced[0].decoded)
 }
 

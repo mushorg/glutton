@@ -76,14 +76,18 @@ func HandleSTUN(ctx context.Context, srcAddr, dstAddr *net.UDPAddr, data []byte,
 	if resp == nil {
 		return nil
 	}
-	events = append(events, parsedSTUN{
+	out := parsedSTUN{
 		Direction:     "write",
 		Command:       stun.TypeName(stun.TypeBindingSuccess),
 		Status:        "success",
 		TransactionID: frame.TransactionID,
-		Attributes:    []string{"xor-mapped-address"},
 		Payload:       resp,
-	})
+	}
+	if r, err := stun.Parse(resp); err == nil {
+		out.Attributes = r.Attributes
+		out.Software = r.Software
+	}
+	events = append(events, out)
 	if err := h.ReplyUDP(srcAddr, dstAddr, resp); err != nil {
 		logger.Error("Failed to send STUN reply", slog.String("protocol", "stun"), producer.ErrAttr(err))
 		endReason = connection.EndWriteError

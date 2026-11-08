@@ -1,7 +1,9 @@
 package stun
 
 import (
+	"encoding/binary"
 	"encoding/hex"
+	"hash/crc32"
 	"net"
 	"testing"
 
@@ -62,21 +64,57 @@ func TestTypeName(t *testing.T) {
 	require.Equal(t, "refresh-success", TypeName(0x0104))
 }
 
+// capturedBindingSuccess is the reply to capturedBinding from 207.90.244.25:25835,
+// computed independently of BuildBindingSuccess.
+const capturedBindingSuccess = "010100382112a442307755703271327871716a6a" +
+	"00200008" + "0001" + "45f9" + "ee48505b" + // XOR-MAPPED-ADDRESS (§15.2)
+	"00010008" + "0001" + "64eb" + "cf5af419" + // MAPPED-ADDRESS
+	"80220014" + "436f7475726e2d342e362e322027476f72737427" + // SOFTWARE "Coturn-4.6.2 'Gorst'"
+	"80280004" + "a29a2bb6" // FINGERPRINT
+
 func TestBuildBindingSuccessIPv4(t *testing.T) {
 	m, err := Parse(capturedBinding)
 	require.NoError(t, err)
 	src := &net.UDPAddr{IP: net.ParseIP("207.90.244.25"), Port: 25835}
 	resp := BuildBindingSuccess(m, src)
 
-	// RFC 5389 §15.2: port ^ 0x2112, address ^ 0x2112A442
-	want, _ := hex.DecodeString("0101000c2112a442307755703271327871716a6a" +
-		"00200008" + "0001" + "45f9" + "ee48505b")
+	want, _ := hex.DecodeString(capturedBindingSuccess)
 	require.Equal(t, want, resp)
 	require.True(t, LooksLikeSTUN(resp))
 	r, err := Parse(resp)
 	require.NoError(t, err)
 	require.Equal(t, "binding-success", r.Command())
-	require.Equal(t, []string{"xor-mapped-address"}, r.Attributes)
+	require.Equal(t, []string{"xor-mapped-address", "mapped-address", "software", "fingerprint"}, r.Attributes)
+	require.Equal(t, Software, r.Software)
+}
+
+func TestBuildBindingSuccessFingerprint(t *testing.T) {
+	m, err := Parse(capturedBinding)
+	require.NoError(t, err)
+	resp := BuildBindingSuccess(m, &net.UDPAddr{IP: net.ParseIP("192.0.2.7"), Port: 1})
+	// RFC 5389 §15.5: CRC-32 of everything before the attribute, XOR 0x5354554e
+	n := len(resp) - 8
+	require.Equal(t, []byte{0x80, 0x28, 0x00, 0x04}, resp[n:n+4])
+	require.Equal(t, crc32.ChecksumIEEE(resp[:n])^0x5354554e, binary.BigEndian.Uint32(resp[n+4:]))
+}
+
+func TestBuildBindingSuccessSoftwarePadding(t *testing.T) {
+	prev := Software
+	t.Cleanup(func() { Software = prev })
+	m, err := Parse(capturedBinding)
+	require.NoError(t, err)
+	src := &net.UDPAddr{IP: net.ParseIP("192.0.2.7"), Port: 1}
+
+	Software = "abc" // padded to 4 bytes
+	r, err := Parse(BuildBindingSuccess(m, src))
+	require.NoError(t, err)
+	require.Equal(t, "abc", r.Software)
+	require.Equal(t, []string{"xor-mapped-address", "mapped-address", "software", "fingerprint"}, r.Attributes)
+
+	Software = ""
+	r, err = Parse(BuildBindingSuccess(m, src))
+	require.NoError(t, err)
+	require.Equal(t, []string{"xor-mapped-address", "mapped-address", "fingerprint"}, r.Attributes)
 }
 
 func TestBuildBindingSuccessIPv6(t *testing.T) {
@@ -84,7 +122,7 @@ func TestBuildBindingSuccessIPv6(t *testing.T) {
 	require.NoError(t, err)
 	src := &net.UDPAddr{IP: net.ParseIP("2001:db8::1"), Port: 3478}
 	resp := BuildBindingSuccess(m, src)
-	require.Len(t, resp, HeaderLen+4+20)
+	require.True(t, LooksLikeSTUN(resp))
 	require.Equal(t, byte(0x02), resp[HeaderLen+5])
 	// un-XOR the address with cookie||txid
 	key := resp[4:20]

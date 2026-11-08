@@ -1,5 +1,5 @@
-// Package stun parses STUN (RFC 5389/8489) messages and builds a minimal
-// Binding Success Response.
+// Package stun parses STUN (RFC 5389/8489) messages and builds a
+// coturn-like Binding Success Response.
 package stun
 
 import (
@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"net"
 )
 
@@ -157,8 +158,22 @@ func AttrName(t uint16) string {
 	return fmt.Sprintf("attr_%#04x", t)
 }
 
+// Software is the SOFTWARE attribute sent in Binding Success Responses. It
+// matches the string coturn 4.6.x sends, the most common open STUN/TURN
+// server on the Internet.
+var Software = "Coturn-4.6.2 'Gorst'"
+
+const (
+	attrSoftware    = 0x8022
+	attrFingerprint = 0x8028
+	// fingerprintXOR is XORed into the CRC-32 (RFC 5389 §15.5).
+	fingerprintXOR = 0x5354554e
+)
+
 // BuildBindingSuccess answers a Binding Request with a Binding Success
-// Response carrying one XOR-MAPPED-ADDRESS for src.
+// Response for src in the attribute order coturn uses: XOR-MAPPED-ADDRESS,
+// MAPPED-ADDRESS, SOFTWARE, FINGERPRINT. RESPONSE-ORIGIN is left out because
+// it would carry the sensor's (possibly private) local address.
 func BuildBindingSuccess(m *Message, src *net.UDPAddr) []byte {
 	ip := src.IP.To4()
 	family := byte(0x01)
@@ -169,21 +184,44 @@ func BuildBindingSuccess(m *Message, src *net.UDPAddr) []byte {
 	if ip == nil {
 		return nil
 	}
-	attrLen := 4 + len(ip)
-	out := make([]byte, HeaderLen+4+attrLen)
+	out := make([]byte, HeaderLen, 128)
 	binary.BigEndian.PutUint16(out[0:2], TypeBindingSuccess)
-	binary.BigEndian.PutUint16(out[2:4], uint16(4+attrLen))
 	binary.BigEndian.PutUint32(out[4:8], MagicCookie)
 	copy(out[8:20], m.TransactionID[:])
 
-	a := out[HeaderLen:]
-	binary.BigEndian.PutUint16(a[0:2], attrXORMappedAddress)
-	binary.BigEndian.PutUint16(a[2:4], uint16(attrLen))
-	a[5] = family
-	binary.BigEndian.PutUint16(a[6:8], uint16(src.Port)^uint16(MagicCookie>>16))
 	key := out[4:20] // magic cookie followed by the transaction ID
+	xorAddr := make([]byte, 4+len(ip))
+	xorAddr[1] = family
+	binary.BigEndian.PutUint16(xorAddr[2:4], uint16(src.Port)^uint16(MagicCookie>>16))
 	for i, b := range ip {
-		a[8+i] = b ^ key[i]
+		xorAddr[4+i] = b ^ key[i]
+	}
+	out = appendAttr(out, attrXORMappedAddress, xorAddr)
+
+	addr := make([]byte, 4+len(ip))
+	addr[1] = family
+	binary.BigEndian.PutUint16(addr[2:4], uint16(src.Port))
+	copy(addr[4:], ip)
+	out = appendAttr(out, attrMappedAddress, addr)
+
+	if Software != "" {
+		out = appendAttr(out, attrSoftware, []byte(Software))
+	}
+
+	// the length field must already count FINGERPRINT when the CRC is taken
+	binary.BigEndian.PutUint16(out[2:4], uint16(len(out)-HeaderLen+8))
+	crc := crc32.ChecksumIEEE(out) ^ fingerprintXOR
+	out = appendAttr(out, attrFingerprint, binary.BigEndian.AppendUint32(nil, crc))
+	return out
+}
+
+// appendAttr appends a TLV attribute padded to a 4-byte boundary.
+func appendAttr(out []byte, t uint16, v []byte) []byte {
+	out = binary.BigEndian.AppendUint16(out, t)
+	out = binary.BigEndian.AppendUint16(out, uint16(len(v)))
+	out = append(out, v...)
+	for len(out)%4 != 0 {
+		out = append(out, 0)
 	}
 	return out
 }

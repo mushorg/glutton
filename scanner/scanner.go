@@ -33,6 +33,11 @@ var (
 		"rwth": {
 			"137.226.113.0/26",
 		},
+		// SHODAN-01, allocated directly to Shodan, LLC; its hosts do not
+		// always carry a *.shodan.io PTR, so the PTR check alone misses them
+		"shodan": {
+			"207.90.244.0/24",
+		},
 	}
 )
 

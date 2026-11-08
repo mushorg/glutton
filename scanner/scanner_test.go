@@ -36,6 +36,14 @@ func TestClassifyRWTH(t *testing.T) {
 	require.Equal(t, "rwth", name)
 }
 
+func TestClassifyShodanSubnet(t *testing.T) {
+	// a STUN probe from 207.90.244.25 arrived without a scanner tag
+	name, ptr, err := Classify(net.ParseIP("207.90.244.25"))
+	require.NoError(t, err)
+	require.Equal(t, "shodan", name)
+	require.Empty(t, ptr)
+}
+
 func TestIsScanner(t *testing.T) {
 	matched, _, err := IsScanner(net.ParseIP("162.142.125.1"))
 	require.NoError(t, err)
