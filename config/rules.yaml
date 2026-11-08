@@ -100,7 +100,7 @@ rules:
   - match: tcp dst port 6379
     type: conn_handler
     target: redis
-  - match: tcp dst port 502
+  - match: tcp dst port 502 or 504
     type: conn_handler
     target: modbus
   - match: tcp dst port 20000

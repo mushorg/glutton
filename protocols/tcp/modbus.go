@@ -12,6 +12,7 @@ import (
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
+	mbproto "github.com/mushorg/glutton/protocols/tcp/modbus"
 
 	"github.com/xiegeo/modbusone"
 )
@@ -27,7 +28,14 @@ var modbusFunctionNames = map[modbusone.FunctionCode]string{
 	modbusone.FcWriteSingleRegister:    "WriteSingleRegister",
 	modbusone.FcWriteMultipleCoils:     "WriteMultipleCoils",
 	modbusone.FcWriteMultipleRegisters: "WriteMultipleRegisters",
+	fcEncapsulatedInterface:            "EncapsulatedInterfaceTransport",
 }
+
+const fcEncapsulatedInterface = modbusone.FunctionCode(mbproto.FcEncapsulatedInterface)
+
+// modbusDeviceIdentity is what Read Device Identification (FC 0x2B / MEI
+// 0x0E) reports; a package variable so tests can swap it.
+var modbusDeviceIdentity = mbproto.DefaultDeviceIdentity
 
 type parsedModbus struct {
 	Direction    string `json:"direction,omitempty"`
@@ -36,6 +44,8 @@ type parsedModbus struct {
 	UnitID       uint8  `json:"unit_id,omitempty"`
 	Address      uint16 `json:"address,omitempty"`
 	Quantity     uint16 `json:"quantity,omitempty"`
+	DeviceIDCode uint8  `json:"device_id_code,omitempty"`
+	ObjectID     uint8  `json:"object_id,omitempty"`
 	Status       string `json:"status,omitempty"`
 	Payload      []byte `json:"payload,omitempty"`
 }
@@ -160,7 +170,15 @@ func parsedFromRequest(direction string, adu []byte, req, wire modbusone.PDU) pa
 	if len(adu) > modbusone.TCPHeaderLength {
 		frame.UnitID = adu[modbusone.TCPHeaderLength]
 	}
-	if len(req) >= 3 {
+	if len(wire) >= 2 && wire[0] == mbproto.FcEncapsulatedInterface && wire[1] == mbproto.MEIReadDeviceID {
+		frame.Command = "ReadDeviceIdentification"
+	}
+	if len(req) > 0 && req.GetFunctionCode() == fcEncapsulatedInterface {
+		if r, ok := mbproto.ParseReadDeviceID(req); ok {
+			frame.DeviceIDCode = r.Code
+			frame.ObjectID = r.ObjectID
+		}
+	} else if len(req) >= 3 {
 		frame.Address = req.GetAddress()
 		if qty, err := req.GetRequestCount(); err == nil {
 			frame.Quantity = qty
@@ -298,6 +316,20 @@ func HandleModbus(ctx context.Context, conn net.Conn, md connection.Metadata, lo
 			slog.String("dest_port", strconv.Itoa(int(md.TargetPort))),
 			slog.String("function_code", modbusFunctionName(p.GetFunctionCode())),
 		)
+
+		if req, ok := mbproto.ParseReadDeviceID(p); ok {
+			reply, exc := mbproto.ReadDeviceIDReply(req, modbusDeviceIdentity)
+			if exc != 0 {
+				server.writeError(data, p, modbusone.ExceptionCode(exc))
+				continue
+			}
+			if err := server.write(data, reply); err != nil {
+				logger.Error("Failed to write to connection", slog.String("protocol", "modbus"), producer.ErrAttr(err))
+				endReason = connection.EndWriteError
+				return nil
+			}
+			continue
+		}
 
 		if err := p.ValidateRequest(); err != nil {
 			server.writeError(data, p, err)

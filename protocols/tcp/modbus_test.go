@@ -179,6 +179,50 @@ func TestHandleModbusUnsupportedFunction(t *testing.T) {
 	require.Equal(t, uint16(0), events[1].Address)
 }
 
+// Captured on tcp/504: MBAP txid 0x1337, unit 0, FC 0x2B MEI 0x0E, basic
+// stream access from object 0 (Read Device Identification discovery probe).
+var modbusReadDeviceIDProbe = []byte{0x13, 0x37, 0x00, 0x00, 0x00, 0x05, 0x00, 0x2b, 0x0e, 0x01, 0x00}
+
+func TestHandleModbusReadDeviceIdentification(t *testing.T) {
+	client, hp, done := startModbus(t)
+
+	_, err := client.Write(modbusReadDeviceIDProbe)
+	require.NoError(t, err)
+	reply := readModbusADU(t, client)
+
+	want := []byte{0x13, 0x37, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x2b, 0x0e, 0x01, 0x82, 0x00, 0x00, 0x03,
+		0x00, 18}
+	want = append(want, "Schneider Electric"...)
+	want = append(want, 0x01, 12)
+	want = append(want, "BMX P34 2020"...)
+	want = append(want, 0x02, 5)
+	want = append(want, "v2.70"...)
+	binary.BigEndian.PutUint16(want[4:6], uint16(len(want)-6))
+	require.Equal(t, want, reply)
+
+	// Individual access to an unknown object is an illegal data address.
+	bad := modbusADU(0x1338, 0x00, []byte{0x2b, 0x0e, 0x04, 0x42})
+	_, err = client.Write(bad)
+	require.NoError(t, err)
+	excReply := readModbusADU(t, client)
+	require.Equal(t, []byte{0x13, 0x38, 0x00, 0x00, 0x00, 0x03, 0x00, 0xab, 0x02}, excReply)
+
+	require.NoError(t, client.Close())
+	require.NoError(t, <-done)
+
+	ev := waitModbusEvent(t, hp)
+	require.Equal(t, "modbus", ev.protocol)
+	events, ok := ev.decoded.([]parsedModbus)
+	require.True(t, ok)
+	require.Equal(t, []parsedModbus{
+		{Direction: "read", Command: "ReadDeviceIdentification", FunctionCode: "EncapsulatedInterfaceTransport", DeviceIDCode: 1, Payload: modbusReadDeviceIDProbe},
+		{Direction: "write", Command: "ReadDeviceIdentification", FunctionCode: "EncapsulatedInterfaceTransport", DeviceIDCode: 1, Payload: reply},
+		{Direction: "read", Command: "ReadDeviceIdentification", FunctionCode: "EncapsulatedInterfaceTransport", DeviceIDCode: 4, ObjectID: 0x42, Payload: bad},
+		{Direction: "write", Command: "Exception", FunctionCode: "Exception", Status: "Exception", DeviceIDCode: 4, ObjectID: 0x42, Payload: excReply},
+	}, events)
+}
+
 func TestHandleModbusEarlyDisconnect(t *testing.T) {
 	client, hp, done := startModbus(t)
 	require.NoError(t, client.Close())
