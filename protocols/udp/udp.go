@@ -15,6 +15,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/enip"
 	sipproto "github.com/mushorg/glutton/protocols/tcp/sip"
 	"github.com/mushorg/glutton/protocols/udp/a2s"
+	"github.com/mushorg/glutton/protocols/udp/bacnet"
 	"github.com/mushorg/glutton/protocols/udp/ddp"
 	"github.com/mushorg/glutton/protocols/udp/dht"
 	"github.com/mushorg/glutton/protocols/udp/dtls"
@@ -63,6 +64,7 @@ var udpMatchers = []udpMatcher{
 	{"steam", payloadMatch(steam.LooksLikeSteam), HandleSteam},
 	{"ddp", payloadMatch(ddp.LooksLikeDDP), HandleDDP},
 	{"knx", payloadMatch(knx.LooksLikeKNX), HandleKNX},
+	{"bacnet", payloadMatch(bacnet.LooksLikeBACnet), HandleBACnet},
 	{"dtls", payloadMatch(dtls.LooksLikeDTLS), HandleDTLS},
 	{"rtps", payloadMatch(rtps.LooksLikeRTPS), HandleRTPS},
 	{"wsdiscovery", payloadMatch(wsd.LooksLikeWSD), HandleWSDiscovery},

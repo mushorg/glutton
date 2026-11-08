@@ -137,6 +137,7 @@ Example shape:
 | `rtps` | UDP | [protocols/rtps.md](protocols/rtps.md) |
 | `wsdiscovery` | UDP | [protocols/wsdiscovery.md](protocols/wsdiscovery.md) |
 | `knx` | UDP | [protocols/knx.md](protocols/knx.md) |
+| `bacnet` | UDP | [protocols/bacnet.md](protocols/bacnet.md) |
 | `itp` | UDP | [protocols/itp.md](protocols/itp.md) |
 | `rip` | UDP | [protocols/rip.md](protocols/rip.md) |
 | `tftp` | UDP | [protocols/tftp.md](protocols/tftp.md) |

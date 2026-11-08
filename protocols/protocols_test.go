@@ -55,6 +55,7 @@ func TestMapUDPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "ddp", "expected DDP UDP handler")
 	require.Contains(t, m, "rtps", "expected RTPS UDP handler")
 	require.Contains(t, m, "knx", "expected KNX UDP handler")
+	require.Contains(t, m, "bacnet", "expected BACnet/IP UDP handler")
 	require.Contains(t, m, "enip", "expected ENIP UDP handler")
 	require.Contains(t, m, "slp", "expected SLP UDP handler")
 	require.Contains(t, m, "radius", "expected RADIUS UDP handler")

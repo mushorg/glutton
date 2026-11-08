@@ -238,6 +238,9 @@ rules:
   - match: udp dst port 3671
     type: conn_handler
     target: knx
+  - match: udp dst port 47808
+    type: conn_handler
+    target: bacnet
   - match: udp dst port 44818
     type: conn_handler
     target: enip
