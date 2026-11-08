@@ -428,55 +428,69 @@ func (g *Glutton) tcpListen() {
 			continue
 		}
 
-		rule, err := g.applyRulesOnConn(conn)
-		if err != nil {
-			g.Logger.Error("Failed to apply rules", producer.ErrAttr(err))
-			g.closeUnhandled(conn)
-			continue
-		}
-		if rule == nil {
-			rule = &rules.Rule{Target: "default"}
-		}
-
-		md, err := g.connTable.RegisterConn(conn, rule)
-		if err != nil {
-			g.Logger.Error("Failed to register connection", producer.ErrAttr(err))
-			g.closeUnhandled(conn)
-			continue
-		}
-
-		md.MPTCP = isMultipathTCP(conn)
-
-		g.Logger.Debug("new connection", slog.String("addr", conn.LocalAddr().String()), slog.String("handler", rule.Target))
-
-		// Registered by its raw address above; from here on every write the
-		// handler (or TLS termination, or a proxy) makes is charged.
-		conn = g.GuardConn(conn)
-
-		// derive per connection; reassigning g.ctx would chain one node per
-		// accepted conn onto it forever
-		connCtx := context.WithValue(g.ctx, ctxTimeout("timeout"), int64(viper.GetInt("conn_timeout")))
-		if err := g.UpdateConnectionTimeout(connCtx, conn); err != nil {
-			g.Logger.Error("Failed to set connection timeout", producer.ErrAttr(err))
-		}
-
-		var handlerName string
-		switch rule.Type {
-		case "proxy_tcp":
-			handlerName = rule.Type
-		default:
-			handlerName = rule.Target
-		}
-
-		if hfunc, ok := g.tcpProtocolHandlers[handlerName]; ok {
-			go func() {
-				defer g.recoverPanic("tcp", handlerName)
-				if err := hfunc(connCtx, conn, md); err != nil {
-					g.Logger.Error("Failed to handle ", producer.ErrAttr(err), slog.String("handler", handlerName))
-				}
-			}()
-		}
+		g.handleTCPConn(conn)
 	}
+}
+
+// handleTCPConn routes an accepted connection to its rule's handler. Every
+// path either hands conn to a handler goroutine or closes it.
+func (g *Glutton) handleTCPConn(conn net.Conn) {
+	rule, err := g.applyRulesOnConn(conn)
+	if err != nil {
+		g.Logger.Error("Failed to apply rules", producer.ErrAttr(err))
+		g.closeUnhandled(conn)
+		return
+	}
+	if rule == nil {
+		// no rule matched: the catch-all tcp handler, as udp is for datagrams
+		rule = &rules.Rule{Target: "tcp"}
+	}
+
+	var handlerName string
+	switch rule.Type {
+	case "proxy_tcp":
+		handlerName = rule.Type
+	default:
+		handlerName = rule.Target
+	}
+
+	hfunc, ok := g.tcpProtocolHandlers[handlerName]
+	if !ok {
+		// a drop rule, or a target that names no TCP handler: nothing
+		// would ever read or close conn
+		g.Logger.Debug("No TCP handler for rule, closing connection", slog.String("handler", handlerName), slog.String("rule_type", rule.Type))
+		g.closeUnhandled(conn)
+		return
+	}
+
+	md, err := g.connTable.RegisterConn(conn, rule)
+	if err != nil {
+		g.Logger.Error("Failed to register connection", producer.ErrAttr(err))
+		g.closeUnhandled(conn)
+		return
+	}
+
+	md.MPTCP = isMultipathTCP(conn)
+
+	g.Logger.Debug("new connection", slog.String("addr", conn.LocalAddr().String()), slog.String("handler", rule.Target))
+
+	// Registered by its raw address above; from here on every write the
+	// handler (or TLS termination, or a proxy) makes is charged.
+	conn = g.GuardConn(conn)
+
+	// derive per connection; reassigning g.ctx would chain one node per
+	// accepted conn onto it forever
+	connCtx := context.WithValue(g.ctx, ctxTimeout("timeout"), int64(viper.GetInt("conn_timeout")))
+	if err := g.UpdateConnectionTimeout(connCtx, conn); err != nil {
+		g.Logger.Error("Failed to set connection timeout", producer.ErrAttr(err))
+	}
+
+	go func() {
+		defer g.recoverPanic("tcp", handlerName)
+		if err := hfunc(connCtx, conn, md); err != nil {
+			g.Logger.Error("Failed to handle ", producer.ErrAttr(err), slog.String("handler", handlerName))
+		}
+	}()
 }
 
 // Start the listener, this blocks for new connections

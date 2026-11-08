@@ -13,6 +13,7 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/producer"
+	"github.com/mushorg/glutton/protocols"
 	"github.com/mushorg/glutton/protocols/guard"
 	"github.com/mushorg/glutton/protocols/recall"
 	"github.com/mushorg/glutton/rules"
@@ -294,4 +295,76 @@ func TestIsMultipathTCP(t *testing.T) {
 	require.NoError(t, err)
 	defer server.Close()
 	require.False(t, isMultipathTCP(server), "plain TCP listener must not report MPTCP")
+}
+
+// tcpPair returns both ends of a loopback TCP connection.
+func tcpPair(t *testing.T) (client, server net.Conn) {
+	t.Helper()
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	client, err = net.Dial("tcp4", ln.Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { client.Close() })
+	server, err = ln.Accept()
+	require.NoError(t, err)
+	t.Cleanup(func() { server.Close() })
+	return client, server
+}
+
+// A connection no handler will take must be closed, not left open until the
+// peer gives up.
+func TestHandleTCPConnClosesUnhandled(t *testing.T) {
+	for name, cfg := range map[string]string{
+		"drop rule":      "rules:\n  - match: tcp\n    type: drop\n",
+		"unknown target": "rules:\n  - match: tcp\n    type: conn_handler\n    target: nosuchhandler\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			rs, err := rules.Init(bytes.NewReader([]byte(cfg)))
+			require.NoError(t, err)
+			g := &Glutton{
+				Logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+				rules:               rs,
+				tcpProtocolHandlers: map[string]protocols.TCPHandlerFunc{},
+			}
+			client, server := tcpPair(t)
+			g.handleTCPConn(server)
+
+			require.NoError(t, client.SetReadDeadline(time.Now().Add(2*time.Second)))
+			_, err = client.Read(make([]byte, 1))
+			require.ErrorIs(t, err, io.EOF, "server side should be closed")
+		})
+	}
+}
+
+// A connection that matches no rule goes to the catch-all tcp handler.
+func TestHandleTCPConnNoRuleUsesTCPHandler(t *testing.T) {
+	rs, err := rules.Init(bytes.NewReader([]byte("rules:\n  - match: udp\n    type: conn_handler\n    target: udp\n")))
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	got := make(chan connection.Metadata, 1)
+	g := &Glutton{
+		ctx:       ctx,
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		rules:     rs,
+		connTable: connection.New(ctx, 16, nil),
+		tcpProtocolHandlers: map[string]protocols.TCPHandlerFunc{
+			"tcp": func(_ context.Context, conn net.Conn, md connection.Metadata) error {
+				got <- md
+				return conn.Close()
+			},
+		},
+	}
+	_, server := tcpPair(t)
+	g.handleTCPConn(server)
+
+	select {
+	case md := <-got:
+		require.NotNil(t, md.Rule)
+		require.Equal(t, "tcp", md.Rule.Target)
+	case <-time.After(2 * time.Second):
+		t.Fatal("tcp handler was not called")
+	}
 }
