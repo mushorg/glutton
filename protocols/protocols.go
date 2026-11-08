@@ -141,6 +141,7 @@ func MapUDPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"rtps":        bindUDP(udp.HandleRTPS, log, h),
 		"wsdiscovery": bindUDP(udp.HandleWSDiscovery, log, h),
 		"hiflying":    bindUDP(udp.HandleHiFlying, log, h),
+		"sadp":        bindUDP(udp.HandleSADP, log, h),
 		"rpcbind":     bindUDP(udp.HandleRPCBind, log, h),
 		"wdb":         bindUDP(udp.HandleWDB, log, h),
 		"realtek":     bindUDP(udp.HandleRealtek, log, h),

@@ -69,6 +69,7 @@ func TestMapUDPProtocolHandlers(t *testing.T) {
 	require.Contains(t, m, "dtls", "expected DTLS UDP handler")
 	require.Contains(t, m, "wsdiscovery", "expected WS-Discovery UDP handler")
 	require.Contains(t, m, "hiflying", "expected Hi-Flying UDP handler")
+	require.Contains(t, m, "sadp", "expected Hikvision SADP UDP handler")
 	require.Contains(t, m, "rpcbind", "expected rpcbind UDP handler")
 	require.Contains(t, m, "wdb", "expected WDB UDP handler")
 	require.Contains(t, m, "realtek", "expected Realtek MP daemon UDP handler")

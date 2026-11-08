@@ -283,6 +283,9 @@ rules:
   - match: udp dst port 48899
     type: conn_handler
     target: hiflying
+  - match: udp dst port 37020
+    type: conn_handler
+    target: sadp
   - match: udp dst port 17185
     type: conn_handler
     target: wdb

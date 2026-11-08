@@ -25,6 +25,7 @@ import (
 	"github.com/mushorg/glutton/protocols/udp/realtek"
 	"github.com/mushorg/glutton/protocols/udp/rip"
 	"github.com/mushorg/glutton/protocols/udp/rtps"
+	"github.com/mushorg/glutton/protocols/udp/sadp"
 	"github.com/mushorg/glutton/protocols/udp/snmp"
 	"github.com/mushorg/glutton/protocols/udp/steam"
 	"github.com/mushorg/glutton/protocols/udp/stun"
@@ -69,6 +70,7 @@ var udpMatchers = []udpMatcher{
 	{"rtps", payloadMatch(rtps.LooksLikeRTPS), HandleRTPS},
 	{"wsdiscovery", payloadMatch(wsd.LooksLikeWSD), HandleWSDiscovery},
 	{"hiflying", looksLikeHiFlying, HandleHiFlying},
+	{"sadp", payloadMatch(sadp.LooksLikeProbe), HandleSADP},
 	{"rip", payloadMatch(rip.LooksLikeRIP), HandleRIP},
 	{"tftp", payloadMatch(tftp.LooksLikeTFTP), HandleTFTP},
 	{"enip", payloadMatch(enip.LooksLikeListRequest), HandleENIP},
