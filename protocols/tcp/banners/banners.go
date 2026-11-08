@@ -314,6 +314,12 @@ func ForPort(port uint16) (Response, bool) {
 		// still waiting for the end of the line. Record it unanswered and keep
 		// the connection open rather than sending random bytes.
 		return Response{Name: "uptime-agent", NoReply: true}, true
+	case 162:
+		// SNMP trap receiver over TCP (nmap-services snmptrap, RFC 3430).
+		// A receiver never answers a Trap and reads BER messages until the
+		// peer is done, so scanners' bare newline gets no reply and the
+		// connection stays open rather than getting random bytes.
+		return Response{Name: "snmptrap", NoReply: true}, true
 	case 30005:
 		// No registered service (nmap-services "unknown"), and the product
 		// behind it is unconfirmed. Research scanners send a bare newline,
