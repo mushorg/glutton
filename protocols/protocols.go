@@ -39,6 +39,7 @@ import (
 	"github.com/mushorg/glutton/protocols/tcp/socks"
 	"github.com/mushorg/glutton/protocols/tcp/spice"
 	"github.com/mushorg/glutton/protocols/udp"
+	"github.com/mushorg/glutton/rules"
 	"github.com/spf13/viper"
 )
 
@@ -662,10 +663,13 @@ func rtspOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 
 // ippOrTCP serves the CUPS port (tcp/631): HTTP requests (IPP POSTs and
 // web interface fetches) go to the IPP handler; anything else goes through
-// the catch-all dispatch so it is still answered and stored.
+// the catch-all dispatch so it is still answered and stored. A ClientHello
+// that arrives after the tls: auto sniff window (Censys waits ~5s for a
+// banner first) is terminated here and the decrypted stream dispatched again.
 func ippOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 	catchAll := catchAllTCP(log, h)
-	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
+	var serve TCPHandlerFunc
+	serve = func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			log.Debug("failed to set connection timeout", producer.ErrAttr(err))
 			return conn.Close()
@@ -673,6 +677,11 @@ func ippOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		bufConn := newBufferedConn(conn)
 		// wait (up to the connection timeout) for the client to speak first
 		if _, err := bufConn.peek(1); err != nil {
+			if md.TLS != nil {
+				// a certificate grab that closes after the handshake is
+				// still an IPPS session; IPP produces it with md.TLS
+				return tcp.HandleIPP(ctx, bufConn, md, log, h)
+			}
 			log.Debug("failed to peek connection", producer.ErrAttr(err))
 			return conn.Close()
 		}
@@ -683,8 +692,28 @@ func ippOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		if snip, _ := bufConn.peek(httpMethodPeek); looksLikeHTTPRequest(snip) {
 			return tcp.HandleIPP(ctx, bufConn, md, log, h)
 		}
+		if lateAutoTLS(bufConn, md) {
+			if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
+				log.Debug("failed to set connection timeout", producer.ErrAttr(err))
+				return conn.Close()
+			}
+			tlsConn, info, err := terminateTLS(conn, bufConn.r, md)
+			return finishTLS(ctx, serve, conn, tlsConn, info, err, md, log, h)
+		}
 		return catchAll(ctx, bufConn, md)
 	}
+	return serve
+}
+
+// lateAutoTLS reports whether a tls: auto connection that withTLS passed on
+// as plaintext (the client stayed silent past tlsAutoWait) opened with a TLS
+// handshake record after all.
+func lateAutoTLS(bufConn BufferedConn, md connection.Metadata) bool {
+	if md.TLS != nil || md.Rule == nil || md.Rule.TLS != rules.TLSAuto {
+		return false
+	}
+	hdr, _ := bufConn.peek(3)
+	return looksLikeTLSRecord(hdr)
 }
 
 // hl7OrTCP serves the HL7 port (tcp/2575): HL7 v2 messages, framed or
