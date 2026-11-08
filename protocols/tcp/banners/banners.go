@@ -298,6 +298,9 @@ func ForPort(port uint16) (Response, bool) {
 		// ASDUs (general interrogation) need a session, so record them and keep
 		// the connection open rather than sending random bytes
 		return Response{Name: "iec104", NoReply: true}, true
+	case 1200, 2455:
+		// CODESYS V2 runtime: the discovery query is matched in ForPayload
+		return Response{Name: "codesys", Silent: true}, true
 	case 3551:
 		// apcupsd ignores input that is not a NIS command; "status" is
 		// matched in ForPayload
@@ -474,6 +477,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	litecoinReply,
 	dogecoinReply,
 	kamstrupReply,
+	codesysReply,
 	iec104Reply,
 	func(data []byte) (Response, bool) {
 		if !isFoxHello(data) {
