@@ -766,9 +766,10 @@ func rfbOrSPICE(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 }
 
 // adbOrTCP serves the ADB ports (tcp/5555, tcp/5037): ADB clients go to the
-// ADB handler; anything else on these busy ports falls back to the generic
-// TCP handler so it is still stored.
+// ADB handler; anything else on these busy ports goes through the catch-all
+// dispatch so RDP, HTTP and other probes are answered and still stored.
 func adbOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
+	catchAll := catchAllTCP(log, h)
 	return func(ctx context.Context, conn net.Conn, md connection.Metadata) error {
 		if err := h.UpdateConnectionTimeout(ctx, conn); err != nil {
 			log.Debug("failed to set connection timeout", producer.ErrAttr(err))
@@ -786,7 +787,7 @@ func adbOrTCP(log interfaces.Logger, h interfaces.Honeypot) TCPHandlerFunc {
 		if snip, err := bufConn.peek(adbPeekLen); err == nil && adb.LooksLikeADB(snip) {
 			return tcp.HandleADB(ctx, bufConn, md, log, h)
 		}
-		return tcp.HandleTCPWith(ctx, bufConn, md, log, h, tcp.Options{AfterTLS: httpAfterTLS(log, h)})
+		return catchAll(ctx, bufConn, md)
 	}
 }
 

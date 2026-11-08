@@ -13,4 +13,4 @@ Android Debug Bridge over TCP (tcp/5555, tcp/5037). The device persona is an And
 - Raw payloads are kept up to 64 KiB per session (`truncated` beyond). A bad header magic or a `data_length` over 1 MiB ends the session (`endReason` `read_error`).
 - A host smart-socket request (`000chost:version`, the adb client to adb server framing) is recorded as one read frame with `command` the service prefix and no `packet`.
 
-Non-ADB traffic on these ports falls back to `tcp`. On any other port the `tcp` catch-all routes a transport `CNXN` here, so adbd moved off 5555 is emulated too.
+Non-ADB traffic on these ports goes through the `tcp` catch-all dispatch, so RDP Connection Requests reach `rdp`, HTTP reaches `http`, and anything else is answered by generic `tcp`. On any other port the `tcp` catch-all routes a transport `CNXN` here, so adbd moved off 5555 is emulated too.
