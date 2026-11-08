@@ -371,7 +371,8 @@ func TestHandleTCPConnNoRuleUsesTCPHandler(t *testing.T) {
 
 func TestConnLimitConfig(t *testing.T) {
 	const key = "tcp_conn_limit"
-	keys := []string{key + ".enabled", key + ".source_max", key + ".source_prefix_v4", key + ".source_prefix_v6"}
+	keys := []string{key + ".enabled", key + ".source_max", key + ".source_rate", key + ".source_burst",
+		key + ".max_sources", key + ".source_prefix_v4", key + ".source_prefix_v6"}
 	orig := map[string]any{}
 	for _, k := range keys {
 		orig[k] = viper.Get(k)
@@ -388,9 +389,16 @@ func TestConnLimitConfig(t *testing.T) {
 
 	viper.Set(key+".enabled", false)
 	viper.Set(key+".source_max", 10)
+	viper.Set(key+".source_rate", 5)
+	viper.Set(key+".source_burst", 7)
+	viper.Set(key+".max_sources", 50)
 	viper.Set(key+".source_prefix_v4", 32)
 	viper.Set(key+".source_prefix_v6", 64)
-	require.Equal(t, guard.ConnLimitConfig{Enabled: false, SourceMax: 10, SourcePrefixV4: 32, SourcePrefixV6: 64}, connLimitConfig(key))
+	require.Equal(t, guard.ConnLimitConfig{Enabled: false, SourceMax: 10, SourceRate: 5, SourceBurst: 7, MaxSources: 50,
+		SourcePrefixV4: 32, SourcePrefixV6: 64}, connLimitConfig(key))
+
+	viper.Set(key+".source_rate", 0)
+	require.Zero(t, connLimitConfig(key).SourceRate, "source_rate 0 disables the rate")
 }
 
 // Over tcp_conn_limit a connection is reset before any handler runs; the slot
@@ -429,7 +437,7 @@ func TestHandleTCPConnRefusesOverConnLimit(t *testing.T) {
 	_, err = client.Read(make([]byte, 1))
 	require.Error(t, err, "refused connection is closed")
 	require.NotErrorIs(t, err, os.ErrDeadlineExceeded)
-	require.Contains(t, logs.String(), "Refusing TCP connections over the per-source connection cap")
+	require.Contains(t, logs.String(), "Refusing TCP connections over the per-source connection limit")
 	require.Len(t, started, 0, "the handler never ran for the refused conn")
 
 	close(finish)

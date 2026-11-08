@@ -92,9 +92,12 @@ tcp_reply_limit:   # bounds bytes and write counts to each TCP peer IP (all hand
   source_prefix_v4: 32   # IPv4 addresses sharing one source budget; 24 groups a /24.
   source_prefix_v6: 128  # IPv6 prefix sharing one source budget; 48 groups a /48.
 
-tcp_conn_limit:   # caps TCP connections one source prefix holds open; extra connections are reset before any handler runs or event is produced.
+tcp_conn_limit:   # caps TCP connections one source prefix holds open and opens per second; extra connections are reset before any handler runs or event is produced.
   enabled: true
   source_max: 256        # open connections one source prefix may hold.
+  source_rate: 20        # new connections per second one source prefix may open; 0 disables.
+  source_burst: 100      # most new connections one source prefix may open at once.
+  max_sources: 65536     # prefixes whose rate is tracked; the least recently seen is dropped first.
   source_prefix_v4: 24   # IPv4 addresses sharing one cap; 32 counts per address.
   source_prefix_v6: 48   # IPv6 prefix sharing one cap; 128 counts per address.
 

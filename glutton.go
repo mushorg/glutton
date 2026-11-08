@@ -253,7 +253,7 @@ func guardConfig(key string, def guard.Config) guard.Config {
 }
 
 // connLimitConfig reads the tcp_conn_limit block; it is enabled unless set to
-// false.
+// false, and source_rate 0 disables the new-connection rate.
 func connLimitConfig(key string) guard.ConnLimitConfig {
 	cfg := guard.DefaultConnLimitConfig()
 	if viper.IsSet(key + ".enabled") {
@@ -261,6 +261,15 @@ func connLimitConfig(key string) guard.ConnLimitConfig {
 	}
 	if n := viper.GetInt(key + ".source_max"); n > 0 {
 		cfg.SourceMax = n
+	}
+	if viper.IsSet(key + ".source_rate") {
+		cfg.SourceRate = max(0, viper.GetInt(key+".source_rate"))
+	}
+	if n := viper.GetInt(key + ".source_burst"); n > 0 {
+		cfg.SourceBurst = n
+	}
+	if n := viper.GetInt(key + ".max_sources"); n > 0 {
+		cfg.MaxSources = n
 	}
 	if viper.IsSet(key + ".source_prefix_v4") {
 		cfg.SourcePrefixV4 = viper.GetInt(key + ".source_prefix_v4")
@@ -730,7 +739,7 @@ func (g *Glutton) ReplyUDPSent(srcAddr, dstAddr *net.UDPAddr, payload []byte) (b
 }
 
 // acquireTCPConn takes a tcp_conn_limit slot for conn's peer prefix. Over the
-// cap, conn is reset (no FIN handshake, so a flood leaves no orphaned or
+// open cap or the new-connection rate, conn is reset (no FIN handshake, so a flood leaves no orphaned or
 // TIME_WAIT sockets behind) before any rule, handler or event runs, and a
 // limited prefix warns once per guard.WarnInterval.
 func (g *Glutton) acquireTCPConn(conn net.Conn) (release func(), ok bool) {
@@ -752,7 +761,7 @@ func (g *Glutton) acquireTCPConn(conn net.Conn) (release func(), ok bool) {
 		if la, ok := conn.LocalAddr().(*net.TCPAddr); ok {
 			attrs = append(attrs, slog.Int("dest_port", la.Port))
 		}
-		g.Logger.Warn("Refusing TCP connections over the per-source connection cap", attrs...)
+		g.Logger.Warn("Refusing TCP connections over the per-source connection limit", attrs...)
 	}
 	if tc, ok := conn.(*net.TCPConn); ok {
 		_ = tc.SetLinger(0)

@@ -90,3 +90,63 @@ func TestConnLimiterDisabled(t *testing.T) {
 func TestNewConnLimiterDefaults(t *testing.T) {
 	require.Equal(t, DefaultSourceMaxConns, NewConnLimiter(ConnLimitConfig{Enabled: true}).cfg.SourceMax)
 }
+
+func newRateLimiter(cfg ConnLimitConfig) (*ConnLimiter, *clock) {
+	l, c := newConnLimiter(cfg)
+	l.rate.now = c.now
+	return l, c
+}
+
+func TestConnLimiterRateCapsChurn(t *testing.T) {
+	// a flood that releases every slot at once and reconnects is still held
+	// to SourceRate new connections per second
+	l, c := newRateLimiter(ConnLimitConfig{Enabled: true, SourceMax: 256, SourceRate: 2, SourceBurst: 3, SourcePrefixV4: 24})
+
+	for i := range 3 {
+		r, d := l.Acquire(net.ParseIP("149.86.227.19"))
+		require.True(t, d.Allowed, "burst %d", i)
+		r()
+	}
+	_, d := l.Acquire(net.ParseIP("149.86.227.41"))
+	require.Equal(t, Decision{Limit: LimitSourceConnRate, First: true}, d, "the /24 shares one rate")
+	_, d = l.Acquire(net.ParseIP("149.86.227.41"))
+	require.Equal(t, Decision{Limit: LimitSourceConnRate}, d, "only the first refusal is flagged")
+	require.Zero(t, l.Open(net.ParseIP("149.86.227.1")), "a rate refusal takes no slot")
+	require.Zero(t, l.Len(), "a rate refusal leaves no open-count entry")
+
+	_, d = l.Acquire(net.ParseIP("149.86.228.1"))
+	require.True(t, d.Allowed, "another /24 has its own rate")
+
+	c.advance(time.Second)
+	for range 2 {
+		_, d = l.Acquire(net.ParseIP("149.86.227.19"))
+		require.True(t, d.Allowed, "refilled at SourceRate")
+	}
+	_, d = l.Acquire(net.ParseIP("149.86.227.19"))
+	require.False(t, d.Allowed)
+}
+
+func TestConnLimiterCapRefusalSpendsNoRate(t *testing.T) {
+	l, _ := newRateLimiter(ConnLimitConfig{Enabled: true, SourceMax: 1, SourceRate: 1, SourceBurst: 2, SourcePrefixV4: 24})
+	r, d := l.Acquire(victim)
+	require.True(t, d.Allowed)
+	for range 5 {
+		_, d = l.Acquire(victim)
+		require.Equal(t, LimitSourceConns, d.Limit)
+	}
+	r()
+	_, d = l.Acquire(victim)
+	require.True(t, d.Allowed, "refusals by the open cap did not spend the rate burst")
+}
+
+func TestNewConnLimiterRateDefaults(t *testing.T) {
+	l := NewConnLimiter(ConnLimitConfig{Enabled: true, SourceRate: 5})
+	require.Equal(t, DefaultSourceConnBurst, l.cfg.SourceBurst)
+	require.Equal(t, DefaultMaxSources, l.cfg.MaxSources)
+	require.NotNil(t, l.rate)
+	require.Nil(t, NewConnLimiter(ConnLimitConfig{Enabled: true}).rate, "SourceRate 0 disables the rate")
+	require.Nil(t, NewConnLimiter(ConnLimitConfig{Enabled: false, SourceRate: 5}).rate)
+	d := DefaultConnLimitConfig()
+	require.Equal(t, 20, d.SourceRate)
+	require.Equal(t, 100, d.SourceBurst)
+}

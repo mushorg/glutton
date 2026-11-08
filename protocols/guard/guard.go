@@ -126,6 +126,7 @@ const (
 	LimitSourceRequests Limit = "source_requests"
 	LimitGlobalRequests Limit = "global_requests"
 	LimitSourceConns    Limit = "source_conns"
+	LimitSourceConnRate Limit = "source_conn_rate"
 )
 
 // Decision is the outcome of Allow.
