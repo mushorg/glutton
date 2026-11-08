@@ -102,7 +102,7 @@ func TestMinecraftLogin(t *testing.T) {
 	require.Equal(t, "login_start", frames[1].Command)
 	require.Equal(t, "bob", frames[1].Username)
 	require.Equal(t, "not_whitelisted", frames[2].Status)
-	require.Equal(t, minecraft.BuildLoginDisconnect(minecraft.ReasonNotWhitelisted), resp)
+	require.Equal(t, minecraft.BuildLoginDisconnect(minecraft.Personas[0], minecraft.ReasonNotWhitelisted), resp)
 }
 
 // A login Handshake with a foreign protocol (or a transfer) is rejected before
@@ -130,7 +130,7 @@ func TestMinecraftLoginRejected(t *testing.T) {
 			require.NoError(t, err)
 			<-wrote
 		})
-		require.Equal(t, minecraft.BuildLoginDisconnect(tc.reason), resp)
+		require.Equal(t, minecraft.BuildLoginDisconnect(minecraft.Personas[0], tc.reason), resp)
 		frames := p.decoded.([]parsedMinecraft)
 		require.Len(t, frames, 3)
 		require.Equal(t, "handshake", frames[0].Command)
@@ -220,6 +220,53 @@ func TestMinecraftRecallRotatesPersona(t *testing.T) {
 	require.Equal(t, []string{"handshake", "status_request"}, v.Previous.Commands)
 	require.Equal(t, []string{"matscan"}, v.Previous.Paths)
 	require.Equal(t, 2, v.Previous.Events)
+}
+
+// A returning source's login is checked against its persona's version: the
+// smp persona (1.21.8, protocol 772) lets a 772 client reach Login Start and
+// rejects a 769 client with its own version name.
+func TestMinecraftRecallPersonaVersionGatesLogin(t *testing.T) {
+	now := time.Date(2026, 11, 8, 10, 44, 0, 0, time.UTC)
+	orig := minecraftRecall
+	minecraftRecall = recall.NewWithClock(recall.Config{Enabled: true, Gap: time.Hour}, func() time.Time { return now })
+	t.Cleanup(func() { minecraftRecall = orig })
+	remote := staticAddr{"198.44.135.103:51524"}
+
+	// Visit 1: default persona.
+	_, _ = runMinecraftFrom(t, remote, func(c net.Conn) {
+		_, _ = c.Write(append(mcHandshake(772, minecraft.StateStatus), 0x01, 0x00))
+		_, err := readMCPacket(c)
+		require.NoError(t, err)
+	})
+	now = now.Add(2 * time.Hour)
+
+	smp := minecraft.Personas[1]
+	var resp []byte
+	p, _ := runMinecraftFrom(t, remote, func(c net.Conn) {
+		_, _ = c.Write(append(mcHandshake(smp.Protocol, minecraft.StateLogin), mcLogin...))
+		var err error
+		resp, err = readMCPacket(c)
+		require.NoError(t, err)
+	})
+	require.Equal(t, minecraft.BuildLoginDisconnect(smp, minecraft.ReasonNotWhitelisted), resp)
+	frames := p.decoded.([]parsedMinecraft)
+	require.Len(t, frames, 3)
+	require.Equal(t, "bob", frames[1].Username)
+	require.Equal(t, parsedMinecraft{Direction: "write", Status: "not_whitelisted", Variant: "smp", Visit: 2, Payload: resp}, frames[2])
+
+	// Same visit, a 1.21.4 client: incompatible, naming 1.21.8.
+	p, _ = runMinecraftFrom(t, remote, func(c net.Conn) {
+		go func() { _, _ = c.Write(mcHandshake(minecraft.DefaultProtocol, minecraft.StateLogin)) }()
+		var err error
+		resp, err = readMCPacket(c)
+		require.NoError(t, err)
+	})
+	require.Equal(t, minecraft.BuildLoginDisconnect(smp, minecraft.ReasonIncompatible), resp)
+	require.Contains(t, string(resp), `"with":["1.21.8"]`)
+	frames = p.decoded.([]parsedMinecraft)
+	require.Equal(t, "incompatible", frames[1].Status)
+	require.Equal(t, "smp", frames[1].Variant)
+	require.Equal(t, 2, frames[1].Visit)
 }
 
 func ptrInt32(v int32) *int32 { return &v }

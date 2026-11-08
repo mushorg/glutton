@@ -33,7 +33,7 @@ type parsedMinecraft struct {
 	Port            uint16 `json:"port,omitempty"`
 	NextState       int32  `json:"next_state,omitempty"`
 	Username        string `json:"username,omitempty"`
-	Variant         string `json:"variant,omitempty"` // persona, on the status_response write
+	Variant         string `json:"variant,omitempty"` // persona, on status/disconnect writes
 	Visit           int    `json:"visit,omitempty"`   // source's visit number, on the status_response write
 	Payload         []byte `json:"payload,omitempty"`
 	Truncated       bool   `json:"truncated,omitempty"`
@@ -111,9 +111,14 @@ func (s *minecraftServer) write(data []byte, status string) error {
 }
 
 // disconnect sends a login Disconnect; the frame status is the reason key
-// without its "multiplayer.disconnect." prefix (e.g. "not_whitelisted").
+// without its "multiplayer.disconnect." prefix (e.g. "not_whitelisted"). The
+// frame carries the persona, whose version decides the version reasons.
 func (s *minecraftServer) disconnect(reason string) error {
-	return s.write(minecraft.BuildLoginDisconnect(reason), strings.TrimPrefix(reason, "multiplayer.disconnect."))
+	if err := s.write(minecraft.BuildLoginDisconnect(s.persona, reason), strings.TrimPrefix(reason, "multiplayer.disconnect.")); err != nil {
+		return err
+	}
+	s.tagLast()
+	return nil
 }
 
 // readLingeringLogin records a Login Start the client sent before it saw the
@@ -246,7 +251,7 @@ func HandleMinecraft(ctx context.Context, conn net.Conn, md connection.Metadata,
 			switch state {
 			case minecraft.StateStatus:
 			case minecraft.StateLogin:
-				reason = minecraft.VersionReason(hs.ProtocolVersion)
+				reason = minecraft.VersionReason(server.persona, hs.ProtocolVersion)
 			case minecraft.StateTransfer:
 				reason = minecraft.ReasonTransfersDisabled
 			default:

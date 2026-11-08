@@ -5,24 +5,30 @@ import (
 	"fmt"
 )
 
-// Persona is the server a Status Response advertises: its server.properties
-// MOTD and max-players, and the players currently online.
+// Persona is the server a Status Response advertises: its game version, its
+// server.properties MOTD and max-players, and the players currently online.
+// Only 1.20.5+ versions fit: older servers encode the status JSON differently
+// (object MOTD, explicit defaults).
 type Persona struct {
 	// Name labels the persona in decoded frames and recall summaries.
-	Name    string
-	MOTD    string
-	Max     int
-	Players []string
+	Name     string
+	Version  string // version name, e.g. "1.21.4"
+	Protocol int32  // protocol number matching Version
+	MOTD     string
+	Max      int
+	Players  []string
 }
 
 // Personas is the rotation order for returning sources. The first is an
 // untouched default server, so a first visit sees what it always saw. The
 // others are small whitelisted servers with a few friends online, which fits
-// the not_whitelisted login Disconnect.
+// the not_whitelisted login Disconnect. Each runs its own version, as servers
+// in the wild do: a freshly updated SMP and a survival server pinned to the
+// long-lived 1.21.1 modding release.
 var Personas = []Persona{
-	{Name: "default", MOTD: "A Minecraft Server", Max: 20},
-	{Name: "smp", MOTD: "Friends SMP", Max: 10, Players: []string{"kuba_mc", "Nyxie"}},
-	{Name: "survival", MOTD: "survival server - whitelist only", Max: 20, Players: []string{"dragonslayer07"}},
+	{Name: "default", Version: DefaultVersionName, Protocol: DefaultProtocol, MOTD: "A Minecraft Server", Max: 20},
+	{Name: "smp", Version: "1.21.8", Protocol: 772, MOTD: "Friends SMP", Max: 10, Players: []string{"kuba_mc", "Nyxie"}},
+	{Name: "survival", Version: "1.21.1", Protocol: 767, MOTD: "survival server - whitelist only", Max: 20, Players: []string{"dragonslayer07"}},
 }
 
 // OfflineUUID returns the UUID an offline-mode server gives name: a

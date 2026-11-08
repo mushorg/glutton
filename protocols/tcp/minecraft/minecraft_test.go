@@ -3,6 +3,7 @@ package minecraft
 import (
 	"bytes"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/stretchr/testify/require"
 )
@@ -65,8 +66,8 @@ func TestBuildStatusResponse(t *testing.T) {
 		want    string
 	}{
 		{Personas[0], `{"description":"A Minecraft Server","players":{"max":20,"online":0},"version":{"name":"1.21.4","protocol":769}}`},
-		{Personas[1], `{"description":"Friends SMP","players":{"max":10,"online":2,"sample":[{"id":"96925955-fcfb-3fab-bb35-84f574daee23","name":"kuba_mc"},{"id":"1e09a6fd-185d-314e-b314-0af906030a6d","name":"Nyxie"}]},"version":{"name":"1.21.4","protocol":769}}`},
-		{Personas[2], `{"description":"survival server - whitelist only","players":{"max":20,"online":1,"sample":[{"id":"afb8f65c-3401-34be-9910-fa49d0b7122a","name":"dragonslayer07"}]},"version":{"name":"1.21.4","protocol":769}}`},
+		{Personas[1], `{"description":"Friends SMP","players":{"max":10,"online":2,"sample":[{"id":"96925955-fcfb-3fab-bb35-84f574daee23","name":"kuba_mc"},{"id":"1e09a6fd-185d-314e-b314-0af906030a6d","name":"Nyxie"}]},"version":{"name":"1.21.8","protocol":772}}`},
+		{Personas[2], `{"description":"survival server - whitelist only","players":{"max":20,"online":1,"sample":[{"id":"afb8f65c-3401-34be-9910-fa49d0b7122a","name":"dragonslayer07"}]},"version":{"name":"1.21.1","protocol":767}}`},
 	} {
 		pkt, err := ReadPacket(bytes.NewReader(BuildStatusResponse(tc.persona)))
 		require.NoError(t, err)
@@ -89,11 +90,30 @@ func TestOfflineUUID(t *testing.T) {
 }
 
 func TestVersionReason(t *testing.T) {
-	require.Equal(t, "", VersionReason(DefaultProtocol))
-	require.Equal(t, ReasonOutdatedClient, VersionReason(47))
-	require.Equal(t, ReasonOutdatedClient, VersionReason(-1))
-	require.Equal(t, ReasonIncompatible, VersionReason(767))
-	require.Equal(t, ReasonIncompatible, VersionReason(770))
+	def := Personas[0]
+	require.Equal(t, "", VersionReason(def, DefaultProtocol))
+	require.Equal(t, ReasonOutdatedClient, VersionReason(def, 47))
+	require.Equal(t, ReasonOutdatedClient, VersionReason(def, -1))
+	require.Equal(t, ReasonIncompatible, VersionReason(def, 767))
+	require.Equal(t, ReasonIncompatible, VersionReason(def, 770))
+	// Each persona accepts only its own protocol.
+	for _, p := range Personas {
+		require.Equal(t, "", VersionReason(p, p.Protocol), p.Name)
+		require.Equal(t, ReasonIncompatible, VersionReason(p, p.Protocol+1), p.Name)
+	}
+}
+
+// Personas must differ in version and stay on the 1.20.5+ status encoding.
+func TestPersonaVersions(t *testing.T) {
+	require.Equal(t, DefaultVersionName, Personas[0].Version)
+	require.Equal(t, int32(DefaultProtocol), Personas[0].Protocol)
+	seen := map[int32]bool{}
+	for _, p := range Personas {
+		require.NotEmpty(t, p.Version, p.Name)
+		require.GreaterOrEqual(t, p.Protocol, int32(766), p.Name) // 1.20.5
+		require.False(t, seen[p.Protocol], p.Name)
+		seen[p.Protocol] = true
+	}
 }
 
 func TestBuildLoginDisconnect(t *testing.T) {
@@ -103,13 +123,18 @@ func TestBuildLoginDisconnect(t *testing.T) {
 		ReasonIncompatible:      `{"translate":"multiplayer.disconnect.incompatible","with":["1.21.4"]}`,
 		ReasonOutdatedClient:    `{"translate":"multiplayer.disconnect.outdated_client","with":["1.21.4"]}`,
 	} {
-		pkt, err := ReadPacket(bytes.NewReader(BuildLoginDisconnect(reason)))
+		pkt, err := ReadPacket(bytes.NewReader(BuildLoginDisconnect(Personas[0], reason)))
 		require.NoError(t, err)
 		require.Equal(t, int32(IDLoginDiscon), pkt.ID)
 		js, err := readString(bytes.NewReader(pkt.Body))
 		require.NoError(t, err)
 		require.Equal(t, want, js)
 	}
+	pkt, err := ReadPacket(bytes.NewReader(BuildLoginDisconnect(Personas[1], ReasonIncompatible)))
+	require.NoError(t, err)
+	js, err := readString(bytes.NewReader(pkt.Body))
+	require.NoError(t, err)
+	require.Equal(t, `{"translate":"multiplayer.disconnect.incompatible","with":["1.21.8"]}`, js)
 }
 
 func TestPongAndLogin(t *testing.T) {
@@ -209,4 +234,17 @@ func TestBuildLegacyKick(t *testing.T) {
 	want := "§1\x00127\x001.21.4\x00A Minecraft Server\x000\x0020"
 	require.Equal(t, units, len([]rune(want)))
 	require.Equal(t, []byte{0x00, 0xa7, 0x00, '1', 0x00, 0x00, 0x00, '1', 0x00, '2', 0x00, '7'}, got[3:15])
+
+	// Other personas carry their own version name; the legacy protocol stays 127.
+	got = BuildLegacyKick(Personas[2])
+	want = "§1\x00127\x001.21.1\x00survival server - whitelist only\x001\x0020"
+	require.Equal(t, string(utf16.Decode(beUnits(got[3:]))), want)
+}
+
+func beUnits(b []byte) []uint16 {
+	u := make([]uint16, len(b)/2)
+	for i := range u {
+		u[i] = uint16(b[2*i])<<8 | uint16(b[2*i+1])
+	}
+	return u
 }

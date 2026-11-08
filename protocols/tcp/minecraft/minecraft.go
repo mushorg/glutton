@@ -22,8 +22,8 @@ const (
 	MaxVarIntBytes = 5
 	maxStringBytes = 1024
 
-	// DefaultProtocol is the protocol the server speaks. Like vanilla, it is
-	// advertised whatever protocol the client sends.
+	// DefaultProtocol is the protocol the default persona speaks. Like
+	// vanilla, a persona's protocol is advertised whatever the client sends.
 	DefaultProtocol = 769
 	// DefaultVersionName matches DefaultProtocol.
 	DefaultVersionName = "1.21.4"
@@ -272,10 +272,10 @@ func stringBody(s string) []byte {
 	return append(b, s...)
 }
 
-// BuildStatusResponse builds the Status Response (0x00) of a vanilla 1.21.4
-// dedicated server with p's server.properties in offline mode: plain string
-// MOTD, no favicon, and no enforcesSecureChat (vanilla omits it when false,
-// and it is false without online mode). Field order and compact encoding
+// BuildStatusResponse builds the Status Response (0x00) of a vanilla
+// dedicated server running p.Version (1.20.5+) with p's server.properties in
+// offline mode: plain string MOTD, no favicon, and no enforcesSecureChat
+// (vanilla omits it when false, and it is false without online mode). Field order and compact encoding
 // follow vanilla's codec; sample is omitted when empty, as vanilla does. Like
 // vanilla, the client's protocol is not echoed.
 func BuildStatusResponse(p Persona) []byte {
@@ -295,7 +295,9 @@ func BuildStatusResponse(p Persona) []byte {
 		}
 		b.WriteByte(']')
 	}
-	fmt.Fprintf(&b, `},"version":{"name":%q,"protocol":%d}}`, DefaultVersionName, DefaultProtocol)
+	b.WriteString(`},"version":{"name":`)
+	writeJSONString(&b, p.Version)
+	fmt.Fprintf(&b, `,"protocol":%d}}`, p.Protocol)
 	return BuildPacket(IDStatusResp, stringBody(b.String()))
 }
 
@@ -309,11 +311,11 @@ func BuildPong(payload []byte) []byte {
 	return BuildPacket(IDPong, payload)
 }
 
-// VersionReason returns the reason vanilla rejects a login Handshake with, or
-// "" when clientProtocol matches DefaultProtocol.
-func VersionReason(clientProtocol int32) string {
+// VersionReason returns the reason a vanilla server running p rejects a login
+// Handshake with, or "" when clientProtocol matches p.Protocol.
+func VersionReason(p Persona, clientProtocol int32) string {
 	switch {
-	case clientProtocol == DefaultProtocol:
+	case clientProtocol == p.Protocol:
 		return ""
 	case clientProtocol < minModernProtocol:
 		return ReasonOutdatedClient
@@ -323,12 +325,12 @@ func VersionReason(clientProtocol int32) string {
 }
 
 // BuildLoginDisconnect builds a login-state Disconnect (0x00) with a
-// translatable JSON chat component. Version reasons carry the server version
-// name as their argument, as in vanilla.
-func BuildLoginDisconnect(reason string) []byte {
+// translatable JSON chat component. Version reasons carry p's version name as
+// their argument, as in vanilla.
+func BuildLoginDisconnect(p Persona, reason string) []byte {
 	js := fmt.Sprintf(`{"translate":%q}`, reason)
 	if reason == ReasonIncompatible || reason == ReasonOutdatedClient {
-		js = fmt.Sprintf(`{"translate":%q,"with":[%q]}`, reason, DefaultVersionName)
+		js = fmt.Sprintf(`{"translate":%q,"with":[%q]}`, reason, p.Version)
 	}
 	return BuildPacket(IDLoginDiscon, stringBody(js))
 }
@@ -364,7 +366,7 @@ func LooksLikeLegacyPing(b []byte) bool {
 // by NUL, encoded as UTF-16BE and prefixed with its length in code units.
 func BuildLegacyKick(p Persona) []byte {
 	s := fmt.Sprintf("§1\x00%d\x00%s\x00%s\x00%d\x00%d",
-		legacyProtocol, DefaultVersionName, p.MOTD, len(p.Players), p.Max)
+		legacyProtocol, p.Version, p.MOTD, len(p.Players), p.Max)
 	units := utf16.Encode([]rune(s))
 	out := make([]byte, 3, 3+2*len(units))
 	out[0] = legacyKickByte
