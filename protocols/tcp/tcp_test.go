@@ -575,6 +575,8 @@ func TestHandleTCPSilentReplies(t *testing.T) {
 		{"mglndd elsewhere", 9999, []byte("MGLNDD_1.2.3.4_9999\n"), "mglndd"},
 		// Shodan-tagged probe on tcp/55000 (209.38.70.156)
 		{"bracket probe", 55000, []byte("\x00\x00\x00[38]\x00d\x00[8]\x00UmVtb3Rl[8]\x00cmVtb3Rl[8]\x00UmVtb3Rl"), "bracket-probe"},
+		// Shodan-tagged probe on tcp/444 (143.110.239.2)
+		{"dns query probe", 444, []byte("HTTP/1.1 GET /dns?\x00"), "dns-query-probe"},
 		{"non-ber on ldap", 389, []byte("GET / HTTP/1.0\r\n\r\n"), ""},
 		{"no magic on bitcoin", 8333, []byte("\x16\x00junk\r\n"), ""},
 		{"no fox hello on niagara", 1911, []byte("GET / HTTP/1.0\r\n\r\n"), ""},

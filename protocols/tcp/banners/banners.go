@@ -444,6 +444,9 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 		return Response{Name: "bracket-probe", Silent: true}, bracketProbe(data)
 	},
 	func(data []byte) (Response, bool) {
+		return Response{Name: "dns-query-probe", Silent: true}, isDNSQueryProbe(data)
+	},
+	func(data []byte) (Response, bool) {
 		msgID, ok := ldapRootDSEQuery(data)
 		if !ok {
 			return Response{}, false
