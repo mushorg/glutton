@@ -273,6 +273,9 @@ rules:
   - match: udp dst port 17185
     type: conn_handler
     target: wdb
+  - match: udp dst port 9034
+    type: conn_handler
+    target: realtek
   - match: udp dst port 111
     type: conn_handler
     target: rpcbind

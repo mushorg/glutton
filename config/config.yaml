@@ -112,6 +112,9 @@ log_limit:   # bounds Info log lines that carry a src_ip (SOCKS request, HTTP re
   source_prefix_v4: 24  # IPv4 sources in one /24 share a budget; 32 is per address.
   source_prefix_v6: 48  # IPv6 sources in one /48 share a budget; 128 is per address.
 
+realtek:
+  fetch_samples: false   # download the http(s) URLs a udp/9034 "orf;" injection (CVE-2021-35394) fetches into samples/. UDP sources can be forged, so fetches go only to public addresses, at most 2 per datagram, each URL once per hour.
+
 openvpn:
   reply: false        # answer well-formed UDP hard resets with P_CONTROL_HARD_RESET_SERVER_V2 (default parse-only).
 

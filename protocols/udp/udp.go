@@ -21,6 +21,7 @@ import (
 	"github.com/mushorg/glutton/protocols/udp/ike"
 	"github.com/mushorg/glutton/protocols/udp/knx"
 	"github.com/mushorg/glutton/protocols/udp/ntp"
+	"github.com/mushorg/glutton/protocols/udp/realtek"
 	"github.com/mushorg/glutton/protocols/udp/rip"
 	"github.com/mushorg/glutton/protocols/udp/rtps"
 	"github.com/mushorg/glutton/protocols/udp/snmp"
@@ -73,6 +74,7 @@ var udpMatchers = []udpMatcher{
 	{"dht", payloadMatch(dht.LooksLikeDHT), HandleDHT},
 	{"ntp", payloadMatch(ntp.LooksLikeNTP), HandleNTP},
 	{"stun", payloadMatch(stun.LooksLikeSTUN), HandleSTUN},
+	{"realtek", payloadMatch(realtek.LooksLikeRealtekMP), HandleRealtek},
 }
 
 // pickDispatch chooses among n matching protocols; it is replaced in tests

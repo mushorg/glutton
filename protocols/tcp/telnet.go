@@ -5,8 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
-	"errors"
-	"io"
 	"log/slog"
 	"math/big"
 	"net"
@@ -46,9 +44,6 @@ const busyboxUsage = "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) multi-call binar
 const busyboxPingUsage = "BusyBox v1.16.1 (2014-03-04 16:00:18 CST) multi-call binary\r\n\r\n" +
 	"Usage: ping [OPTIONS] HOST\r\n\r\n"
 
-// maxTelnetSample caps bytes fetched from wget/curl URLs.
-const maxTelnetSample = 10 << 20
-
 const (
 	// maxTelnetLine caps one recorded line; long echo -ne droppers fit.
 	maxTelnetLine = 64 << 10
@@ -59,9 +54,10 @@ const (
 	maxTelnetSampleFetches = 8
 )
 
-// telnetFetchSlots bounds sample downloads in flight across all connections
-// (each may buffer maxTelnetSample); a download beyond it is skipped.
-var telnetFetchSlots = make(chan struct{}, 32)
+// telnetFetchSlots bounds sample downloads in flight; it is the slot pool
+// shared with every handler that fetches samples. A download beyond it is
+// skipped.
+var telnetFetchSlots = helpers.SampleFetchSlots
 
 // telnetOptionRequests opens the session: IAC DO TERMINAL-TYPE, TERMINAL-SPEED,
 // X-DISPLAY-LOCATION and NEW-ENVIRON.
@@ -550,26 +546,7 @@ func telnetWriteCommand(msg string) string {
 
 // telnetDownloadURL extracts an http(s) URL from a wget/curl shell line.
 func telnetDownloadURL(cmd string) (string, bool) {
-	line := trimTelnetLine(cmd)
-	lower := strings.ToLower(line)
-	if !strings.Contains(lower, "wget") && !strings.Contains(lower, "curl") {
-		return "", false
-	}
-	idx := strings.Index(lower, "http://")
-	if idx < 0 {
-		idx = strings.Index(lower, "https://")
-	}
-	if idx < 0 {
-		return "", false
-	}
-	url := line[idx:]
-	if end := strings.IndexAny(url, " \t\r\n;|&\"'"); end >= 0 {
-		url = url[:end]
-	}
-	if url == "" {
-		return "", false
-	}
-	return url, true
+	return helpers.DownloadURL(trimTelnetLine(cmd))
 }
 
 // write writes a telnet message to the connection
@@ -682,31 +659,10 @@ func (s *telnetServer) read() (string, error) {
 
 func (s *telnetServer) fetchSample(url string, logger interfaces.Logger) (string, error) {
 	logger.Debug("Fetching sample", slog.String("url", url), slog.String("handler", "telnet"))
-	resp, err := s.client.Get(url)
+	sha256Hash, err := helpers.FetchSample(s.client, url)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", errors.New("failed to fetch sample: " + resp.Status)
-	}
-
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxTelnetSample))
-	if err != nil {
-		return "", err
-	}
-	if len(data) == 0 {
-		return "", errors.New("empty response body")
-	}
-
-	sha256Hash, err := helpers.Store(data, "samples")
-	if err != nil {
-		return "", err
-	}
-	if sha256Hash == "" {
-		sha256Hash = helpers.SHA256Hex(data)
-	}
-
 	logger.Info(
 		"New sample fetched",
 		slog.String("handler", "telnet"),
