@@ -235,6 +235,7 @@ Caps: 8 scripts of 4 KiB, 256 B for `index`/`type`/`id`/`lang`, and JSON nesting
 
 Keep-alive HTTP parsed with Spicy. `command`, `query`, `parameters`, and `status` mean the same as in the [Go handler](#frame-fields). Differences from the Go handler:
 
+- **CONNECT goes to the Go handler.** When the catch-all detects HTTP and the first request is `CONNECT`, the connection is handed to the Go handler, so [CONNECT proxy tunnels](#connect-proxy-tunnels) behave the same with Spicy enabled.
 - **Header cap.** The request line plus headers may be at most 64 KiB, as in the Go handler.
 - **One event per connection.** There is no cross-connection `session` cookie grouping, so no `session_id`, `dest_port`, or `src_port` frame fields.
 - **No header-derived fields.** `host` (the sensor address), `user_agent`, and other request headers are not decoded; `payload` still holds the raw wire request/response.

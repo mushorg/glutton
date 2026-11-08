@@ -3,6 +3,7 @@ package protocols
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"io"
 	"net"
 	"strings"
@@ -168,6 +169,55 @@ func TestCatchAllIdlePortRoutesHTTP(t *testing.T) {
 	require.True(t, strings.HasPrefix(line, "HTTP/1.1 "), "%q", line)
 
 	require.Equal(t, "http", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllHTTPConnectWithSpicyTerminatesTLS(t *testing.T) {
+	// the CONNECT path never reaches Spicy, so only the flag is needed
+	prev := viper.GetBool("spicy.enabled")
+	viper.Set("spicy.enabled", true)
+	// the Go handler groups sessions and produces after conn_timeout idle
+	prevTimeout := viper.GetInt("conn_timeout")
+	viper.Set("conn_timeout", 1)
+	t.Cleanup(func() {
+		viper.Set("spicy.enabled", prev)
+		viper.Set("conn_timeout", prevTimeout)
+	})
+	client, hp, done := startCatchAllDispatch(t, 2333)
+
+	// run-1794143125-2.jsonl events #8/#9 on tcp/2333: Spicy answered
+	// "200 OK" with Content-Length and never answered the ClientHello
+	_, err := client.Write([]byte("CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n" +
+		"Proxy-Authorization: Basic Y2VzaGlzaGlmdXFpOmNlc2hpc2hpZnVxaQ==\r\n\r\n"))
+	require.NoError(t, err)
+	want := "HTTP/1.1 200 Connection established\r\n\r\n"
+	reply := make([]byte, len(want))
+	_, err = io.ReadFull(client, reply)
+	require.NoError(t, err)
+	require.Equal(t, want, string(reply))
+
+	tlsClient := tls.Client(client, &tls.Config{ServerName: "github.com", InsecureSkipVerify: true, NextProtos: []string{"http/1.1"}})
+	require.NoError(t, tlsClient.Handshake())
+	require.Equal(t, "github.com", tlsClient.ConnectionState().PeerCertificates[0].Subject.CommonName)
+
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	select {
+	case protocol := <-hp.produced:
+		require.Equal(t, "http", protocol)
+	case <-time.After(3 * time.Second):
+		t.Fatal("no event produced")
+	}
+}
+
+func TestIsHTTPConnect(t *testing.T) {
+	require.True(t, isHTTPConnect([]byte("CONNECT github.com:443 HTTP/1.1\r\n")))
+	require.False(t, isHTTPConnect([]byte("GET / HTTP/1.1\r\n")))
+	require.False(t, isHTTPConnect([]byte("CONNECTX / HTTP/1.1\r\n")))
 }
 
 func TestCatchAllShortPayloadWithSpicy(t *testing.T) {

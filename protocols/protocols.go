@@ -825,11 +825,18 @@ func handleDetectedHTTP(ctx context.Context, bufConn BufferedConn, md connection
 		return tcp.HandleMCP(ctx, httpConn, md, log, h)
 	}
 	// httpConn holds the bytes it peeked even when the request is shorter
-	// than the peek, so it must be used either way
-	if !viper.GetBool("spicy.enabled") {
+	// than the peek, so it must be used either way. A proxy CONNECT always
+	// goes to the Go handler: only it grants the tunnel and terminates the
+	// ClientHello that follows (Spicy answered a plain 200 and went silent).
+	if !viper.GetBool("spicy.enabled") || isHTTPConnect(reqLine) {
 		return tcp.HandleHTTP(ctx, httpConn, md, log, h)
 	}
 	return spicyHandlers.HandleHTTP(ctx, httpConn, md, log, h)
+}
+
+// isHTTPConnect reports whether reqLine starts a CONNECT request.
+func isHTTPConnect(reqLine []byte) bool {
+	return bytes.HasPrefix(reqLine, []byte("CONNECT "))
 }
 
 // peekOrClose peeks up to n bytes. Fewer bytes before the deadline or EOF
