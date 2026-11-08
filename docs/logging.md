@@ -158,6 +158,7 @@ Example shape:
 | `radius` | UDP | [protocols/radius.md](protocols/radius.md) |
 | `opcua` | TCP | [protocols/opcua.md](protocols/opcua.md) |
 | `gearman` | TCP | [protocols/gearman.md](protocols/gearman.md) |
+| `rocketmq` | TCP | [protocols/rocketmq.md](protocols/rocketmq.md) |
 | `nettcp` | TCP | [protocols/nettcp.md](protocols/nettcp.md) |
 | `mctp` | TCP | [protocols/mctp.md](protocols/mctp.md) |
 | `dahua` | TCP | [protocols/dahua.md](protocols/dahua.md) |
