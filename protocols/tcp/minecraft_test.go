@@ -89,6 +89,40 @@ func TestMinecraftStatusPing(t *testing.T) {
 
 var mcLogin = minecraft.BuildPacket(0, append([]byte{3}, "bob"...))
 
+// mcDragonLogin and mcDragonDisconnect are the Login Start and reply from
+// Ochi event 291f9645-0f55-430e-ae74-226d391f19a9 (tcp/29421, protocol 769).
+// Its Handshake was scrubbed by Ochi, so the test builds a fresh one.
+var mcDragonLogin = []byte{
+	0x1e, 0x00, 0x0c, 0x44, 0x72, 0x61, 0x67, 0x6f, 0x6e, 0x44, 0x69, 0x6d, 0x61, 0x34, 0x30, 0x3e,
+	0xbd, 0xb2, 0xdc, 0x48, 0x2f, 0x37, 0xe1, 0x93, 0x19, 0x47, 0x63, 0xc2, 0x59, 0x07, 0xbc,
+}
+
+var mcDragonDisconnect = []byte{
+	0x38, 0x00, 0x36, 0x7b, 0x22, 0x74, 0x72, 0x61, 0x6e, 0x73, 0x6c, 0x61, 0x74, 0x65, 0x22, 0x3a,
+	0x22, 0x6d, 0x75, 0x6c, 0x74, 0x69, 0x70, 0x6c, 0x61, 0x79, 0x65, 0x72, 0x2e, 0x64, 0x69, 0x73,
+	0x63, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x2e, 0x6e, 0x6f, 0x74, 0x5f, 0x77, 0x68, 0x69, 0x74,
+	0x65, 0x6c, 0x69, 0x73, 0x74, 0x65, 0x64, 0x22, 0x7d,
+}
+
+func TestMinecraftLoginUUID(t *testing.T) {
+	handshake := mcHandshake(minecraft.DefaultProtocol, minecraft.StateLogin)
+	var resp []byte
+	p, _ := runMinecraft(t, func(c net.Conn) {
+		_, _ = c.Write(append(append([]byte{}, handshake...), mcDragonLogin...))
+		var err error
+		resp, err = readMCPacket(c)
+		require.NoError(t, err)
+	})
+	require.Equal(t, mcDragonDisconnect, resp)
+	frames := p.decoded.([]parsedMinecraft)
+	require.Len(t, frames, 3)
+	require.Equal(t, parsedMinecraft{
+		Direction: "read", Command: "login_start", Username: "DragonDima40",
+		UUID: "3ebdb2dc-482f-37e1-9319-4763c25907bc", Payload: mcDragonLogin,
+	}, frames[1])
+	require.Equal(t, parsedMinecraft{Direction: "write", Status: "not_whitelisted", Variant: "default", Visit: 1, Payload: mcDragonDisconnect}, frames[2])
+}
+
 func TestMinecraftLogin(t *testing.T) {
 	var resp []byte
 	p, _ := runMinecraft(t, func(c net.Conn) {

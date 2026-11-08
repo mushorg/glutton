@@ -2,7 +2,6 @@ package minecraft
 
 import (
 	"crypto/md5"
-	"fmt"
 )
 
 // Persona is the server a Status Response advertises: its game version, its
@@ -37,5 +36,5 @@ func OfflineUUID(name string) string {
 	b := md5.Sum([]byte("OfflinePlayer:" + name))
 	b[6] = b[6]&0x0f | 0x30
 	b[8] = b[8]&0x3f | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+	return formatUUID(b[:])
 }

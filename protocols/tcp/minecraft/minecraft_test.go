@@ -143,9 +143,45 @@ func TestPongAndLogin(t *testing.T) {
 	_, err := ParsePing(ping[:4])
 	require.ErrorIs(t, err, ErrShortBody)
 
-	name, err := ParseLoginStart([]byte{0x03, 'b', 'o', 'b', 0xaa})
+	ls, err := ParseLoginStart([]byte{0x03, 'b', 'o', 'b', 0xaa})
 	require.NoError(t, err)
-	require.Equal(t, "bob", name)
+	require.Equal(t, LoginStart{Name: "bob"}, ls)
+}
+
+// dragonLoginBody is the Login Start body (1.21.4 layout: name, 16-byte UUID)
+// from Ochi event 291f9645-0f55-430e-ae74-226d391f19a9 (tcp/29421). The UUID
+// is version 3 but not OfflineUUID of the name.
+var dragonLoginBody = []byte{
+	0x0c, 'D', 'r', 'a', 'g', 'o', 'n', 'D', 'i', 'm', 'a', '4', '0',
+	0x3e, 0xbd, 0xb2, 0xdc, 0x48, 0x2f, 0x37, 0xe1, 0x93, 0x19, 0x47, 0x63, 0xc2, 0x59, 0x07, 0xbc,
+}
+
+func TestParseLoginStartUUID(t *testing.T) {
+	const dragonUUID = "3ebdb2dc-482f-37e1-9319-4763c25907bc"
+	uuidBytes := dragonLoginBody[13:]
+	name := []byte{0x03, 'b', 'o', 'b'}
+	cases := []struct {
+		label string
+		body  []byte
+		want  LoginStart
+	}{
+		{"1.20.2+ name and UUID", dragonLoginBody, LoginStart{Name: "DragonDima40", UUID: dragonUUID}},
+		{"1.19.3 has-UUID true", append(append(append([]byte{}, name...), 0x01), uuidBytes...), LoginStart{Name: "bob", UUID: dragonUUID}},
+		{"1.19.3 has-UUID false", append(append([]byte{}, name...), 0x00), LoginStart{Name: "bob"}},
+		{"pre-1.19 name only", name, LoginStart{Name: "bob"}},
+		{"truncated UUID", append(append([]byte{}, name...), uuidBytes[:15]...), LoginStart{Name: "bob"}},
+		{"1.19 signature data", append(append(append([]byte{}, name...), 0x01), make([]byte, 40)...), LoginStart{Name: "bob"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			ls, err := ParseLoginStart(tc.body)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, ls)
+		})
+	}
+
+	_, err := ParseLoginStart([]byte{0x05, 'b', 'o'})
+	require.ErrorIs(t, err, ErrBadString)
 }
 
 // matscanPing is the Handshake + Status Request from Ochi event

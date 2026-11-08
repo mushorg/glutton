@@ -33,6 +33,7 @@ type parsedMinecraft struct {
 	Port            uint16 `json:"port,omitempty"`
 	NextState       int32  `json:"next_state,omitempty"`
 	Username        string `json:"username,omitempty"`
+	UUID            string `json:"uuid,omitempty"`    // player UUID from Login Start (1.19.3+)
 	Variant         string `json:"variant,omitempty"` // persona, on status/disconnect writes
 	Visit           int    `json:"visit,omitempty"`   // source's visit number, on the status_response write
 	Payload         []byte `json:"payload,omitempty"`
@@ -165,8 +166,9 @@ func loginStartFrame(pkt minecraft.Packet) parsedMinecraft {
 	frame := parsedMinecraft{Direction: "read", Command: "unknown", Payload: pkt.Raw}
 	if pkt.ID == minecraft.IDLoginStart {
 		frame.Command = "login_start"
-		if name, err := minecraft.ParseLoginStart(pkt.Body); err == nil {
-			frame.Username = name
+		if ls, err := minecraft.ParseLoginStart(pkt.Body); err == nil {
+			frame.Username = ls.Name
+			frame.UUID = ls.UUID
 		}
 	}
 	return frame

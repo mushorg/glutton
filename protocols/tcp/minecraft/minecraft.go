@@ -245,10 +245,35 @@ func LooksLikeHandshake(b []byte) bool {
 	return br.Len() == 0
 }
 
-// ParseLoginStart returns the player name from a Login Start body. Any
-// trailing fields (UUID in newer versions) are ignored.
-func ParseLoginStart(body []byte) (string, error) {
-	return readString(bytes.NewReader(body))
+// LoginStart is a decoded Login Start packet.
+type LoginStart struct {
+	Name string
+	UUID string // canonical 8-4-4-4-12 hex; empty when the client sent none
+}
+
+// ParseLoginStart decodes a Login Start body. The player UUID is taken from
+// the 1.20.2+ layout (name, 16-byte UUID) and the 1.19.3-1.20.1 layout (name,
+// has-UUID bool, optional UUID); other trailing data (pre-1.19.3 signature
+// data) leaves UUID empty.
+func ParseLoginStart(body []byte) (LoginStart, error) {
+	br := bytes.NewReader(body)
+	name, err := readString(br)
+	if err != nil {
+		return LoginStart{}, err
+	}
+	ls := LoginStart{Name: name}
+	rest := body[len(body)-br.Len():]
+	switch {
+	case len(rest) == 16:
+		ls.UUID = formatUUID(rest)
+	case len(rest) == 17 && rest[0] == 1:
+		ls.UUID = formatUUID(rest[1:])
+	}
+	return ls, nil
+}
+
+func formatUUID(b []byte) string {
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // ParsePing returns the 8-byte payload of a Ping packet.
