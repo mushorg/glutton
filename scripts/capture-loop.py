@@ -3,8 +3,9 @@
 
 The script captures and de-duplicates events itself; Claude only analyzes the file it is given.
 
-Usage: scripts/capture-loop.py [--transport-only]
+Usage: scripts/capture-loop.py [--transport-only | --handlers smb,http]
   --transport-only  capture only the generic tcp/udp catch-all handlers (traffic with no dedicated handler)
+  --handlers        capture these handlers (comma-separated); the tcp/udp catch-alls are always added
 Env:   INTERVAL=600 MAX_RUNS=20 DURATION=600 COUNT=500 CHUNK=10 KEEP_HOURS=24 SEEN_MAX=50000
        TRIAGE_MODEL=haiku IMPL_MODEL= (empty = default model)
        BACKLOG=~/.cache/glutton-capture-loop/backlog.md
@@ -89,7 +90,7 @@ def log(msg):
 
 
 class Loop:
-    def __init__(self, transport_only):
+    def __init__(self, transport_only, handlers=""):
         self.interval = env_int("INTERVAL", 600)
         self.max_runs = env_int("MAX_RUNS", 20)       # 0 = unlimited
         self.duration = env_int("DURATION", 600)      # seconds per capture
@@ -113,7 +114,12 @@ class Loop:
         self.backlog = Backlog(Path(os.environ.get("BACKLOG") or
                                     Path(cache) / "glutton-capture-loop" / "backlog.md").expanduser())
 
-        self.handlers = "tcp,udp" if transport_only else rule_targets(Path("config/rules.yaml"))
+        if transport_only:
+            self.handlers = with_catch_alls("")
+        elif handlers:
+            self.handlers = with_catch_alls(handlers)
+        else:
+            self.handlers = with_catch_alls(rule_targets(Path("config/rules.yaml")))
         self.sub = None
 
     # -- housekeeping --------------------------------------------------------
@@ -436,6 +442,12 @@ def rule_targets(rules):
     return ",".join(sorted(targets))
 
 
+def with_catch_alls(handlers):
+    """handlers (comma-separated) plus the default tcp and udp catch-alls, de-duplicated."""
+    picked = [h.strip() for h in handlers.split(",") if h.strip()]
+    return ",".join(dict.fromkeys(["tcp", "udp", *picked]))
+
+
 def tree_hash():
     diff = subprocess.run(["git", "diff", "HEAD"], capture_output=True, check=True).stdout
     untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"],
@@ -453,9 +465,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--transport-only", action="store_true",
                         help="capture only the generic tcp/udp catch-all handlers")
+    parser.add_argument("--handlers", default="",
+                        help="comma-separated handlers to capture; tcp and udp are always included")
     args = parser.parse_args()
+    if args.transport_only and args.handlers:
+        parser.error("--transport-only and --handlers are mutually exclusive")
     os.chdir(REPO)
-    loop = Loop(args.transport_only)
+    loop = Loop(args.transport_only, args.handlers)
     try:
         return loop.run()
     except KeyboardInterrupt:
