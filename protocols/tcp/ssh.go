@@ -205,6 +205,11 @@ type sshServer struct {
 	// extra counts the frames capped by sshMaxExtraFrames.
 	extra int
 
+	// clientVersion and clientKex are the client's identification string
+	// and KEXINIT, for the spoofed-banner label.
+	clientVersion string
+	clientKex     *sshproto.KexInit
+
 	persona sshproto.Persona
 	visit   int
 	ip      net.IP
@@ -264,10 +269,15 @@ func (s *sshServer) frame(direction string, m sshproto.Message) parsedSSH {
 		f.Version = m.Version
 		if direction == "write" {
 			f.Variant, f.Visit = s.persona.Name, s.visit
+		} else {
+			s.clientVersion = m.Version
 		}
 	case sshproto.KindKexInit:
 		f.Command = "kexinit"
 		f.HASSH, f.HASSHAlgorithms = m.KexInit.HASSH(direction == "write")
+		if direction == "read" {
+			s.clientKex = m.KexInit
+		}
 	}
 	return f
 }
@@ -392,7 +402,7 @@ func HandleSSH(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 		server.produced = true
 		events := server.events
 		md.EndReason = server.endReason
-		md.Fleet = sshFleet(events)
+		md.Fleet = sshFleet(events, server.clientVersion, server.clientKex)
 		if md.EndReason == "" {
 			md.EndReason = connection.EndHandlerClose
 		}
@@ -457,12 +467,17 @@ func HandleSSH(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 }
 
 // sshFleet labels a session that wrote an authorized_keys file, the key
-// implant bots run after a login (see sshproto.IsAuthorizedKeys).
-func sshFleet(events []parsedSSH) string {
+// implant bots run after a login (see sshproto.IsAuthorizedKeys), else one
+// whose client claims OpenSSH with a KEXINIT OpenSSH cannot send (see
+// sshproto.SpoofedOpenSSH).
+func sshFleet(events []parsedSSH, clientVersion string, clientKex *sshproto.KexInit) string {
 	for _, f := range events {
 		if f.Direction == "read" && f.Command == "write-file" && sshproto.IsAuthorizedKeys(f.Path) {
 			return sshproto.FleetAuthKeysImplant
 		}
+	}
+	if sshproto.SpoofedOpenSSH(clientVersion, clientKex) {
+		return sshproto.FleetSpoofedOpenSSH
 	}
 	return ""
 }

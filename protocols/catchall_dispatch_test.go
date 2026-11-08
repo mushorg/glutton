@@ -50,7 +50,7 @@ func TestCatchAllSendsBannerWithoutClientData(t *testing.T) {
 	require.NoError(t, client.SetReadDeadline(time.Now().Add(time.Second)))
 	line, err := bufio.NewReader(client).ReadString('\n')
 	require.NoError(t, err)
-	require.Equal(t, "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10\r\n", line)
+	require.Equal(t, "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.17\r\n", line)
 	require.NoError(t, client.Close())
 
 	select {

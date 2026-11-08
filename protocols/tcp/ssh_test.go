@@ -183,6 +183,62 @@ func TestSSHParamikoReplay(t *testing.T) {
 	hasshServer, _ := kex.HASSH(true)
 	require.Equal(t, hasshServer, writes[0].HASSH)
 	require.Len(t, frames, 4)
+	// paramiko names itself, so the session is not a spoofed OpenSSH
+	require.Empty(t, ev.fleet)
+}
+
+// TestSSHSpoofedOpenSSHReplay replays a client that claims OpenSSH 9.2p1 but
+// repeats its algorithm lists and offers arcfour: it hangs up after the
+// KEXINIT exchange and the session is labelled ssh-spoofed-openssh.
+func TestSSHSpoofedOpenSSHReplay(t *testing.T) {
+	addr, hp, done := startSSH(t)
+	conn, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	require.NoError(t, conn.SetDeadline(time.Now().Add(sshTimeout)))
+	_, err = conn.Write(append(append([]byte(nil), sshSpoofedGoRead1...), sshSpoofedGoRead2...))
+	require.NoError(t, err)
+
+	var stream sshproto.Stream
+	buf := make([]byte, 4096)
+	for !stream.Done() {
+		n, err := conn.Read(buf)
+		require.NoError(t, err)
+		stream.Feed(buf[:n])
+	}
+	require.NoError(t, conn.Close())
+
+	ev, frames := waitSSHEvent(t, hp, done)
+	require.Equal(t, sshproto.FleetSpoofedOpenSSH, ev.fleet)
+	require.Contains(t, []string{connection.EndClientClose, connection.EndClientReset}, ev.endReason)
+	require.Len(t, frames, 4)
+	require.Equal(t, sshBannerWrite, frames[0])
+	require.Equal(t, []parsedSSH{{
+		Direction: "read",
+		Command:   "banner",
+		Payload:   sshSpoofedGoRead1,
+		Version:   "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u7",
+	}}, sshFramesByCommand(frames, "read", "banner"))
+	reads := sshFramesByCommand(frames, "read", "kexinit")
+	require.Len(t, reads, 1)
+	require.Equal(t, sshSpoofedGoRead2, reads[0].Payload)
+	require.Equal(t, "9052c4ab4164c78256e71143dcfc7eac", reads[0].HASSH)
+}
+
+func TestSSHFleetPrecedence(t *testing.T) {
+	_, kex := sshSpoofedKex(t)
+	implant := []parsedSSH{{Direction: "read", Command: "write-file", Path: "/root/.ssh/authorized_keys"}}
+	require.Equal(t, sshproto.FleetAuthKeysImplant, sshFleet(implant, "SSH-2.0-OpenSSH_9.2p1", kex))
+	require.Equal(t, sshproto.FleetSpoofedOpenSSH, sshFleet(nil, "SSH-2.0-OpenSSH_9.2p1", kex))
+	require.Empty(t, sshFleet(nil, "SSH-2.0-Go", kex))
+	require.Empty(t, sshFleet(nil, "", nil))
+}
+
+func sshSpoofedKex(t *testing.T) (string, *sshproto.KexInit) {
+	t.Helper()
+	var stream sshproto.Stream
+	msgs := stream.Feed(append(append([]byte(nil), sshSpoofedGoRead1...), sshSpoofedGoRead2...))
+	require.Len(t, msgs, 2)
+	return msgs[0].Version, msgs[1].KexInit
 }
 
 func TestSSHPasswordAuth(t *testing.T) {
