@@ -1273,3 +1273,62 @@ func TestHandleSMBBasicSessionSetupPlaintextPassword(t *testing.T) {
 	require.Equal(t, "Unix", frames[0].NativeOS)
 	require.Equal(t, "Samba", frames[0].NativeLanMan)
 }
+
+// A connection whose bytes never form a full NBSS message still records what
+// was read, so probes that are not SMB are not produced as empty events.
+func TestHandleSMBRecordsUnreadableFrame(t *testing.T) {
+	oversized := []byte{smb.NBSSSessionMessage, 0x04, 0x00, 0x40} // claims MaxMessage+64
+	oversized = append(oversized, make([]byte, smb.MaxMessage)...)
+	httpProbe := []byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+
+	tests := []struct {
+		name          string
+		send          []byte
+		wantPayload   []byte
+		wantTruncated bool
+		wantEnd       string
+	}{
+		{
+			name:        "short header",
+			send:        []byte{0x00, 0x00},
+			wantPayload: []byte{0x00, 0x00},
+			wantEnd:     connection.EndReadError,
+		},
+		{
+			name:        "zero length session message",
+			send:        []byte{0x00, 0x00, 0x00, 0x00},
+			wantPayload: []byte{0x00, 0x00, 0x00, 0x00},
+			wantEnd:     connection.EndReadError,
+		},
+		{
+			name:        "partial body",
+			send:        httpProbe,
+			wantPayload: httpProbe,
+			wantEnd:     connection.EndReadError,
+		},
+		{
+			name:          "truncated message cut short",
+			send:          oversized,
+			wantPayload:   oversized,
+			wantTruncated: true,
+			wantEnd:       connection.EndClientClose,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, hp, done := startHandleSMB(t)
+			require.NoError(t, client.SetWriteDeadline(time.Now().Add(2*time.Second)))
+			_, err := client.Write(tt.send)
+			require.NoError(t, err)
+
+			ev := finishHandleSMB(t, client, done, hp)
+			require.Equal(t, tt.wantEnd, ev.endReason)
+			require.Equal(t, tt.wantPayload, ev.payload)
+			require.Equal(t, []parsedSMB{{
+				Direction: "read",
+				Payload:   tt.wantPayload,
+				Truncated: tt.wantTruncated,
+			}}, ev.decoded)
+		})
+	}
+}

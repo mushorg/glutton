@@ -44,6 +44,13 @@ fields are described in [Logging and producers](../logging.md#decoded-data).
 `called_name` and `calling_name` and is answered with
 `NBSS_POSITIVE_SESSION_RESPONSE`; keepalives get no reply.
 
+**Unreadable frames.** When the connection ends before a full NBSS message
+arrives (a short header, a zero-length session message, or a body cut short),
+the bytes already read are kept as one `read` frame with no `command`, and the
+session ends with `read_error` (or `client_close`). A message over the capture
+cap that is cut short while its tail is being discarded keeps the stored bytes
+with `truncated` set.
+
 **Tree Connect.** `path` is the share. `IPC$` and ordinary shares are accepted;
 nmap's `nmap-share-test` probe share is answered with `STATUS_BAD_NETWORK_NAME`.
 

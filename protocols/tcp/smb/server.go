@@ -184,30 +184,45 @@ func (f Frame) pdu() []byte {
 	return f.payload[4:]
 }
 
-// ReadFrame reads one NBSS packet from the connection.
+// ReadFrame reads one NBSS packet from the connection. When it fails, the
+// bytes already read (a short header, a header with an invalid length, or a
+// partial body) are recorded as a read frame, so a probe that is not valid SMB
+// still shows up in the session.
 func (ss *Server) ReadFrame() (Frame, error) {
 	var hdr [4]byte
-	if _, err := io.ReadFull(ss.conn, hdr[:]); err != nil {
+	if n, err := io.ReadFull(ss.conn, hdr[:]); err != nil {
+		ss.recordPartial(hdr[:n], false)
 		return Frame{}, err
 	}
 	n := int(hdr[1])<<16 | int(hdr[2])<<8 | int(hdr[3])
 	// Only NBSS control packets (keepalive) may be empty.
 	if n > maxClaimedLen || (n == 0 && hdr[0] == NBSSSessionMessage) {
+		ss.recordPartial(hdr[:], false)
 		return Frame{}, fmt.Errorf("invalid SMB message length: %d", n)
 	}
 	store := min(n, MaxMessage)
 	truncated := store < n
 	payload := make([]byte, 4+store)
 	copy(payload[:4], hdr[:])
-	if _, err := io.ReadFull(ss.conn, payload[4:]); err != nil {
+	if got, err := io.ReadFull(ss.conn, payload[4:]); err != nil {
+		ss.recordPartial(payload[:4+got], false)
 		return Frame{}, err
 	}
 	if truncated {
 		if _, err := io.CopyN(io.Discard, ss.conn, int64(n-store)); err != nil {
+			ss.recordPartial(payload, true)
 			return Frame{}, err
 		}
 	}
 	return Frame{payload: payload, truncated: truncated}, nil
+}
+
+// recordPartial records the bytes of a frame that could not be read in full.
+func (ss *Server) recordPartial(data []byte, truncated bool) {
+	if len(data) == 0 {
+		return
+	}
+	ss.recordRead(Frame{payload: bytes.Clone(data), truncated: truncated}, Event{})
 }
 
 // HandleFrame records one NBSS packet and answers it by dialect. An error
