@@ -1,13 +1,14 @@
 package rules
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 
-	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"golang.org/x/net/bpf"
@@ -220,81 +221,107 @@ func parseProxyTarget(raw string) (*ProxyTarget, error) {
 	}, nil
 }
 
-func splitAddr(addr string) (string, uint16, error) {
-	ip, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return "", 0, err
+// maxFakePacket is the largest header-only packet fakePacket builds:
+// Ethernet (14) + IPv6 (40) + TCP (20).
+const maxFakePacket = 14 + 40 + 20
+
+// addrPort extracts the IP and port of a TCP or UDP address. IPv4-mapped IPv6
+// addresses are unmapped so they match IPv4 filters.
+func addrPort(a net.Addr) (netip.AddrPort, error) {
+	var ap netip.AddrPort
+	switch a := a.(type) {
+	case *net.TCPAddr:
+		ap = a.AddrPort()
+	case *net.UDPAddr:
+		ap = a.AddrPort()
+	default:
+		var err error
+		if ap, err = netip.ParseAddrPort(a.String()); err != nil {
+			return netip.AddrPort{}, err
+		}
 	}
-	dPort, err := strconv.Atoi(port)
-	if err != nil {
-		return "", 0, err
+	if !ap.Addr().IsValid() {
+		return netip.AddrPort{}, fmt.Errorf("invalid address %q", a.String())
 	}
-	return ip, uint16(dPort), nil
+	return netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port()), nil
 }
 
-func fakePacketBytes(network, srcIP, dstIP string, srcPort, dstPort uint16) ([]byte, error) {
-	buf := gopacket.NewSerializeBuffer()
-	eth := &layers.Ethernet{
-		SrcMAC:       net.HardwareAddr{0x0, 0x11, 0x22, 0x33, 0x44, 0x55},
-		DstMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-		EthernetType: layers.EthernetTypeIPv4,
-	}
-	ipv4 := &layers.IPv4{
-		SrcIP:   net.ParseIP(srcIP),
-		DstIP:   net.ParseIP(dstIP),
-		Version: 4,
-	}
-
-	var transport gopacket.SerializableLayer
+// fakePacket writes into buf the headers of a packet that src would send to
+// dst over network ("tcp" or "udp") and returns the written part of buf.
+// Only what the rule filters look at is filled in: an Ethernet header, an
+// IPv4 or IPv6 header (picked by the address family) and the ports. Checksums
+// stay zero because the filters never inspect them.
+func fakePacket(buf *[maxFakePacket]byte, network string, src, dst netip.AddrPort) ([]byte, error) {
+	var proto byte
+	transportLen := 0
 	switch network {
 	case "tcp":
-		ipv4.Protocol = layers.IPProtocolTCP
-		tcp := &layers.TCP{
-			SrcPort: layers.TCPPort(srcPort),
-			DstPort: layers.TCPPort(dstPort),
-		}
-		if err := tcp.SetNetworkLayerForChecksum(ipv4); err != nil {
-			return nil, err
-		}
-		transport = tcp
-
+		proto, transportLen = 6, 20
 	case "udp":
-		ipv4.Protocol = layers.IPProtocolUDP
-		udp := &layers.UDP{
-			SrcPort: layers.UDPPort(srcPort),
-			DstPort: layers.UDPPort(dstPort),
-		}
-		if err := udp.SetNetworkLayerForChecksum(ipv4); err != nil {
-			return nil, err
-		}
-		transport = udp
+		proto, transportLen = 17, 8
+	default:
+		return nil, fmt.Errorf("unsupported network %q", network)
+	}
+	if src.Addr().Is4() != dst.Addr().Is4() {
+		return nil, fmt.Errorf("address family mismatch: %s -> %s", src, dst)
 	}
 
-	if err := gopacket.SerializeLayers(buf, gopacket.SerializeOptions{
-		FixLengths:       true,
-		ComputeChecksums: true,
-	},
-		eth,
-		ipv4,
-		transport,
-		gopacket.Payload([]byte{})); err != nil {
-		return nil, err
+	*buf = [maxFakePacket]byte{}
+	// Ethernet: broadcast destination, fixed source MAC.
+	copy(buf[0:6], []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+	copy(buf[6:12], []byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55})
+
+	var ipLen int
+	if src.Addr().Is4() {
+		ipLen = 20
+		binary.BigEndian.PutUint16(buf[12:], 0x0800)
+		ip := buf[14 : 14+ipLen]
+		ip[0] = 0x45 // version 4, IHL 5
+		binary.BigEndian.PutUint16(ip[2:], uint16(ipLen+transportLen))
+		ip[8] = 64 // TTL
+		ip[9] = proto
+		s, d := src.Addr().As4(), dst.Addr().As4()
+		copy(ip[12:16], s[:])
+		copy(ip[16:20], d[:])
+	} else {
+		ipLen = 40
+		binary.BigEndian.PutUint16(buf[12:], 0x86dd)
+		ip := buf[14 : 14+ipLen]
+		ip[0] = 0x60 // version 6
+		binary.BigEndian.PutUint16(ip[4:], uint16(transportLen))
+		ip[6] = proto // next header
+		ip[7] = 64    // hop limit
+		s, d := src.Addr().As16(), dst.Addr().As16()
+		copy(ip[8:24], s[:])
+		copy(ip[24:40], d[:])
 	}
-	return buf.Bytes(), nil
+
+	th := buf[14+ipLen : 14+ipLen+transportLen]
+	binary.BigEndian.PutUint16(th[0:], src.Port())
+	binary.BigEndian.PutUint16(th[2:], dst.Port())
+	if proto == 6 {
+		th[12] = 5 << 4 // data offset: 5 words
+	} else {
+		binary.BigEndian.PutUint16(th[4:], uint16(transportLen))
+	}
+	return buf[:14+ipLen+transportLen], nil
 }
 
 type Rules []*Rule
 
+// Match returns the first rule whose filter accepts a packet from srcAddr to
+// dstAddr over network ("tcp" or "udp"), or nil if none does.
 func (rs Rules) Match(network string, srcAddr, dstAddr net.Addr) (*Rule, error) {
-	srcIP, srcPort, err := splitAddr(srcAddr.String())
+	src, err := addrPort(srcAddr)
 	if err != nil {
 		return nil, err
 	}
-	dstIP, dstPort, err := splitAddr(dstAddr.String())
+	dst, err := addrPort(dstAddr)
 	if err != nil {
 		return nil, err
 	}
-	b, err := fakePacketBytes(network, srcIP, dstIP, srcPort, dstPort)
+	var buf [maxFakePacket]byte
+	b, err := fakePacket(&buf, network, src, dst)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fake packet: %w", err)
 	}

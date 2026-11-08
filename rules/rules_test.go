@@ -2,6 +2,7 @@ package rules
 
 import (
 	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"testing"
@@ -35,13 +36,6 @@ func TestInitRule(t *testing.T) {
 		require.NotNil(t, rule.matcher)
 		require.NotEmpty(t, rule.Type)
 	}
-}
-
-func TestSplitAddr(t *testing.T) {
-	ip, port, err := splitAddr("192.168.1.1:8080")
-	require.NoError(t, err)
-	require.Equal(t, "192.168.1.1", ip)
-	require.Equal(t, uint16(8080), port)
 }
 
 func TestParseProxyTarget(t *testing.T) {
@@ -212,25 +206,91 @@ func TestInitProxyTCPRuleRejectsInvalidTarget(t *testing.T) {
 	require.Contains(t, err.Error(), "too many colons")
 }
 
-func testConn(t *testing.T) (net.Conn, net.Listener) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	require.NotNil(t, ln)
-	con, err := net.Dial(ln.Addr().Network(), ln.Addr().String())
-	require.NoError(t, err)
-	require.NotNil(t, con)
-	return con, ln
+// TestFakePacket decodes the hand-built packet with gopacket to check every
+// header field the filters can look at.
+func TestFakePacket(t *testing.T) {
+	for _, tc := range []struct {
+		network  string
+		src, dst string
+	}{
+		{"tcp", "1.1.1.1:12", "2.2.2.2:21"},
+		{"udp", "1.1.1.1:5353", "2.2.2.2:53"},
+		{"tcp", "[2001:db8::1]:40000", "[2001:db8::2]:22"},
+		{"udp", "[2001:db8::1]:40000", "[2001:db8::2]:5060"},
+	} {
+		t.Run(tc.network+" "+tc.src, func(t *testing.T) {
+			src, dst := netip.MustParseAddrPort(tc.src), netip.MustParseAddrPort(tc.dst)
+			var buf [maxFakePacket]byte
+			b, err := fakePacket(&buf, tc.network, src, dst)
+			require.NoError(t, err)
+
+			pkt := gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default)
+			require.Nil(t, pkt.ErrorLayer(), "decode error")
+			nl := pkt.NetworkLayer()
+			require.NotNil(t, nl)
+			require.Equal(t, src.Addr().String(), nl.NetworkFlow().Src().String())
+			require.Equal(t, dst.Addr().String(), nl.NetworkFlow().Dst().String())
+
+			switch tc.network {
+			case "tcp":
+				tcp, ok := pkt.TransportLayer().(*layers.TCP)
+				require.True(t, ok, "no TCP layer")
+				require.Equal(t, src.Port(), uint16(tcp.SrcPort))
+				require.Equal(t, dst.Port(), uint16(tcp.DstPort))
+				require.Equal(t, uint8(5), tcp.DataOffset)
+			case "udp":
+				udp, ok := pkt.TransportLayer().(*layers.UDP)
+				require.True(t, ok, "no UDP layer")
+				require.Equal(t, src.Port(), uint16(udp.SrcPort))
+				require.Equal(t, dst.Port(), uint16(udp.DstPort))
+				require.Equal(t, uint16(8), udp.Length)
+			}
+		})
+	}
 }
 
-func TestFakePacketBytes(t *testing.T) {
-	conn, ln := testConn(t)
-	defer func() {
-		conn.Close()
-		ln.Close()
-	}()
-	b, err := fakePacketBytes("tcp", "1.1.1.1", "2.2.2.2", 12, 21)
+func TestFakePacketErrors(t *testing.T) {
+	var buf [maxFakePacket]byte
+	v4, v6 := netip.MustParseAddrPort("192.0.2.1:1"), netip.MustParseAddrPort("[2001:db8::1]:1")
+	_, err := fakePacket(&buf, "sctp", v4, v4)
+	require.ErrorContains(t, err, "unsupported network")
+	_, err = fakePacket(&buf, "tcp", v4, v6)
+	require.ErrorContains(t, err, "address family mismatch")
+}
+
+func TestMatchIPv6(t *testing.T) {
+	rs := loadDefaultRules(t)
+	src := &net.TCPAddr{IP: net.ParseIP("2001:db8::1"), Port: 40000}
+	dst := &net.TCPAddr{IP: net.ParseIP("2001:db8::2"), Port: 23}
+	match, err := rs.Match("tcp", src, dst)
 	require.NoError(t, err)
-	require.NotEmpty(t, b)
+	require.NotNil(t, match)
+	require.Equal(t, "telnet", match.Target)
+
+	usrc := &net.UDPAddr{IP: net.ParseIP("2001:db8::1"), Port: 40000}
+	udst := &net.UDPAddr{IP: net.ParseIP("2001:db8::2"), Port: 5060}
+	match, err = rs.Match("udp", usrc, udst)
+	require.NoError(t, err)
+	require.NotNil(t, match)
+	require.Equal(t, "sip", match.Target)
+}
+
+// TestMatchIPv4Mapped checks that an IPv4-mapped IPv6 address (as a dual-stack
+// socket reports an IPv4 peer) is matched as IPv4.
+func TestMatchIPv4Mapped(t *testing.T) {
+	rs, err := Init(strings.NewReader("rules:\n  - match: ip and tcp dst port 23\n    type: conn_handler\n    target: telnet\n"))
+	require.NoError(t, err)
+	src := &net.TCPAddr{IP: net.ParseIP("::ffff:192.0.2.1"), Port: 40000}
+	dst := &net.TCPAddr{IP: net.ParseIP("::ffff:192.0.2.10"), Port: 23}
+	match, err := rs.Match("tcp", src, dst)
+	require.NoError(t, err)
+	require.NotNil(t, match)
+}
+
+func TestMatchRejectsNonIPAddr(t *testing.T) {
+	rs := parseRules(t)
+	_, err := rs.Match("tcp", &net.UnixAddr{Name: "/tmp/x", Net: "unix"}, &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 1})
+	require.Error(t, err)
 }
 
 func TestRunMatchTCP(t *testing.T) {
@@ -366,11 +426,16 @@ func TestCompileMatcherAgreesWithLibpcap(t *testing.T) {
 		require.NoError(t, err)
 		for _, network := range []string{"tcp", "udp"} {
 			for _, port := range ports {
-				for _, sp := range [][2]int{{50000, port}, {port, 50000}} {
-					b, err := fakePacketBytes(network, "192.0.2.1", "192.0.2.10", uint16(sp[0]), uint16(sp[1]))
-					require.NoError(t, err)
-					ci := gopacket.CaptureInfo{CaptureLength: len(b), Length: len(b), Timestamp: time.Now()}
-					require.Equal(t, ref.Matches(ci, b), r.matches(b), "%q %s %d->%d", r.Match, network, sp[0], sp[1])
+				for _, sp := range [][2]uint16{{50000, uint16(port)}, {uint16(port), 50000}} {
+					for _, ips := range [][2]string{{"192.0.2.1", "192.0.2.10"}, {"2001:db8::1", "2001:db8::2"}} {
+						src := netip.AddrPortFrom(netip.MustParseAddr(ips[0]), sp[0])
+						dst := netip.AddrPortFrom(netip.MustParseAddr(ips[1]), sp[1])
+						var buf [maxFakePacket]byte
+						b, err := fakePacket(&buf, network, src, dst)
+						require.NoError(t, err)
+						ci := gopacket.CaptureInfo{CaptureLength: len(b), Length: len(b), Timestamp: time.Now()}
+						require.Equal(t, ref.Matches(ci, b), r.matches(b), "%q %s %s->%s", r.Match, network, src, dst)
+					}
 				}
 			}
 		}

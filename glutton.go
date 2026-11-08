@@ -403,6 +403,14 @@ func (g *Glutton) recoverPanic(transport, handler string) {
 	}
 }
 
+// closeUnhandled closes an accepted connection that no handler will own, so
+// it does not stay open until the peer gives up.
+func (g *Glutton) closeUnhandled(conn net.Conn) {
+	if err := conn.Close(); err != nil {
+		g.Logger.Debug("Failed to close unhandled connection", producer.ErrAttr(err))
+	}
+}
+
 func (g *Glutton) tcpListen() {
 	for {
 		select {
@@ -423,6 +431,7 @@ func (g *Glutton) tcpListen() {
 		rule, err := g.applyRulesOnConn(conn)
 		if err != nil {
 			g.Logger.Error("Failed to apply rules", producer.ErrAttr(err))
+			g.closeUnhandled(conn)
 			continue
 		}
 		if rule == nil {
@@ -432,6 +441,7 @@ func (g *Glutton) tcpListen() {
 		md, err := g.connTable.RegisterConn(conn, rule)
 		if err != nil {
 			g.Logger.Error("Failed to register connection", producer.ErrAttr(err))
+			g.closeUnhandled(conn)
 			continue
 		}
 
