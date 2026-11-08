@@ -15,6 +15,7 @@ import (
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/protocols/tcp/citrix"
+	"github.com/mushorg/glutton/protocols/tcp/dockerapi"
 	"github.com/mushorg/glutton/protocols/tcp/elasticsearch"
 	"github.com/mushorg/glutton/protocols/tcp/log4shell"
 	"github.com/mushorg/glutton/protocols/tcp/php2shell"
@@ -167,6 +168,75 @@ func TestHandleHTTPSeleniumGrid(t *testing.T) {
 	require.Equal(t, "/bin/sh", events[2].Binary)
 	require.Equal(t, []string{"-c", "id"}, events[2].Args)
 	require.Equal(t, "500", events[3].Status)
+}
+
+func TestHandleHTTPDocker(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+	prevNow := httpNow
+	httpNow = func() time.Time { return time.Date(2026, 11, 8, 11, 42, 22, 0, time.UTC) }
+	t.Cleanup(func() { httpNow = prevNow })
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{TargetPort: dockerapi.TLSPort, TLS: &connection.TLSInfo{}}, &recordingLogger{}, hp)
+	}()
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write(httpTestRequest("GET", "/_ping", "", nil))
+	require.NoError(t, err)
+	status, headers, body := readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "OK", string(body))
+	require.Equal(t, "1.41", headers.Get("Api-Version"))
+	require.Equal(t, "false", headers.Get("Docker-Experimental"))
+	require.Equal(t, "Docker/20.10.9 (linux)", headers.Get("Server"))
+	require.Equal(t, "Sun, 08 Nov 2026 11:42:22 GMT", headers.Get("Date"))
+	sessionID := sessionCookieFromHeaders(t, headers)
+
+	_, err = client.Write(httpTestRequest("GET", "/v1.24/version", sessionID, nil))
+	require.NoError(t, err)
+	status, _, body = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Contains(t, string(body), `"ApiVersion":"1.41"`)
+
+	_, err = client.Write(httpTestRequest("POST", "/containers/create", sessionID, []byte(`{"Image":"alpine"}`)))
+	require.NoError(t, err)
+	status, _, body = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "{\"message\":\"page not found\"}\n", string(body))
+
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "http", produced.protocol)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+	events, ok := produced.decoded.([]parsedHTTP)
+	require.True(t, ok)
+	require.Len(t, events, 6)
+	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, "GET", events[0].Command)
+	require.Equal(t, "/_ping", events[0].Path)
+	require.Equal(t, "200", events[1].Status)
+	require.Equal(t, "/v1.24/version", events[2].Path)
+	require.Equal(t, "200", events[3].Status)
+	require.Equal(t, "POST", events[4].Command)
+	require.Equal(t, "/containers/create", events[4].Path)
+	require.Contains(t, string(events[4].Payload), `{"Image":"alpine"}`)
+	require.Equal(t, "404", events[5].Status)
 }
 
 func TestHandleHTTPProxmox(t *testing.T) {

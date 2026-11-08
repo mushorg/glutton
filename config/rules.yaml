@@ -174,6 +174,10 @@ rules:
     type: conn_handler
     target: http
     tls: auto
+  - match: tcp dst port 2375 or 2376
+    type: conn_handler
+    target: http
+    tls: auto
   - match: tcp dst port 32400
     type: conn_handler
     target: http

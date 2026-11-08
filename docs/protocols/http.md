@@ -145,7 +145,7 @@ Package: `protocols/tcp/phpinfo`. Exposure scanners (Censys, nuclei `phpinfo-fil
 | `i.php`, `pi.php`, `p.php`, `php.php`, `php2.php`, `test.php`, `a.php`, `asdf.php`, `time.php`, `temp.php`, `testxx.php` | at the web root only |
 | `/?phpinfo=1`, `/index.php?phpinfo=1`, `/l.php?act=phpinfo` | by query |
 
-The Selenium, Proxmox VE, Elasticsearch, Plex and Citrix personas answer first on their ports and paths. The Spicy `http` handler does not set `phpinfo`.
+The Selenium, Proxmox VE, Elasticsearch, Docker, Plex and Citrix personas answer first on their ports and paths. The Spicy `http` handler does not set `phpinfo`.
 
 #### Plex2Shell (CVE-2026-96652, -96654, -96655, -96656)
 
@@ -167,6 +167,21 @@ The reply bodies are best recollection of a real server, not captures. A read th
 | `poc_client` | `X-Plex-Target-Client-Identifier` (header or query) starts with `poc_`. |
 
 `callback_ip` is the address embedded in a `sslip.io`/`nip.io` name, read from the name alone. Query and header text is scanned up to 16 KiB, fields are capped at 256 B, and `truncated` is set when either applies. The Spicy `http` handler does not set `plex2shell`.
+
+#### Docker Engine API
+
+Package: `protocols/tcp/dockerapi`. Every path on tcp/2375 and tcp/2376 is answered as an unauthenticated Docker Engine 20.10.9 daemon (API 1.41). The rule uses `tls: auto`, so plain HTTP and HTTPS both reach the persona. Replies carry `Api-Version: 1.41`, `Docker-Experimental: false`, `Ostype: linux` and `Server: Docker/20.10.9 (linux)`, plus the `session` cookie. Routes may carry a `/vX.Y` API version prefix.
+
+| Request | Reply |
+| --- | --- |
+| `GET`/`HEAD /_ping` | `200` `OK` (`text/plain`) |
+| `GET /version` | `200` with the `resources/docker_api.json` version object |
+| `GET /containers/json`, `GET /images/json` | `200` `[]` |
+| anything else (including `POST /containers/create`) | `404` `{"message":"page not found"}` |
+
+No frame field is added: `command`, `path` and the raw `payload` (including any request body) record the request. Nothing is executed. The Spicy `http` handler answers only `/v1.16/version`.
+
+> **Change (2026-11-08):** before this date tcp/2375 and tcp/2376 reached the catch-all `tcp` handler. On 2376 it completed the TLS handshake and then answered any request with random bytes.
 
 #### Elasticsearch 1.4
 
@@ -213,3 +228,4 @@ Keep-alive HTTP parsed with Spicy. `command`, `query`, `parameters`, and `status
 - **LFI:** same path- and query-based canned replies as the [Go handler](#local-file-include-lfi).
 - **Proxmox VE:** not emulated.
 - **Elasticsearch:** not emulated.
+- **Docker Engine API:** only `/v1.16/version` is answered.

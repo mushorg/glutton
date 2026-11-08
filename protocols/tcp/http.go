@@ -20,6 +20,7 @@ import (
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/citrix"
+	"github.com/mushorg/glutton/protocols/tcp/dockerapi"
 	"github.com/mushorg/glutton/protocols/tcp/elasticsearch"
 	"github.com/mushorg/glutton/protocols/tcp/ja4h"
 	"github.com/mushorg/glutton/protocols/tcp/log4shell"
@@ -356,6 +357,13 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 	}
 	if elastic {
 		return s.write(elasticsearch.Respond(req.Method, path, req.URL.RawQuery, frame.Elastic))
+	}
+	if dockerapi.IsPort(md.TargetPort) {
+		version, err := Res.ReadFile("resources/docker_api.json")
+		if err != nil {
+			return fmt.Errorf("failed to read embedded file: %w", err)
+		}
+		return s.write(dockerapi.Respond(req.Method, path, version, httpNow()))
 	}
 	if md.TargetPort == plex2shell.Port || frame.Plex2Shell != nil {
 		return s.write(plex2shell.Respond(req.Method, path, httpNow()))
