@@ -394,6 +394,11 @@ func ForPort(port uint16) (Response, bool) {
 		// an MSMQ queue manager drops a connection whose first bytes are not
 		// a valid session packet; EstablishConnection is matched in ForPayload
 		return Response{Name: "msmq", Silent: true}, true
+	case 264:
+		// Check Point FW1_topo: a gateway is not expected to answer bytes
+		// that are not a topology hello, so drop them; the hello and the
+		// securemote request are matched in ForPayload
+		return Response{Name: "fw1-topology", Silent: true}, true
 	case 5938:
 		// TeamViewer greets a silent client (nmap -sV); CMD_PING is matched
 		// in ForPayload
@@ -496,6 +501,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	nomachineReply,
 	epmdReply,
 	msmqReply,
+	fw1TopoReply,
 	saprouterReply,
 	xiongmaiReply,
 	scpiReply,

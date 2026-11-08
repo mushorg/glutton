@@ -36,6 +36,22 @@ func TestClassifyRWTH(t *testing.T) {
 	require.Equal(t, "rwth", name)
 }
 
+func TestClassifyRuhrUniBochum(t *testing.T) {
+	name, ptr, err := Classify(net.ParseIP("195.37.190.80"))
+	require.NoError(t, err)
+	require.Equal(t, "ruhr-uni-bochum.de", name)
+	require.Empty(t, ptr)
+}
+
+func TestClassifyDriftnet(t *testing.T) {
+	for _, ip := range []string{"87.236.176.10", "45.55.151.3", "2a06:4880::1", "2604:a880:800:14::5633:c00f"} {
+		name, ptr, err := Classify(net.ParseIP(ip))
+		require.NoError(t, err)
+		require.Equal(t, "driftnet.io", name, ip)
+		require.Empty(t, ptr, ip)
+	}
+}
+
 func TestClassifyShodanSubnet(t *testing.T) {
 	// a STUN probe from 207.90.244.25 arrived without a scanner tag
 	name, ptr, err := Classify(net.ParseIP("207.90.244.25"))

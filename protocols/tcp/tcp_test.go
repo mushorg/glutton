@@ -185,6 +185,33 @@ func TestHandleTCPAnswersFollowUps(t *testing.T) {
 	}, events)
 }
 
+func TestHandleTCPFW1Topology(t *testing.T) {
+	// Check Point topology hello, then the securemote request for the DN
+	client, hp, done := startCatchAll(t, 264)
+	hello := []byte{0x51, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21}
+	_, err := client.Write(hello)
+	require.NoError(t, err)
+	accept := []byte("Y\x00\x00\x00")
+	require.Equal(t, accept, readAll(t, client, len(accept)))
+
+	req := []byte("\x00\x00\x00\x0bsecuremote\x00")
+	_, err = client.Write(req)
+	require.NoError(t, err)
+	want, _ := banners.ForPayload(req)
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	require.Equal(t, want.Data, reply)
+
+	produced := finishCatchAllProduced(t, client, hp, done)
+	require.Equal(t, connection.EndHandlerClose, produced.endReason)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Command: "fw1-topology-hello", Payload: hello, PayloadHash: helpers.SHA256Hex(hello)},
+		{Direction: "write", Status: "fw1-topology-hello", Payload: accept, PayloadHash: helpers.SHA256Hex(accept)},
+		{Direction: "read", Command: "fw1-topology-securemote", Payload: req, PayloadHash: helpers.SHA256Hex(req)},
+		{Direction: "write", Status: "fw1-topology-securemote", Payload: want.Data, PayloadHash: helpers.SHA256Hex(want.Data)},
+	}, produced.decoded.([]parsedTCP))
+}
+
 func TestHandleTCPHTTPClosesAfterReply(t *testing.T) {
 	// the HTTP response says Connection: close, so the handler hangs up
 	client, hp, done := startCatchAll(t, 80)
