@@ -473,8 +473,38 @@ func TestHandleSOCKSReplyOverBudget(t *testing.T) {
 	require.NoError(t, <-done)
 
 	ev := <-hp.produced
+	require.Empty(t, hp.produced, "exactly one event per session")
 	require.Equal(t, connection.EndWriteError, ev.endReason)
-	require.Len(t, ev.decoded.([]parsedSOCKS), 1)
+	frames := ev.decoded.([]parsedSOCKS)
+	require.Len(t, frames, 2)
+	require.Equal(t, parsedSOCKS{Direction: "write", Command: "socks4a-connect", Status: "granted", Error: "reply over budget"}, frames[1])
 	require.Empty(t, logger.errs)
 	require.Contains(t, logger.debugs, "Failed to write to connection")
+}
+
+func TestHandleSOCKS5GreetingReplyOverBudget(t *testing.T) {
+	// SOCKS5 no-auth greeting whose method reply is refused by the guard
+	// (tcp/1, write_error with only the greeting read frame before)
+	client, serverConn := net.Pipe()
+	t.Cleanup(func() { client.Close() })
+	hp := newFakeHoneypot()
+	logger := &recordingLogger{}
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleSOCKS(context.Background(), limitedConn{Conn: serverConn}, connection.Metadata{TargetPort: 1}, logger, hp)
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write([]byte{0x05, 0x01, 0x00})
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+
+	ev := <-hp.produced
+	require.Empty(t, hp.produced, "exactly one event per session")
+	require.Equal(t, "socks", ev.protocol)
+	require.Equal(t, connection.EndWriteError, ev.endReason)
+	require.Equal(t, []parsedSOCKS{
+		{Direction: "read", Command: "socks5-greeting", Version: socks.Version5, Methods: []int{0}, Payload: []byte{0x05, 0x01, 0x00}},
+		{Direction: "write", Command: "socks5-greeting", Status: "no-auth", Error: "reply over budget"},
+	}, ev.decoded)
+	require.Empty(t, logger.errs)
 }

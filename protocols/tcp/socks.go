@@ -33,7 +33,7 @@ type parsedSOCKS struct {
 	Payload     []byte `json:"payload,omitempty"`
 	PayloadHash string `json:"payload_hash,omitempty"`
 	Truncated   bool   `json:"truncated,omitempty"`
-	Error       string `json:"error,omitempty"` // why a tls-handshake write failed
+	Error       string `json:"error,omitempty"` // why a write failed (reply over budget, write failed)
 	// HTTP request volume in a tunnel read: pipelined repeats are counted, not stored.
 	Requests         int    `json:"requests,omitempty"`
 	DistinctRequests int    `json:"distinct_requests,omitempty"`
@@ -91,8 +91,17 @@ func (s *socksServer) captureRequest(req socks.Request) {
 	s.events = append(s.events, frame)
 }
 
+// write sends one SOCKS reply. A refused write (e.g. reply over the guard
+// budget) is still recorded, with Error set and no Payload since nothing
+// reached the wire, so the capture shows which reply was withheld.
 func (s *socksServer) write(data []byte, command, status string) error {
 	if _, err := s.conn.Write(data); err != nil {
+		s.events = append(s.events, parsedSOCKS{
+			Direction: "write",
+			Command:   command,
+			Status:    status,
+			Error:     writeErrorName(err),
+		})
 		return err
 	}
 	s.events = append(s.events, parsedSOCKS{
