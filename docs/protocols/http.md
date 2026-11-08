@@ -40,11 +40,26 @@ The handler speaks keep-alive HTTP and groups frames across TCP connections into
 A `CONNECT host:port` request is answered like an open proxy: `HTTP/1.1 200 Connection established` with no headers (no `session` cookie, no `Content-Length`). The handler then stops parsing HTTP on that connection and captures what the client sends through the tunnel, using the same code as [`socks`](socks.md) (`protocols/tcp/tunnel.go`). Nothing is dialed, resolved or forwarded.
 
 - The first tunnel bytes (up to `max_tcp_payload`) become a read frame with `command` `tunnel`, `path` the CONNECT target, `payload_hash` (the bytes are stored with `helpers.Store` unless `storage.tunnel_payloads` is `false`), and `truncated` when the cap applied.
-- A plaintext HTTP request in the tunnel gets the canned open-proxy judge reply (`{"ip":"198.51.100.10",…}`). The tunnel frame then carries `requests`/`distinct_requests`/`request_line`/`user_agent` and an `http` array with the request and reply frames.
+- A plaintext HTTP request in the tunnel gets the canned open-proxy judge reply (`{"ip":"198.51.100.10",…}`). A request for a crawler asset path gets the `404` instead (see [Unknown paths](#unknown-paths)). The tunnel frame then carries `requests`/`distinct_requests`/`request_line`/`user_agent` and an `http` array with the request and reply frames.
 - A TLS ClientHello is recorded as `command` `tls-clienthello` with its fingerprint fields (it is not stored on disk), answered with a self-signed certificate for the SNI (or CONNECT host) and a `write` with `status` `tls-handshake` (`error` set if it could not be sent). The decrypted first message is the `tunnel` read. The TLS details stay on the frames; the event's top-level `tls` object is not set, because the session can span other connections.
 - Opaque data (for example a connect-back checker's random token) gets no reply, and the connection closes with `endReason` `handler_close`.
 
 > **Change (2026-10-24):** before this date `CONNECT` got the generic `200 OK` with `Content-Length: 0`. The tunnel bytes were then parsed as HTTP, so a non-HTTP token sat until the connection timeout and was stored as an untagged read with `endReason` `read_error` (Ochi event 137b2e1d-350c-4e23-bbb6-54a7f0ce35ef). `Proxy-Authorization` credentials were not recorded.
+
+### Unknown paths
+
+A request that no emulated application, POST handler or LFI reply answers gets `200` with an empty body (the judge reply inside a proxy tunnel). The exception is crawler and browser asset paths that a bare server would not have. Those get `404 Not Found` with a small `text/html` body (headers only for `HEAD`), so not every path returns the same reply:
+
+- `/favicon.ico`, `/apple-touch-icon*.png`
+- `/sitemap.xml`, `/sitemap_index.xml`
+- `/ads.txt`, `/app-ads.txt`, `/humans.txt`
+- `/crossdomain.xml`, `/clientaccesspolicy.xml`, `/browserconfig.xml`
+- `/site.webmanifest`, `/manifest.json`, `/apple-app-site-association`
+- anything under `/.well-known/`
+
+Matching ignores case. `/robots.txt` keeps the empty `200`.
+
+> **Change (2026-11-08):** before this date these paths got the empty `200`, or the judge JSON inside a tunnel. One capture showed seven tunnelled requests across two hosts and two paths (`/`, `/sitemap_index.xml`) that all got the identical 137-byte judge reply.
 
 ### Emulated applications
 

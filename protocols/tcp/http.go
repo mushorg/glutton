@@ -417,7 +417,11 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 	}
 
 	reply := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-	if s.tunnelReply != nil {
+	switch {
+	case isHTTPMissingPath(req.URL.Path):
+		// asset paths get a 404 so not every path answers the same way
+		reply = httpNotFound(req.Method)
+	case s.tunnelReply != nil:
 		reply = s.tunnelReply
 	}
 	if err := s.write(reply); err != nil {
