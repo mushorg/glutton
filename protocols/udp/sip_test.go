@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -1802,4 +1803,18 @@ func TestHandleSIPDialogReferEdgeCases(t *testing.T) {
 	last := string(h.replies[len(h.replies)-1])
 	require.True(t, strings.HasPrefix(last, "SIP/2.0 400 Bad Request\r\n"), last)
 	require.NotContains(t, timers.pending(), sipRing)
+}
+
+// The per-request Info line carries src_ip so log_limit can throttle an
+// INVITE flood per source prefix instead of logging a line per datagram.
+func TestLogSIPRequestCarriesSourceIP(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	logSIPRequest(logger, &net.UDPAddr{IP: net.ParseIP("5.135.108.213"), Port: 5070}, "INVITE")
+
+	var line map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &line))
+	require.Equal(t, "handling SIP request", line["msg"])
+	require.Equal(t, "INVITE", line["method"])
+	require.Equal(t, "5.135.108.213", line["src_ip"])
 }

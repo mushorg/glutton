@@ -211,7 +211,7 @@ func (d *sipDialog) requestLocked(req sip.Request) (string, error) {
 		}
 	}
 
-	logSIPRequest(d.logger, string(req.Method()))
+	logSIPRequest(d.logger, d.src, string(req.Method()))
 	for _, resp := range sipResponder.Reply(req, d.src, d.dst, d.visit.Variant) {
 		if err := d.respondLocked(resp); err != nil {
 			return connection.EndWriteError, err
@@ -255,7 +255,7 @@ func (d *sipDialog) ackLocked() string {
 // variant). In the auth variant an INVITE without credentials gets a 401
 // challenge instead.
 func (d *sipDialog) inviteLocked(seq uint32, req sip.Request) (string, error) {
-	logSIPRequest(d.logger, string(req.Method()))
+	logSIPRequest(d.logger, d.src, string(req.Method()))
 	first := d.invite == nil
 	d.stopRingLocked()
 	stopSIPTimer(&d.resend)
@@ -297,7 +297,7 @@ func (d *sipDialog) inviteLocked(seq uint32, req sip.Request) (string, error) {
 // cancelLocked ends a ringing INVITE: 200 OK to the CANCEL, then 487 to the
 // INVITE, resent until the caller ACKs it (RFC 3261 §9.2).
 func (d *sipDialog) cancelLocked(req sip.Request) (string, error) {
-	logSIPRequest(d.logger, string(req.Method()))
+	logSIPRequest(d.logger, d.src, string(req.Method()))
 	d.stopRingLocked()
 	if err := d.respondLocked(sipResponder.Final(req, d.src, 200, "OK", d.tag)); err != nil {
 		return connection.EndWriteError, err
@@ -318,7 +318,7 @@ func (d *sipDialog) answeredLocked() bool {
 // 200 OK and the same SDP answer, resent until ACKed like the first 200,
 // instead of ringing it as a new call.
 func (d *sipDialog) reInviteLocked(seq uint32, req sip.Request) (string, error) {
-	logSIPRequest(d.logger, "re-INVITE")
+	logSIPRequest(d.logger, d.src, "re-INVITE")
 	ok := sipResponder.ReInviteOK(req, d.src, d.final)
 	d.invite, d.inviteSeq = req, seq
 	d.sendFinalLocked(ok, connection.EndTimeout)
@@ -331,7 +331,7 @@ func (d *sipDialog) reInviteLocked(seq uint32, req sip.Request) (string, error) 
 // Refer-To number is only recorded (called_number on the read frame). A
 // REFER without Refer-To gets 400, as Asterisk answers it.
 func (d *sipDialog) referLocked(req sip.Request) (string, error) {
-	logSIPRequest(d.logger, string(req.Method()))
+	logSIPRequest(d.logger, d.src, string(req.Method()))
 	if len(req.GetHeaders("Refer-To")) == 0 {
 		if err := d.respondLocked(sipResponder.Final(req, d.src, 400, "Bad Request", d.tag)); err != nil {
 			return connection.EndWriteError, err

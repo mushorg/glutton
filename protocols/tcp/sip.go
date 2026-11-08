@@ -554,7 +554,12 @@ func (s *sipServer) handle(pp *parser.PacketParser, m sipproto.StreamMessage) (s
 	if !ok {
 		return "", nil
 	}
-	s.logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", string(req.Method())))
+	// src_ip lets log_limit throttle a source that floods requests
+	attrs := []any{slog.String("protocol", "sip"), slog.String("method", string(req.Method()))}
+	if s.srcIP != nil {
+		attrs = append(attrs, slog.String("src_ip", s.srcIP.String()))
+	}
+	s.logger.Info("handling SIP request", attrs...)
 	s.begin()
 	if s.srcIP != nil && frame.CallID != "" && s.calls[frame.CallID] == nil {
 		if p := sipParked.take(s.srcIP, frame.CallID); p != nil {

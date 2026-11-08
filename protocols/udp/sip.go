@@ -137,8 +137,11 @@ func sendSIPReply(h interfaces.Honeypot, logger interfaces.Logger, src, dst *net
 	return frame, nil
 }
 
-func logSIPRequest(logger interfaces.Logger, method string) {
-	logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", method))
+// logSIPRequest logs one request at Info. src_ip lets log_limit throttle a
+// source that floods INVITEs instead of logging a line per datagram.
+func logSIPRequest(logger interfaces.Logger, src *net.UDPAddr, method string) {
+	logger.Info("handling SIP request", slog.String("protocol", "sip"), slog.String("method", method),
+		slog.String("src_ip", src.IP.String()))
 }
 
 // sipResponder builds the UDP SIP replies; tests swap it for deterministic tags and nonces.
@@ -270,7 +273,7 @@ func handleSIPDatagram(srcAddr, dstAddr *net.UDPAddr, msg sip.Message, frame par
 	if !ok {
 		return nil
 	}
-	logSIPRequest(logger, string(req.Method()))
+	logSIPRequest(logger, srcAddr, string(req.Method()))
 
 	for _, resp := range sipResponder.Reply(req, srcAddr, dstAddr, visit.Variant) {
 		frame, err := sendSIPReply(h, logger, srcAddr, dstAddr, visit, []byte(resp.String()), resp)
