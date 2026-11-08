@@ -6,7 +6,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 
 ## `http` (Go)
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `ja4h`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `elasticsearch`, `log4shell`, `php2shell`, `phpinfo`, `plex2shell`, `session_id`, `dest_port`, `src_port`, `payload`, and on [CONNECT tunnel](#connect-proxy-tunnels) frames `payload_hash`, `error`, `requests`, `distinct_requests`, `request_line`, `http`, plus TLS ClientHello fingerprint fields (`sni`, `ja4`, …)
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `path`, `query`, `parameters`, `host`, `username`, `password`, `user_agent`, `ja4h`, `status`, `browser`, `binary`, `args`, `truncated`, `citrix`, `docker`, `elasticsearch`, `log4shell`, `php2shell`, `phpinfo`, `plex2shell`, `session_id`, `dest_port`, `src_port`, `payload`, `payload_hash` (Docker create/exec bodies), and on [CONNECT tunnel](#connect-proxy-tunnels) frames `payload_hash`, `error`, `requests`, `distinct_requests`, `request_line`, `http`, plus TLS ClientHello fingerprint fields (`sni`, `ja4`, …)
 
 ### Frame fields
 
@@ -21,7 +21,7 @@ Glutton has two `http` handlers: the Go handler (default) and a Spicy-based one.
 | `status` | writes | Response status, e.g. `200`. |
 | `username`, `password` | reads | `Authorization: Basic` credentials, otherwise `Proxy-Authorization: Basic` (any method, including `CONNECT`), or the Proxmox VE ticket login form (see [Emulated applications](#emulated-applications)). Recorded in plaintext. |
 | `payload_hash`, `truncated`, `error`, `requests`, `distinct_requests`, `request_line`, `http`, `sni`, `ja4`, … | tunnel frames | See [CONNECT proxy tunnels](#connect-proxy-tunnels). |
-| `browser`, `binary`, `args`, `citrix`, `elasticsearch`, `log4shell`, `php2shell`, `phpinfo`, `plex2shell`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
+| `browser`, `binary`, `args`, `citrix`, `docker`, `elasticsearch`, `log4shell`, `php2shell`, `phpinfo`, `plex2shell`, `truncated` | reads | Application-specific; see [Emulated applications](#emulated-applications). |
 
 ### Sessions
 
@@ -185,18 +185,27 @@ The reply bodies are best recollection of a real server, not captures. A read th
 
 #### Docker Engine API
 
-Package: `protocols/tcp/dockerapi`. Every path on tcp/2375 and tcp/2376 is answered as an unauthenticated Docker Engine 20.10.9 daemon (API 1.41). The rule uses `tls: auto`, so plain HTTP and HTTPS both reach the persona. Replies carry `Api-Version: 1.41`, `Docker-Experimental: false`, `Ostype: linux` and `Server: Docker/20.10.9 (linux)`, plus the `session` cookie. Routes may carry a `/vX.Y` API version prefix.
+Package: `protocols/tcp/dockerapi`. Every path on tcp/2375 and tcp/2376 is answered as an unauthenticated Docker Engine 20.10.9 daemon (API 1.41) on a Debian 11 host with no containers or images. The rule uses `tls: auto`, so plain HTTP and HTTPS both reach the persona. Replies carry `Api-Version: 1.41`, `Docker-Experimental: false`, `Ostype: linux` and `Server: Docker/20.10.9 (linux)`, plus the `session` cookie. Routes may carry a `/vX.Y` API version prefix. Nothing is pulled, created or executed: IDs are random and every output stream is empty, so the container chain of a cryptojacking bot runs to the end without doing anything.
 
-| Request | Reply |
-| --- | --- |
-| `GET`/`HEAD /_ping` | `200` `OK` (`text/plain`) |
-| `GET /version` | `200` with the `resources/docker_api.json` version object |
-| `GET /containers/json`, `GET /images/json` | `200` `[]` |
-| anything else (including `POST /containers/create`) | `404` `{"message":"page not found"}` |
+| Request | `operation` | Reply |
+| --- | --- | --- |
+| `GET`/`HEAD /_ping` | `ping` | `200` `OK` (`text/plain`) |
+| `GET /version` | `version` | `200` with the `resources/docker_api.json` version object |
+| `GET /info` | `info` | `200` host summary (overlay2, cgroup v2, 4 CPUs, 0 containers); `Name` (`srv-<6 hex>`) and the daemon `ID` are random per sensor |
+| `GET /containers/json`, `GET /images/json` | `container_list`, `image_list` | `200` `[]` |
+| `POST /images/create?fromImage=&tag=` | `image_create` | `200` pull stream: `Pulling from`, a digest derived from the name, `Image is up to date` |
+| `POST /containers/create` | `container_create` | `201` `{"Id":"<64 hex>","Warnings":[]}` |
+| `POST /containers/<id>/start`, `stop`, `kill`, `restart`, `DELETE /containers/<id>` | `container_start`, … , `container_delete` | `204` |
+| `POST /containers/<id>/wait` | `container_wait` | `200` `{"Error":null,"StatusCode":0}` |
+| `POST /containers/<id>/attach`, `GET /containers/<id>/logs` | `container_attach`, `container_logs` | `200` empty `application/vnd.docker.raw-stream` |
+| `POST /containers/<id>/exec` | `container_exec` | `201` `{"Id":"<64 hex>"}` |
+| `POST /exec/<id>/start` | `exec_start` | `200` empty raw stream |
+| `GET /exec/<id>/json` | `exec_inspect` | `200` `{"ID":…,"Running":false,"ExitCode":0,"Pid":0}` |
+| anything else | `unknown` | `404` `{"message":"page not found"}` |
 
-No frame field is added: `command`, `path` and the raw `payload` (including any request body) record the request. Nothing is executed. The Spicy `http` handler answers only `/v1.16/version`.
+The persona keeps no state: a created container is not listed by `/containers/json`, and any ID is accepted. Every read on these ports sets `docker` to `{operation, id, image, cmd, entrypoint, env, binds, privileged, user, truncated}`. `id` comes from the path, `image` from the create body or `fromImage[:tag]`, and `cmd`, `entrypoint`, `env`, `binds` (`HostConfig.Binds`, e.g. `/:/host`), `privileged` and `user` from the create or exec JSON body (`Cmd`/`Entrypoint` may be a string or an array). Caps: 32 entries per list, 4 KiB per `cmd`/`entrypoint`/`env` entry, 1 KiB per bind, 256 B for `image`/`id`/`user`; `truncated` is set when one applies. Create and exec bodies of 4 KiB or more are also stored with `helpers.Store` under `payloads/docker/`, and the read frame gets `payload_hash`. The raw `payload` always holds the full request. The Spicy `http` handler answers only `/v1.16/version`.
 
-> **Change (2026-11-08):** before this date tcp/2375 and tcp/2376 reached the catch-all `tcp` handler. On 2376 it completed the TLS handshake and then answered any request with random bytes.
+> **Change (2026-11-08):** before this date tcp/2375 and tcp/2376 reached the catch-all `tcp` handler. On 2376 it completed the TLS handshake and then answered any request with random bytes. Later on 2026-11-08 the persona gained `/info`, image pull and the container create/start/exec chain plus the `docker` frame field; before that, `POST /containers/create` and everything past recon got `404`.
 
 #### Elasticsearch 1.4
 

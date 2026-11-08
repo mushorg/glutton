@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -203,11 +204,26 @@ func TestHandleHTTPDocker(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	require.Contains(t, string(body), `"ApiVersion":"1.41"`)
 
-	_, err = client.Write(httpTestRequest("POST", "/containers/create", sessionID, []byte(`{"Image":"alpine"}`)))
+	// an oversized create body is stored and its hash recorded
+	createBody := []byte(`{"Image":"alpine","Cmd":["sh","-c","echo hi"],"HostConfig":{"Binds":["/:/host"],"Privileged":true},"Labels":{"pad":"` + strings.Repeat("p", dockerStoreMin) + `"}}`)
+	var stored []byte
+	prevStore := dockerStore
+	dockerStore = func(data []byte) (string, error) { stored = data; return "deadbeef", nil }
+	t.Cleanup(func() { dockerStore = prevStore })
+	_, err = client.Write(httpTestRequest("POST", "/v1.41/containers/create", sessionID, createBody))
 	require.NoError(t, err)
 	status, _, body = readHTTPResponse(t, client)
-	require.Equal(t, http.StatusNotFound, status)
-	require.Equal(t, "{\"message\":\"page not found\"}\n", string(body))
+	require.Equal(t, http.StatusCreated, status)
+	var created struct{ Id string }
+	require.NoError(t, json.Unmarshal(body, &created))
+	require.Regexp(t, `^[0-9a-f]{64}$`, created.Id)
+	require.Equal(t, createBody, stored)
+
+	_, err = client.Write(httpTestRequest("POST", "/v1.41/containers/"+created.Id+"/start", sessionID, nil))
+	require.NoError(t, err)
+	status, _, body = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusNoContent, status)
+	require.Empty(t, body)
 
 	require.NoError(t, client.Close())
 	select {
@@ -226,17 +242,30 @@ func TestHandleHTTPDocker(t *testing.T) {
 	}
 	events, ok := produced.decoded.([]parsedHTTP)
 	require.True(t, ok)
-	require.Len(t, events, 6)
+	require.Len(t, events, 8)
 	require.Equal(t, "read", events[0].Direction)
 	require.Equal(t, "GET", events[0].Command)
 	require.Equal(t, "/_ping", events[0].Path)
+	require.Equal(t, &dockerapi.Request{Operation: dockerapi.OpPing}, events[0].Docker)
 	require.Equal(t, "200", events[1].Status)
+	require.Nil(t, events[1].Docker)
 	require.Equal(t, "/v1.24/version", events[2].Path)
 	require.Equal(t, "200", events[3].Status)
 	require.Equal(t, "POST", events[4].Command)
-	require.Equal(t, "/containers/create", events[4].Path)
-	require.Contains(t, string(events[4].Payload), `{"Image":"alpine"}`)
-	require.Equal(t, "404", events[5].Status)
+	require.Equal(t, "/v1.41/containers/create", events[4].Path)
+	require.Contains(t, string(events[4].Payload), `"Image":"alpine"`)
+	require.Equal(t, &dockerapi.Request{
+		Operation:  dockerapi.OpContainerCreate,
+		Image:      "alpine",
+		Cmd:        []string{"sh", "-c", "echo hi"},
+		Binds:      []string{"/:/host"},
+		Privileged: true,
+	}, events[4].Docker)
+	require.Equal(t, "deadbeef", events[4].PayloadHash)
+	require.Equal(t, "201", events[5].Status)
+	require.Equal(t, &dockerapi.Request{Operation: dockerapi.OpContainerStart, ID: created.Id}, events[6].Docker)
+	require.Empty(t, events[6].PayloadHash)
+	require.Equal(t, "204", events[7].Status)
 }
 
 func TestHandleHTTPProxmox(t *testing.T) {

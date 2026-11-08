@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +42,14 @@ var httpSessions = newSessionTable[parsedHTTP]()
 
 // httpNow stamps persona Date headers; tests swap it.
 var httpNow = time.Now
+
+// dockerStore keeps Docker container create/exec bodies of at least
+// dockerStoreMin bytes; tests swap it.
+var dockerStore = func(data []byte) (string, error) {
+	return helpers.Store(data, filepath.Join("payloads", "docker"))
+}
+
+const dockerStoreMin = 4 << 10
 
 // formatRequest generates ascii representation of a request
 func formatRequest(r *http.Request) string {
@@ -129,6 +138,7 @@ type parsedHTTP struct {
 	Truncated  bool                   `json:"truncated,omitempty"`     // a Selenium binary/args or tunnel capture cap applied
 	Citrix     *citrix.Request        `json:"citrix,omitempty"`        // CVE-2019-19781 stage, NSC_USER, template
 	Elastic    *elasticsearch.Request `json:"elasticsearch,omitempty"` // tcp/9200 REST operation, index, scripts
+	Docker     *dockerapi.Request     `json:"docker,omitempty"`        // tcp/2375-2376 Engine API operation, image, cmd, binds
 	Log4Shell  *log4shell.Request     `json:"log4shell,omitempty"`     // CVE-2021-44228 JNDI lookups (parse-only)
 	PHP2Shell  *php2shell.Request     `json:"php2shell,omitempty"`     // CVE-2026-109618/109619 multipart shape (parse-only)
 	PHPInfo    *phpinfo.Request       `json:"phpinfo,omitempty"`       // request for a well-known phpinfo() page
@@ -316,6 +326,26 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 			)
 		}
 	}
+	docker := dockerapi.IsPort(md.TargetPort)
+	if docker {
+		frame.Docker = dockerapi.Inspect(req.Method, path, req.URL.RawQuery, body)
+		if frame.Docker.Artifact() && len(body) >= dockerStoreMin {
+			hash, err := dockerStore(body)
+			if err != nil {
+				logger.Error("Failed to store Docker request body", slog.String("protocol", "http"), producer.ErrAttr(err))
+			} else {
+				frame.PayloadHash = hash
+			}
+		}
+		if frame.Docker.Image != "" || len(frame.Docker.Cmd) > 0 {
+			logger.Info(
+				"HTTP Docker API request",
+				slog.String("handler", "http"),
+				slog.String("operation", frame.Docker.Operation),
+				slog.String("image", frame.Docker.Image),
+			)
+		}
+	}
 	frame.Citrix = citrix.Inspect(req.Method, path, req.Header, body)
 	frame.Log4Shell = log4shell.Inspect(path, req.URL.RawQuery, req.Header, body)
 	frame.PHP2Shell = php2shell.Inspect(req.Header, body)
@@ -358,12 +388,12 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 	if elastic {
 		return s.write(elasticsearch.Respond(req.Method, path, req.URL.RawQuery, frame.Elastic))
 	}
-	if dockerapi.IsPort(md.TargetPort) {
+	if docker {
 		version, err := Res.ReadFile("resources/docker_api.json")
 		if err != nil {
 			return fmt.Errorf("failed to read embedded file: %w", err)
 		}
-		return s.write(dockerapi.Respond(req.Method, path, version, httpNow()))
+		return s.write(dockerapi.Respond(req.Method, frame.Docker, version, httpNow()))
 	}
 	if md.TargetPort == plex2shell.Port || frame.Plex2Shell != nil {
 		return s.write(plex2shell.Respond(req.Method, path, httpNow()))
