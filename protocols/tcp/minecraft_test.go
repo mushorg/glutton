@@ -257,8 +257,8 @@ func TestMinecraftRecallRotatesPersona(t *testing.T) {
 }
 
 // A returning source's login is checked against its persona's version: the
-// smp persona (1.21.8, protocol 772) lets a 772 client reach Login Start and
-// rejects a 769 client with its own version name.
+// smp persona (1.21.8, protocol 772) lets a 772 client log in and rejects a
+// 769 client with its own version name.
 func TestMinecraftRecallPersonaVersionGatesLogin(t *testing.T) {
 	now := time.Date(2026, 11, 8, 10, 44, 0, 0, time.UTC)
 	orig := minecraftRecall
@@ -282,11 +282,12 @@ func TestMinecraftRecallPersonaVersionGatesLogin(t *testing.T) {
 		resp, err = readMCPacket(c)
 		require.NoError(t, err)
 	})
-	require.Equal(t, minecraft.BuildLoginDisconnect(smp, minecraft.ReasonNotWhitelisted), resp)
+	// smp is open: the login is accepted instead of not_whitelisted.
+	require.Equal(t, minecraft.BuildLoginSuccess("bob"), resp)
 	frames := p.decoded.([]parsedMinecraft)
 	require.Len(t, frames, 3)
 	require.Equal(t, "bob", frames[1].Username)
-	require.Equal(t, parsedMinecraft{Direction: "write", Status: "not_whitelisted", Variant: "smp", Visit: 2, Payload: resp}, frames[2])
+	require.Equal(t, parsedMinecraft{Direction: "write", Status: "login_success", State: "login", Variant: "smp", Visit: 2, Payload: resp}, frames[2])
 
 	// Same visit, a 1.21.4 client: incompatible, naming 1.21.8.
 	p, _ = runMinecraftFrom(t, remote, func(c net.Conn) {
@@ -373,4 +374,192 @@ func TestMinecraftLegacyPingSingleByteIsMalformed(t *testing.T) {
 	frames := p.decoded.([]parsedMinecraft)
 	require.Len(t, frames, 1)
 	require.Equal(t, "malformed", frames[0].Command)
+}
+
+// openMinecraftSource makes remote's next visit get the open smp persona and
+// pins the session seams; it returns remote.
+func openMinecraftSource(t *testing.T) net.Addr {
+	t.Helper()
+	now := time.Date(2026, 11, 8, 13, 0, 0, 0, time.UTC)
+	origRecall, origWorld, origKA, origMax, origNow := minecraftRecall, minecraftWorld, minecraftKeepAliveEvery, minecraftSessionMax, minecraftNow
+	minecraftRecall = recall.NewWithClock(recall.Config{Enabled: true, Gap: time.Hour}, func() time.Time { return now })
+	minecraftWorld = minecraft.World{EntityID: 412, HashedSeed: 99, MaxPlayers: 10, X: 12, Y: 70, Z: -40}
+	minecraftKeepAliveEvery = time.Hour
+	minecraftSessionMax = time.Hour
+	minecraftNow = func() time.Time { return now }
+	t.Cleanup(func() {
+		minecraftRecall, minecraftWorld, minecraftKeepAliveEvery, minecraftSessionMax, minecraftNow = origRecall, origWorld, origKA, origMax, origNow
+	})
+	remote := staticAddr{"95.165.3.78:40538"}
+	_, _ = runMinecraftFrom(t, remote, func(c net.Conn) {
+		_, _ = c.Write(append(mcHandshake(minecraft.PlayProtocol, minecraft.StateStatus), 0x01, 0x00))
+		_, err := readMCPacket(c)
+		require.NoError(t, err)
+	})
+	now = now.Add(2 * time.Hour)
+	return remote
+}
+
+func mcString(s string) []byte {
+	return append(minecraft.AppendVarInt(nil, int32(len(s))), s...)
+}
+
+// mcExpect reads one packet and checks it.
+func mcExpect(t *testing.T, c net.Conn, want []byte) {
+	t.Helper()
+	got, err := readMCPacket(c)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+}
+
+// mcLoginToPlay drives a client from Handshake to Play on the open persona.
+func mcLoginToPlay(t *testing.T, c net.Conn, w minecraft.World) {
+	t.Helper()
+	_, _ = c.Write(append(mcHandshake(minecraft.PlayProtocol, minecraft.StateLogin), mcDragonLogin...))
+	mcExpect(t, c, minecraft.BuildLoginSuccess("DragonDima40"))
+	_, _ = c.Write(minecraft.BuildPacket(minecraft.IDLoginAck, nil))
+	mcExpect(t, c, minecraft.BuildConfigBrand())
+	mcExpect(t, c, minecraft.BuildFeatureFlags())
+	mcExpect(t, c, minecraft.BuildKnownPacks())
+	_, _ = c.Write(minecraft.BuildPacket(minecraft.IDConfigCustomPayload, append(mcString("minecraft:brand"), mcString("vanilla")...)))
+	_, _ = c.Write(minecraft.BuildPacket(minecraft.IDConfigClientInfo, append(mcString("en_us"), 0x0a, 0, 1, 0x7f, 1, 0, 1, 0)))
+	_, _ = c.Write(minecraft.BuildPacket(minecraft.IDConfigKnownPacks, append([]byte{1}, append(append(mcString("minecraft"), mcString("core")...), mcString("1.21.8")...)...)))
+	for range minecraft.RegistryCount() {
+		_, err := readMCPacket(c)
+		require.NoError(t, err)
+	}
+	mcExpect(t, c, minecraft.BuildFinishConfiguration())
+	_, _ = c.Write(minecraft.BuildPacket(minecraft.IDConfigFinishAck, nil))
+	mcExpect(t, c, minecraft.BuildPlayLogin(w))
+	mcExpect(t, c, minecraft.BuildPlayerPosition(1, w))
+	mcExpect(t, c, minecraft.BuildSpawnPosition(w))
+	mcExpect(t, c, minecraft.BuildWaitForChunks())
+	mcExpect(t, c, minecraft.BuildSystemChat("gold", mcPromptRegister))
+}
+
+func TestMinecraftOpenSession(t *testing.T) {
+	remote := openMinecraftSource(t)
+	w := minecraftWorld
+	tickEnd := minecraft.BuildPacket(0x0C, nil)
+	move := minecraft.BuildPacket(0x1D, make([]byte, 25))
+	chat := minecraft.BuildPacket(minecraft.IDPlayChat, append(mcString("hi"), make([]byte, 21)...))
+	register := minecraft.BuildPacket(minecraft.IDPlayChatCommand, mcString("register hunter2 hunter2"))
+	op := minecraft.BuildPacket(minecraft.IDPlayChatCommand, mcString("op DragonDima40"))
+
+	p, logger := runMinecraftFrom(t, remote, func(c net.Conn) {
+		mcLoginToPlay(t, c, w)
+		_, _ = c.Write(minecraft.BuildPacket(0x00, []byte{1})) // accept_teleportation
+		_, _ = c.Write(chat)
+		mcExpect(t, c, minecraft.BuildSystemChat("red", mcPromptLogin))
+		_, _ = c.Write(register)
+		mcExpect(t, c, minecraft.BuildSystemChat("green", mcRegistered))
+		for range 50 {
+			_, _ = c.Write(tickEnd)
+			_, _ = c.Write(move)
+		}
+		_, _ = c.Write(op) // authed: no reply
+	})
+
+	frames := p.decoded.([]parsedMinecraft)
+	type row struct{ dir, state, kind string }
+	var got []row
+	for _, f := range frames {
+		got = append(got, row{f.Direction, f.State, minecraftFrameKind(f)})
+	}
+	require.Equal(t, []row{
+		{"read", "", "handshake"},
+		{"read", "", "login_start"},
+		{"write", "login", "login_success"},
+		{"read", "login", "login_acknowledged"},
+		{"write", "configuration", "brand"},
+		{"write", "configuration", "feature_flags"},
+		{"write", "configuration", "known_packs"},
+		{"read", "configuration", "custom_payload"},
+		{"read", "configuration", "client_information"},
+		{"read", "configuration", "select_known_packs"},
+		{"write", "configuration", "registry_data"},
+		{"write", "configuration", "finish_configuration"},
+		{"read", "configuration", "finish_configuration"},
+		{"write", "play", "login"},
+		{"write", "play", "player_position"},
+		{"write", "play", "spawn_position"},
+		{"write", "play", "wait_for_chunks"},
+		{"write", "play", "auth_prompt"},
+		{"read", "play", "accept_teleportation"},
+		{"read", "play", "chat"},
+		{"write", "play", "auth_prompt"},
+		{"read", "play", "chat_command"},
+		{"write", "play", "auth_ok"},
+		{"read", "play", "client_tick_end"},
+		{"read", "play", "move_player_pos"},
+		{"read", "play", "chat_command"},
+	}, got)
+
+	require.Equal(t, "3ebdb2dc-482f-37e1-9319-4763c25907bc", frames[1].UUID)
+	require.Equal(t, parsedMinecraft{Direction: "write", Status: "login_success", State: "login", Variant: "smp", Visit: 2, Payload: minecraft.BuildLoginSuccess("DragonDima40")}, frames[2])
+	require.Equal(t, "minecraft:brand", frames[7].Channel)
+	require.Equal(t, "vanilla", frames[7].Brand)
+	require.Equal(t, "en_us", frames[8].Locale)
+	require.Equal(t, []string{"minecraft:core@1.21.8"}, frames[9].Packs)
+	require.Equal(t, parsedMinecraft{Direction: "write", Status: "registry_data", State: "configuration", Count: minecraft.RegistryCount()}, frames[10])
+	require.Equal(t, "hi", frames[19].Message)
+	require.Equal(t, parsedMinecraft{Direction: "read", State: "play", Command: "chat_command", Message: "register hunter2 hunter2", Password: "hunter2", Payload: register}, frames[21])
+	require.Equal(t, 50, frames[23].Count)
+	require.Equal(t, tickEnd, frames[23].Payload)
+	require.Equal(t, 50, frames[24].Count)
+	require.Equal(t, "op DragonDima40", frames[25].Message)
+	require.Empty(t, frames[25].Password)
+	require.Empty(t, logger.errs)
+}
+
+func TestMinecraftOpenSessionKeepAlive(t *testing.T) {
+	remote := openMinecraftSource(t)
+	minecraftKeepAliveEvery = 10 * time.Millisecond
+	ka := minecraft.BuildKeepAlive(true, minecraftNow().UnixMilli())
+	p, _ := runMinecraftFrom(t, remote, func(c net.Conn) {
+		_, _ = c.Write(append(mcHandshake(minecraft.PlayProtocol, minecraft.StateLogin), mcDragonLogin...))
+		mcExpect(t, c, minecraft.BuildLoginSuccess("DragonDima40"))
+		_, _ = c.Write(minecraft.BuildPacket(minecraft.IDLoginAck, nil))
+		mcExpect(t, c, minecraft.BuildConfigBrand())
+		mcExpect(t, c, minecraft.BuildFeatureFlags())
+		mcExpect(t, c, minecraft.BuildKnownPacks())
+		for range 3 {
+			mcExpect(t, c, ka)
+		}
+	})
+	frames := p.decoded.([]parsedMinecraft)
+	last := frames[len(frames)-1]
+	require.Equal(t, "keep_alive", last.Status)
+	require.Equal(t, "configuration", last.State)
+	require.GreaterOrEqual(t, last.Count, 3)
+	require.Equal(t, ka, last.Payload)
+}
+
+func TestMinecraftOpenSessionLimits(t *testing.T) {
+	remote := openMinecraftSource(t)
+	minecraftSessionMax = 50 * time.Millisecond
+	start := time.Now()
+	p, _ := runMinecraftFrom(t, remote, func(c net.Conn) {
+		_, _ = c.Write(append(mcHandshake(minecraft.PlayProtocol, minecraft.StateLogin), mcDragonLogin...))
+		mcExpect(t, c, minecraft.BuildLoginSuccess("DragonDima40"))
+		// The client idles; the server ends the session and closes.
+		_, err := readMCPacket(c)
+		require.Error(t, err)
+	})
+	require.Less(t, time.Since(start), time.Second)
+	require.Len(t, p.decoded.([]parsedMinecraft), 3)
+
+	// Frame cap: a flood of distinct, non-noisy packets.
+	minecraftSessionMax = time.Hour
+	loaded := minecraft.BuildPacket(0x2B, nil)
+	p, _ = runMinecraftFrom(t, remote, func(c net.Conn) {
+		mcLoginToPlay(t, c, minecraftWorld)
+		for range maxMinecraftFrames {
+			_, _ = c.Write(loaded)
+		}
+	})
+	frames := p.decoded.([]parsedMinecraft)
+	require.Len(t, frames, maxMinecraftFrames)
+	require.True(t, frames[len(frames)-1].Truncated)
+	require.Equal(t, "player_loaded", frames[len(frames)-1].Command)
 }
