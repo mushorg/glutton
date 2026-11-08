@@ -56,14 +56,18 @@ func SelfSignedCertificateECDSA(subject pkix.Name, dnsNames ...string) (tls.Cert
 
 // SelfSignedCertificateForHost returns a self-signed certificate whose CN and
 // SAN match host (DNS name or IP). Empty, oversized, or invalid hosts fall
-// back to CN=localhost. The host is attacker chosen (tunnel SNI or CONNECT
+// back to the shared sensor certificate (see SensorCertName). The host is attacker chosen (tunnel SNI or CONNECT
 // target), so every host certificate is signed with one shared key (an RSA
 // key costs ~40ms of CPU to generate, a signature ~1ms) and only the
 // hostCertMax most recently used certificates are kept.
 func SelfSignedCertificateForHost(host string) (tls.Certificate, error) {
 	host = strings.TrimSpace(host)
 	if host == "" || len(host) > 253 || strings.ContainsRune(host, 0) {
-		return SelfSignedCertificate(pkix.Name{CommonName: "localhost"}, "localhost")
+		certs, err := sensorCertificates()
+		if err != nil {
+			return tls.Certificate{}, err
+		}
+		return certs[0], nil
 	}
 	ip := net.ParseIP(host)
 	key := "dns:" + host
@@ -145,7 +149,19 @@ func generateCertificate(subject pkix.Name, dnsNames []string, ips []net.IP) (tl
 // signCertificate creates a self-signed server certificate for key (RSA or
 // ECDSA).
 func signCertificate(key crypto.Signer, subject pkix.Name, dnsNames []string, ips []net.IP) (tls.Certificate, error) {
-	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+	now := time.Now()
+	return signCertificateValid(key, subject, dnsNames, ips, now.Add(-time.Hour), now.Add(365*24*time.Hour))
+}
+
+// certSerial returns a random positive serial of up to 159 bits, the shape
+// OpenSSL (`openssl req -x509`, make-ssl-cert) gives self-signed certificates.
+func certSerial() (*big.Int, error) {
+	return rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 159))
+}
+
+// signCertificateValid is signCertificate with an explicit validity period.
+func signCertificateValid(key crypto.Signer, subject pkix.Name, dnsNames []string, ips []net.IP, notBefore, notAfter time.Time) (tls.Certificate, error) {
+	serial, err := certSerial()
 	if err != nil {
 		return tls.Certificate{}, err
 	}
@@ -154,8 +170,8 @@ func signCertificate(key crypto.Signer, subject pkix.Name, dnsNames []string, ip
 		Subject:               subject,
 		DNSNames:              dnsNames,
 		IPAddresses:           ips,
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
@@ -192,7 +208,7 @@ func generateRDPCertificate(subject pkix.Name) (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+	serial, err := certSerial()
 	if err != nil {
 		return tls.Certificate{}, err
 	}

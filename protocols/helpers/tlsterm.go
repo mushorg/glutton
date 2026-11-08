@@ -2,7 +2,6 @@ package helpers
 
 import (
 	"crypto/tls"
-	"crypto/x509/pkix"
 	"io"
 	"net"
 
@@ -20,9 +19,6 @@ import (
 // could fingerprint RDP. MinVersion is kept at TLS 1.0 because some old RDP
 // clients require it; raise it to tls.VersionTLS12 if future testing confirms
 // Schannel behavior, as that would also eliminate the DOWNGRD\x00 sentinel.
-
-// tlsCertName is the subject of the shared self-signed server certificate.
-const tlsCertName = "localhost"
 
 // TLSHelloLimit caps how many ClientHello bytes are kept.
 const TLSHelloLimit = 4096
@@ -79,22 +75,18 @@ func TerminateTLS(conn net.Conn) (net.Conn, *connection.TLSInfo, error) {
 // partly consumed already: handshake reads come from r (for example a
 // bufio.Reader over conn, or a STARTTLS upgrade) and writes go to conn.
 func TerminateTLSFrom(conn net.Conn, r io.Reader) (net.Conn, *connection.TLSInfo, error) {
-	cert, err := SelfSignedCertificate(pkix.Name{CommonName: tlsCertName}, tlsCertName)
+	certs, err := sensorCertificates()
 	if err != nil {
 		return nil, &connection.TLSInfo{}, err
 	}
-	ecCert, err := SelfSignedCertificateECDSA(pkix.Name{CommonName: tlsCertName}, tlsCertName)
-	if err != nil {
-		return nil, &connection.TLSInfo{}, err
-	}
-	return terminateTLS([]tls.Certificate{cert, ecCert}, conn, r)
+	return terminateTLS(certs, conn, r)
 }
 
 // pickCertificate serves the first of certs the client can use and falls back
 // to certs[0]. The RSA certificate comes first, so only clients that cannot
 // use it (ECDSA/EdDSA-only signature_algorithms, or no enabled ECDHE_RSA
 // suite) get the ECDSA one instead of a handshake_failure. The certificates
-// are self-signed for localhost and do not match a client's SNI, so the check
+// are self-signed for the sensor name and do not match a client's SNI, so the check
 // runs on a copy of the hello without a server name: otherwise
 // SupportsCertificate rejects every certificate for any client sending SNI and
 // the RSA one is always served.

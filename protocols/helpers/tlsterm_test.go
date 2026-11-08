@@ -32,7 +32,7 @@ func TestSelfSignedCertificateForHost(t *testing.T) {
 	require.NoError(t, err)
 	fbLeaf, err := x509.ParseCertificate(fallback.Certificate[0])
 	require.NoError(t, err)
-	require.Equal(t, "localhost", fbLeaf.Subject.CommonName)
+	require.Equal(t, SensorCertName(), fbLeaf.Subject.CommonName)
 }
 
 func TestSelfSignedCertificateForHostSharedKeyBounded(t *testing.T) {
@@ -263,7 +263,7 @@ const ecdsaOnlyHello = "FgMBAkIBAAI+AwNkenWsFwDcNuSvRCgL4l1A3QwW9dYo4SJKesPwn/cb
 // t12d3511h9_66c735deec94_52c4d8bb91c9, SNI 221-166-172-163.instances.scw.cloud).
 // Its only ECDHE_RSA suite is 3DES (c012), which crypto/tls no longer enables
 // by default, while it offers ECDHE_ECDSA AES/ChaCha suites. Because the SNI
-// did not match the localhost certificates, the picker rejected both and fell
+// did not match the self-signed certificates, the picker rejected both and fell
 // back to RSA, which ended in a fatal handshake_failure alert.
 var ecdsaSuitesHello = []byte{
 	0x16, 0x03, 0x03, 0x01, 0x6d, 0x01, 0x00, 0x01, 0x69, 0x03, 0x03, 0x39, 0x4a, 0x9d, 0x7f, 0x31,
@@ -322,7 +322,7 @@ func firstServerRecord(t *testing.T, hello []byte, terminate func(net.Conn)) []b
 }
 
 func TestTerminateTLSECDSAOnlyClient(t *testing.T) {
-	rsaCert, err := SelfSignedCertificate(pkix.Name{CommonName: tlsCertName}, tlsCertName)
+	rsaCert, err := SelfSignedCertificate(pkix.Name{CommonName: "rsa-only"}, "rsa-only")
 	require.NoError(t, err)
 	// control: an RSA-only server can only refuse this hello
 	hdr := firstServerRecord(t, ecdsaOnlyHelloBytes(t), func(c net.Conn) { _, _, _ = TerminateTLSFromWith(rsaCert, c, c) })
@@ -337,7 +337,7 @@ func TestTerminateTLSECDSAOnlyClient(t *testing.T) {
 // A TLS 1.2 client that verifies RSA signatures but shares no enabled
 // ECDHE_RSA suite with the server gets the ECDSA cert, not handshake_failure.
 func TestTerminateTLSECDSASuitesClient(t *testing.T) {
-	rsaCert, err := SelfSignedCertificate(pkix.Name{CommonName: tlsCertName}, tlsCertName)
+	rsaCert, err := SelfSignedCertificate(pkix.Name{CommonName: "rsa-only"}, "rsa-only")
 	require.NoError(t, err)
 	hdr := firstServerRecord(t, ecdsaSuitesHello, func(c net.Conn) { _, _, _ = TerminateTLSFromWith(rsaCert, c, c) })
 	require.Equal(t, []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02}, hdr, "control: RSA-only server refuses")
@@ -358,12 +358,13 @@ func TestTerminateTLSPrefersRSA(t *testing.T) {
 		_, _, err := TerminateTLS(server)
 		res <- err
 	}()
-	// an SNI that does not match the localhost cert must not change the choice
+	// an SNI that does not match the sensor cert must not change the choice
 	tc := tls.Client(client, &tls.Config{InsecureSkipVerify: true, ServerName: "mail.example.com"})
 	require.NoError(t, tc.Handshake())
 	leaf := tc.ConnectionState().PeerCertificates[0]
 	require.Equal(t, x509.RSA, leaf.PublicKeyAlgorithm, "clients that accept RSA keep getting the RSA cert")
-	require.Equal(t, "localhost", leaf.Subject.CommonName)
+	require.Equal(t, SensorCertName(), leaf.Subject.CommonName)
+	require.NotEqual(t, "localhost", leaf.Subject.CommonName)
 	require.NoError(t, <-res)
 }
 
