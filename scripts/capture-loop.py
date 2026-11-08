@@ -3,12 +3,17 @@
 
 The script captures and de-duplicates events itself; Claude only analyzes the file it is given.
 
-Usage: scripts/capture-loop.py [--transport-only | --handlers smb,http]
+Usage: scripts/capture-loop.py [--transport-only | --handlers smb,http | --all-handlers]
+  (default)         each run, the triage model picks up to PICK_COUNT handlers to capture, based on the
+                    backlog, recent protocol commits and handlers not captured recently (PICK_HISTORY)
   --transport-only  capture only the generic tcp/udp catch-all handlers (traffic with no dedicated handler)
-  --handlers        capture these handlers (comma-separated); the tcp/udp catch-alls are always added
+  --handlers        capture these handlers (comma-separated)
+  --all-handlers    capture every rule target in config/rules.yaml
+  The tcp/udp catch-alls are always captured.
 Env:   INTERVAL=600 MAX_RUNS=20 DURATION=600 COUNT=500 CHUNK=10 KEEP_HOURS=24 SEEN_MAX=50000
        TRIAGE_MODEL=haiku IMPL_MODEL= (empty = default model)
        BACKLOG=~/.cache/glutton-capture-loop/backlog.md
+       PICK_COUNT=5 PICK_HISTORY=~/.cache/glutton-capture-loop/pick-history.json RECENT_DAYS=14
        Each run captures up to COUNT events / DURATION seconds, triaging every CHUNK new events as
        they arrive; the first chunk with a finding stops the capture early and goes to implementation.
 Logs:  $CLAUDE_JOB_DIR/logs/run-N-chunk-M-triage.jsonl, run-N-impl.jsonl (stream-json); watch with tail -f.
@@ -73,6 +78,18 @@ BACKLOG_OUTPUT_PROMPT = (
     "payload summary, why it matters), plus the Handler improvement prompt or banner args from triage "
     "verbatim if there was one. Leave the block empty if there is nothing to add."
 )
+PICK_PROMPT = (
+    "Autonomous mode, PICK HANDLERS. Choose which Glutton handlers the next live capture should "
+    "subscribe to, so the following triage has the best chance of finding a worthwhile handler "
+    "improvement. Balance three sources, all given below: (1) backlog items that need more evidence, "
+    "(2) handlers changed in recent commits, to see how the change behaves on real traffic, and "
+    "(3) exploration of handlers not captured recently or never captured. Mix them: do not spend every "
+    "slot on one source, and include at least one never- or least-recently captured handler. You may "
+    "Read handler code under protocols/ if it helps, but do not edit anything. Pick only names from "
+    "the valid targets list. tcp and udp are always captured, so do not spend slots on them. End your "
+    "answer with one line `HANDLERS: <name>,<name>,...` (at most {count} names) and one line "
+    "`WHY: <one sentence>`."
+)
 TRIAGE_TOOLS = ["Read", "Skill", "Bash(python3 -I .claude/skills/*)"]
 IMPL_TOOLS = [
     "Read", "Edit", "Write", "Skill",
@@ -90,7 +107,7 @@ def log(msg):
 
 
 class Loop:
-    def __init__(self, transport_only, handlers=""):
+    def __init__(self, transport_only, handlers="", all_handlers=False):
         self.interval = env_int("INTERVAL", 600)
         self.max_runs = env_int("MAX_RUNS", 20)       # 0 = unlimited
         self.duration = env_int("DURATION", 600)      # seconds per capture
@@ -114,12 +131,19 @@ class Loop:
         self.backlog = Backlog(Path(os.environ.get("BACKLOG") or
                                     Path(cache) / "glutton-capture-loop" / "backlog.md").expanduser())
 
+        self.pick_count = env_int("PICK_COUNT", 5)    # handlers the triage model picks per run
+        self.recent_days = env_int("RECENT_DAYS", 14)  # commit window shown to the picker
+        self.history = PickHistory(Path(os.environ.get("PICK_HISTORY") or
+                                        Path(cache) / "glutton-capture-loop" / "pick-history.json").expanduser())
+        self.targets = rule_targets(Path("config/rules.yaml"))
+        # pick = True: the triage model chooses the handlers at the start of every run.
+        self.pick = not (transport_only or handlers or all_handlers)
         if transport_only:
             self.handlers = with_catch_alls("")
         elif handlers:
             self.handlers = with_catch_alls(handlers)
         else:
-            self.handlers = with_catch_alls(rule_targets(Path("config/rules.yaml")))
+            self.handlers = with_catch_alls(",".join(self.targets))
         self.sub = None
 
     # -- housekeeping --------------------------------------------------------
@@ -196,6 +220,26 @@ class Loop:
         if not out or "NO_CHANGE" in out.splitlines():
             return ""
         return out
+
+    def pick_handlers(self, run):
+        """Ask the triage model which handlers to capture this run; falls back to every rule target."""
+        choices = [t for t in self.targets if t not in ("tcp", "udp")]
+        prompt = PICK_PROMPT.format(count=self.pick_count)
+        prompt += f"\n\nValid targets: {', '.join(choices)}"
+        prompt += f"\n\nLast captured (oldest first; never = not captured yet):\n{self.history.render(choices)}"
+        prompt += (f"\n\nProtocol commits in the last {self.recent_days} days:\n"
+                   f"{recent_changes(self.recent_days) or '(none)'}")
+        prompt += f"\n\nBacklog:\n{self.backlog.summary() or '(empty)'}"
+        out = self.run_claude(self.logs / f"run-{run}-pick.jsonl", prompt,
+                              "--model", self.triage_model, "--allowedTools", "Read")
+        valid = set(choices)
+        picked = [h for h in re.split(r"[,\s]+", marker(out, "HANDLERS")) if h in valid][:self.pick_count]
+        if not picked:
+            log(f"pick: no valid handlers in the answer; capturing all rule targets "
+                f"(see {self.logs}/run-{run}-pick.jsonl)")
+            return with_catch_alls(",".join(self.targets))
+        log(f"pick: {', '.join(picked)} ({marker(out, 'WHY') or 'no reason given'})")
+        return with_catch_alls(",".join(picked))
 
     def implement(self, run, findings):
         """Runs implementation; returns (commit message, raw output) so the backlog can be updated."""
@@ -302,7 +346,7 @@ class Loop:
     def run(self):
         before = tree_hash()
         commit_msg = ""
-        print(f"handlers: {self.handlers[:80]}")
+        print("handlers: picked by the triage model each run" if self.pick else f"handlers: {self.handlers[:80]}")
         print(f"logs: {self.logs}  (tail -f {self.logs}/run-*-triage.jsonl)")
         print(f"backlog: {self.backlog.path} ({len(self.backlog.items)} open)", flush=True)
         run = 0
@@ -311,6 +355,9 @@ class Loop:
             ts = int(time.time())
             log(f"run {run}: capturing up to {self.count} events / {self.duration}s, triaging every {self.chunk}")
             self.prune()
+            if self.pick:
+                self.handlers = self.pick_handlers(run)
+            self.history.record(self.handlers.split(","))
             findings = self.capture_and_triage(run, ts)
 
             impl_out = ""
@@ -409,6 +456,47 @@ class Backlog:
         tmp.replace(self.path)
 
 
+class PickHistory:
+    """When each handler was last captured, so the picker can explore handlers it has not looked at."""
+
+    def __init__(self, path):
+        self.path = path
+        try:
+            self.last = json.loads(path.read_text())
+        except (FileNotFoundError, ValueError):
+            self.last = {}
+
+    def record(self, handlers):
+        now = now_iso()
+        for h in handlers:
+            self.last[h] = now
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".json.new")
+        tmp.write_text(json.dumps(self.last, indent=1, sort_keys=True) + "\n")
+        tmp.replace(self.path)
+
+    def render(self, handlers):
+        # ISO timestamps with the same offset sort chronologically; "" (never) sorts first.
+        rows = sorted(handlers, key=lambda h: (self.last.get(h, ""), h))
+        return "\n".join(f"- {h}: {self.last.get(h, 'never')}" for h in rows)
+
+
+def recent_changes(days):
+    """Recent commits touching handlers or rules: subject plus the protocol files they changed."""
+    r = subprocess.run(["git", "log", f"--since={days} days ago", "-n", "40", "--date=short",
+                        "--format=%x00%ad %s", "--name-only", "--", "protocols", "config/rules.yaml"],
+                       capture_output=True, text=True)
+    out = []
+    for entry in r.stdout.split("\0"):
+        lines = [l for l in entry.strip().splitlines() if l]
+        if not lines:
+            continue
+        files = sorted({re.sub(r"(_test)?\.go$", "", Path(f).name) for f in lines[1:]
+                        if f.endswith(".go") or f.endswith(".yaml") or f.endswith(".spicy")})
+        out.append(f"- {lines[0]} [{', '.join(files)}]")
+    return "\n".join(out)
+
+
 def split_items(block):
     """(title, body) pairs from `BACKLOG_ITEM: title` sections in the implementation's BACKLOG_ADD block."""
     heads = list(re.finditer(r"^`?BACKLOG_ITEM:\s*(.+?)`?\s*$", block, re.MULTILINE))
@@ -431,7 +519,7 @@ def now_iso():
 
 
 def rule_targets(rules):
-    """Unique handler targets from rules.yaml, comma-separated."""
+    """Unique handler targets from rules.yaml, sorted."""
     targets = set()
     for line in rules.read_text().splitlines():
         m = re.match(r"^\s*-?\s*target:\s*(.*)$", line)
@@ -439,7 +527,7 @@ def rule_targets(rules):
             t = re.sub(r"[\"' ]", "", m.group(1))
             if t:
                 targets.add(t)
-    return ",".join(sorted(targets))
+    return sorted(targets)
 
 
 def with_catch_alls(handlers):
@@ -463,15 +551,16 @@ def commit_message(out):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--transport-only", action="store_true",
-                        help="capture only the generic tcp/udp catch-all handlers")
-    parser.add_argument("--handlers", default="",
-                        help="comma-separated handlers to capture; tcp and udp are always included")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--transport-only", action="store_true",
+                      help="capture only the generic tcp/udp catch-all handlers")
+    mode.add_argument("--handlers", default="",
+                      help="comma-separated handlers to capture; tcp and udp are always included")
+    mode.add_argument("--all-handlers", action="store_true",
+                      help="capture every rule target instead of letting the triage model pick")
     args = parser.parse_args()
-    if args.transport_only and args.handlers:
-        parser.error("--transport-only and --handlers are mutually exclusive")
     os.chdir(REPO)
-    loop = Loop(args.transport_only, args.handlers)
+    loop = Loop(args.transport_only, args.handlers, args.all_handlers)
     try:
         return loop.run()
     except KeyboardInterrupt:
