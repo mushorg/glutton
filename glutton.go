@@ -46,6 +46,7 @@ type Glutton struct {
 	publicAddrs         []net.IP
 	udpGuard            *guard.Guard
 	tcpGuard            *guard.Guard
+	tcpConnLimit        *guard.ConnLimiter
 	produceGuard        *guard.Guard
 	ignorePorts         ignoredPorts
 }
@@ -155,6 +156,9 @@ func (g *Glutton) Init() error {
 	// amplifier, and TCP peers cannot pull unbounded bytes from it
 	g.udpGuard = guard.New(guardConfig("udp_reply_limit", guard.DefaultConfig()))
 	g.tcpGuard = guard.New(guardConfig("tcp_reply_limit", guard.DefaultTCPConfig()))
+	// Open-connection cap per source prefix so one subnet cannot hold
+	// hundreds of handler goroutines and sockets
+	g.tcpConnLimit = guard.NewConnLimiter(connLimitConfig("tcp_conn_limit"))
 	// Event budget so a flooding source cannot overwhelm the producers
 	g.produceGuard = guard.New(eventLimitConfig("produce_limit"))
 	// and cannot flood the log with a line per connection
@@ -238,6 +242,25 @@ func guardConfig(key string, def guard.Config) guard.Config {
 	}
 	if n := viper.GetInt(key + ".max_sources"); n > 0 {
 		cfg.MaxSources = n
+	}
+	if viper.IsSet(key + ".source_prefix_v4") {
+		cfg.SourcePrefixV4 = viper.GetInt(key + ".source_prefix_v4")
+	}
+	if viper.IsSet(key + ".source_prefix_v6") {
+		cfg.SourcePrefixV6 = viper.GetInt(key + ".source_prefix_v6")
+	}
+	return cfg
+}
+
+// connLimitConfig reads the tcp_conn_limit block; it is enabled unless set to
+// false.
+func connLimitConfig(key string) guard.ConnLimitConfig {
+	cfg := guard.DefaultConnLimitConfig()
+	if viper.IsSet(key + ".enabled") {
+		cfg.Enabled = viper.GetBool(key + ".enabled")
+	}
+	if n := viper.GetInt(key + ".source_max"); n > 0 {
+		cfg.SourceMax = n
 	}
 	if viper.IsSet(key + ".source_prefix_v4") {
 		cfg.SourcePrefixV4 = viper.GetInt(key + ".source_prefix_v4")
@@ -435,6 +458,17 @@ func (g *Glutton) tcpListen() {
 // handleTCPConn routes an accepted connection to its rule's handler. Every
 // path either hands conn to a handler goroutine or closes it.
 func (g *Glutton) handleTCPConn(conn net.Conn) {
+	release, ok := g.acquireTCPConn(conn)
+	if !ok {
+		return
+	}
+	handed := false
+	defer func() {
+		if !handed {
+			release()
+		}
+	}()
+
 	rule, err := g.applyRulesOnConn(conn)
 	if err != nil {
 		g.Logger.Error("Failed to apply rules", producer.ErrAttr(err))
@@ -485,7 +519,9 @@ func (g *Glutton) handleTCPConn(conn net.Conn) {
 		g.Logger.Error("Failed to set connection timeout", producer.ErrAttr(err))
 	}
 
+	handed = true
 	go func() {
+		defer release()
 		defer g.recoverPanic("tcp", handlerName)
 		if err := hfunc(connCtx, conn, md); err != nil {
 			g.Logger.Error("Failed to handle ", producer.ErrAttr(err), slog.String("handler", handlerName))
@@ -691,6 +727,38 @@ func (g *Glutton) ReplyUDPSent(srcAddr, dstAddr *net.UDPAddr, payload []byte) (b
 		return false, err
 	}
 	return true, nil
+}
+
+// acquireTCPConn takes a tcp_conn_limit slot for conn's peer prefix. Over the
+// cap, conn is reset (no FIN handshake, so a flood leaves no orphaned or
+// TIME_WAIT sockets behind) before any rule, handler or event runs, and a
+// limited prefix warns once per guard.WarnInterval.
+func (g *Glutton) acquireTCPConn(conn net.Conn) (release func(), ok bool) {
+	ra, isTCP := conn.RemoteAddr().(*net.TCPAddr)
+	if !isTCP {
+		return func() {}, true
+	}
+	release, d := g.tcpConnLimit.Acquire(ra.IP)
+	if d.Allowed {
+		return release, true
+	}
+	if d.First && g.Logger != nil {
+		attrs := []any{
+			slog.String("limit", string(d.Limit)),
+			slog.String("src_ip", ra.IP.String()),
+			slog.Int("open", g.tcpConnLimit.Open(ra.IP)),
+			slog.String("reporter", "glutton"),
+		}
+		if la, ok := conn.LocalAddr().(*net.TCPAddr); ok {
+			attrs = append(attrs, slog.Int("dest_port", la.Port))
+		}
+		g.Logger.Warn("Refusing TCP connections over the per-source connection cap", attrs...)
+	}
+	if tc, ok := conn.(*net.TCPConn); ok {
+		_ = tc.SetLinger(0)
+	}
+	g.closeUnhandled(conn)
+	return nil, false
 }
 
 // GuardConn charges writes on conn against the tcp_reply_limit budget for its

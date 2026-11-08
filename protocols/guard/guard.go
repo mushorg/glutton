@@ -125,6 +125,7 @@ const (
 	LimitGlobal         Limit = "global"
 	LimitSourceRequests Limit = "source_requests"
 	LimitGlobalRequests Limit = "global_requests"
+	LimitSourceConns    Limit = "source_conns"
 )
 
 // Decision is the outcome of Allow.
@@ -275,9 +276,15 @@ func (g *Guard) Allow(dst net.IP, size int) Decision {
 
 // sourceKey masks addr to the configured source prefix.
 func (g *Guard) sourceKey(addr netip.Addr) netip.Addr {
-	bits := g.cfg.SourcePrefixV6
+	return prefixKey(addr, g.cfg.SourcePrefixV4, g.cfg.SourcePrefixV6)
+}
+
+// prefixKey masks addr to v4 bits (IPv4) or v6 bits (IPv6). 0 or the full
+// length keeps the address.
+func prefixKey(addr netip.Addr, v4, v6 int) netip.Addr {
+	bits := v6
 	if addr.Is4() {
-		bits = g.cfg.SourcePrefixV4
+		bits = v4
 	}
 	if bits <= 0 || bits >= addr.BitLen() {
 		return addr

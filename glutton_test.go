@@ -368,3 +368,79 @@ func TestHandleTCPConnNoRuleUsesTCPHandler(t *testing.T) {
 		t.Fatal("tcp handler was not called")
 	}
 }
+
+func TestConnLimitConfig(t *testing.T) {
+	const key = "tcp_conn_limit"
+	keys := []string{key + ".enabled", key + ".source_max", key + ".source_prefix_v4", key + ".source_prefix_v6"}
+	orig := map[string]any{}
+	for _, k := range keys {
+		orig[k] = viper.Get(k)
+	}
+	t.Cleanup(func() {
+		for k, v := range orig {
+			viper.Set(k, v)
+		}
+	})
+	for _, k := range keys {
+		viper.Set(k, nil)
+	}
+	require.Equal(t, guard.DefaultConnLimitConfig(), connLimitConfig(key), "enabled with defaults when unset")
+
+	viper.Set(key+".enabled", false)
+	viper.Set(key+".source_max", 10)
+	viper.Set(key+".source_prefix_v4", 32)
+	viper.Set(key+".source_prefix_v6", 64)
+	require.Equal(t, guard.ConnLimitConfig{Enabled: false, SourceMax: 10, SourcePrefixV4: 32, SourcePrefixV6: 64}, connLimitConfig(key))
+}
+
+// Over tcp_conn_limit a connection is reset before any handler runs; the slot
+// frees when the handler returns.
+func TestHandleTCPConnRefusesOverConnLimit(t *testing.T) {
+	rs, err := rules.Init(bytes.NewReader([]byte("rules:\n  - match: tcp\n    type: conn_handler\n    target: hold\n")))
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var logs bytes.Buffer
+	started := make(chan struct{}, 4)
+	finish := make(chan struct{})
+	g := &Glutton{
+		ctx:          ctx,
+		Logger:       slog.New(slog.NewTextHandler(&logs, nil)),
+		rules:        rs,
+		connTable:    connection.New(ctx, 16, nil),
+		tcpConnLimit: guard.NewConnLimiter(guard.ConnLimitConfig{Enabled: true, SourceMax: 1, SourcePrefixV4: 24}),
+		tcpProtocolHandlers: map[string]protocols.TCPHandlerFunc{
+			"hold": func(_ context.Context, conn net.Conn, _ connection.Metadata) error {
+				started <- struct{}{}
+				<-finish
+				return conn.Close()
+			},
+		},
+	}
+
+	_, first := tcpPair(t)
+	g.handleTCPConn(first)
+	<-started
+
+	client, second := tcpPair(t)
+	g.handleTCPConn(second)
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, err = client.Read(make([]byte, 1))
+	require.Error(t, err, "refused connection is closed")
+	require.NotErrorIs(t, err, os.ErrDeadlineExceeded)
+	require.Contains(t, logs.String(), "Refusing TCP connections over the per-source connection cap")
+	require.Len(t, started, 0, "the handler never ran for the refused conn")
+
+	close(finish)
+	require.Eventually(t, func() bool { return g.tcpConnLimit.Open(net.ParseIP("127.0.0.1")) == 0 },
+		2*time.Second, 10*time.Millisecond, "handler return releases the slot")
+
+	_, third := tcpPair(t)
+	g.handleTCPConn(third)
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a freed slot was not reused")
+	}
+}
