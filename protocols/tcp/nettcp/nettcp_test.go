@@ -102,6 +102,12 @@ func TestRespondFaults(t *testing.T) {
 		require.Equal(t, "Fault", parsed.Name)
 		require.Equal(t, name, FaultName(parsed.Fault))
 	}
+	upgrade := append([]byte{RecordUpgradeRequest, 0x13}, UpgradeSSLTLS...)
+	rec, err := ReadRecord(bufio.NewReader(bytes.NewReader(upgrade)), 64)
+	require.NoError(t, err)
+	require.Equal(t, UpgradeSSLTLS, rec.ContentType)
+	require.Equal(t, Reply{Data: []byte{RecordUpgradeResponse}, StartTLS: true}, Respond(rec))
+
 	end := Respond(Record{Type: RecordEnd})
 	require.Equal(t, Reply{Data: []byte{RecordEnd}, Close: true}, end)
 }

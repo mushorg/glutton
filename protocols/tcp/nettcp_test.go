@@ -2,6 +2,7 @@ package tcp
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"net"
 	"testing"
@@ -130,6 +131,85 @@ func TestHandleNetTcpCaptured4025Preamble(t *testing.T) {
 		{Direction: "write", Command: "PreambleAck", Payload: []byte{0x0b}},
 	}, ev.decoded)
 	require.Empty(t, hp.produced)
+}
+
+// Captured on tcp/9401 (sensor address scrubbed to 1.2.3.4, Via size byte
+// adjusted from 0x1f to match): Version 1.0, duplex, Via,
+// application/soap+msbinsession1, then an application/ssl-tls Upgrade Request.
+var nettcpCaptured9401Preamble = []byte{
+	0x00, 0x01, 0x00, 0x01, 0x02, 0x02, 0x17, 0x6e, 0x65, 0x74, 0x2e, 0x74, 0x63, 0x70, 0x3a, 0x2f,
+	0x2f, 0x31, 0x2e, 0x32, 0x2e, 0x33, 0x2e, 0x34, 0x3a, 0x39, 0x34, 0x30, 0x31, 0x2f, 0x03, 0x08,
+	0x09, 0x13, 0x61, 0x70, 0x70, 0x6c, 0x69, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x2f, 0x73, 0x73,
+	0x6c, 0x2d, 0x74, 0x6c, 0x73,
+}
+
+func TestHandleNetTcpSSLTLSUpgrade(t *testing.T) {
+	client, hp, done := startNetTcpOnPort(t, 9401)
+	_, err := client.Write(nettcpCaptured9401Preamble)
+	require.NoError(t, err)
+
+	resp := make([]byte, 1)
+	_, err = io.ReadFull(client, resp)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x0a}, resp)
+
+	tc := tls.Client(client, &tls.Config{InsecureSkipVerify: true, ServerName: "wcf.example.com"})
+	require.NoError(t, tc.Handshake())
+
+	// Inside TLS: PreambleEnd gets PreambleAck, End gets End.
+	_, err = tc.Write([]byte{0x0c})
+	require.NoError(t, err)
+	_, err = io.ReadFull(tc, resp)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x0b}, resp)
+	_, err = tc.Write([]byte{0x07})
+	require.NoError(t, err)
+	_, err = io.ReadFull(tc, resp)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x07}, resp)
+
+	ev := waitNetTcpEvent(t, hp, done)
+	require.Equal(t, "nettcp", ev.protocol)
+	require.NotNil(t, ev.tls)
+	require.Equal(t, "wcf.example.com", ev.tls.ServerName)
+	frames := ev.decoded.([]parsedNetTcp)
+	require.Len(t, frames, 11)
+	via := "net.tcp://1.2.3.4:9401/"
+	require.Equal(t, []parsedNetTcp{
+		{Direction: "read", Command: "Version", Version: "1.0", Payload: []byte{0x00, 0x01, 0x00}},
+		{Direction: "read", Command: "Mode", Mode: "duplex", Payload: []byte{0x01, 0x02}},
+		{Direction: "read", Command: "Via", Path: via, Payload: append([]byte{0x02, 0x17}, via...)},
+		{Direction: "read", Command: "KnownEncoding", ContentType: "application/soap+msbinsession1", Payload: []byte{0x03, 0x08}},
+		{Direction: "read", Command: "UpgradeRequest", ContentType: "application/ssl-tls", Payload: nettcpCaptured9401Preamble[32:]},
+		{Direction: "write", Command: "UpgradeResponse", Payload: []byte{0x0a}},
+	}, frames[:6])
+	require.Equal(t, "tls", frames[6].Command)
+	require.Equal(t, "read", frames[6].Direction)
+	require.Equal(t, "wcf.example.com", frames[6].ServerName)
+	require.Equal(t, byte(0x16), frames[6].Payload[0])
+	require.Equal(t, []parsedNetTcp{
+		{Direction: "read", Command: "PreambleEnd", TLS: true, Payload: []byte{0x0c}},
+		{Direction: "write", Command: "PreambleAck", TLS: true, Payload: []byte{0x0b}},
+		{Direction: "read", Command: "End", TLS: true, Payload: []byte{0x07}},
+		{Direction: "write", Command: "End", TLS: true, Payload: []byte{0x07}},
+	}, frames[7:])
+}
+
+func TestHandleNetTcpUpgradeHandshakeFails(t *testing.T) {
+	client, hp, done := startNetTcpOnPort(t, 9401)
+	_, err := client.Write(nettcpCaptured9401Preamble)
+	require.NoError(t, err)
+	resp := make([]byte, 1)
+	_, err = io.ReadFull(client, resp)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x0a}, resp)
+	require.NoError(t, client.Close())
+
+	ev := waitNetTcpEvent(t, hp, done)
+	require.Nil(t, ev.tls)
+	frames := ev.decoded.([]parsedNetTcp)
+	require.Len(t, frames, 7)
+	require.Equal(t, parsedNetTcp{Direction: "read", Command: "tls"}, frames[6])
 }
 
 func TestHandleNetTcpEarlyDisconnect(t *testing.T) {

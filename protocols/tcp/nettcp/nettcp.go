@@ -264,17 +264,25 @@ func FaultName(s string) string {
 	return s
 }
 
+// UpgradeSSLTLS is the Upgrade Request protocol for a TLS stream upgrade
+// ([MS-NMF] 2.2.3.9, 3.1.5.8).
+const UpgradeSSLTLS = "application/ssl-tls"
+
 // Reply is the server's answer to one client record. Close tells the caller
-// to end the session after writing Data (if any).
+// to end the session after writing Data (if any). StartTLS tells the caller
+// to run a server TLS handshake after writing Data (an Upgrade Response) and
+// to read the rest of the session's records from the TLS stream.
 type Reply struct {
-	Data  []byte
-	Close bool
+	Data     []byte
+	Close    bool
+	StartTLS bool
 }
 
 // Respond returns the minimal server answer to a client record: Preamble Ack
 // after Preamble End, End for End, and a framing Fault (then close) for an
-// unsupported version, mode, encoding or any upgrade (no SSPI/TLS upgrade is
-// emulated). Envelopes get no reply.
+// unsupported version, mode, encoding or upgrade. An application/ssl-tls
+// Upgrade Request gets an Upgrade Response and StartTLS; SSPI
+// (application/negotiate) is not emulated. Envelopes get no reply.
 func Respond(rec Record) Reply {
 	switch rec.Type {
 	case RecordVersion:
@@ -290,6 +298,9 @@ func Respond(rec Record) Reply {
 			return Reply{Data: FaultRecord(FaultContentTypeInvalid), Close: true}
 		}
 	case RecordUpgradeRequest:
+		if rec.ContentType == UpgradeSSLTLS {
+			return Reply{Data: []byte{RecordUpgradeResponse}, StartTLS: true}
+		}
 		return Reply{Data: FaultRecord(FaultUpgradeInvalid), Close: true}
 	case RecordPreambleEnd:
 		return Reply{Data: []byte{RecordPreambleAck}}
