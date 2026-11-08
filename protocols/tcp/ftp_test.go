@@ -327,3 +327,152 @@ func TestParseFTPPort(t *testing.T) {
 		require.Error(t, err, bad)
 	}
 }
+
+// Unrecognized input used to get a uniform "200 Ok.", which no real FTP
+// server sends. Known-but-unemulated verbs now get 502, junk gets 500.
+func TestHandleFTPUnknownCommands(t *testing.T) {
+	send, expect, hp, done := startFTP(t)
+	send("SYST")
+	expect("215 UNIX Type: L8")
+	send("PASV")
+	expect("502 Command not implemented.")
+	send("FOOBAR x")
+	expect("500 Syntax error, command unrecognized.")
+	send("\x10\x0c\x00\x0b\x00\x08")
+	expect("500 Syntax error, command unrecognized.")
+	send("QUIT")
+	expect("221 Goodbye.")
+	require.NoError(t, <-done)
+
+	events := waitProduced(t, hp).decoded.([]parsedFTP)
+	require.Equal(t, []parsedFTP{
+		{Direction: "write", Status: "220", Payload: []byte("220 Welcome\r\n")},
+		{Direction: "read", Command: "SYST", Payload: []byte("SYST\r\n")},
+		{Direction: "write", Status: "215", Payload: []byte("215 UNIX Type: L8\r\n")},
+		{Direction: "read", Command: "PASV", Payload: []byte("PASV\r\n")},
+		{Direction: "write", Status: "502", Payload: []byte("502 Command not implemented.\r\n")},
+		{Direction: "read", Command: "FOOBAR", Payload: []byte("FOOBAR x\r\n")},
+		{Direction: "write", Status: "500", Payload: []byte("500 Syntax error, command unrecognized.\r\n")},
+		{Direction: "read", Payload: []byte("\x10\x0c\x00\x0b\x00\x08\r\n")},
+		{Direction: "write", Status: "500", Payload: []byte("500 Syntax error, command unrecognized.\r\n")},
+		{Direction: "read", Command: "QUIT", Payload: []byte("QUIT\r\n")},
+		{Direction: "write", Status: "221", Payload: []byte("221 Goodbye.\r\n")},
+	}, events)
+}
+
+func TestFTPVerbAndPath(t *testing.T) {
+	cases := []struct{ msg, want string }{
+		{"user anonymous\r\n", "USER"},
+		{"GET / HTTP/1.1\r\n", "GET"},
+		{"\x16\x03\x01\x05\xac", ""},
+		{"US3R x", ""},
+		{"ABCDEFGHI", ""},
+		{"   \r\n", ""},
+		{"\xff\xfb\x01 telnet\r\n", ""},
+	}
+	for _, c := range cases {
+		cmd, _ := ftpVerbAndPath(c.msg)
+		require.Equal(t, c.want, cmd, "%q", c.msg)
+	}
+}
+
+// startFTPRaw starts the handler and reads the greeting, returning the raw
+// client side of the pipe for TLS tests.
+func startFTPRaw(t *testing.T) (net.Conn, *fakeHoneypot, chan error) {
+	t.Helper()
+	client, serverConn := net.Pipe()
+	t.Cleanup(func() { client.Close() })
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleFTP(context.Background(), serverConn, connection.Metadata{}, &recordingLogger{}, hp)
+	}()
+	buf := make([]byte, len("220 Welcome\r\n"))
+	_, err := io.ReadFull(client, buf)
+	require.NoError(t, err)
+	require.Equal(t, "220 Welcome\r\n", string(buf))
+	return client, hp, done
+}
+
+func finishFTPTLS(t *testing.T, tc *tls.Conn, r *bufio.Reader, hp *fakeHoneypot, done chan error) producedTCP {
+	t.Helper()
+	_, err := io.WriteString(tc, "QUIT\r\n")
+	require.NoError(t, err)
+	line, err := r.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "221 Goodbye.\r\n", line)
+	go func() { _, _ = io.Copy(io.Discard, tc) }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	produced := waitProduced(t, hp)
+	require.NotNil(t, produced.tls)
+	require.NotEmpty(t, produced.tls.JA4)
+	require.Contains(t, produced.stack, "tls")
+	return produced
+}
+
+// A captured client on tcp/21 read the 220 banner and then sent a TLS
+// ClientHello; it used to get "200 Ok." for every handshake record. The
+// handler now terminates TLS and greets again over the encrypted channel.
+func TestHandleFTPClientHelloAfterBanner(t *testing.T) {
+	client, hp, done := startFTPRaw(t)
+	tc := tls.Client(client, &tls.Config{InsecureSkipVerify: true, ServerName: "ftp.example"})
+	require.NoError(t, tc.Handshake())
+	r := bufio.NewReader(tc)
+	line, err := r.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "220 Welcome\r\n", line)
+
+	events := finishFTPTLS(t, tc, r, hp, done).decoded.([]parsedFTP)
+	require.Len(t, events, 5)
+	hello := events[1]
+	require.Equal(t, "read", hello.Direction)
+	require.Equal(t, "tls", hello.Command)
+	require.Equal(t, "ftp.example", hello.ServerName)
+	require.True(t, helpers.LooksLikeTLSHandshakeRecord(hello.Payload))
+	require.Equal(t, parsedFTP{Direction: "write", Status: "220", Payload: []byte("220 Welcome\r\n")}, events[2])
+	require.Equal(t, "QUIT", events[3].Command)
+}
+
+func TestHandleFTPAuthTLS(t *testing.T) {
+	client, hp, done := startFTPRaw(t)
+	_, err := io.WriteString(client, "AUTH TLS\r\n")
+	require.NoError(t, err)
+	buf := make([]byte, len("234 Proceed with negotiation.\r\n"))
+	_, err = io.ReadFull(client, buf)
+	require.NoError(t, err)
+	require.Equal(t, "234 Proceed with negotiation.\r\n", string(buf))
+
+	tc := tls.Client(client, &tls.Config{InsecureSkipVerify: true})
+	require.NoError(t, tc.Handshake())
+	r := bufio.NewReader(tc)
+	_, err = io.WriteString(tc, "AUTH TLS\r\n")
+	require.NoError(t, err)
+	line, err := r.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "502 Already using TLS.\r\n", line)
+
+	events := finishFTPTLS(t, tc, r, hp, done).decoded.([]parsedFTP)
+	require.Len(t, events, 8)
+	require.Equal(t, "AUTH", events[1].Command)
+	require.Equal(t, "tls", events[3].Command)
+}
+
+// A failed handshake still produces the session with the hello bytes.
+func TestHandleFTPClientHelloGarbage(t *testing.T) {
+	client, hp, done := startFTPRaw(t)
+	go func() { _, _ = io.Copy(io.Discard, client) }()
+	_, err := client.Write([]byte{0x16, 0x03, 0x01, 0x00, 0x05, 0x01, 0x00, 0x00, 0x01, 0x03})
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
+	require.NoError(t, <-done)
+	events := waitProduced(t, hp).decoded.([]parsedFTP)
+	require.Len(t, events, 2)
+	require.Equal(t, "tls", events[1].Command)
+	require.NotEmpty(t, events[1].Payload)
+}

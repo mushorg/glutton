@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"path/filepath"
@@ -26,13 +27,20 @@ const (
 	StatusServiceReady       = 220 // RFC 959, 4.2.1
 	StatusClosingControlConn = 221 // RFC 959, 4.2.1
 	StatusClosingDataConn    = 226 // RFC 959, 4.2.1
+	StatusSystemType         = 215 // RFC 959, 4.2.1
 	StatusUserLoggedIn       = 230 // RFC 959, 4.2.1
+	StatusAuthOK             = 234 // RFC 4217, 4
+	StatusFileActionOK       = 250 // RFC 959, 4.2.1
+	StatusPathCreated        = 257 // RFC 959, 4.2.1
 	// 3xx
 	StatusUserOK = 331 // RFC 959, 4.2.1
 	// 4xx
 	StatusCannotOpenDataConnection = 425 // RFC 959, 4.2.1
 	// 5xx
+	StatusSyntaxError       = 500 // RFC 959, 4.2.1
 	StatusSyntaxErrorInArgs = 501 // RFC 959, 4.2.1
+	StatusNotImplemented    = 502 // RFC 959, 4.2.1
+	StatusParamNotImpl      = 504 // RFC 959, 4.2.1
 	StatusActionNotTaken    = 550 // RFC 959, 4.2.1
 )
 
@@ -43,6 +51,7 @@ type parsedFTP struct {
 	Username    string `json:"username,omitempty"` // USER argument
 	Password    string `json:"password,omitempty"` // PASS argument
 	Status      string `json:"status,omitempty"`
+	ServerName  string `json:"server_name,omitempty"` // SNI of an in-session ClientHello (command "tls")
 	Payload     []byte `json:"payload,omitempty"`
 	PayloadHash string `json:"payload_hash,omitempty"`
 	Truncated   bool   `json:"truncated,omitempty"` // command line cut at maxFTPLine
@@ -60,6 +69,8 @@ type ftpServer struct {
 	events []parsedFTP
 	conn   net.Conn
 	reader *bufio.Reader
+	w      io.Writer
+	tls    bool
 }
 
 type ftpResponse struct {
@@ -67,9 +78,28 @@ type ftpResponse struct {
 	msg  string
 }
 
+// maxFTPVerb bounds a verb: RFC 959 and its extensions use 3-4 letters; the
+// slack lets HTTP or SMTP verbs sent to tcp/21 still show up.
+const maxFTPVerb = 8
+
+// ftpVerb reports whether s looks like a command verb (ASCII letters only),
+// so binary input such as a TLS record never ends up in command.
+func ftpVerb(s string) bool {
+	if len(s) == 0 || len(s) > maxFTPVerb {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i] | 0x20
+		if c < 'a' || c > 'z' {
+			return false
+		}
+	}
+	return true
+}
+
 func ftpVerbAndPath(msg string) (cmd, path string) {
 	fields := strings.Fields(strings.TrimSpace(msg))
-	if len(fields) == 0 {
+	if len(fields) == 0 || !ftpVerb(fields[0]) {
 		return "", ""
 	}
 	cmd = strings.ToUpper(fields[0])
@@ -112,7 +142,7 @@ func (s *ftpServer) read(_ interfaces.Logger, _ interfaces.Honeypot) (string, er
 
 func (s *ftpServer) write(resp ftpResponse) error {
 	msg := fmt.Sprintf("%d %s\r\n", resp.code, resp.msg)
-	_, err := s.conn.Write([]byte(msg))
+	_, err := s.w.Write([]byte(msg))
 	if err != nil {
 		return err
 	}
@@ -122,7 +152,79 @@ func (s *ftpServer) write(resp ftpResponse) error {
 		Payload:   []byte(msg),
 	})
 	return nil
+}
 
+// tlsNext reports whether the next client bytes open a TLS handshake record.
+func (s *ftpServer) tlsNext() (bool, error) {
+	first, err := s.reader.Peek(1)
+	if err != nil {
+		return false, err
+	}
+	if first[0] != 0x16 {
+		return false, nil
+	}
+	hdr, _ := s.reader.Peek(3)
+	return helpers.LooksLikeTLSHandshakeRecord(hdr), nil
+}
+
+// startTLS runs a server TLS handshake over the buffered reader and switches
+// the control connection to it. The client's handshake bytes are recorded as
+// a "tls" read frame and the TLS details go on md for the produced event.
+func (s *ftpServer) startTLS(md *connection.Metadata) error {
+	tlsConn, info, err := helpers.TerminateTLSFrom(s.conn, s.reader)
+	md.TLS = info
+	md.AddInner("tls")
+	s.events = append(s.events, parsedFTP{
+		Direction:  "read",
+		Command:    "tls",
+		ServerName: info.ServerName,
+		Payload:    info.Hello,
+		Truncated:  info.Truncated,
+	})
+	if err != nil {
+		return err
+	}
+	s.tls = true
+	s.reader = bufio.NewReader(tlsConn)
+	s.w = tlsConn
+	return nil
+}
+
+// ftpReply answers the verbs the main loop does not act on. Verbs real
+// servers know but this one does not emulate (PASV, LIST, RETR, FEAT, ...)
+// get 502; anything else, including binary input with no verb, gets 500 as
+// on vsftpd or ProFTPD instead of a uniform 200.
+func ftpReply(cmd, arg string, tlsActive bool) ftpResponse {
+	switch cmd {
+	case "SYST":
+		return ftpResponse{StatusSystemType, "UNIX Type: L8"}
+	case "PWD", "XPWD":
+		return ftpResponse{StatusPathCreated, `"/" is the current directory`}
+	case "CWD", "CDUP":
+		return ftpResponse{StatusFileActionOK, "Directory successfully changed."}
+	case "TYPE":
+		return ftpResponse{StatusOK, "Switching to Binary mode."}
+	case "NOOP":
+		return ftpResponse{StatusOK, "NOOP ok."}
+	case "AUTH":
+		switch strings.ToUpper(arg) {
+		case "TLS", "SSL", "TLS-C", "TLS-P":
+			if tlsActive {
+				return ftpResponse{StatusNotImplemented, "Already using TLS."}
+			}
+			return ftpResponse{StatusAuthOK, "Proceed with negotiation."}
+		}
+		return ftpResponse{StatusParamNotImpl, "Unknown AUTH type."}
+	case "PBSZ":
+		return ftpResponse{StatusOK, "PBSZ=0"}
+	case "PROT":
+		return ftpResponse{StatusOK, "PROT now Private."}
+	case "ABOR", "ACCT", "ALLO", "APPE", "DELE", "EPRT", "EPSV", "FEAT", "HELP", "LIST",
+		"MDTM", "MKD", "MLSD", "MLST", "MODE", "NLST", "OPTS", "PASV", "REIN", "REST",
+		"RETR", "RMD", "RNFR", "RNTO", "SITE", "SIZE", "SMNT", "STAT", "STOU", "STRU":
+		return ftpResponse{StatusNotImplemented, "Command not implemented."}
+	}
+	return ftpResponse{StatusSyntaxError, "Syntax error, command unrecognized."}
 }
 
 // parseFTPPort parses a PORT argument (h1,h2,h3,h4,p1,p2) into the client's
@@ -181,6 +283,8 @@ func HandleFTP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 	server := ftpServer{
 		conn:   conn,
 		reader: bufio.NewReader(conn),
+		w:      conn,
+		tls:    md.TLS != nil,
 	}
 	endReason := connection.EndHandlerClose
 	defer func() {
@@ -210,6 +314,29 @@ loop:
 			logger.Debug("Failed to set connection timeout", slog.String("protocol", "ftp"), producer.ErrAttr(err))
 			endReason = connection.EndTimeout
 			return nil
+		}
+		// A ClientHello on the control connection (an implicit-FTPS client on
+		// tcp/21 that read the banner first): terminate TLS over the buffered
+		// reader and greet again, as pop3.go does.
+		if !server.tls {
+			isTLS, err := server.tlsNext()
+			if err != nil {
+				logger.Debug("Failed to read data", slog.String("protocol", "ftp"), producer.ErrAttr(err))
+				endReason = connection.EndReasonFromRead(err)
+				break
+			}
+			if isTLS {
+				if err := server.startTLS(&md); err != nil {
+					logger.Debug("Failed TLS handshake", slog.String("protocol", "ftp"), producer.ErrAttr(err))
+					endReason = connection.EndReasonFromRead(err)
+					break
+				}
+				if err := server.write(ftpResponse{StatusServiceReady, "Welcome"}); err != nil {
+					endReason = connection.EndWriteError
+					return err
+				}
+				continue
+			}
 		}
 		msg, err := server.read(logger, h)
 		if err != nil {
@@ -276,11 +403,18 @@ loop:
 			dataAddr = addr
 			resp = ftpResponse{StatusOK, "PORT command successful."}
 		default:
-			resp = ftpResponse{StatusOK, "Ok."}
+			resp = ftpReply(cmd, ftpArg(msg), server.tls)
 		}
 		if err := server.write(resp); err != nil {
 			endReason = connection.EndWriteError
 			return err
+		}
+		if resp.code == StatusAuthOK {
+			if err := server.startTLS(&md); err != nil {
+				logger.Debug("Failed AUTH TLS handshake", slog.String("protocol", "ftp"), producer.ErrAttr(err))
+				endReason = connection.EndReasonFromRead(err)
+				break
+			}
 		}
 	}
 	return nil
