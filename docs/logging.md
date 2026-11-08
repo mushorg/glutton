@@ -157,6 +157,7 @@ Example shape:
 | `slp` | UDP, TCP | [protocols/slp.md](protocols/slp.md) |
 | `radius` | UDP | [protocols/radius.md](protocols/radius.md) |
 | `opcua` | TCP | [protocols/opcua.md](protocols/opcua.md) |
+| `gearman` | TCP | [protocols/gearman.md](protocols/gearman.md) |
 | `nettcp` | TCP | [protocols/nettcp.md](protocols/nettcp.md) |
 | `mctp` | TCP | [protocols/mctp.md](protocols/mctp.md) |
 | `dahua` | TCP | [protocols/dahua.md](protocols/dahua.md) |

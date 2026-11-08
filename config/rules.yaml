@@ -112,6 +112,9 @@ rules:
   - match: tcp dst port 4840
     type: conn_handler
     target: opcua
+  - match: tcp dst port 4730
+    type: conn_handler
+    target: gearman
   - match: tcp dst port 4025 or 4026 or 9401
     type: conn_handler
     target: nettcp
