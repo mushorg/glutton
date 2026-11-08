@@ -1,9 +1,9 @@
 rules:
-  - match: tcp dst port 23 or port 2323 or port 23231
+  - match: tcp dst port 23 or 2323 or 23231
     type: conn_handler
     target: telnet
     tls: auto
-  - match: tcp dst port 1883 or port 8883
+  - match: tcp dst port 1883 or 8883
     type: conn_handler
     target: mqtt
     tls: auto
@@ -23,7 +23,7 @@ rules:
   - match: tcp dst portrange 5900-5910
     type: conn_handler
     target: rfb
-  - match: tcp dst port 445 or port 139
+  - match: tcp dst port 445 or 139
     type: conn_handler
     target: smb
   - match: tcp dst port 21
@@ -43,7 +43,7 @@ rules:
     type: conn_handler
     target: sip
     tls: true
-  - match: tcp dst port 5222 or port 5223 or port 5269
+  - match: tcp dst port 5222 or 5223 or 5269
     type: conn_handler
     target: jabber
   - match: tcp dst port 995
@@ -112,7 +112,7 @@ rules:
   - match: tcp dst port 4840
     type: conn_handler
     target: opcua
-  - match: tcp dst port 4025 or port 4026
+  - match: tcp dst port 4025 or 4026
     type: conn_handler
     target: nettcp
   - match: tcp dst port 9000
@@ -121,7 +121,7 @@ rules:
   - match: tcp dst port 37777
     type: conn_handler
     target: dahua
-  - match: tcp dst port 34567 or port 34568
+  - match: tcp dst port 34567 or 34568
     type: conn_handler
     target: sofia
   - match: tcp dst port 179
@@ -134,17 +134,17 @@ rules:
     type: conn_handler
     target: cql
     tls: auto
-  - match: tcp dst port 554 or port 8554 or port 10554
+  - match: tcp dst port 554 or 8554 or 10554
     type: conn_handler
     target: rtsp
-  - match: tcp dst port 1344 or port 11344
+  - match: tcp dst port 1344 or 11344
     type: conn_handler
     target: icap
     tls: auto
-  - match: tcp dst port 5555 or port 5037
+  - match: tcp dst port 5555 or 5037
     type: conn_handler
     target: adb
-  - match: tcp dst port 104 or port 2345 or port 11112 or port 2761 or port 2762 or port 4242
+  - match: tcp dst port 104 or 2345 or 11112 or 2761 or 2762 or 4242
     type: conn_handler
     target: dicom
     tls: auto
@@ -167,10 +167,10 @@ rules:
   - match: tcp dst port 27015
     type: conn_handler
     target: rcon
-  - match: tcp dst port 1080 or port 4145
+  - match: tcp dst port 1080 or 4145
     type: conn_handler
     target: socks
-  - match: tcp dst port 8006 or port 3780
+  - match: tcp dst port 8006 or 3780
     type: conn_handler
     target: http
     tls: auto
@@ -180,7 +180,7 @@ rules:
   - match: tcp dst port 9200
     type: conn_handler
     target: http
-  - match: tcp dst port 22 or port 2222
+  - match: tcp dst port 22 or 2222
     type: conn_handler
     target: ssh
   - match: tcp dst port 6668
@@ -213,7 +213,7 @@ rules:
   - match: udp dst port 5683
     type: conn_handler
     target: coap
-  - match: udp dst port 500 or port 4500
+  - match: udp dst port 500 or 4500
     type: conn_handler
     target: ike
   - match: udp dst port 137
@@ -225,10 +225,10 @@ rules:
   - match: udp dst port 27036
     type: conn_handler
     target: steam
-  - match: udp dst port 987 or port 9302
+  - match: udp dst port 987 or 9302
     type: conn_handler
     target: ddp
-  - match: udp dst port 7400 or port 7401 or port 7410 or port 7411
+  - match: udp dst port 7400 or 7401 or 7410 or 7411
     type: conn_handler
     target: rtps
   - match: udp dst port 3671
@@ -240,7 +240,7 @@ rules:
   - match: udp dst port 427
     type: conn_handler
     target: slp
-  - match: udp dst port 1812 or port 1813
+  - match: udp dst port 1812 or 1813
     type: conn_handler
     target: radius
   - match: udp dst port 36000

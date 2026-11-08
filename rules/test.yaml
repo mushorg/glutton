@@ -1,5 +1,5 @@
 rules:
-  - match: tcp dst port 22 or port 2222
+  - match: tcp dst port 22 or 2222
     type: conn_handler
     name: proxy_ssh
     target: tcp://172.17.0.2:22

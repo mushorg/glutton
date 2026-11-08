@@ -15,6 +15,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/xiegeo/modbusone v1.2.1
 	golang.org/x/crypto v0.58.0
+	golang.org/x/net v0.60.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v2 v2.4.0
 )

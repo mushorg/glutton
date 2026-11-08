@@ -282,20 +282,17 @@ func TestRunMatchProxyTCP(t *testing.T) {
 
 func TestBPF(t *testing.T) {
 	buf := make([]byte, 65535)
-	bpfi, err := pcap.NewBPF(layers.LinkTypeEthernet, 65535, "icmp")
+	vm, err := compileMatcher("icmp")
 	require.NoError(t, err)
 	fh, err := os.Open("test.yaml")
 	require.NoError(t, err)
 	n, err := fh.Read(buf)
 	require.NoError(t, err)
-	ci := gopacket.CaptureInfo{CaptureLength: n, Length: n, Timestamp: time.Now()}
-	if bpfi.Matches(ci, buf) {
-		t.Error("shouldn't match")
-	}
+	rule := &Rule{matcher: vm}
+	require.False(t, rule.matches(buf[:n]), "shouldn't match")
 }
 
 func TestWorkingMatch(t *testing.T) {
-	snaplen := 65535
 	packet := [...]byte{
 		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // dst mac
 		0x0, 0x11, 0x22, 0x33, 0x44, 0x55, // src mac
@@ -307,15 +304,147 @@ func TestWorkingMatch(t *testing.T) {
 		0x0, 0x50, // dst port
 	}
 
-	bpfi, _ := pcap.NewBPF(layers.LinkTypeEthernet, snaplen, "ip and tcp and port 80")
-	ci := gopacket.CaptureInfo{
-		InterfaceIndex: 0,
-		CaptureLength:  len(packet),
-		Length:         len(packet),
-		Timestamp:      time.Now(),
+	vm, err := compileMatcher("ip and tcp and port 80")
+	require.NoError(t, err)
+	rule := &Rule{matcher: vm}
+	require.True(t, rule.matches(packet[:]), "didn't match")
+}
+
+func TestCompileMatcherRejectsInvalidFilter(t *testing.T) {
+	_, err := compileMatcher("tcp dst port nope")
+	require.Error(t, err)
+}
+
+func loadDefaultRules(t testing.TB) Rules {
+	t.Helper()
+	fh, err := os.Open("../config/rules.yaml")
+	require.NoError(t, err)
+	defer fh.Close()
+	rs, err := Init(fh)
+	require.NoError(t, err)
+	return rs
+}
+
+// rulePorts returns every number that appears in a match expression of the
+// default rules, plus a few unlisted ones: the ports where a filter can
+// behave differently.
+func rulePorts(rs Rules) []int {
+	seen := map[int]bool{1: true, 80: true, 50000: true}
+	for _, r := range rs {
+		for _, f := range strings.FieldsFunc(r.Match, func(c rune) bool { return c < '0' || c > '9' }) {
+			var p int
+			for _, c := range f {
+				p = p*10 + int(c-'0')
+			}
+			if p > 0 && p < 65536 {
+				seen[p] = true
+			}
+		}
 	}
-	if !bpfi.Matches(ci, packet[:]) {
-		t.Fatal("didn't match")
+	ports := make([]int, 0, len(seen))
+	for p := range seen {
+		ports = append(ports, p)
+	}
+	return ports
+}
+
+func addr(network string, port int) net.Addr {
+	ip := net.ParseIP("192.0.2.10")
+	if network == "udp" {
+		return &net.UDPAddr{IP: ip, Port: port}
+	}
+	return &net.TCPAddr{IP: ip, Port: port}
+}
+
+// TestCompileMatcherAgreesWithLibpcap checks that the Go VM accepts exactly
+// the packets libpcap's own filter accepts, for every default rule.
+func TestCompileMatcherAgreesWithLibpcap(t *testing.T) {
+	rs := loadDefaultRules(t)
+	ports := rulePorts(rs)
+	for _, r := range rs {
+		ref, err := pcap.NewBPF(layers.LinkTypeEthernet, 65535, r.Match)
+		require.NoError(t, err)
+		for _, network := range []string{"tcp", "udp"} {
+			for _, port := range ports {
+				for _, sp := range [][2]int{{50000, port}, {port, 50000}} {
+					b, err := fakePacketBytes(network, "192.0.2.1", "192.0.2.10", uint16(sp[0]), uint16(sp[1]))
+					require.NoError(t, err)
+					ci := gopacket.CaptureInfo{CaptureLength: len(b), Length: len(b), Timestamp: time.Now()}
+					require.Equal(t, ref.Matches(ci, b), r.matches(b), "%q %s %d->%d", r.Match, network, sp[0], sp[1])
+				}
+			}
+		}
+	}
+}
+
+// TestDefaultRulesMatchOnlyDestination guards against rules like
+// "tcp dst port 23 or port 2323", where the bare "port 2323" matches any
+// protocol and the source port too.
+func TestDefaultRulesMatchOnlyDestination(t *testing.T) {
+	rs := loadDefaultRules(t)
+	for _, network := range []string{"tcp", "udp"} {
+		for _, port := range rulePorts(rs) {
+			// The source port must not change which rule a flow hits.
+			want, err := rs.Match(network, addr(network, 50000), addr(network, 1))
+			require.NoError(t, err)
+			got, err := rs.Match(network, addr(network, port), addr(network, 1))
+			require.NoError(t, err)
+			require.Same(t, want, got, "%s from source port %d matched %q", network, port, got.Match)
+
+			// A rule written for one protocol must not catch the other.
+			match, err := rs.Match(network, addr(network, 50000), addr(network, port))
+			require.NoError(t, err)
+			if match != nil {
+				other := "udp"
+				if network == "udp" {
+					other = "tcp"
+				}
+				require.False(t, strings.HasPrefix(match.Match, other), "%s dst port %d matched %q", network, port, match.Match)
+			}
+		}
+	}
+}
+
+// TestMatchConcurrent runs TCP and UDP matching in parallel the way the two
+// listeners do; run with -race.
+func TestMatchConcurrent(t *testing.T) {
+	rs := loadDefaultRules(t)
+	done := make(chan struct{})
+	for _, network := range []string{"tcp", "udp"} {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			for i := 0; i < 200; i++ {
+				if _, err := rs.Match(network, addr(network, 40000+i), addr(network, i)); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	<-done
+	<-done
+}
+
+func BenchmarkMatch(b *testing.B) {
+	rs := loadDefaultRules(b)
+	for _, tc := range []struct {
+		name    string
+		network string
+		port    int
+	}{
+		{"tcp-first", "tcp", 23},
+		{"tcp-catchall", "tcp", 1},
+		{"udp-catchall", "udp", 9},
+	} {
+		src, dst := addr(tc.network, 40000), addr(tc.network, tc.port)
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, err := rs.Match(tc.network, src, dst); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

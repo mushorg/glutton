@@ -6,11 +6,11 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
+	"golang.org/x/net/bpf"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -43,7 +43,10 @@ type Rule struct {
 	RuleType    RuleType
 	ProxyTarget *ProxyTarget `yaml:"-"`
 	index       int
-	matcher     *pcap.BPF
+	// matcher runs the compiled filter in Go. Unlike pcap.BPF, which writes
+	// a shared header on every call, it is stateless and so safe for the TCP
+	// and UDP listeners to run concurrently, and it avoids a cgo call per rule.
+	matcher *bpf.VM
 }
 
 // ShouldProduce reports whether matching sessions should be sent to producers.
@@ -148,7 +151,7 @@ func (rule *Rule) init(idx int) error {
 
 	var err error
 	if len(rule.Match) > 0 {
-		rule.matcher, err = pcap.NewBPF(layers.LinkTypeEthernet, 65535, rule.Match)
+		rule.matcher, err = compileMatcher(rule.Match)
 		if err != nil {
 			return err
 		}
@@ -158,6 +161,34 @@ func (rule *Rule) init(idx int) error {
 	rule.isInit = true
 
 	return nil
+}
+
+// compileMatcher compiles a pcap filter expression with libpcap (once, at
+// init) and loads the program into a pure-Go BPF VM for matching.
+func compileMatcher(expr string) (*bpf.VM, error) {
+	ins, err := pcap.CompileBPFFilter(layers.LinkTypeEthernet, 65535, expr)
+	if err != nil {
+		return nil, err
+	}
+	raw := make([]bpf.RawInstruction, len(ins))
+	for i, in := range ins {
+		raw[i] = bpf.RawInstruction{Op: in.Code, Jt: in.Jt, Jf: in.Jf, K: in.K}
+	}
+	filter, ok := bpf.Disassemble(raw)
+	if !ok {
+		return nil, fmt.Errorf("filter %q uses BPF instructions the Go VM cannot run", expr)
+	}
+	vm, err := bpf.NewVM(filter)
+	if err != nil {
+		return nil, fmt.Errorf("filter %q: %w", expr, err)
+	}
+	return vm, nil
+}
+
+// matches reports whether the rule's filter accepts the packet.
+func (r *Rule) matches(packet []byte) bool {
+	n, err := r.matcher.Run(packet)
+	return err == nil && n > 0
 }
 
 func parseProxyTarget(raw string) (*ProxyTarget, error) {
@@ -269,16 +300,8 @@ func (rs Rules) Match(network string, srcAddr, dstAddr net.Addr) (*Rule, error) 
 	}
 
 	for _, rule := range rs {
-		if rule.matcher != nil {
-			n := len(b)
-			if rule.matcher.Matches(gopacket.CaptureInfo{
-				InterfaceIndex: 0,
-				CaptureLength:  n,
-				Length:         n,
-				Timestamp:      time.Now(),
-			}, b) {
-				return rule, nil
-			}
+		if rule.matcher != nil && rule.matches(b) {
+			return rule, nil
 		}
 	}
 
