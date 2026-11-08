@@ -138,6 +138,9 @@ func Classify(ip net.IP) (scannerName, srcPtr string, err error) {
 		if strings.HasSuffix(name, "criminalip.com.") {
 			return "criminalip", srcPtr, nil
 		}
+		if strings.HasSuffix(name, "internet-census.org.") {
+			return "internet-census", srcPtr, nil
+		}
 	}
 	return "", srcPtr, nil
 }

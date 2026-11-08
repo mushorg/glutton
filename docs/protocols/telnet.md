@@ -10,12 +10,13 @@ Transport: TCP. Shared encodings and frame fields are described in [Logging and 
 | --- | --- | --- |
 | `direction` | all | `read` (from attacker) or `write` (from honeypot). |
 | `command` | reads | `username` / `password` on login reads; otherwise the first token of the shell line, cut at whitespace or a shell operator (`ping; sh` → `ping`). `tls_client_hello` or `binary` for non-telnet input. Login prompt writes also set `username` / `password`. |
-| `message` | all | Line as sent or written, CRLF and NUL terminators included. Credentials are recorded as sent. |
-| `path` | `wget` / `curl` reads | The http(s) URL from the command line. |
+| `message` | all | Line as sent or written, CRLF and NUL terminators included. Credentials are recorded as sent. On a merged echo-loader frame (`lines` > 1) it holds every merged line, raw and in order. |
+| `path` | `wget` / `curl` reads; echo-loader reads; `chmod` / `./F` / `sh F` reads | The http(s) URL from the command line; the file an `echo -e … > F` / `>> F` line writes; the first echo-built file a line makes executable or runs. |
+| `lines` | echo-loader reads | Number of `echo -e … >> F` lines merged into this frame (1 for an unmerged one). |
 | `commands` | shell reads of a chained line | First word of every `;`, `&&`, `\|\|` or `\|` separated command (at most 32), only set when the line has more than one. `command` keeps the first word, so a probe after it (e.g. `/bin/busybox HISILICON` after `cd /root/;`) stays queryable. |
-| `payload_hash` | `wget` / `curl` reads | SHA-256 of the fetched sample, set when the fetch succeeds. |
+| `payload_hash` | `wget` / `curl` reads; `chmod` / `./F` / `sh F` reads; echo-loader reads | SHA-256 of the fetched sample, set when the fetch succeeds; of the echo-built file a line runs; or, for a file never run, of its final content on its last echo frame. |
 | `offset_ms` | all | Milliseconds since the connection was accepted (omitted when 0). Shows how long a bot waits between a write and its next command. |
-| `truncated` | reads | The line was longer than 64 KiB and `message` holds its first 64 KiB (the rest is dropped; the next line is read normally), or this is the last read kept when the session hit its frame limit. |
+| `truncated` | reads | The line was longer than 64 KiB and `message` holds its first 64 KiB (the rest is dropped; the next line is read normally), or this is the last read kept when the session hit its frame limit, or (echo-loader reads) the file hit its 1 MiB cap or the connection its 4 MiB total and later bytes were dropped. |
 | `variant` / `visit` | ELF header writes | Architecture of the visit (`arm`, `mips`, `mipsel`) and the source's visit number. Empty on all other frames. |
 
 ## Behaviour
@@ -40,6 +41,8 @@ Transport: TCP. Shared encodings and frame fields are described in [Logging and 
 
 **Sample downloads.** `wget` / `curl` lines with an http(s) URL set `path`; the sample is fetched in the background (up to 10 MiB), stored under `samples/`, and its SHA-256 set as `payload_hash`. At most 8 downloads run per connection and 32 across the sensor at once; a `wget` / `curl` beyond either limit keeps its `path` but is not fetched, so it has no `payload_hash`.
 
+**Echo-loader files.** Mirai writes its downloader 32 bytes per line (`/bin/busybox echo -ne "\x7f\x45…" > .d`, then `>> .d`) and runs it with `chmod +x .d; ./.d`. The handler rebuilds every file written by an escape-interpreting `echo` (`-e`, `-ne`, `-en`) on a single-command line: `>` truncates, `>>` appends, extra words are joined with spaces as echo does (`"…"  ar >> .k` appends ` ar`), and BusyBox escapes (`\xHH`, `\0NNN`, `\n`, `\c`, …) are decoded. Files are keyed by the name as sent, without a leading `./`, and capped at 1 MiB each and 4 MiB per connection. A line that runs or makes executable such a file (`chmod … F`, `./F`, `sh F`, with or without `/bin/busybox`) stores the file's current content under `samples/` and sets `path` and `payload_hash` on that read frame; files never run are stored at session end and the hash goes on their last echo frame. Each distinct content is stored once per connection. Nothing is executed. Consecutive `>>` appends to the same file are merged into the read frame of the first line (`lines` counts them, `message` holds all of them) and their `> ` prompts are sent but not recorded, so a loader for eight architectures (~420 lines) costs a handful of frames instead of ~840. A merged frame holds at most 256 KiB of lines; the next line starts a new frame. Sensors before this change recorded one read and one `> ` write per line, stored nothing, and an 8-architecture loader hit the frame limit (Ochi event bedf4355-6886-489c-b2f6-69df475a314c).
+
 **Session limit.** A connection keeps at most about 1000 frames; then the event is produced with `endReason` `max_frames`.
 
 ## Returning sources
@@ -59,4 +62,5 @@ Write frames that depend on the variant set `variant` and `visit`: ELF headers, 
 - Info `telnet login` with `src_ip`, `src_port`, `dest_port`, `username`, `password`. Not logged for non-telnet input.
 - Info `returning telnet source` with `visit`, `variant`, `previous_variant`, `previous_commands`.
 - Info `New sample fetched` with `sample_hash` and `source`.
+- Info `New sample rebuilt from echo` with `sample_hash`, `path`, `bytes`, `truncated`.
 - Shell lines at Debug.

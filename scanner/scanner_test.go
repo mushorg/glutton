@@ -131,6 +131,16 @@ func TestClassifyPTRCachedAcrossFlood(t *testing.T) {
 	require.EqualValues(t, 1, calls.Load())
 }
 
+func TestClassifyInternetCensusPTR(t *testing.T) {
+	fakePTR(t, func(string) ([]string, error) {
+		return []string{"scanner-04.internet-census.org."}, nil
+	})
+	name, ptr, err := Classify(net.ParseIP("198.51.100.9"))
+	require.NoError(t, err)
+	require.Equal(t, "internet-census", name)
+	require.Equal(t, "scanner-04.internet-census.org", ptr)
+}
+
 func TestClassifyPTRFailureCached(t *testing.T) {
 	calls := fakePTR(t, func(string) ([]string, error) {
 		return nil, errors.New("server misbehaving")

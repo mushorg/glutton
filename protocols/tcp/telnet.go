@@ -327,14 +327,19 @@ type parsedTelnet struct {
 	// Commands lists the first word of every `;`, `&&`, `||` or `|` separated
 	// command on a chained line (only set when there is more than one), so a
 	// probe after the first command is not lost behind Command.
-	Commands    []string `json:"commands,omitempty"`
-	Path        string   `json:"path,omitempty"` // wget/curl URL when present
-	Message     string   `json:"message,omitempty"`
-	PayloadHash string   `json:"payload_hash,omitempty"`
-	Variant     string   `json:"variant,omitempty"`   // architecture variant, on writes that depend on it
-	Visit       int      `json:"visit,omitempty"`     // source's visit number, on writes that depend on it
-	OffsetMs    int64    `json:"offset_ms,omitempty"` // milliseconds since the connection was accepted
-	Truncated   bool     `json:"truncated,omitempty"` // line cut at maxTelnetLine, or last read kept at maxTelnetFrames
+	Commands []string `json:"commands,omitempty"`
+	// Path is the wget/curl URL, or the file an echo line writes or a
+	// chmod/./sh line runs.
+	Path    string `json:"path,omitempty"`
+	Message string `json:"message,omitempty"`
+	// Lines counts the echo-loader lines merged into this read frame
+	// (Message holds them all, raw).
+	Lines       int    `json:"lines,omitempty"`
+	PayloadHash string `json:"payload_hash,omitempty"`
+	Variant     string `json:"variant,omitempty"`   // architecture variant, on writes that depend on it
+	Visit       int    `json:"visit,omitempty"`     // source's visit number, on writes that depend on it
+	OffsetMs    int64  `json:"offset_ms,omitempty"` // milliseconds since the connection was accepted
+	Truncated   bool   `json:"truncated,omitempty"` // line cut at maxTelnetLine, last read kept at maxTelnetFrames, or echo-written file cut at its cap
 }
 
 type telnetServer struct {
@@ -349,6 +354,13 @@ type telnetServer struct {
 	sampleMu sync.Mutex
 	samples  map[int]string // event index -> sample hash
 	fetches  int            // downloads started on this connection
+
+	// Files built with `echo -e … > F` on this connection (telnet_files.go).
+	files        map[string]*telnetFile
+	fileBytes    int
+	storedHashes map[string]bool
+	echoFrame    int // read frame of the last echo line, -1 when the last line was not one
+	echoFile     string
 
 	// Recall: the architecture is picked once per connection.
 	srcIP net.IP
@@ -367,6 +379,10 @@ func newTelnetServer(conn net.Conn) *telnetServer {
 		started: telnetNow(),
 		srcIP:   remoteIP(conn),
 		arch:    telnetArches[0],
+
+		files:        map[string]*telnetFile{},
+		storedHashes: map[string]bool{},
+		echoFrame:    -1,
 	}
 }
 
@@ -758,6 +774,7 @@ func handleTelnet(ctx context.Context, s *telnetServer, md connection.Metadata, 
 	s.begin(logger)
 	defer func() {
 		s.applySampleHashes()
+		s.storeEchoFiles(logger)
 		s.note()
 		md.EndReason = endReason
 		if err := h.ProduceTCP("telnet", s.conn, md, []byte(helpers.FirstOrEmpty(s.events).Message), s.events); err != nil {
@@ -880,6 +897,13 @@ func (s *telnetServer) runShellLine(msg string, logger interfaces.Logger) error 
 			s.startSampleFetch(idx, url, logger)
 		}
 	}
+	// An echo append merged into the previous echo frame gets its prompt
+	// sent but not recorded, so the loader costs one frame per file.
+	quietPrompt := s.handleEchoLine(msg)
+	framesBefore := len(s.events)
+	if s.echoFrame < 0 {
+		s.storeRunTargets(msg, s.lastReadEventIndex(), logger)
+	}
 	skipPrompt := false
 	for _, cmd := range strings.Split(msg, ";") {
 		if strings.TrimRight(cmd, "\r\n") == "cd /dev/" {
@@ -912,8 +936,15 @@ func (s *telnetServer) runShellLine(msg string, logger interfaces.Logger) error 
 		s.inSh = true
 		return nil
 	}
+	prompt := telnetPrompt
 	if s.inSh {
-		return s.write(telnetShPrompt)
+		prompt = telnetShPrompt
 	}
-	return s.write(telnetPrompt)
+	// only when the line wrote nothing else, so the merged frame stays
+	// directly before the prompt the next echo line merges across
+	if quietPrompt && len(s.events) == framesBefore {
+		_, err := s.conn.Write([]byte(prompt))
+		return err
+	}
+	return s.write(prompt)
 }
