@@ -381,7 +381,7 @@ func TestForPayloadHTTP2SettingsFollowUp(t *testing.T) {
 	require.NoError(t, err)
 	resp, ok := ForPayload(settings)
 	require.True(t, ok)
-	require.Equal(t, Response{Name: "http2-settings-ack", Data: h2SettingsAck}, resp)
+	require.Equal(t, Response{Name: "http2-client-settings", Data: h2SettingsAck}, resp)
 
 	// the client's own ACK needs no answer
 	resp, ok = ForPayload(h2SettingsAck)

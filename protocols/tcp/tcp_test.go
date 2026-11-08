@@ -454,6 +454,46 @@ func TestHandleTCPHTTP2GoAwayCloses(t *testing.T) {
 	}, events)
 }
 
+func TestHandleTCPHTTP2ClientSettingsLabelled(t *testing.T) {
+	// Censys on tcp/10443 (h2 over TLS): preface, a non-ACK SETTINGS, its
+	// ACK of our SETTINGS, then GOAWAY. The non-ACK SETTINGS used to be
+	// recorded as http2-settings-ack.
+	client, hp, done := startCatchAll(t, 10443)
+
+	probe := []byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+	_, err := client.Write(probe)
+	require.NoError(t, err)
+	reply, ok := banners.ForPayload(probe)
+	require.True(t, ok)
+	require.Equal(t, reply.Data, readAll(t, client, len(reply.Data)))
+
+	settings := []byte{0, 0, 0x18, 4, 0, 0, 0, 0, 0,
+		0, 2, 0, 0, 0, 0, 0, 4, 0, 0, 0x42, 0x68, 0, 6, 0, 4, 0, 0, 0, 3, 0, 0, 0, 0x0a}
+	_, err = client.Write(settings)
+	require.NoError(t, err)
+	settingsAck := []byte{0, 0, 0, 4, 1, 0, 0, 0, 0}
+	require.Equal(t, settingsAck, readAll(t, client, len(settingsAck)))
+
+	_, err = client.Write(settingsAck)
+	require.NoError(t, err)
+
+	goaway := []byte{0, 0, 8, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	_, err = client.Write(goaway)
+	require.NoError(t, err)
+	_, err = client.Read(make([]byte, 1))
+	require.ErrorIs(t, err, io.EOF, "no reply to the ACK or GOAWAY, connection closed")
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Equal(t, []parsedTCP{
+		{Direction: "read", Command: "http2-settings", Payload: probe, PayloadHash: helpers.SHA256Hex(probe)},
+		{Direction: "write", Status: "http2-settings", Payload: reply.Data, PayloadHash: helpers.SHA256Hex(reply.Data)},
+		{Direction: "read", Command: "http2-client-settings", Payload: settings, PayloadHash: helpers.SHA256Hex(settings)},
+		{Direction: "write", Status: "http2-client-settings", Payload: settingsAck, PayloadHash: helpers.SHA256Hex(settingsAck)},
+		{Direction: "read", Command: "http2-settings-ack", Payload: settingsAck, PayloadHash: helpers.SHA256Hex(settingsAck)},
+		{Direction: "read", Command: "http2-goaway", Payload: goaway, PayloadHash: helpers.SHA256Hex(goaway)},
+	}, events)
+}
+
 func TestHandleTCPX11Denied(t *testing.T) {
 	// X11 setup from Ochi event bf678cc5-ae8d-4ea2-8d97-02ca98d6e37c (tcp/6029)
 	client, hp, done := startCatchAll(t, 6029)

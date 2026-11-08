@@ -425,7 +425,9 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 		if ack {
 			return Response{Name: "http2-settings-ack", NoReply: true}, true
 		}
-		return Response{Name: "http2-settings-ack", Data: h2SettingsAck}, true
+		// a client SETTINGS (not an ACK): named apart from the ACK so the
+		// read frame records what the client sent; the reply is our ACK
+		return Response{Name: "http2-client-settings", Data: h2SettingsAck}, true
 	},
 	func(data []byte) (Response, bool) {
 		// the client is done: a real HTTP/2 server sends nothing more and

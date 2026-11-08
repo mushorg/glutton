@@ -32,6 +32,9 @@ Writes set `status` to the response name or `random`.
 | TLS handshake record (`16 03 00`–`04`, or TLCP `16 01 01` from GmSSL/Tongsuo) that is not a complete ClientHello | `tls-alert` | fatal TLS alert, then the connection is closed |
 | Complete TLS ClientHello | `tls-clienthello` | TLS handshake, see [TLS ClientHello](#tls-clienthello) |
 | HTTP/2 client preface `PRI * HTTP/2.0` (h2c prior knowledge) | `http2-settings` | nginx-style SETTINGS, WINDOW_UPDATE, SETTINGS ACK and GOAWAY (NO_ERROR) on stream 0 |
+| HTTP/2 SETTINGS frame on stream 0 after the preface, ACK flag clear | `http2-client-settings` | SETTINGS ACK |
+| HTTP/2 SETTINGS frame on stream 0, ACK flag set | `http2-settings-ack` | none, the connection stays open |
+| HTTP/2 GOAWAY frame on stream 0 | `http2-goaway` | none, the connection closes |
 | Oracle TNS CONNECT (packet type `01`, version 300–319, connect descriptor in the packet) | `tns-refuse` | Oracle 19c listener REFUSE (`ERR=12504`, `VSNNUM=318767104`), then the connection closes |
 | X11 connection setup | `x11-denied` | Setup Failed reply "No protocol specified" in the client's byte order |
 | LDAP root DSE search (empty base, scope baseObject) | `ldap-rootdse` | OpenLDAP-style SearchResultEntry plus SearchResultDone, echoing the messageID |
