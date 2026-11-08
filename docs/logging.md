@@ -146,6 +146,7 @@ Example shape:
 | `snmp` | UDP | [protocols/snmp.md](protocols/snmp.md) |
 | `hiflying` | UDP | [protocols/hiflying.md](protocols/hiflying.md) |
 | `realtek` | UDP | [protocols/realtek.md](protocols/realtek.md) |
+| `pcanywhere` | UDP | [protocols/pcanywhere.md](protocols/pcanywhere.md) |
 | `dtls` | UDP | [protocols/dtls.md](protocols/dtls.md) |
 | `mqtt` | TCP | [protocols/mqtt.md](protocols/mqtt.md) |
 | `memcache` | TCP | [protocols/memcache.md](protocols/memcache.md) |
