@@ -1,7 +1,6 @@
 package rules
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -9,9 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
-	"golang.org/x/net/bpf"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -44,10 +40,9 @@ type Rule struct {
 	RuleType    RuleType
 	ProxyTarget *ProxyTarget `yaml:"-"`
 	index       int
-	// matcher runs the compiled filter in Go. Unlike pcap.BPF, which writes
-	// a shared header on every call, it is stateless and so safe for the TCP
-	// and UDP listeners to run concurrently, and it avoids a cgo call per rule.
-	matcher *bpf.VM
+	// filter is the compiled Match expression. It is stateless, so the TCP
+	// and UDP listeners can match concurrently.
+	filter *matcher
 }
 
 // ShouldProduce reports whether matching sessions should be sent to producers.
@@ -150,46 +145,18 @@ func (rule *Rule) init(idx int) error {
 		rule.ProxyTarget = target
 	}
 
-	var err error
 	if len(rule.Match) > 0 {
-		rule.matcher, err = compileMatcher(rule.Match)
+		filter, err := compileFilter(rule.Match)
 		if err != nil {
-			return err
+			return fmt.Errorf("invalid match %q: %w", rule.Match, err)
 		}
+		rule.filter = filter
 	}
 
 	rule.index = idx
 	rule.isInit = true
 
 	return nil
-}
-
-// compileMatcher compiles a pcap filter expression with libpcap (once, at
-// init) and loads the program into a pure-Go BPF VM for matching.
-func compileMatcher(expr string) (*bpf.VM, error) {
-	ins, err := pcap.CompileBPFFilter(layers.LinkTypeEthernet, 65535, expr)
-	if err != nil {
-		return nil, err
-	}
-	raw := make([]bpf.RawInstruction, len(ins))
-	for i, in := range ins {
-		raw[i] = bpf.RawInstruction{Op: in.Code, Jt: in.Jt, Jf: in.Jf, K: in.K}
-	}
-	filter, ok := bpf.Disassemble(raw)
-	if !ok {
-		return nil, fmt.Errorf("filter %q uses BPF instructions the Go VM cannot run", expr)
-	}
-	vm, err := bpf.NewVM(filter)
-	if err != nil {
-		return nil, fmt.Errorf("filter %q: %w", expr, err)
-	}
-	return vm, nil
-}
-
-// matches reports whether the rule's filter accepts the packet.
-func (r *Rule) matches(packet []byte) bool {
-	n, err := r.matcher.Run(packet)
-	return err == nil && n > 0
 }
 
 func parseProxyTarget(raw string) (*ProxyTarget, error) {
@@ -221,12 +188,9 @@ func parseProxyTarget(raw string) (*ProxyTarget, error) {
 	}, nil
 }
 
-// maxFakePacket is the largest header-only packet fakePacket builds:
-// Ethernet (14) + IPv6 (40) + TCP (20).
-const maxFakePacket = 14 + 40 + 20
-
 // addrPort extracts the IP and port of a TCP or UDP address. IPv4-mapped IPv6
-// addresses are unmapped so they match IPv4 filters.
+// addresses are unmapped so they match IPv4 filters, and zones are dropped
+// because a filter matches on the address bytes alone.
 func addrPort(a net.Addr) (netip.AddrPort, error) {
 	var ap netip.AddrPort
 	switch a := a.(type) {
@@ -243,73 +207,12 @@ func addrPort(a net.Addr) (netip.AddrPort, error) {
 	if !ap.Addr().IsValid() {
 		return netip.AddrPort{}, fmt.Errorf("invalid address %q", a.String())
 	}
-	return netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port()), nil
-}
-
-// fakePacket writes into buf the headers of a packet that src would send to
-// dst over network ("tcp" or "udp") and returns the written part of buf.
-// Only what the rule filters look at is filled in: an Ethernet header, an
-// IPv4 or IPv6 header (picked by the address family) and the ports. Checksums
-// stay zero because the filters never inspect them.
-func fakePacket(buf *[maxFakePacket]byte, network string, src, dst netip.AddrPort) ([]byte, error) {
-	var proto byte
-	transportLen := 0
-	switch network {
-	case "tcp":
-		proto, transportLen = 6, 20
-	case "udp":
-		proto, transportLen = 17, 8
-	default:
-		return nil, fmt.Errorf("unsupported network %q", network)
-	}
-	if src.Addr().Is4() != dst.Addr().Is4() {
-		return nil, fmt.Errorf("address family mismatch: %s -> %s", src, dst)
-	}
-
-	*buf = [maxFakePacket]byte{}
-	// Ethernet: broadcast destination, fixed source MAC.
-	copy(buf[0:6], []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
-	copy(buf[6:12], []byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55})
-
-	var ipLen int
-	if src.Addr().Is4() {
-		ipLen = 20
-		binary.BigEndian.PutUint16(buf[12:], 0x0800)
-		ip := buf[14 : 14+ipLen]
-		ip[0] = 0x45 // version 4, IHL 5
-		binary.BigEndian.PutUint16(ip[2:], uint16(ipLen+transportLen))
-		ip[8] = 64 // TTL
-		ip[9] = proto
-		s, d := src.Addr().As4(), dst.Addr().As4()
-		copy(ip[12:16], s[:])
-		copy(ip[16:20], d[:])
-	} else {
-		ipLen = 40
-		binary.BigEndian.PutUint16(buf[12:], 0x86dd)
-		ip := buf[14 : 14+ipLen]
-		ip[0] = 0x60 // version 6
-		binary.BigEndian.PutUint16(ip[4:], uint16(transportLen))
-		ip[6] = proto // next header
-		ip[7] = 64    // hop limit
-		s, d := src.Addr().As16(), dst.Addr().As16()
-		copy(ip[8:24], s[:])
-		copy(ip[24:40], d[:])
-	}
-
-	th := buf[14+ipLen : 14+ipLen+transportLen]
-	binary.BigEndian.PutUint16(th[0:], src.Port())
-	binary.BigEndian.PutUint16(th[2:], dst.Port())
-	if proto == 6 {
-		th[12] = 5 << 4 // data offset: 5 words
-	} else {
-		binary.BigEndian.PutUint16(th[4:], uint16(transportLen))
-	}
-	return buf[:14+ipLen+transportLen], nil
+	return netip.AddrPortFrom(ap.Addr().Unmap().WithZone(""), ap.Port()), nil
 }
 
 type Rules []*Rule
 
-// Match returns the first rule whose filter accepts a packet from srcAddr to
+// Match returns the first rule whose filter accepts a flow from srcAddr to
 // dstAddr over network ("tcp" or "udp"), or nil if none does.
 func (rs Rules) Match(network string, srcAddr, dstAddr net.Addr) (*Rule, error) {
 	src, err := addrPort(srcAddr)
@@ -320,14 +223,21 @@ func (rs Rules) Match(network string, srcAddr, dstAddr net.Addr) (*Rule, error) 
 	if err != nil {
 		return nil, err
 	}
-	var buf [maxFakePacket]byte
-	b, err := fakePacket(&buf, network, src, dst)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fake packet: %w", err)
+	f := flow{src: src, dst: dst}
+	switch network {
+	case "tcp":
+		f.proto = protoTCP
+	case "udp":
+		f.proto = protoUDP
+	default:
+		return nil, fmt.Errorf("unsupported network %q", network)
+	}
+	if src.Addr().Is4() != dst.Addr().Is4() {
+		return nil, fmt.Errorf("address family mismatch: %s -> %s", src, dst)
 	}
 
 	for _, rule := range rs {
-		if rule.matcher != nil && rule.matches(b) {
+		if rule.filter != nil && rule.filter.match(&f) {
 			return rule, nil
 		}
 	}

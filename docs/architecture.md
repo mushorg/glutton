@@ -27,7 +27,7 @@ flowchart TD
 | CLI + runtime | `app/server.go`, `glutton.go` | Flags, init, listeners, rule load, dispatch, signal handling. |
 | Listener | `server.go` | Local TCP/UDP TPROXY listeners on `127.0.0.1`. |
 | iptables integration | `iptables.go` | Append/remove mangle PREROUTING TPROXY rules. |
-| Rules engine | `rules/rules.go` | Compiles BPF expressions, returns the first matching rule. |
+| Rules engine | `rules/rules.go` | Compiles pcap-filter expressions into Go matchers, returns the first matching rule. |
 | Handler registry | `protocols/protocols.go` | Maps rule targets (`smtp`, `http`, `proxy_tcp`, `tcp`, …) to handler funcs. |
 | TCP/UDP handlers | `protocols/tcp/`, `protocols/udp/` | Protocol interaction, logging, producer calls, fake responses. |
 | Spicy bridge | `protocols/spicy/` | Initializes Spicy/HILTI runtime; parses selected payloads. |

@@ -1,25 +1,22 @@
 package glutton
 
 import (
+	"errors"
 	"log/slog"
 	"net"
+	"os"
 	"time"
 
 	"github.com/mushorg/glutton/connection"
 	"github.com/mushorg/glutton/ipopts"
 	"github.com/mushorg/glutton/producer"
 	"github.com/mushorg/glutton/protocols/helpers"
-
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/pcap"
 	"github.com/spf13/viper"
 )
 
-const ipoptsBPF = "ip and tcp and (ip[0] & 0x0f) > 5"
-
 // watchIPOpts passively captures IPv4 TCP packets that carry IP options and
-// produces one event per flow. Soft-fails if pcap cannot open so the sensor
-// keeps running without the watcher.
+// produces one event per flow. Soft-fails if the capture cannot open so the
+// sensor keeps running without the watcher.
 func (g *Glutton) watchIPOpts() {
 	if !viper.GetBool("ipopts_watch.enabled") {
 		return
@@ -29,30 +26,13 @@ func (g *Glutton) watchIPOpts() {
 	if snaplen <= 0 {
 		snaplen = 256
 	}
-	handle, err := pcap.OpenLive(iface, int32(snaplen), false, 500*time.Millisecond)
+	capture, err := ipopts.OpenCapture(iface, snaplen)
 	if err != nil {
-		g.Logger.Warn("ipopts watcher disabled: failed to open pcap",
+		g.Logger.Warn("ipopts watcher disabled: failed to open capture",
 			slog.String("interface", iface),
 			slog.String("reporter", "glutton"),
 			producer.ErrAttr(err))
 		return
-	}
-	defer handle.Close()
-
-	if err := handle.SetBPFFilter(ipoptsBPF); err != nil {
-		g.Logger.Warn("ipopts watcher disabled: failed to set BPF filter",
-			slog.String("reporter", "glutton"),
-			producer.ErrAttr(err))
-		return
-	}
-
-	inboundOnly := false
-	if err := handle.SetDirection(pcap.DirectionIn); err != nil {
-		g.Logger.Debug("ipopts watcher: SetDirection not supported, classifying with publicAddrs",
-			slog.String("reporter", "glutton"),
-			producer.ErrAttr(err))
-	} else {
-		inboundOnly = true
 	}
 
 	idleSecs := viper.GetInt("ipopts_watch.idle_seconds")
@@ -68,12 +48,44 @@ func (g *Glutton) watchIPOpts() {
 	g.Logger.Info("ipopts watcher started",
 		slog.String("interface", iface),
 		slog.Int("snaplen", snaplen),
-		slog.Bool("inbound_only", inboundOnly),
 		slog.String("reporter", "glutton"))
 
-	linkType := handle.LinkType()
-	src := gopacket.NewPacketSource(handle, linkType)
-	packets := src.Packets()
+	// The reader decodes in its own goroutine because ReadPacket reuses its
+	// buffer; decoded packets own their bytes.
+	type capturedPacket struct {
+		pkt       *ipopts.Packet
+		direction string
+	}
+	packets := make(chan capturedPacket, 64)
+	go func() {
+		defer close(packets)
+		for {
+			data, outgoing, err := capture.ReadPacket()
+			if err != nil {
+				if !errors.Is(err, os.ErrClosed) {
+					g.Logger.Warn("ipopts watcher stopped: capture read failed",
+						slog.String("reporter", "glutton"),
+						producer.ErrAttr(err))
+				}
+				return
+			}
+			pkt, ok := ipopts.DecodeIPv4(data)
+			if !ok {
+				continue
+			}
+			direction := "read"
+			if outgoing {
+				direction = "write"
+			}
+			select {
+			case packets <- capturedPacket{pkt, direction}:
+			case <-g.ctx.Done():
+				return
+			}
+		}
+	}()
+	defer capture.Close()
+
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
@@ -88,47 +100,18 @@ func (g *Glutton) watchIPOpts() {
 			for _, flow := range tracker.Expire(time.Now()) {
 				g.produceIPOptsFlow(flow)
 			}
-		case packet, ok := <-packets:
+		case p, ok := <-packets:
 			if !ok {
 				for _, flow := range tracker.Close() {
 					g.produceIPOptsFlow(flow)
 				}
 				return
 			}
-			data := packet.Data()
-			pkt, decoded := ipopts.Decode(data, linkType)
-			if !decoded {
-				continue
-			}
-			direction := "read"
-			if !inboundOnly {
-				direction = g.ipoptsDirection(pkt.SrcIP)
-			}
-			now := time.Now()
-			for _, flow := range tracker.Add(now, direction, pkt) {
+			for _, flow := range tracker.Add(time.Now(), p.direction, p.pkt) {
 				g.produceIPOptsFlow(flow)
 			}
 		}
 	}
-}
-
-func (g *Glutton) ipoptsDirection(srcIP net.IP) string {
-	if g.isPublicAddr(srcIP) {
-		return "write"
-	}
-	return "read"
-}
-
-func (g *Glutton) isPublicAddr(ip net.IP) bool {
-	if ip == nil {
-		return false
-	}
-	for _, pub := range g.publicAddrs {
-		if pub != nil && pub.Equal(ip) {
-			return true
-		}
-	}
-	return false
 }
 
 func (g *Glutton) produceIPOptsFlow(flow ipopts.Flow) {

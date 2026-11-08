@@ -46,7 +46,7 @@ Source: `config/config.yaml`. Keys you'll most often touch:
 | `conn_table_max_entries` | `250000` | Cap on TCP connection metadata entries (about 300 bytes each). When full, the oldest half is dropped and a warning is logged; `0` or less uses the default. |
 | `dial_timeout`                                                       | `5`                      | Outbound `proxy_tcp` / `proxy_udp` dial timeout in seconds.                                                                                                                         |
 | `capture_traffic.enabled`                                            | `false`                  | Enables raw payload capture in `proxy_tcp` / `proxy_udp` logs and produced events. Proxying still forwards traffic when disabled.                                                   |
-| `ipopts_watch.enabled`                                               | `true`                   | Passiveively captures IPv4 TCP packets that carry IP options (IHL > 5) via libpcap and produces one `ipopts` event per flow. Soft-fails if pcap cannot open (warning logged; sensor keeps running). Not a `rules.yaml` target. See [ipopts decoded data](protocols/ipopts.md). |
+| `ipopts_watch.enabled`                                               | `true`                   | Passively captures inbound IPv4 TCP packets that carry IP options (IHL > 5) with an `AF_PACKET` socket and produces one `ipopts` event per flow. Needs `CAP_NET_RAW`. Soft-fails if the capture cannot open (warning logged; sensor keeps running). Not a `rules.yaml` target. See [ipopts decoded data](protocols/ipopts.md). |
 | `ipopts_watch.idle_seconds`                                          | `5`                      | Seconds of silence before an `ipopts` flow is flushed (`endReason` `timeout`). |
 | `ipopts_watch.max_flows`                                             | `1024`                   | Live `ipopts` flows; when full, the least recently active is flushed with `evicted` before a new one is accepted. |
 | `ipopts_watch.max_frames`                                            | `32`                     | Frames kept per `ipopts` flow; reaching the cap flushes the flow with `max_frames`. |
@@ -172,7 +172,15 @@ A busy sensor can fill the conntrack table (`nf_conntrack: table full, dropping 
 
 Rules decide which handler receives a redirected TCP connection or UDP packet. They're parsed by `rules/rules.go` and evaluated in order, **first match wins**, so put specific rules before broad catch-alls.
 
-`match` is a pcap filter expression evaluated against the connection's protocol, addresses and ports. To list several ports, write `tcp dst port 23 or 2323`: a bare number inherits the `tcp dst port` qualifiers. Don't write `tcp dst port 23 or port 2323`. A bare `port 2323` matches any protocol and either direction, so a client whose *source* port happens to be 2323 would hit the rule too.
+`match` is a filter in [pcap-filter](https://www.tcpdump.org/manpages/pcap-filter.7.html) syntax, evaluated in Go against the connection's protocol, addresses and ports. It supports the part of the language a TCP or UDP flow can answer:
+
+- protocols: `ip`, `ip6`, `tcp`, `udp` (and `sctp`, `icmp`, `icmp6`, which never match a redirected flow);
+- `host ADDR`, `net CIDR` (or a full address), `port N`, `portrange A-B`, with an optional `ip`/`ip6` (host, net) or `tcp`/`udp`/`sctp` (port, portrange) qualifier and an optional `src`, `dst`, `src or dst` or `src and dst` qualifier;
+- `and`/`&&`, `or`/`||`, `not`/`!` and parentheses.
+
+As in libpcap, `and` and `or` have equal precedence and group left to right (`port 80 or 81 and tcp` is `(port 80 or port 81) and tcp`; use parentheses), and a number with a leading `0` is octal. Anything else, such as port or host names, partial networks (`net 10`), byte offsets (`tcp[13]`), `len`, or link-layer primitives, is rejected when the rules load instead of silently never matching.
+
+To list several ports, write `tcp dst port 23 or 2323`: a bare number inherits the `tcp dst port` qualifiers. Don't write `tcp dst port 23 or port 2323`. A bare `port 2323` matches any protocol and either direction, so a client whose *source* port happens to be 2323 would hit the rule too.
 
 ### Rule shape
 
@@ -196,7 +204,7 @@ rules:
 | Field     | Required | Description                                                                          |
 | --------- | -------- | ------------------------------------------------------------------------------------ |
 | `name`    | no       | Human-readable label. `Rule.String()` returns the `match` expression, not this name. |
-| `match`   | yes      | BPF expression compiled with `pcap.NewBPF(...)`.                                     |
+| `match`   | yes      | Filter expression in pcap-filter syntax (see above), compiled once at load.          |
 | `type`    | yes      | `conn_handler`, `proxy_tcp`, or `proxy_udp`.                                         |
 | `target`  | yes      | Handler key for `conn_handler`; `host:port` upstream for `proxy_tcp` / `proxy_udp`.  |
 | `produce` | no       | When `false`, matching sessions are not sent to producers. Defaults to `true`.       |

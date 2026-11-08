@@ -34,7 +34,7 @@ conn_table_max_entries: 250000   # TCP connection metadata entries kept; when fu
 capture_traffic:
   enabled: false
 
-ipopts_watch:   # passive pcap watcher for IPv4 TCP packets that carry IP options (CVE-2026-98432 visibility). Soft-fails if pcap cannot open.
+ipopts_watch:   # passive AF_PACKET watcher for inbound IPv4 TCP packets that carry IP options (CVE-2026-98432 visibility). Needs CAP_NET_RAW; soft-fails if the capture cannot open.
   enabled: true
   idle_seconds: 5    # flush a flow after this many seconds of silence
   max_flows: 1024

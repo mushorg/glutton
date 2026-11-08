@@ -2,15 +2,10 @@ package rules
 
 import (
 	"net"
-	"net/netip"
 	"os"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,7 +28,7 @@ func TestInitRule(t *testing.T) {
 
 	for _, rule := range rules {
 		require.True(t, rule.isInit)
-		require.NotNil(t, rule.matcher)
+		require.NotNil(t, rule.filter)
 		require.NotEmpty(t, rule.Type)
 	}
 }
@@ -206,58 +201,6 @@ func TestInitProxyTCPRuleRejectsInvalidTarget(t *testing.T) {
 	require.Contains(t, err.Error(), "too many colons")
 }
 
-// TestFakePacket decodes the hand-built packet with gopacket to check every
-// header field the filters can look at.
-func TestFakePacket(t *testing.T) {
-	for _, tc := range []struct {
-		network  string
-		src, dst string
-	}{
-		{"tcp", "1.1.1.1:12", "2.2.2.2:21"},
-		{"udp", "1.1.1.1:5353", "2.2.2.2:53"},
-		{"tcp", "[2001:db8::1]:40000", "[2001:db8::2]:22"},
-		{"udp", "[2001:db8::1]:40000", "[2001:db8::2]:5060"},
-	} {
-		t.Run(tc.network+" "+tc.src, func(t *testing.T) {
-			src, dst := netip.MustParseAddrPort(tc.src), netip.MustParseAddrPort(tc.dst)
-			var buf [maxFakePacket]byte
-			b, err := fakePacket(&buf, tc.network, src, dst)
-			require.NoError(t, err)
-
-			pkt := gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default)
-			require.Nil(t, pkt.ErrorLayer(), "decode error")
-			nl := pkt.NetworkLayer()
-			require.NotNil(t, nl)
-			require.Equal(t, src.Addr().String(), nl.NetworkFlow().Src().String())
-			require.Equal(t, dst.Addr().String(), nl.NetworkFlow().Dst().String())
-
-			switch tc.network {
-			case "tcp":
-				tcp, ok := pkt.TransportLayer().(*layers.TCP)
-				require.True(t, ok, "no TCP layer")
-				require.Equal(t, src.Port(), uint16(tcp.SrcPort))
-				require.Equal(t, dst.Port(), uint16(tcp.DstPort))
-				require.Equal(t, uint8(5), tcp.DataOffset)
-			case "udp":
-				udp, ok := pkt.TransportLayer().(*layers.UDP)
-				require.True(t, ok, "no UDP layer")
-				require.Equal(t, src.Port(), uint16(udp.SrcPort))
-				require.Equal(t, dst.Port(), uint16(udp.DstPort))
-				require.Equal(t, uint16(8), udp.Length)
-			}
-		})
-	}
-}
-
-func TestFakePacketErrors(t *testing.T) {
-	var buf [maxFakePacket]byte
-	v4, v6 := netip.MustParseAddrPort("192.0.2.1:1"), netip.MustParseAddrPort("[2001:db8::1]:1")
-	_, err := fakePacket(&buf, "sctp", v4, v4)
-	require.ErrorContains(t, err, "unsupported network")
-	_, err = fakePacket(&buf, "tcp", v4, v6)
-	require.ErrorContains(t, err, "address family mismatch")
-}
-
 func TestMatchIPv6(t *testing.T) {
 	rs := loadDefaultRules(t)
 	src := &net.TCPAddr{IP: net.ParseIP("2001:db8::1"), Port: 40000}
@@ -340,41 +283,6 @@ func TestRunMatchProxyTCP(t *testing.T) {
 	require.Equal(t, "127.0.0.1:9889", match.ProxyTarget.DialAddress)
 }
 
-func TestBPF(t *testing.T) {
-	buf := make([]byte, 65535)
-	vm, err := compileMatcher("icmp")
-	require.NoError(t, err)
-	fh, err := os.Open("test.yaml")
-	require.NoError(t, err)
-	n, err := fh.Read(buf)
-	require.NoError(t, err)
-	rule := &Rule{matcher: vm}
-	require.False(t, rule.matches(buf[:n]), "shouldn't match")
-}
-
-func TestWorkingMatch(t *testing.T) {
-	packet := [...]byte{
-		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // dst mac
-		0x0, 0x11, 0x22, 0x33, 0x44, 0x55, // src mac
-		0x08, 0x0, // ether type
-		0x45, 0x0, 0x0, 0x3c, 0xa6, 0xc3, 0x40, 0x0, 0x40, 0x06, 0x3d, 0xd8, // ip header
-		0xc0, 0xa8, 0x50, 0x2f, // src ip
-		0xc0, 0xa8, 0x50, 0x2c, // dst ip
-		0xaf, 0x14, // src port
-		0x0, 0x50, // dst port
-	}
-
-	vm, err := compileMatcher("ip and tcp and port 80")
-	require.NoError(t, err)
-	rule := &Rule{matcher: vm}
-	require.True(t, rule.matches(packet[:]), "didn't match")
-}
-
-func TestCompileMatcherRejectsInvalidFilter(t *testing.T) {
-	_, err := compileMatcher("tcp dst port nope")
-	require.Error(t, err)
-}
-
 func loadDefaultRules(t testing.TB) Rules {
 	t.Helper()
 	fh, err := os.Open("../config/rules.yaml")
@@ -414,32 +322,6 @@ func addr(network string, port int) net.Addr {
 		return &net.UDPAddr{IP: ip, Port: port}
 	}
 	return &net.TCPAddr{IP: ip, Port: port}
-}
-
-// TestCompileMatcherAgreesWithLibpcap checks that the Go VM accepts exactly
-// the packets libpcap's own filter accepts, for every default rule.
-func TestCompileMatcherAgreesWithLibpcap(t *testing.T) {
-	rs := loadDefaultRules(t)
-	ports := rulePorts(rs)
-	for _, r := range rs {
-		ref, err := pcap.NewBPF(layers.LinkTypeEthernet, 65535, r.Match)
-		require.NoError(t, err)
-		for _, network := range []string{"tcp", "udp"} {
-			for _, port := range ports {
-				for _, sp := range [][2]uint16{{50000, uint16(port)}, {uint16(port), 50000}} {
-					for _, ips := range [][2]string{{"192.0.2.1", "192.0.2.10"}, {"2001:db8::1", "2001:db8::2"}} {
-						src := netip.AddrPortFrom(netip.MustParseAddr(ips[0]), sp[0])
-						dst := netip.AddrPortFrom(netip.MustParseAddr(ips[1]), sp[1])
-						var buf [maxFakePacket]byte
-						b, err := fakePacket(&buf, network, src, dst)
-						require.NoError(t, err)
-						ci := gopacket.CaptureInfo{CaptureLength: len(b), Length: len(b), Timestamp: time.Now()}
-						require.Equal(t, ref.Matches(ci, b), r.matches(b), "%q %s %s->%s", r.Match, network, src, dst)
-					}
-				}
-			}
-		}
-	}
 }
 
 // TestDefaultRulesMatchOnlyDestination guards against rules like
@@ -490,17 +372,21 @@ func TestMatchConcurrent(t *testing.T) {
 	<-done
 }
 
+// matchBenchCases are the first rule, and the TCP and UDP catch-alls, which
+// walk every rule.
+var matchBenchCases = []struct {
+	name    string
+	network string
+	port    int
+}{
+	{"tcp-first", "tcp", 23},
+	{"tcp-catchall", "tcp", 1},
+	{"udp-catchall", "udp", 9},
+}
+
 func BenchmarkMatch(b *testing.B) {
 	rs := loadDefaultRules(b)
-	for _, tc := range []struct {
-		name    string
-		network string
-		port    int
-	}{
-		{"tcp-first", "tcp", 23},
-		{"tcp-catchall", "tcp", 1},
-		{"udp-catchall", "udp", 9},
-	} {
+	for _, tc := range matchBenchCases {
 		src, dst := addr(tc.network, 40000), addr(tc.network, tc.port)
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()

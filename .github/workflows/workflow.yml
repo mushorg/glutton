@@ -43,7 +43,7 @@ jobs:
       - name: Basic Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpcap-dev iptables nftables zlib1g-dev build-essential clang-17
+          sudo apt-get install -y iptables nftables zlib1g-dev build-essential clang-17
 
       - name: Install spicyc
         run: |

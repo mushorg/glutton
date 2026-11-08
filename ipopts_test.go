@@ -18,16 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIPOptsDirection(t *testing.T) {
-	g := &Glutton{
-		publicAddrs: []net.IP{net.ParseIP("192.0.2.10"), net.ParseIP("198.51.100.1")},
-	}
-	require.Equal(t, "write", g.ipoptsDirection(net.ParseIP("192.0.2.10")))
-	require.Equal(t, "write", g.ipoptsDirection(net.ParseIP("198.51.100.1")))
-	require.Equal(t, "read", g.ipoptsDirection(net.ParseIP("203.0.113.10")))
-	require.Equal(t, "read", g.ipoptsDirection(nil))
-}
-
 func TestProduceIPOptsFlow(t *testing.T) {
 	var mu sync.Mutex
 	var events []producer.Event

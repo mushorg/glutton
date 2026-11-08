@@ -52,6 +52,12 @@ func Decode(data []byte, linkType layers.LinkType) (pkt *Packet, ok bool) {
 	return decodeIPv4TCP(data[offset:])
 }
 
+// DecodeIPv4 is Decode for data that starts at the IPv4 header, as a
+// Capture returns it.
+func DecodeIPv4(data []byte) (pkt *Packet, ok bool) {
+	return decodeIPv4TCP(data)
+}
+
 func ipv4Start(packet gopacket.Packet, data []byte) int {
 	offset := 0
 	for _, layer := range packet.Layers() {

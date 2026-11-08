@@ -8,12 +8,11 @@ Glutton also includes an emerging Spicy parser path. Spicy is the parser-definit
 
 ## Requirements
 
-Glutton is a Linux-only Go binary that depends on iptables, libpcap, a C/C++ toolchain, and Spicy/HILTI. Treat it as hostile-facing infrastructure once it's running: it receives unsolicited traffic, records attacker-controlled payloads, and manages network redirection rules.
+Glutton is a Linux-only Go binary that depends on iptables, a C/C++ toolchain, and Spicy/HILTI. Treat it as hostile-facing infrastructure once it's running: it receives unsolicited traffic, records attacker-controlled payloads, and manages network redirection rules.
 
 | Requirement                     | Source of truth                                                                                                          |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | Go 1.26+                        | `go.mod` declares `go 1.26.5`; CI uses `^1.26`.                                                                          |
-| libpcap                         | Required by `github.com/google/gopacket/pcap` (iface address discovery, rule BPF matching, and the `ipopts` packet watcher). |
 | iptables                        | TPROXY rule management.                                                                                                  |
 | zlib + build-essential          | Spicy and cgo builds.                                                                                                    |
 | clang-17 / clang++-17           | `Makefile` uses `CC=clang-17 CXX=clang++-17`; CI installs clang 17. Unversioned `clang` on Ubuntu 22.04 is often too old. |
@@ -25,7 +24,7 @@ CI runs on Ubuntu 24.04 (`ubuntu-latest`). Other distros need equivalent package
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y libpcap-dev iptables zlib1g-dev build-essential clang-17
+sudo apt-get install -y iptables zlib1g-dev build-essential clang-17
 
 # Pick the deb for your Ubuntu release (example: 24.04 / CI):
 wget https://github.com/zeek/spicy/releases/download/v1.16.0/spicy_linux_ubuntu24.deb
@@ -45,7 +44,7 @@ make build
 
 ## Run
 
-Glutton modifies iptables rules and needs root (or `CAP_NET_ADMIN`). The optional `ipopts` watcher also needs capture privileges (`CAP_NET_RAW` / root) on `interface`; if pcap cannot open, Glutton logs a warning and continues without it.
+Glutton modifies iptables rules and needs root (or `CAP_NET_ADMIN`). The optional `ipopts` watcher also needs capture privileges (`CAP_NET_RAW` / root) on `interface`; if the capture cannot open, Glutton logs a warning and continues without it.
 
 ```bash
 sudo bin/server --interface eth0 --confpath config/ --logpath /var/log/glutton.log

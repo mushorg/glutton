@@ -3,26 +3,26 @@ package glutton
 import (
 	"fmt"
 	"net"
-	"strings"
-
-	"github.com/google/gopacket/pcap"
 )
 
 func getNonLoopbackIPs(ifaceName string) ([]net.IP, error) {
 	nonLoopback := []net.IP{}
 
-	ifs, err := pcap.FindAllDevs()
+	iface, err := net.InterfaceByName(ifaceName)
 	if err != nil {
 		return nonLoopback, err
 	}
-
-	for _, iface := range ifs {
-		if strings.EqualFold(iface.Name, ifaceName) {
-			for _, addr := range iface.Addresses {
-				if !addr.IP.IsLoopback() && addr.IP.To4() != nil {
-					nonLoopback = append(nonLoopback, addr.IP)
-				}
-			}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nonLoopback, err
+	}
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if !ipNet.IP.IsLoopback() && ipNet.IP.To4() != nil {
+			nonLoopback = append(nonLoopback, ipNet.IP)
 		}
 	}
 
