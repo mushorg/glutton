@@ -189,6 +189,7 @@ Example shape:
 | `imap` | TCP | [protocols/imap.md](protocols/imap.md) |
 | `whois` | TCP | [protocols/whois.md](protocols/whois.md) |
 | `ident` | TCP | [protocols/ident.md](protocols/ident.md) |
+| `dcerpc` | TCP | [protocols/dcerpc.md](protocols/dcerpc.md) |
 | `rsync` | TCP | [protocols/rsync.md](protocols/rsync.md) |
 | `dns` | TCP, UDP | [protocols/dns.md](protocols/dns.md) |
 | `acpp` | TCP | [protocols/acpp.md](protocols/acpp.md) |

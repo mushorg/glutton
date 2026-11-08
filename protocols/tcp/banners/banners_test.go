@@ -25,7 +25,6 @@ func TestForPort(t *testing.T) {
 		{110, "pop3", true, false, []byte("+OK ")},
 		{5900, "rfb", true, false, []byte("RFB 003.008\n")},
 		{80, "http", false, false, []byte("HTTP/1.1 200 OK\r\n")},
-		{135, "dcerpc-bind-ack", false, false, []byte{0x05, 0x00, 0x0c, 0x03}},
 		{139, "netbios-session", false, false, []byte{0x82, 0x00, 0x00, 0x00}},
 		{1433, "mssql-prelogin", false, false, []byte{0x04, 0x01, 0x00, 0x25}},
 		{4899, "radmin", false, false, []byte{0x01, 0x00, 0x00, 0x00, 0x25}},
@@ -46,6 +45,10 @@ func TestForPort(t *testing.T) {
 	resp, ok := ForPort(49)
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "tacacs", Silent: true}, resp)
+
+	resp, ok = ForPort(135)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "dcerpc", Silent: true}, resp)
 
 	resp, ok = ForPort(389)
 	require.True(t, ok)
@@ -136,7 +139,6 @@ func TestForPort(t *testing.T) {
 
 func TestBinaryResponseLengths(t *testing.T) {
 	// lengths of the honeytrap response files
-	require.Len(t, dcerpcBindAck, 60)
 	require.Len(t, mssqlPrelogin, 37)
 	require.Len(t, radminReply, 46)
 	require.Len(t, ajp404, 785)

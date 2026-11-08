@@ -72,6 +72,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | SMTP                        | mail submission probes                   |
 | RDP                         | Remote Desktop handshake                 |
 | SMB                         | Windows file-sharing probes              |
+| DCE/RPC (tcp/135)           | endpoint mapper binds and `ept_lookup` / `ept_map` enumeration |
 | NBNS                        | NetBIOS name queries on udp/137          |
 | IKE                         | IKEv1 Main Mode and IKEv2 SA_INIT on udp/500, 4500 |
 | FTP                         | file transfer commands                   |

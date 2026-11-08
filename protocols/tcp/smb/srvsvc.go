@@ -15,8 +15,6 @@ const (
 	// SrvsvcOpNetrShareEnum is NetrShareEnum (opnum 15).
 	SrvsvcOpNetrShareEnum = 15
 
-	dcerpcPTypeResponse = 0x02
-
 	shareTypeDisk      = 0x00000000
 	shareTypeIPC       = 0x80000003
 	shareTypeDiskAdmin = 0x80000000
@@ -112,10 +110,5 @@ func BuildNetShareEnumResponse(callID uint32, ctxID uint16, level uint32, shares
 	u32(0)                   // ResumeHandle (null pointer)
 	u32(0)                   // WERR_OK
 
-	// alloc_hint(4) + p_cont_id(2) + cancel_count(1) + reserved(1), then stub.
-	body := make([]byte, 8, 8+len(stub))
-	binary.LittleEndian.PutUint32(body[0:4], uint32(len(stub)))
-	binary.LittleEndian.PutUint16(body[4:6], ctxID)
-	body = append(body, stub...)
-	return dcerpcFrame(dcerpcPTypeResponse, callID, body), true
+	return BuildResponse(callID, ctxID, stub), true
 }

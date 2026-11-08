@@ -156,8 +156,8 @@ func readReply(t *testing.T, conn net.Conn) []byte {
 
 func TestHandleTCPAnswersFollowUps(t *testing.T) {
 	// a client that keeps talking gets a reply per message
-	client, hp, done := startCatchAll(t, 135)
-	want, _ := banners.ForPort(135)
+	client, hp, done := startCatchAll(t, 139)
+	want, _ := banners.ForPort(139)
 
 	prelogin := []byte{0x12, 0x01, 0x00, 0x2f, 0x00, 0x00, 0x01, 0x00}
 	for range 2 {
@@ -177,9 +177,9 @@ func TestHandleTCPAnswersFollowUps(t *testing.T) {
 	hash := helpers.SHA256Hex(prelogin)
 	require.Equal(t, []parsedTCP{
 		{Direction: "read", Payload: prelogin, PayloadHash: hash},
-		{Direction: "write", Status: "dcerpc-bind-ack", Payload: want.Data, PayloadHash: helpers.SHA256Hex(want.Data)},
+		{Direction: "write", Status: "netbios-session", Payload: want.Data, PayloadHash: helpers.SHA256Hex(want.Data)},
 		{Direction: "read", Payload: prelogin, PayloadHash: hash},
-		{Direction: "write", Status: "dcerpc-bind-ack", Payload: want.Data, PayloadHash: helpers.SHA256Hex(want.Data)},
+		{Direction: "write", Status: "netbios-session", Payload: want.Data, PayloadHash: helpers.SHA256Hex(want.Data)},
 		{Direction: "read", Command: "ssh", Payload: ssh, PayloadHash: helpers.SHA256Hex(ssh)},
 		{Direction: "write", Status: "ssh", Payload: sshBanner.Data, PayloadHash: helpers.SHA256Hex(sshBanner.Data)},
 	}, events)

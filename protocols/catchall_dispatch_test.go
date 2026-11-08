@@ -481,3 +481,56 @@ func TestCatchAllRESPLookalikeStaysTCP(t *testing.T) {
 
 	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
 }
+
+// DCE/RPC bind for the endpoint mapper v3.0 from a Shodan probe on tcp/135
+// (run-1794097956-1.jsonl event #5).
+var epmBind = []byte{
+	0x05, 0x00, 0x0b, 0x03, 0x10, 0x00, 0x00, 0x00, 0x48, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+	0xb8, 0x10, 0xb8, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+	0x08, 0x83, 0xaf, 0xe1, 0x1f, 0x5d, 0xc9, 0x11, 0x91, 0xa4, 0x08, 0x00, 0x2b, 0x14, 0xa0, 0xfa,
+	0x03, 0x00, 0x00, 0x00, 0x04, 0x5d, 0x88, 0x8a, 0xeb, 0x1c, 0xc9, 0x11, 0x9f, 0xe8, 0x08, 0x00,
+	0x2b, 0x10, 0x48, 0x60, 0x02, 0x00, 0x00, 0x00,
+}
+
+func TestCatchAllRoutesDCERPCBind(t *testing.T) {
+	// tcp/135 and a dynamic RPC port
+	for _, port := range []uint16{135, 49667} {
+		client, hp, done := startCatchAllDispatch(t, port)
+		_, err := client.Write(epmBind)
+		require.NoError(t, err)
+		head := make([]byte, 16)
+		_, err = io.ReadFull(client, head)
+		require.NoError(t, err)
+		require.Equal(t, byte(0x0c), head[2], "bind_ack")
+		require.Equal(t, "dcerpc", finishCatchAllDispatch(t, client, hp, done))
+	}
+}
+
+func TestCatchAllDCERPCLookalikeStaysTCP(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 9999)
+
+	// big-endian data representation: not a header the handler answers
+	bind := append([]byte(nil), epmBind...)
+	bind[4] = 0x00
+	_, err := client.Write(bind)
+	require.NoError(t, err)
+	reply := make([]byte, 4096)
+	n, err := client.Read(reply)
+	require.NoError(t, err)
+	require.NotZero(t, n)
+
+	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
+}
+
+func TestCatchAllPort135NonRPCGetsNoReply(t *testing.T) {
+	client, hp, done := startCatchAllDispatch(t, 135)
+
+	// no static bind_ack for bytes that are not a DCE/RPC PDU
+	_, err := client.Write([]byte("hello there\r\n"))
+	require.NoError(t, err)
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(500*time.Millisecond)))
+	n, _ := client.Read(make([]byte, 64))
+	require.Zero(t, n)
+
+	require.Equal(t, "tcp", finishCatchAllDispatch(t, client, hp, done))
+}

@@ -153,6 +153,7 @@ func MapTCPProtocolHandlers(log interfaces.Logger, h interfaces.Honeypot) map[st
 		"ssh":        bindTCP(tcp.HandleSSH, log, h),
 		"rdp":        bindTCP(tcp.HandleRDP, log, h),
 		"smb":        bindTCP(tcp.HandleSMB, log, h),
+		"dcerpc":     bindTCP(tcp.HandleDCERPC, log, h),
 		"ftp":        bindTCP(tcp.HandleFTP, log, h),
 		"sip":        bindTCP(tcp.HandleSIP, log, h),
 		"rfb":        rfbOrSPICE(log, h),
@@ -488,6 +489,16 @@ var catchAllMatchers = []catchAllMatcher{
 		}),
 		match:  smb.LooksLikeSMB,
 		handle: asBuffered(tcp.HandleSMB),
+	},
+	{
+		// endpoint mapper lookups (tcp/135) and calls to dynamic RPC ports
+		// start with a DCE/RPC bind; answer them per PDU, not with a banner
+		name: "dcerpc",
+		peek: fixedPeek(smb.HeaderLen, func(snip []byte) bool {
+			return snip[0] == 0x05 && snip[1] == 0x00
+		}),
+		match:  smb.LooksLikeDCERPC,
+		handle: asBuffered(tcp.HandleDCERPC),
 	},
 	{
 		// HL7 senders and scanners also find interface engines off 2575

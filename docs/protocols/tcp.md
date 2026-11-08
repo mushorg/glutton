@@ -72,7 +72,7 @@ Writes set `status` to the response name or `random`.
 | --- | --- | --- |
 | 49 | `tacacs` | Sends nothing, as tac_plus does with a bad header; AUTHEN STARTs get `tacacs-authen-error` |
 | 80 | `http` | Only for non-HTTP input; HTTP requests go to the `http` handler |
-| 135 | `dcerpc-bind-ack` | |
+| 135 | `dcerpc` | Sends nothing and closes, as rpcss does with bytes that are not a DCE/RPC PDU. A DCE/RPC bind or request on any port goes to the [`dcerpc`](dcerpc.md) handler. Older sensors sent a static bind ack (`dcerpc-bind-ack`) to every message |
 | 139 | `netbios-session` | |
 | 389 | `ldap` | Sends nothing, as an LDAP server does with input it cannot parse |
 | 1433 | `mssql-prelogin` | Only on sensors without the `mssql` rule, and only for the first message; the next one (a LOGIN7) ends the session instead of getting the PRELOGIN reply again. A TDS PRELOGIN on any port goes to the [`mssql`](mssql.md) handler |

@@ -75,10 +75,6 @@ var (
 	// match: whois p/rwhois/ v/$2/ h/$1/. The host name is made up.
 	rwhoisBanner = []byte("%rwhois V-1.5:003fff:00 rwhois.corp-net.local (by Network Solutions, Inc. V-1.5.9.6)\r\n")
 
-	// DCE/RPC bind_ack (honeytrap 135_tcp).
-	dcerpcBindAck = mustHex(
-		"05000c03100000003c00000001000000d016d016acd80000040031333500c501" +
-			"0100000000000000045d888aeb1cc9119fe808002b10486002000000")
 	// NetBIOS positive session response (honeytrap 139_tcp).
 	netbiosSession = []byte{0x82, 0x00, 0x00, 0x00}
 	// TDS pre-login response (honeytrap 1433_tcp).
@@ -256,7 +252,9 @@ func ForPort(port uint16) (Response, bool) {
 	case 80:
 		return Response{Name: "http", Data: httpResponse(), Close: true}, true
 	case 135:
-		return Response{Name: "dcerpc-bind-ack", Data: dcerpcBindAck}, true
+		// rpcss drops a connection whose first bytes are not a DCE/RPC PDU;
+		// binds and requests are routed to the dcerpc handler
+		return Response{Name: "dcerpc", Silent: true}, true
 	case 139:
 		return Response{Name: "netbios-session", Data: netbiosSession}, true
 	case 1433:

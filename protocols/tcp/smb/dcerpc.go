@@ -11,12 +11,13 @@ import (
 // the honeypot cannot act as a working backend.
 
 const (
-	dcerpcVersion      = 5
-	dcerpcHeaderLen    = 16
-	dcerpcPTypeRequest = 0x00
-	dcerpcPTypeFault   = 0x03
-	dcerpcPTypeBind    = 0x0b
-	dcerpcPTypeBindAck = 0x0c
+	dcerpcVersion       = 5
+	dcerpcHeaderLen     = 16
+	dcerpcPTypeRequest  = 0x00
+	dcerpcPTypeResponse = 0x02
+	dcerpcPTypeFault    = 0x03
+	dcerpcPTypeBind     = 0x0b
+	dcerpcPTypeBindAck  = 0x0c
 
 	dcerpcFlagFirst      = 0x01
 	dcerpcFlagLast       = 0x02
@@ -27,16 +28,22 @@ const (
 )
 
 var dcerpcPTypeNames = map[byte]string{
-	dcerpcPTypeRequest: "DCERPC_REQUEST",
-	dcerpcPTypeFault:   "DCERPC_FAULT",
-	dcerpcPTypeBind:    "DCERPC_BIND",
-	dcerpcPTypeBindAck: "DCERPC_BIND_ACK",
+	dcerpcPTypeRequest:  "DCERPC_REQUEST",
+	dcerpcPTypeResponse: "DCERPC_RESPONSE",
+	dcerpcPTypeFault:    "DCERPC_FAULT",
+	dcerpcPTypeBind:     "DCERPC_BIND",
+	dcerpcPTypeBindAck:  "DCERPC_BIND_ACK",
 }
 
 // Exported PDU type codes for handlers dispatching on ParseDCERPCHeader.
 const (
 	PTypeRequest = dcerpcPTypeRequest
 	PTypeBind    = dcerpcPTypeBind
+
+	// HeaderLen is the length of the common connection-oriented header.
+	HeaderLen = dcerpcHeaderLen
+	// FaultNDR is nca_s_fault_ndr, the status BuildFault sends.
+	FaultNDR = dcerpcFaultNDR
 )
 
 // DCERPCName returns the PDU type mnemonic, or DCERPC_0xNN for unknowns.
@@ -77,6 +84,15 @@ func ParseDCERPCHeader(b []byte) (DCERPCHeader, bool) {
 		CallID:   order.Uint32(b[12:16]),
 		LittleEn: little,
 	}, true
+}
+
+// LooksLikeDCERPC reports whether b starts with a little-endian
+// connection-oriented DCE/RPC v5.0 bind or request header, the first PDU a
+// client sends to an endpoint mapper or a dynamic RPC port.
+func LooksLikeDCERPC(b []byte) bool {
+	h, ok := ParseDCERPCHeader(b)
+	return ok && b[1] == 0 && h.LittleEn && int(h.FragLen) >= dcerpcHeaderLen &&
+		(h.PType == dcerpcPTypeBind || h.PType == dcerpcPTypeRequest)
 }
 
 // BindContext is one presentation context from a bind request.
@@ -188,10 +204,29 @@ func ParseRequest(pdu []byte) (opnum, ctxID uint16, stub []byte, ok bool) {
 
 // BuildFault builds a fault PDU echoing callID with nca_s_fault_ndr.
 func BuildFault(callID uint32) []byte {
+	return BuildFaultFor(callID, 0, dcerpcFaultNDR)
+}
+
+// BuildFaultFor builds a fault PDU echoing callID and the request's
+// presentation context id, with the given nca status.
+func BuildFaultFor(callID uint32, ctxID uint16, status uint32) []byte {
 	body := make([]byte, 16)
-	// alloc_hint(4)=0, p_cont_id(2)=0, cancel_count(1)=0, reserved(1)=0.
-	binary.LittleEndian.PutUint32(body[8:12], dcerpcFaultNDR) // status
+	// alloc_hint(4)=0, p_cont_id(2), cancel_count(1)=0, reserved(1)=0,
+	// status(4), reserved(4)=0.
+	binary.LittleEndian.PutUint16(body[4:6], ctxID)
+	binary.LittleEndian.PutUint32(body[8:12], status)
 	return dcerpcFrame(dcerpcPTypeFault, callID, body)
+}
+
+// BuildResponse builds a single-fragment response PDU carrying stub,
+// echoing callID and the request's presentation context id.
+func BuildResponse(callID uint32, ctxID uint16, stub []byte) []byte {
+	// alloc_hint(4) + p_cont_id(2) + cancel_count(1) + reserved(1), then stub.
+	body := make([]byte, 8, 8+len(stub))
+	binary.LittleEndian.PutUint32(body[0:4], uint32(len(stub)))
+	binary.LittleEndian.PutUint16(body[4:6], ctxID)
+	body = append(body, stub...)
+	return dcerpcFrame(dcerpcPTypeResponse, callID, body)
 }
 
 // dcerpcFrame prepends the common header (little-endian, first+last fragment)
