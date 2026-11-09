@@ -544,6 +544,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	weblogicT3Reply,
 	zookeeperReply,
 	nomachineReply,
+	impressRemoteReply,
 	epmdReply,
 	msmqReply,
 	fw1TopoReply,
@@ -631,6 +632,22 @@ func nomachineReply(data []byte) (Response, bool) {
 		}
 	}
 	return Response{Name: "nomachine-nx", Data: nxdVersion}, true
+}
+
+// impressValidatingPin is the LibreOffice Impress Remote reply to a pairing
+// request whose PIN the user has not confirmed yet; the server keeps the
+// connection open while it waits. nmap match (LibreOfficeImpressSCPair probe):
+// impress-remote m|^LO_SERVER_VALIDATING_PIN\n$| p/LibreOffice Impress remote/
+var impressValidatingPin = []byte("LO_SERVER_VALIDATING_PIN\n\n")
+
+// impressRemoteReply answers the LibreOffice Impress Remote pairing request
+// "LO_SERVER_CLIENT_PAIR\n<device>\n<PIN>\n\n" (tcp/1599; Shodan sends
+// "Firefox OS" with PIN 0000, nmap "Nmap" with 0000).
+func impressRemoteReply(data []byte) (Response, bool) {
+	if !bytes.HasPrefix(data, []byte("LO_SERVER_CLIENT_PAIR\n")) {
+		return Response{}, false
+	}
+	return Response{Name: "impress-remote", Data: impressValidatingPin}, true
 }
 
 // pjlUEL is the Universal Exit Language escape that prefixes PJL jobs.

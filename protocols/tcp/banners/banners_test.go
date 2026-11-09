@@ -284,6 +284,23 @@ func TestForPayloadNoMachine(t *testing.T) {
 	}
 }
 
+func TestForPayloadImpressRemote(t *testing.T) {
+	// Shodan pairing request on tcp/1599 from 209.38.131.131 (2026-11-08) and
+	// nmap's LibreOfficeImpressSCPair probe
+	for _, data := range []string{"LO_SERVER_CLIENT_PAIR\nFirefox OS\n0000\n\n", "LO_SERVER_CLIENT_PAIR\nNmap\n0000\n\n"} {
+		resp, ok := ForPayload([]byte(data))
+		require.True(t, ok, "%q", data)
+		require.Equal(t, "impress-remote", resp.Name)
+		require.Equal(t, "LO_SERVER_VALIDATING_PIN\n\n", string(resp.Data))
+		require.False(t, resp.Close)
+	}
+
+	for _, data := range []string{"LO_SERVER_CLIENT_PAIR", "lo_server_client_pair\n", "transition_next\n\n"} {
+		_, ok := ForPayload([]byte(data))
+		require.False(t, ok, "%q", data)
+	}
+}
+
 func TestForPayloadPJL(t *testing.T) {
 	// Shodan, Ochi event 51e8cbb7-c5c1-43ce-bfa6-5f7f0e3f1fb0 (tcp/9100)
 	resp, ok := ForPayload([]byte("@PJL INFO STATUS\n"))
