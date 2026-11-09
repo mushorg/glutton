@@ -251,6 +251,13 @@ var tlsFleets = map[string]map[string]string{
 	"socks": {
 		"t12d320800_a6df2e0e78d0_36cef8aed422": "socks-https-flood",
 	},
+	// X.224 Connection Request with Cookie: mstshash=rdp-async offering
+	// TLS|CredSSP|EarlyAuth, then this TLS 1.2 ClientHello (no SNI) and a reset
+	// after the handshake. Four sources on tcp/23389 (2026-11-08) and again on
+	// 2026-11-09, all with the same CR payload hash c880c8cb.
+	"rdp": {
+		"t12i210600_76e208dd3e22_f28add8e7af0": "rdp-async-cookie-fleet",
+	},
 }
 
 // ClassifyTLS returns the fleet label for a handler and JA4 fingerprint, or "".

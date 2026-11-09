@@ -83,6 +83,8 @@ func TestClassifyTLS(t *testing.T) {
 	require.Empty(t, ClassifyTLS("http", ja4))
 	require.Empty(t, ClassifyTLS("socks", "t13d1516h2_8daaf6152771_02713d6af862"))
 	require.Empty(t, ClassifyTLS("socks", ""))
+	require.Equal(t, "rdp-async-cookie-fleet", ClassifyTLS("rdp", "t12i210600_76e208dd3e22_f28add8e7af0"))
+	require.Empty(t, ClassifyTLS("tcp", "t12i210600_76e208dd3e22_f28add8e7af0"))
 }
 
 // fakePTR swaps the resolver and empties the PTR cache for one test.
