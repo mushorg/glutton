@@ -257,6 +257,12 @@ var tlsFleets = map[string]map[string]string{
 	// 2026-11-09, all with the same CR payload hash c880c8cb.
 	"rdp": {
 		"t12i210600_76e208dd3e22_f28add8e7af0": "rdp-async-cookie-fleet",
+		// X.224 Connection Request with Cookie: mstshash=test (or hello), then
+		// this TLS 1.3 ClientHello (no SNI, no ALPN) and an NTLMSSP Negotiate,
+		// closing or resetting within ~60-300 ms. Same CR payload hash df88d953
+		// on tcp/3369, 3379, 3384, 9898, 9989, 23389 and 33896-33899 from
+		// several sources (2026-11-09).
+		"t13i251000_b78ed14e2fd0_ab7e3b40a677": "rdp-tls-sweep",
 	},
 }
 
