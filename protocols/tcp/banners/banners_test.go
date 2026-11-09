@@ -94,6 +94,22 @@ func TestForPort(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "port-30005", NoReply: true}, resp)
 
+	resp, ok = ForPort(989)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "ftps-data", NoReply: true}, resp)
+
+	resp, ok = ForPort(988)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "port-988", NoReply: true}, resp)
+
+	resp, ok = ForPort(8092)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "port-8092", NoReply: true}, resp)
+	// the bare-newline probe matches no payload signature, so the port
+	// entries answer it
+	_, ok = ForPayload([]byte("\n"))
+	require.False(t, ok)
+
 	resp, ok = ForPort(8024)
 	require.True(t, ok)
 	require.Equal(t, Response{Name: "port-8024", NoReply: true}, resp)

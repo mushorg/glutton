@@ -341,6 +341,21 @@ func ForPort(port uint16) (Response, bool) {
 		// rather than sending random bytes. HTTP requests are still rerouted
 		// by the Spicy peek.
 		return Response{Name: "port-8024", NoReply: true}, true
+	case 989:
+		// ftps-data (nmap-services): FTP data over implicit TLS. A TLS
+		// listener waits for a full 5-byte record header, so the research
+		// scanners' bare newline gets no reply; record it unanswered and keep
+		// the connection open rather than sending random bytes. A ClientHello
+		// is still terminated by the catch-all before this entry applies.
+		return Response{Name: "ftps-data", NoReply: true}, true
+	case 988, 8092:
+		// No registered service (nmap-services "unknown"), and the product
+		// behind either port is unconfirmed. The only traffic seen is the
+		// research scanners' bare newline, sent to both ports from one
+		// source; answering it with random bytes of different lengths per
+		// port gives the sensor away, so record it unanswered and keep the
+		// connection open. HTTP requests are still rerouted by the Spicy peek.
+		return Response{Name: "port-" + strconv.Itoa(int(port)), NoReply: true}, true
 	case 50070:
 		// Hadoop 2.x HDFS NameNode web UI (dfs.namenode.http-address default),
 		// served by Jetty 6. Research scanners send a bare newline, which Jetty
