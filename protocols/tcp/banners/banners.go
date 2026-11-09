@@ -510,6 +510,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	dogecoinReply,
 	kamstrupReply,
 	codesysReply,
+	melsecReply,
 	iec104Reply,
 	func(data []byte) (Response, bool) {
 		if !isFoxHello(data) {
