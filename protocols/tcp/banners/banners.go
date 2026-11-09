@@ -236,9 +236,26 @@ func statsdStats() []byte {
 		"END\n\n")
 }
 
+// rfc868Epoch is the Unix time of the RFC 868 epoch, 1900-01-01T00:00:00Z.
+const rfc868Epoch = -2208988800
+
+// timeReply is the RFC 868 time server reply: the seconds since 1900 as a
+// 32-bit big-endian number (it wraps in 2036, as the protocol does). nmap
+// match: time m|^[\xd5-\xef]...$|s i/32 bits/.
+func timeReply() []byte {
+	return binary.BigEndian.AppendUint32(nil, uint32(now().Unix()-rfc868Epoch))
+}
+
 // ForPort returns the canned response for a destination port.
 func ForPort(port uint16) (Response, bool) {
 	switch port {
+	case 37:
+		// RFC 868 time server: sends the time on connect and closes, whatever
+		// the client sends. Clients that speak first (scanners send CRLF
+		// pairs) get it as the reply so their bytes are recorded and Spicy
+		// still routes HTTP; silent clients (nmap's NULL probe) after the
+		// idle wait
+		return Response{Name: "time", Data: timeReply(), GreetWhenIdle: true, Close: true}, true
 	case 22, 2222:
 		return Response{Name: "ssh", Data: sshBanner, ServerFirst: true}, true
 	case 110:

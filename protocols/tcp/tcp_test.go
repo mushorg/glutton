@@ -1393,6 +1393,34 @@ func TestHandleTCPSaprouter(t *testing.T) {
 	require.False(t, HasServerBanner(3299))
 }
 
+func TestHandleTCPTime(t *testing.T) {
+	// the scanner's CRLF pair is recorded and answered with the 4-byte RFC 868
+	// time, then the connection closes
+	client, hp, done := startCatchAll(t, 37)
+	_, err := client.Write([]byte("\r\n\r\n"))
+	require.NoError(t, err)
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	require.Len(t, reply, 4)
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 2)
+	require.Equal(t, "read", events[0].Direction)
+	require.Equal(t, []byte("\r\n\r\n"), events[0].Payload)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "time", Payload: reply, PayloadHash: helpers.SHA256Hex(reply)}, events[1])
+
+	// nmap's NULL probe: the time on connect, then the connection closes
+	client, hp, done = startCatchAllWith(t, 37, HandleTCPSilent)
+	reply, err = io.ReadAll(client)
+	require.NoError(t, err)
+	require.Len(t, reply, 4)
+	events = finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 1)
+	require.Equal(t, "time", events[0].Status)
+
+	require.True(t, GreetsWhenIdle(37))
+	require.False(t, HasServerBanner(37))
+}
+
 func TestHandleTCPSilentWithoutIdleBanner(t *testing.T) {
 	client, hp, done := startCatchAllWith(t, 9999, HandleTCPSilent)
 	events := finishCatchAll(t, client, hp, done)

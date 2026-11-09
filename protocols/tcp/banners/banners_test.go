@@ -210,6 +210,21 @@ func TestStatsdStats(t *testing.T) {
 		"END\n\n", string(statsdStats()))
 }
 
+func TestTimeReply(t *testing.T) {
+	prevNow := now
+	now = func() time.Time { return time.Date(2026, 11, 8, 16, 14, 0, 0, time.UTC) }
+	t.Cleanup(func() { now = prevNow })
+
+	resp, ok := ForPort(37)
+	require.True(t, ok)
+	require.Equal(t, Response{Name: "time", Data: resp.Data, GreetWhenIdle: true, Close: true}, resp)
+	// 2026-11-08T16:14:00Z is Unix 1794154440; + 2208988800 seconds from 1900
+	require.Len(t, resp.Data, 4)
+	require.Equal(t, uint32(4003143240), binary.BigEndian.Uint32(resp.Data))
+	// nmap match: time m|^[\xd5-\xef]...$|s
+	require.True(t, resp.Data[0] >= 0xd5 && resp.Data[0] <= 0xef, "%x", resp.Data)
+}
+
 func TestForPayload(t *testing.T) {
 	resp, ok := ForPayload([]byte("SSH-2.0-Go\r\n"))
 	require.True(t, ok)
