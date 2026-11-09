@@ -190,6 +190,65 @@ func TestTerminateTLSDowngradeSentinel(t *testing.T) {
 	require.Equal(t, []byte("DOWNGRD\x00"), serverHelloRandomTail(t, old, tls.VersionTLS10))
 }
 
+// A TLS 1.2-only ClientHello with no supported_versions extension (shape of
+// the captured ja4 t12i130500_2d7513195f68_e51b7354d87f sweep on tcp/12104-12109
+// and tcp/12225) gets the complete ECDHE-RSA server flight in one write:
+// ServerHello, Certificate, ServerKeyExchange, ServerHelloDone. The sensor then
+// waits for the client's key exchange, so a close right after this write is the
+// client giving up (e.g. on the self-signed certificate), not a short flight.
+func TestTerminateTLS12OnlyFullFlight(t *testing.T) {
+	hello := buildHello(t, tls.VersionTLS12, []uint16{0xc02f, 0xc030, 0xc013, 0xc014, 0x009c, 0x002f, 0x0035},
+		[]testExt{
+			uint16ListExt(extSupportedGroups, 0x001d, 0x0017, 0x0018),
+			{extECPointFormats, []byte{1, 0}},
+			uint16ListExt(extSignatureAlgorithms, 0x0401, 0x0804, 0x0403, 0x0201),
+		})
+	parsed, ok := ParseClientHello(hello)
+	require.True(t, ok)
+	require.Regexp(t, `^t12i07`, parsed.JA4)
+
+	client, server := net.Pipe()
+	defer client.Close()
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	require.NoError(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := TerminateTLS(server)
+		done <- err
+	}()
+	_, err := client.Write(hello)
+	require.NoError(t, err)
+
+	// net.Pipe hands over one Write per Read, so this is the first write only.
+	buf := make([]byte, 16<<10)
+	n, err := client.Read(buf)
+	require.NoError(t, err)
+	flight := buf[:n]
+
+	var types []byte
+	for len(flight) > 0 {
+		require.GreaterOrEqual(t, len(flight), 5)
+		require.Equal(t, byte(0x16), flight[0], "handshake record")
+		require.Equal(t, []byte{0x03, 0x03}, flight[1:3], "TLS 1.2 record version")
+		l := int(flight[3])<<8 | int(flight[4])
+		require.GreaterOrEqual(t, len(flight), 5+l)
+		body := flight[5 : 5+l]
+		for len(body) > 0 {
+			require.GreaterOrEqual(t, len(body), 4)
+			hl := int(body[1])<<16 | int(body[2])<<8 | int(body[3])
+			require.GreaterOrEqual(t, len(body), 4+hl)
+			types = append(types, body[0])
+			body = body[4+hl:]
+		}
+		flight = flight[5+l:]
+	}
+	require.Equal(t, []byte{2, 11, 12, 14}, types, "ServerHello, Certificate, ServerKeyExchange, ServerHelloDone")
+
+	// The client hanging up here is what the captured sessions show.
+	require.NoError(t, client.Close())
+	require.Error(t, <-done)
+}
+
 func TestTerminateTLSSilentClient(t *testing.T) {
 	client, server := net.Pipe()
 	require.NoError(t, client.Close())
