@@ -85,10 +85,15 @@ func ParseCommand(data []byte) (Command, error) {
 	return Command{Tag: tag, Verb: strings.ToUpper(verb), Args: parseArgs(rest)}, nil
 }
 
+// maxArgs bounds the arguments kept per command; the rest are dropped.
+const maxArgs = 64
+
+// parseArgs splits a command's arguments. A bare CR or LF inside the line
+// separates arguments like a space, so every branch consumes input.
 func parseArgs(s string) []string {
 	var args []string
-	for {
-		s = strings.TrimLeft(s, " ")
+	for len(args) < maxArgs {
+		s = strings.TrimLeft(s, " \r\n")
 		if s == "" {
 			return args
 		}
@@ -109,6 +114,7 @@ func parseArgs(s string) []string {
 		}
 		args = append(args, arg)
 	}
+	return args
 }
 
 func quoted(s string) (string, string) {

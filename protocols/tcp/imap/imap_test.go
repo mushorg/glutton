@@ -3,6 +3,7 @@ package imap
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -76,4 +77,36 @@ func TestRespond(t *testing.T) {
 	require.Equal(t, "BAD", Respond(Command{Tag: "a5", Verb: "LOGIN", Args: []string{"u"}}, false).Status)
 	require.Equal(t, "BAD", Respond(Command{Tag: "a6", Verb: "SELECT"}, false).Status)
 	require.Equal(t, "BAD", Respond(Command{Tag: "a7", Verb: "XYZZY"}, false).Status)
+}
+
+func TestParseCommandEmbeddedLineBreaks(t *testing.T) {
+	// a bare CR or LF mid-line used to loop forever appending empty args
+	for _, line := range []string{
+		"a1 LOGIN x\ry\r\n",
+		"a1 LOGIN x\ny\r\n",
+		"a1 LOGIN \"u\"\r\n\r\npass\r\n",
+		"a1 LOGIN x \r\r\n",
+		"a1 LOGIN \r",
+	} {
+		done := make(chan Command, 1)
+		go func() {
+			cmd, _ := ParseCommand([]byte(line))
+			done <- cmd
+		}()
+		select {
+		case cmd := <-done:
+			require.LessOrEqual(t, len(cmd.Args), 2, "%q", line)
+			for _, a := range cmd.Args {
+				require.NotEmpty(t, a, "%q", line)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("ParseCommand(%q) did not return", line)
+		}
+	}
+}
+
+func TestParseCommandCapsArgs(t *testing.T) {
+	cmd, err := ParseCommand([]byte("a1 X" + strings.Repeat(" a", 1000) + "\r\n"))
+	require.NoError(t, err)
+	require.Len(t, cmd.Args, maxArgs)
 }
