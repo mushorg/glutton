@@ -55,6 +55,27 @@ func TestParseASCIICaptured(t *testing.T) {
 	require.Equal(t, ASCIIRequest{Unit: "40", Command: "RN", Data: "J000901", ChecksumOK: true}, req)
 }
 
+// The same scan on tcp/20257, unit "00": an ID query, then UG and RN pipelined
+// in one segment ahead of the binary request.
+func TestParseASCIICapturedPort20257(t *testing.T) {
+	raw := []byte("IUe\x00\x08\x00/00UGFC\rUIe\x00\x0f\x00/00RNJ00090174\r")
+	r := bytes.NewReader(raw)
+	for _, want := range []ASCIIRequest{
+		{Unit: "00", Command: "UG", ChecksumOK: true},
+		{Unit: "00", Command: "RN", Data: "J000901", ChecksumOK: true},
+	} {
+		_, msg, _, err := ReadFrame(r)
+		require.NoError(t, err)
+		req, ok := ParseASCII(msg)
+		require.True(t, ok)
+		require.Equal(t, want, req)
+	}
+
+	req, ok := ParseASCII([]byte("/00IDED\r"))
+	require.True(t, ok)
+	require.Equal(t, ASCIIRequest{Unit: "00", Command: "ID", ChecksumOK: true}, req)
+}
+
 func TestParseASCIIMalformed(t *testing.T) {
 	for _, in := range []string{"", "/", "/40ID", "40IDF1\r", "/40\r"} {
 		_, ok := ParseASCII([]byte(in))

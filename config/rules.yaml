@@ -157,7 +157,7 @@ rules:
   - match: tcp dst port 6036
     type: conn_handler
     target: nvms9000
-  - match: tcp dst port 20256
+  - match: tcp dst port 20256 or 20257
     type: conn_handler
     target: pcom
   - match: tcp dst port 2575
