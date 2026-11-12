@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -160,6 +161,55 @@ type parsedHTTP struct {
 // httpConnectReply grants a CONNECT the way proxies do: no body, no
 // Content-Length (RFC 9110 9.3.6).
 var httpConnectReply = []byte("HTTP/1.1 200 Connection established\r\n\r\n")
+
+// httpBadRequestReply answers a request net/http cannot parse (for example a
+// CONNECT target with a doubled port), as proxies and servers do instead of
+// closing silently.
+var httpBadRequestReply = []byte("HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\nContent-Length: 11\r\n\r\nBad Request")
+
+// parseMalformedHTTP salvages the method, request target, Host, User-Agent and
+// Basic credentials from a request net/http rejected. It returns an empty
+// frame when the first request-line token is not an HTTP method token.
+func parseMalformedHTTP(raw []byte) parsedHTTP {
+	tp := textproto.NewReader(bufio.NewReader(bytes.NewReader(raw)))
+	line, err := tp.ReadLine()
+	if err != nil {
+		return parsedHTTP{}
+	}
+	method, rest, _ := strings.Cut(line, " ")
+	if !isHTTPMethodToken(method) {
+		return parsedHTTP{}
+	}
+	target, _, _ := strings.Cut(rest, " ")
+	hdr, _ := tp.ReadMIMEHeader() // keeps the headers read before an error
+	req := &http.Request{Header: http.Header(hdr)}
+	frame := parsedHTTP{
+		Command:   method,
+		Path:      target,
+		Host:      req.Header.Get("Host"),
+		UserAgent: req.UserAgent(),
+	}
+	if user, pass, ok := req.BasicAuth(); ok {
+		frame.Username, frame.Password = user, pass
+	} else if user, pass, ok := proxyBasicAuth(req); ok {
+		frame.Username, frame.Password = user, pass
+	}
+	return frame
+}
+
+// isHTTPMethodToken reports whether s looks like a request method: 1-32
+// ASCII letters, digits or '-'/'_'.
+func isHTTPMethodToken(s string) bool {
+	if s == "" || len(s) > 32 {
+		return false
+	}
+	for _, c := range []byte(s) {
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
 
 // proxyBasicAuth returns the credentials of a Proxy-Authorization: Basic header.
 func proxyBasicAuth(req *http.Request) (username, password string, ok bool) {
@@ -572,7 +622,20 @@ func (s *httpServer) serve(ctx context.Context, md connection.Metadata, logger i
 			req, parseErr := http.ReadRequest(bufio.NewReader(bytes.NewReader(raw)))
 			if parseErr != nil {
 				logger.Debug("Failed to read the HTTP request", slog.String("protocol", "http"), producer.ErrAttr(parseErr))
-				s.record(parsedHTTP{Direction: "read", Payload: append([]byte(nil), raw...)})
+				frame := parseMalformedHTTP(raw)
+				frame.Direction = "read"
+				frame.DestPort = md.TargetPort
+				frame.SrcPort = srcPort
+				frame.Payload = append([]byte(nil), raw...)
+				s.record(frame)
+				if err == nil {
+					// the whole message arrived, so the peer is still there to
+					// read a 400; after a read error it is not
+					if writeErr := s.writeRaw(httpBadRequestReply); writeErr != nil {
+						logger.Debug("Failed to write the HTTP 400 reply", slog.String("protocol", "http"), producer.ErrAttr(writeErr))
+						return connection.EndWriteError, nil
+					}
+				}
 				return connection.EndReadError, nil
 			}
 

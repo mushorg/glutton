@@ -252,3 +252,68 @@ func TestProxyBasicAuth(t *testing.T) {
 	_, _, ok = proxyBasicAuth(req)
 	require.False(t, ok)
 }
+
+// Proxy-credential check seen on tcp/2333 (run-1794506081-2 events #5 and #8,
+// payload rebuilt from the decoded 152-byte capture): CONNECT to a target
+// with a doubled port, which net/http rejects.
+var httpConnectBadTarget = []byte("CONNECT cpanel1.v.fozzy.com:2096:2096 HTTP/1.1\r\nHost: cpanel1.v.fozzy.com:2096:2096\r\nProxy-Authorization: Basic Y2VzaGlzaGlmdXFpOmNlc2hpc2hpZnVxaQ==\r\n\r\n")
+
+func TestHandleHTTPConnectMalformedTarget(t *testing.T) {
+	client, hp, done := startHTTPConnect(t)
+	_, err := client.Write(httpConnectBadTarget)
+	require.NoError(t, err)
+	got, err := io.ReadAll(client)
+	require.NoError(t, err)
+	require.Equal(t, httpBadRequestReply, got)
+
+	ev, frames := finishHTTPConnect(t, client, hp, done)
+	require.Equal(t, httpConnectBadTarget, ev.payload)
+	require.Equal(t, connection.EndReadError, ev.endReason)
+	require.Len(t, frames, 2)
+	require.Equal(t, parsedHTTP{
+		Direction: "read",
+		DestPort:  30105,
+		SrcPort:   frames[0].SrcPort,
+		Command:   "CONNECT",
+		Path:      "cpanel1.v.fozzy.com:2096:2096",
+		Host:      "cpanel1.v.fozzy.com:2096:2096",
+		Username:  "ceshishifuqi",
+		Password:  "ceshishifuqi",
+		SessionID: frames[0].SessionID,
+		Payload:   httpConnectBadTarget,
+	}, frames[0])
+	require.Equal(t, parsedHTTP{Direction: "write", Status: "400", SessionID: frames[0].SessionID, Payload: httpBadRequestReply}, frames[1])
+}
+
+func TestHandleHTTPGarbageRequestLine(t *testing.T) {
+	client, hp, done := startHTTPConnect(t)
+	req := []byte("\x16\x03\x01 junk\r\n\r\n")
+	_, err := client.Write(req)
+	require.NoError(t, err)
+	got, err := io.ReadAll(client)
+	require.NoError(t, err)
+	require.Equal(t, httpBadRequestReply, got)
+
+	_, frames := finishHTTPConnect(t, client, hp, done)
+	require.Len(t, frames, 2)
+	require.Equal(t, "read", frames[0].Direction)
+	require.Empty(t, frames[0].Command, "a non-token method is not recorded as a command")
+	require.Equal(t, req, frames[0].Payload)
+	require.Equal(t, "400", frames[1].Status)
+}
+
+func TestParseMalformedHTTP(t *testing.T) {
+	f := parseMalformedHTTP(httpConnectBadTarget)
+	require.Equal(t, "CONNECT", f.Command)
+	require.Equal(t, "cpanel1.v.fozzy.com:2096:2096", f.Path)
+	require.Equal(t, "ceshishifuqi", f.Username)
+	require.Equal(t, "ceshishifuqi", f.Password)
+
+	f = parseMalformedHTTP([]byte("GET /a b HTTP/1.1\r\nAuthorization: Basic YWRtaW46YWRtaW4=\r\nUser-Agent: x\r\n\r\n"))
+	require.Equal(t, "GET", f.Command)
+	require.Equal(t, "/a", f.Path)
+	require.Equal(t, "admin", f.Username)
+	require.Equal(t, "x", f.UserAgent)
+
+	require.Equal(t, parsedHTTP{}, parseMalformedHTTP([]byte("\x00\x01\x02")))
+}

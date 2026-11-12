@@ -34,6 +34,7 @@ The handler speaks keep-alive HTTP and groups frames across TCP connections into
 - At most 1024 sessions are tracked at once. When full, the session idle the longest is produced early with `endReason` `evicted`; if every session has an open connection, the new connection produces its own event when it closes.
 - The idle session table is shared with [`mcp`](mcp.md).
 - The request line plus headers may be at most 64 KiB (bodies at most 1 MiB). A larger header block is recorded up to the cap as an unparsed read and ends the connection with `endReason` `read_error`.
+- A complete request that `net/http` rejects (for example a `CONNECT` target with a doubled port, `host:2096:2096`) is answered with `HTTP/1.1 400 Bad Request` and `Connection: close`, and the connection ends with `endReason` `read_error`. The read frame keeps the raw `payload` plus whatever could be salvaged: `command` (when the first token looks like a method), `path` (the raw request target), `host`, `user_agent`, and Basic or Proxy-Authorization `username`/`password`. `ja4h` is empty. Before 2026-11-12 such requests got no reply and the frame held only `direction` and `payload`.
 
 ### CONNECT proxy tunnels
 
