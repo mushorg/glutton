@@ -84,8 +84,8 @@ func httpOKJSON(data []byte) []byte {
 }
 
 func handlePOST(req *http.Request, body []byte, logger interfaces.Logger) ([]byte, error) {
-	// Ethereum RPC call
-	if strings.Contains(string(body), "eth_blockNumber") {
+	// Ethereum JSON-RPC call (eth_, web3_ or net_ method)
+	if isEthereumRPC(body) {
 		data, err := handleEthereumRPC(body)
 		if err != nil {
 			return nil, err

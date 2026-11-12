@@ -65,7 +65,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | Citrix ADC (CVE-2019-19781) | `/vpn/../vpns/` scans, `newbm.pl` template payloads |
 | Log4Shell (CVE-2021-44228)  | `${jndi:...}` lookups in URL, headers, body (obfuscation resolved) |
 | VMware "hyper/send"         | `* hyper/send` request-body exploit (logged, never dialed) |
-| Ethereum JSON-RPC           | `POST` body containing `eth_blockNumber` |
+| Ethereum JSON-RPC           | `POST` JSON-RPC with `eth_`/`web3_`/`net_` methods (geth persona) |
 | Wallet probes               | URIs containing `wallet`                 |
 | Selenium Grid               | `POST /session` browser-binary payloads  |
 | Docker API (tcp/2375, 2376) | `/_ping`, `/version` recon, `containers/create` bodies |

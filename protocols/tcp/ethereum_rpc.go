@@ -19,7 +19,15 @@ package tcp
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 )
+
+// clientVersion is the web3_clientVersion persona. It matches the extraData
+// of the block returned by eth_getBlockByNumber.
+const clientVersion = "Geth/LVIV/v1.0.0/linux/go1.4.2"
+
+// errMethodNotFound is the JSON-RPC 2.0 "method not found" code geth uses.
+const errMethodNotFound = -32601
 
 type jsonError struct {
 	Code    int         `json:"code"`
@@ -29,7 +37,7 @@ type jsonError struct {
 
 type jsonrpcMessage struct {
 	Version string          `json:"jsonrpc,omitempty"`
-	ID      int             `json:"id,omitempty"`
+	ID      json.RawMessage `json:"id,omitempty"` // echoed verbatim: number, string or null
 	Method  string          `json:"method,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
 	Error   *jsonError      `json:"error,omitempty"`
@@ -134,13 +142,57 @@ func getBlockByNumber(message *jsonrpcMessage) (*jsonrpcMessage, error) {
 	}, err
 }
 
+func web3ClientVersion(message *jsonrpcMessage) (*jsonrpcMessage, error) {
+	res, err := json.Marshal(clientVersion)
+	return &jsonrpcMessage{
+		ID:      message.ID,
+		Version: message.Version,
+		Result:  res,
+	}, err
+}
+
+func methodNotFound(message *jsonrpcMessage) *jsonrpcMessage {
+	return &jsonrpcMessage{
+		ID:      message.ID,
+		Version: "2.0",
+		Error: &jsonError{
+			Code:    errMethodNotFound,
+			Message: "the method " + message.Method + " does not exist/is not available",
+		},
+	}
+}
+
+// isEthereumRPC reports whether body is a JSON-RPC request (or batch) whose
+// method lives in one of the Ethereum node namespaces (eth_, web3_, net_).
+func isEthereumRPC(body []byte) bool {
+	var rawmsg json.RawMessage
+	if err := json.Unmarshal(bytes.TrimSpace(body), &rawmsg); err != nil {
+		return false
+	}
+	messages, _ := parseMessage(rawmsg)
+	for _, msg := range messages {
+		if msg == nil {
+			continue
+		}
+		for _, ns := range []string{"eth_", "web3_", "net_"} {
+			if strings.HasPrefix(msg.Method, ns) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// handleEthereumRPC answers a JSON-RPC request like a geth node: a single
+// request gets a single response object, a batch gets an array. Methods
+// that are not emulated get a -32601 error instead of being dropped.
 func handleEthereumRPC(body []byte) ([]byte, error) {
 	var rawmsg json.RawMessage
 	err := json.NewDecoder(bytes.NewReader(body)).Decode(&rawmsg)
 	if err != nil {
 		return nil, err
 	}
-	messages, _ := parseMessage(rawmsg)
+	messages, batch := parseMessage(rawmsg)
 	for i, msg := range messages {
 		if msg == nil {
 			messages[i] = new(jsonrpcMessage)
@@ -157,13 +209,18 @@ func handleEthereumRPC(body []byte) ([]byte, error) {
 			response, err = getBlockByNumber(message)
 		case "eth_accounts":
 			response, err = accounts(message)
+		case "web3_clientVersion":
+			response, err = web3ClientVersion(message)
 		default:
-			continue
+			response = methodNotFound(message)
 		}
 		if err != nil {
 			return nil, err
 		}
 		responses = append(responses, response)
+	}
+	if !batch && len(responses) == 1 {
+		return json.Marshal(responses[0])
 	}
 	return json.Marshal(responses)
 }

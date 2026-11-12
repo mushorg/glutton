@@ -233,6 +233,12 @@ Package: `protocols/tcp/elasticsearch`. Every path on tcp/9200 is answered as an
 
 Caps: 8 scripts of 4 KiB, 256 B for `index`/`type`/`id`/`lang`, and JSON nesting depth 32; `truncated` is set when any applies. Node `name` and `cluster_name` come from `elasticsearch.node_name` and `elasticsearch.cluster_name` (see [Configuration](../configuration.md)). The Spicy `http` handler does not set `elasticsearch`.
 
+#### Ethereum JSON-RPC
+
+`protocols/tcp/ethereum_rpc.go`. A `POST` whose body is a JSON-RPC request or batch with an `eth_`, `web3_` or `net_` method is answered like a geth node, as `Geth/LVIV/v1.0.0/linux/go1.4.2` (the same string as the `extraData` of the block returned by `eth_getBlockByNumber`). The node answers `eth_blockNumber`, `eth_getBlockByNumber`, `eth_accounts` and `web3_clientVersion`. Every other method gets error `-32601` (`the method <name> does not exist/is not available`). The reply echoes the request `id` (number or string). A single request gets a single object, and a batch gets an array. No extra frame fields; the method is in the read `payload`.
+
+> **Change (2026-11-12):** before this date, only bodies containing `eth_blockNumber` were routed here. Every reply was an array, even for a single request, and unknown methods (including the Shodan `web3_clientVersion` probe on tcp/8545) were silently dropped.
+
 #### Local file include (LFI)
 
 `protocols/tcp/lfi.go`. A GET whose **query** or **path** looks like a traversal to a known file (`passwd`, `hosts`, `win.ini`, `amportal.conf`) gets `200` `text/plain` with a canned body from `resources/lfi/`. Examples: `?file=../../etc/passwd`, `/..%2F..%2Fetc%2Fpasswd`. Citrix `/vpn/../vpns/` staging still wins when it matches first. Unknown basenames keep the generic empty `200`.
@@ -255,3 +261,4 @@ Keep-alive HTTP parsed with Spicy. `command`, `query`, `parameters`, and `status
 - **Proxmox VE:** not emulated.
 - **Elasticsearch:** not emulated.
 - **Docker Engine API:** only `/v1.16/version` is answered.
+- **Ethereum JSON-RPC:** only bodies containing `eth_blockNumber` are answered, always with a fixed `eth_blockNumber` result and `id` 0.
