@@ -369,13 +369,14 @@ func ForPort(port uint16) (Response, bool) {
 		// the connection open rather than sending random bytes. A ClientHello
 		// is still terminated by the catch-all before this entry applies.
 		return Response{Name: "ftps-data", NoReply: true}, true
-	case 988, 8092:
-		// No registered service (nmap-services "unknown"), and the product
-		// behind either port is unconfirmed. The only traffic seen is the
-		// research scanners' bare newline, sent to both ports from one
-		// source; answering it with random bytes of different lengths per
-		// port gives the sensor away, so record it unanswered and keep the
-		// connection open. HTTP requests are still rerouted by the Spicy peek.
+	case 988, 4449, 8092:
+		// No common service (nmap-services "unknown" for 988/8092, only the
+		// rarely open IANA "privatewire" for 4449, with no nmap match lines),
+		// and the product behind any of them is unconfirmed. The only traffic
+		// seen is the research scanners' bare newline; answering it with
+		// random bytes of different lengths per port gives the sensor away,
+		// so record it unanswered and keep the connection open. HTTP requests
+		// are still rerouted by the Spicy peek.
 		return Response{Name: "port-" + strconv.Itoa(int(port)), NoReply: true}, true
 	case 50070:
 		// Hadoop 2.x HDFS NameNode web UI (dfs.namenode.http-address default),
