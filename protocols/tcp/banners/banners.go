@@ -515,6 +515,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	kamstrupReply,
 	codesysReply,
 	melsecReply,
+	proconosReply,
 	smartInstallProbeReply,
 	lockdownReply,
 	iec104Reply,
