@@ -440,6 +440,10 @@ func ForPort(port uint16) (Response, bool) {
 		// that are not a topology hello, so drop them; the hello and the
 		// securemote request are matched in ForPayload
 		return Response{Name: "fw1-topology", Silent: true}, true
+	case 62078:
+		// Apple lockdownd drops a connection whose bytes are not a framed
+		// plist it can handle; QueryType is matched in ForPayload
+		return Response{Name: "lockdownd", Silent: true}, true
 	case 5938:
 		// TeamViewer greets a silent client (nmap -sV); CMD_PING is matched
 		// in ForPayload
@@ -512,6 +516,7 @@ var payloadMatchers = []func(data []byte) (Response, bool){
 	codesysReply,
 	melsecReply,
 	smartInstallProbeReply,
+	lockdownReply,
 	iec104Reply,
 	func(data []byte) (Response, bool) {
 		if !isFoxHello(data) {
