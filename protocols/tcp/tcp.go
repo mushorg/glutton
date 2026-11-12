@@ -192,9 +192,12 @@ func (s *tcpServer) readPayload(ctx context.Context, h interfaces.Honeypot, logg
 // ProtocolVersion gets the security handshake the rfb handler would send; a
 // NATS client's reply to INFO gets what nats-server answers; an OpenWire
 // client's reply to WireFormatInfo gets the broker's silent hang-up; AMI
-// messages get an unauthenticated manager session's answers.
+// messages get an unauthenticated manager session's answers; DICT command
+// lines get dictd's replies.
 func bannerFollowUp(banner banners.Response, data []byte) (banners.Response, bool) {
 	switch banner.Name {
+	case "dict":
+		return banners.DICTFollowUp(data)
 	case "nats-info":
 		return banners.NATSFollowUp(data)
 	case "openwire-wireformat":

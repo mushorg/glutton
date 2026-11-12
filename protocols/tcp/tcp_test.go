@@ -412,6 +412,42 @@ func TestHandleTCPAsteriskAMI(t *testing.T) {
 	require.Equal(t, parsedTCP{Direction: "write", Status: "ami-auth-failed", Payload: failed, PayloadHash: helpers.SHA256Hex(failed)}, events[4])
 }
 
+func TestHandleTCPDICT(t *testing.T) {
+	require.True(t, HasServerBanner(2628))
+	client, hp, done := startCatchAll(t, 2628)
+
+	// the greeting arrives before the client sends anything
+	// the msg-id pid is random, so read up to the line end
+	var banner []byte
+	for !bytes.HasSuffix(banner, []byte("\r\n")) {
+		banner = append(banner, readAll(t, client, 1)...)
+	}
+	require.True(t, bytes.HasPrefix(banner, []byte("220 ubuntu dictd 1.12.1/rf on Linux ")), "%q", banner)
+
+	// a scanner's bare CRLF CRLF is two unknown commands
+	unknown := []byte("500 unknown command\r\n500 unknown command\r\n")
+	_, err := client.Write([]byte("\r\n\r\n"))
+	require.NoError(t, err)
+	require.Equal(t, unknown, readAll(t, client, len(unknown)))
+
+	// QUIT is answered, then the server hangs up
+	bye := []byte("221 bye [d/m/c = 0/0/0; 0.000r 0.000u 0.000s]\r\n")
+	_, err = client.Write([]byte("QUIT\r\n"))
+	require.NoError(t, err)
+	require.Equal(t, bye, readAll(t, client, len(bye)))
+	_, err = client.Read(make([]byte, 1))
+	require.ErrorIs(t, err, io.EOF)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 5)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "dict", Payload: banner, PayloadHash: helpers.SHA256Hex(banner)}, events[0])
+	require.Equal(t, "dict", events[1].Command)
+	require.Equal(t, []byte("\r\n\r\n"), events[1].Payload)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "dict-unknown", Payload: unknown, PayloadHash: helpers.SHA256Hex(unknown)}, events[2])
+	require.Equal(t, "dict", events[3].Command)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "dict-bye", Payload: bye, PayloadHash: helpers.SHA256Hex(bye)}, events[4])
+}
+
 func TestHandleTCPRFBNonVersionGetsRandom(t *testing.T) {
 	client, hp, done := startCatchAll(t, 5900)
 

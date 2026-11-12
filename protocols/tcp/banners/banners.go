@@ -459,6 +459,10 @@ func ForPort(port uint16) (Response, bool) {
 		// Asterisk Manager Interface greets on connect; client messages are
 		// answered by AMIFollowUp
 		return Response{Name: "asterisk-ami", Data: amiBanner, ServerFirst: true, FollowUpEach: true}, true
+	case 2628:
+		// dictd greets on connect; command lines are answered by
+		// DICTFollowUp
+		return Response{Name: "dict", Data: dictGreeting(), ServerFirst: true, FollowUpEach: true}, true
 	case 5938:
 		// TeamViewer greets a silent client (nmap -sV); CMD_PING is matched
 		// in ForPayload
