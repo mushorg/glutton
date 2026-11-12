@@ -116,6 +116,7 @@ Writes set `status` to the response name or `random`.
 | 22556 | `dogecoin` | Sends nothing and hangs up, as dogecoind does with bytes that are not its network magic |
 | 30005 | `port-30005` | No registered service, and the product behind it is unconfirmed. Sends nothing but keeps the connection open, as an HTTP-style listener does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request; HTTP requests go to the `http` handler |
 | 50070 | `hadoop-namenode` | Hadoop 2.x HDFS NameNode web UI (Jetty). Sends nothing but keeps the connection open, as Jetty does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request line; HTTP requests (WebHDFS, `/jmx`) go to the `http` handler |
+| 61616 | `openwire-wireformat` | See [Server-first banners](#server-first-banners) |
 | 62078 | `lockdownd` | Apple iOS lockdownd (nmap-services `iphone-sync`). Sends nothing and closes on bytes that are not a framed plist request it answers; `QueryType` gets `lockdownd-querytype` |
 
 Silent responses (`mglndd`, `bracket-probe`, `dns-query-probe`, `tacacs` on 49, `ldap`, `bitcoin` on 8333, `litecoin` on 9333, `dogecoin` on 22556, `niagara-fox` on 1911) leave only the `read` frame, with no `write`. A Bitcoin, Litecoin or Dogecoin message that needs no answer (`verack`, `getaddr`, …) also leaves only its `read` frame, but the connection stays open for the next message, as does every message on 162 (`snmptrap`), 2404 (`iec104`), 9998 (`uptime-agent`), 21379 (`opc-tunneller`), 5555 (`adbd`), 7777 (`oracle-http-server`), 8581 (`homebridge-ui`), 988 (`port-988`), 989 (`ftps-data`), 8024 (`port-8024`), 8090 (`confluence`), 8092 (`port-8092`), 30005 (`port-30005`) and 50070 (`hadoop-namenode`), a KMP frame the meter does not answer (`kamstrup`) and a post-TLS `tls-probe` (CR/LF only). Clients that send nothing get no reply.
@@ -150,7 +151,7 @@ Parsing uses `helpers.ParseClientHello`, a lenient parser that reassembles a hel
 
 ## Server-first banners
 
-- **110 (`pop3`), 5900 (`rfb`), 4222 (`nats-info`):** banner sent on connect, before any read. The 4222 greeting is a nats-server 2.10.22 `INFO {...}\r\n` line with a `server_id` that is random per sensor run and a `client_id` that counts up per connection. Spicy rerouting does not peek on these ports. 22 / 2222 (`ssh`) get the SSH banner the same way only without the `ssh` rule; the default rules send them to the [`ssh`](ssh.md) handler.
+- **110 (`pop3`), 5900 (`rfb`), 4222 (`nats-info`):** banner sent on connect, before any read. The 4222 greeting is a nats-server 2.10.22 `INFO {...}\r\n` line with a `server_id` that is random per sensor run and a `client_id` that counts up per connection. 61616 (`openwire-wireformat`) gets an ActiveMQ OpenWire `WireFormatInfo` (version 12, broker defaults, `ProviderVersion` `5.18.2`, the last release before the CVE-2023-46604 fix), which nmap `-sV` reports as `ActiveMQ OpenWire transport 5.18.2`. Spicy rerouting does not peek on these ports. 22 / 2222 (`ssh`) get the SSH banner the same way only without the `ssh` rule; the default rules send them to the [`ssh`](ssh.md) handler.
 - **4444 (`cmd-shell`, a Windows Server 2003 `cmd.exe` prompt):** waits 2s for the client first.
   - A silent client gets the prompt as `decoded[0]` (a `write`).
   - A client that speaks first is routed by its bytes as on any catch-all port (HTTP to `http`), and otherwise gets the prompt as the reply.
@@ -160,6 +161,8 @@ Parsing uses `helpers.ParseClientHello`, a lenient parser that reassembles a hel
 After a greeting, the client's messages get random bytes unless a payload signature matches (no shell is emulated).
 
 On 4222, the client's first message after the NATS `INFO` greeting is tagged `command` `nats-info`. It gets `-ERR 'Unknown Protocol Operation'\r\n` and the connection closes (`nats-err`) when it does not start with a NATS operation (scanners such as BinaryEdge send a bare `\r\n\r\n`). It gets `PONG\r\n` (`nats-pong`) when it holds a `PING` line, and otherwise no reply (`nats`: `CONNECT`, `SUB`, `PUB` with verbose off). Later messages get random bytes.
+
+On 61616, the client's first message after the `WireFormatInfo` is tagged `command` `openwire-wireformat`. It gets no reply and the connection closes (`openwire`), as the broker drops the transport after a frame it cannot unmarshal (a research scanner's bare newline, the CVE-2023-46604 `ExceptionResponse` frame), so the bytes are recorded instead of answered with random data.
 
 On 5900, a valid RFB ProtocolVersion reply is tagged `command` `rfb` and answered with the security handshake instead of random bytes (`status` `rfb-security`: `02 02 01` for 3.7/3.8, `00 00 00 02` for 3.3). The `rfb` handler (routed by default) takes the session further.
 

@@ -353,6 +353,28 @@ func TestHandleTCPNATS(t *testing.T) {
 	}
 }
 
+func TestHandleTCPOpenWire(t *testing.T) {
+	require.True(t, HasServerBanner(61616))
+	client, hp, done := startCatchAll(t, 61616)
+
+	// WireFormatInfo arrives before the client sends anything
+	want, _ := banners.ForPort(61616)
+	banner := readAll(t, client, len(want.Data))
+	require.Equal(t, want.Data, banner)
+	// stretchoid sends a lone newline; the broker hangs up without a reply
+	_, err := client.Write([]byte("\n"))
+	require.NoError(t, err)
+	_, err = client.Read(make([]byte, 1))
+	require.ErrorIs(t, err, io.EOF)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 2)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "openwire-wireformat", Payload: banner, PayloadHash: helpers.SHA256Hex(banner)}, events[0])
+	require.Equal(t, "read", events[1].Direction)
+	require.Equal(t, "openwire-wireformat", events[1].Command)
+	require.Equal(t, []byte("\n"), events[1].Payload)
+}
+
 func TestHandleTCPRFBNonVersionGetsRandom(t *testing.T) {
 	client, hp, done := startCatchAll(t, 5900)
 

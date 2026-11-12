@@ -189,11 +189,14 @@ func (s *tcpServer) readPayload(ctx context.Context, h interfaces.Honeypot, logg
 // bannerFollowUp answers the client's reply to a server-first banner so the
 // handshake goes one step further instead of getting random bytes. An RFB
 // ProtocolVersion gets the security handshake the rfb handler would send; a
-// NATS client's reply to INFO gets what nats-server answers.
+// NATS client's reply to INFO gets what nats-server answers; an OpenWire
+// client's reply to WireFormatInfo gets the broker's silent hang-up.
 func bannerFollowUp(banner banners.Response, data []byte) (banners.Response, bool) {
 	switch banner.Name {
 	case "nats-info":
 		return banners.NATSFollowUp(data)
+	case "openwire-wireformat":
+		return banners.OpenWireFollowUp(data)
 	case "rfb":
 	default:
 		return banners.Response{}, false

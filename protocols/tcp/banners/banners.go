@@ -266,6 +266,10 @@ func ForPort(port uint16) (Response, bool) {
 		// nats-server greets with INFO on connect; the client's reply is
 		// answered by NATSFollowUp
 		return Response{Name: "nats-info", Data: natsInfo(), ServerFirst: true}, true
+	case 61616:
+		// the ActiveMQ broker sends its WireFormatInfo on connect; the
+		// client's reply is answered by OpenWireFollowUp
+		return Response{Name: "openwire-wireformat", Data: openwireWireFormatInfo, ServerFirst: true}, true
 	case 80:
 		return Response{Name: "http", Data: httpResponse(), Close: true}, true
 	case 135:
