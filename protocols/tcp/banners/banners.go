@@ -41,9 +41,15 @@ type Response struct {
 	// the catch-all ends the session on the next one instead of replaying it
 	// (a TDS PRELOGIN reply sent back to a LOGIN7 fingerprints the sensor).
 	Once bool
-	// Password is a credential guess parsed from the client bytes (a KMP
-	// login PIN), recorded in plaintext on the read frame.
+	// Username and Password are a credential guess parsed from the client
+	// bytes (a KMP login PIN, an AMI Login), recorded in plaintext on the
+	// read frame.
+	Username string
 	Password string
+	// FollowUpEach means the follow-up to a server-first greeting answers
+	// every client message, not only the first (AMI keeps reading messages
+	// after rejecting one).
+	FollowUpEach bool
 }
 
 // now is replaced in tests for a stable HTTP Date header.
@@ -449,6 +455,10 @@ func ForPort(port uint16) (Response, bool) {
 		// Apple lockdownd drops a connection whose bytes are not a framed
 		// plist it can handle; QueryType is matched in ForPayload
 		return Response{Name: "lockdownd", Silent: true}, true
+	case 5038:
+		// Asterisk Manager Interface greets on connect; client messages are
+		// answered by AMIFollowUp
+		return Response{Name: "asterisk-ami", Data: amiBanner, ServerFirst: true, FollowUpEach: true}, true
 	case 5938:
 		// TeamViewer greets a silent client (nmap -sV); CMD_PING is matched
 		// in ForPayload

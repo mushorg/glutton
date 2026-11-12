@@ -2,7 +2,7 @@
 
 Transport: TCP. Shared encodings and frame fields are described in [Logging and producers](../logging.md#decoded-data).
 
-**`decoded`:** Array of per-direction frames: `direction`, `command`, `status`, `payload`, `payload_hash`, `shellcode` (heuristic indicators matched in a read payload, when any), `password` (a credential guess a signature parsed from the read, in plaintext: the KMP login PIN), and on `tls-clienthello` / `tls-alert` reads `tls_version`, `cipher_suites`, `extensions`, `groups`, `sni`, `alpn`, `ja3`, `ja3n`, `ja4`, `ja4_r`. A completed or partial TLS termination adds a `write` with `status` `tls-handshake` holding the server flight (and any fatal alert). When a handshake write failed, that frame also has `error` (`reply over budget` when the `tcp_reply_limit` guard dropped it, otherwise `write failed`) and may have no `payload`.
+**`decoded`:** Array of per-direction frames: `direction`, `command`, `status`, `payload`, `payload_hash`, `shellcode` (heuristic indicators matched in a read payload, when any), `username` and `password` (a credential guess parsed from the read, in plaintext: the KMP login PIN, an AMI `Login`'s `Username` and `Secret`), and on `tls-clienthello` / `tls-alert` reads `tls_version`, `cipher_suites`, `extensions`, `groups`, `sni`, `alpn`, `ja3`, `ja3n`, `ja4`, `ja4_r`. A completed or partial TLS termination adds a `write` with `status` `tls-handshake` holding the server flight (and any fatal alert). When a handshake write failed, that frame also has `error` (`reply over budget` when the `tcp_reply_limit` guard dropped it, otherwise `write failed`) and may have no `payload`.
 
 ## Session flow
 
@@ -117,6 +117,7 @@ Writes set `status` to the response name or `random`.
 | 22556 | `dogecoin` | Sends nothing and hangs up, as dogecoind does with bytes that are not its network magic |
 | 30005 | `port-30005` | No registered service, and the product behind it is unconfirmed. Sends nothing but keeps the connection open, as an HTTP-style listener does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request; HTTP requests go to the `http` handler |
 | 50070 | `hadoop-namenode` | Hadoop 2.x HDFS NameNode web UI (Jetty). Sends nothing but keeps the connection open, as Jetty does when it skips a leading bare newline (the usual research-scanner probe) and waits for a request line; HTTP requests (WebHDFS, `/jmx`) go to the `http` handler |
+| 5038 | `asterisk-ami` | See [Server-first banners](#server-first-banners) |
 | 61616 | `openwire-wireformat` | See [Server-first banners](#server-first-banners) |
 | 62078 | `lockdownd` | Apple iOS lockdownd (nmap-services `iphone-sync`). Sends nothing and closes on bytes that are not a framed plist request it answers; `QueryType` gets `lockdownd-querytype` |
 
@@ -152,7 +153,7 @@ Parsing uses `helpers.ParseClientHello`, a lenient parser that reassembles a hel
 
 ## Server-first banners
 
-- **110 (`pop3`), 5900 (`rfb`), 4222 (`nats-info`):** banner sent on connect, before any read. The 4222 greeting is a nats-server 2.10.22 `INFO {...}\r\n` line with a `server_id` that is random per sensor run and a `client_id` that counts up per connection. 61616 (`openwire-wireformat`) gets an ActiveMQ OpenWire `WireFormatInfo` (version 12, broker defaults, `ProviderVersion` `5.18.2`, the last release before the CVE-2023-46604 fix), which nmap `-sV` reports as `ActiveMQ OpenWire transport 5.18.2`. Spicy rerouting does not peek on these ports. 22 / 2222 (`ssh`) get the SSH banner the same way only without the `ssh` rule; the default rules send them to the [`ssh`](ssh.md) handler.
+- **110 (`pop3`), 5900 (`rfb`), 4222 (`nats-info`):** banner sent on connect, before any read. The 4222 greeting is a nats-server 2.10.22 `INFO {...}\r\n` line with a `server_id` that is random per sensor run and a `client_id` that counts up per connection. 61616 (`openwire-wireformat`) gets an ActiveMQ OpenWire `WireFormatInfo` (version 12, broker defaults, `ProviderVersion` `5.18.2`, the last release before the CVE-2023-46604 fix), which nmap `-sV` reports as `ActiveMQ OpenWire transport 5.18.2`. 5038 (`asterisk-ami`) gets the Asterisk Manager Interface greeting `Asterisk Call Manager/7.0.3\r\n` (Asterisk 18; nmap `-sV`: `Asterisk Call Manager 7.0.3`). Spicy rerouting does not peek on these ports. 22 / 2222 (`ssh`) get the SSH banner the same way only without the `ssh` rule; the default rules send them to the [`ssh`](ssh.md) handler.
 - **4444 (`cmd-shell`, a Windows Server 2003 `cmd.exe` prompt):** waits 2s for the client first.
   - A silent client gets the prompt as `decoded[0]` (a `write`).
   - A client that speaks first is routed by its bytes as on any catch-all port (HTTP to `http`), and otherwise gets the prompt as the reply.
@@ -164,6 +165,8 @@ After a greeting, the client's messages get random bytes unless a payload signat
 On 4222, the client's first message after the NATS `INFO` greeting is tagged `command` `nats-info`. It gets `-ERR 'Unknown Protocol Operation'\r\n` and the connection closes (`nats-err`) when it does not start with a NATS operation (scanners such as BinaryEdge send a bare `\r\n\r\n`). It gets `PONG\r\n` (`nats-pong`) when it holds a `PING` line, and otherwise no reply (`nats`: `CONNECT`, `SUB`, `PUB` with verbose off). Later messages get random bytes.
 
 On 61616, the client's first message after the `WireFormatInfo` is tagged `command` `openwire-wireformat`. It gets no reply and the connection closes (`openwire`), as the broker drops the transport after a frame it cannot unmarshal (a research scanner's bare newline, the CVE-2023-46604 `ExceptionResponse` frame), so the bytes are recorded instead of answered with random data.
+
+On 5038, every client message after the AMI greeting is tagged `command` `asterisk-ami` and answered like an unauthenticated manager session. Each complete message (lines ended by a blank line, so every bare `\r\n` is one message) gets one reply, with the client's `ActionID` echoed: no `Action` → `Missing action in request` (`ami-error`; scanners' `\r\n\r\n` gets two), an action other than `Login`/`Logoff`/`Challenge` → `Permission denied` (`ami-error`), `Challenge` with `AuthType: MD5` → a random challenge (`ami-challenge`), `Login` → `Authentication failed` and close (`ami-auth-failed`, with `Username` and `Secret` recorded as `username`/`password` on the read), `Logoff` → `Goodbye` and close (`ami-goodbye`). A read without a complete message gets no reply (`ami`).
 
 On 5900, a valid RFB ProtocolVersion reply is tagged `command` `rfb` and answered with the security handshake instead of random bytes (`status` `rfb-security`: `02 02 01` for 3.7/3.8, `00 00 00 02` for 3.3). The `rfb` handler (routed by default) takes the session further.
 

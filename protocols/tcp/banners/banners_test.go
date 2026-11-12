@@ -32,6 +32,7 @@ func TestForPort(t *testing.T) {
 		{8126, "statsd-stats", false, false, []byte("uptime: ")},
 		{4444, "cmd-shell", false, true, []byte("Microsoft Windows [Version 5.2.3790]\r\n")},
 		{4222, "nats-info", true, false, []byte(`INFO {"server_id":"N`)},
+		{5038, "asterisk-ami", true, false, []byte("Asterisk Call Manager/7.0.3\r\n")},
 		{61616, "openwire-wireformat", true, false, []byte("\x00\x00\x01\x8f\x01ActiveMQ\x00\x00\x00\x0c")},
 	}
 	for _, c := range cases {

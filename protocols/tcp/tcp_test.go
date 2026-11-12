@@ -375,6 +375,43 @@ func TestHandleTCPOpenWire(t *testing.T) {
 	require.Equal(t, []byte("\n"), events[1].Payload)
 }
 
+func TestHandleTCPAsteriskAMI(t *testing.T) {
+	require.True(t, HasServerBanner(5038))
+	client, hp, done := startCatchAll(t, 5038)
+
+	// the greeting arrives before the client sends anything
+	greeting := []byte("Asterisk Call Manager/7.0.3\r\n")
+	banner := readAll(t, client, len(greeting))
+	require.Equal(t, greeting, banner)
+
+	// a scanner's bare CRLF CRLF is two empty messages
+	missing := []byte("Response: Error\r\nMessage: Missing action in request\r\n\r\n")
+	_, err := client.Write([]byte("\r\n\r\n"))
+	require.NoError(t, err)
+	errs := readAll(t, client, 2*len(missing))
+	require.Equal(t, append(append([]byte(nil), missing...), missing...), errs)
+
+	// a later Login is still answered, then the server hangs up
+	login := []byte("Action: Login\r\nActionID: 1\r\nUsername: admin\r\nSecret: amp111\r\n\r\n")
+	failed := []byte("Response: Error\r\nActionID: 1\r\nMessage: Authentication failed\r\n\r\n")
+	_, err = client.Write(login)
+	require.NoError(t, err)
+	require.Equal(t, failed, readAll(t, client, len(failed)))
+	_, err = client.Read(make([]byte, 1))
+	require.ErrorIs(t, err, io.EOF)
+
+	events := finishCatchAll(t, client, hp, done)
+	require.Len(t, events, 5)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "asterisk-ami", Payload: banner, PayloadHash: helpers.SHA256Hex(banner)}, events[0])
+	require.Equal(t, "asterisk-ami", events[1].Command)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "ami-error", Payload: errs, PayloadHash: helpers.SHA256Hex(errs)}, events[2])
+	require.Equal(t, "asterisk-ami", events[3].Command)
+	require.Equal(t, login, events[3].Payload)
+	require.Equal(t, "admin", events[3].Username)
+	require.Equal(t, "amp111", events[3].Password)
+	require.Equal(t, parsedTCP{Direction: "write", Status: "ami-auth-failed", Payload: failed, PayloadHash: helpers.SHA256Hex(failed)}, events[4])
+}
+
 func TestHandleTCPRFBNonVersionGetsRandom(t *testing.T) {
 	client, hp, done := startCatchAll(t, 5900)
 

@@ -32,7 +32,8 @@ type parsedTCP struct {
 	PayloadHash string   `json:"payload_hash,omitempty"`
 	Shellcode   []string `json:"shellcode,omitempty"` // shellcode heuristics that matched the read payload
 	Error       string   `json:"error,omitempty"`     // why a write failed (tls-handshake writes): "reply over budget" or "write failed"
-	Password    string   `json:"password,omitempty"`  // credential guess parsed by a payload signature (KMP login PIN)
+	Username    string   `json:"username,omitempty"`  // credential guess parsed by a payload signature (AMI Login)
+	Password    string   `json:"password,omitempty"`  // credential guess parsed by a payload signature (KMP login PIN, AMI Login)
 	// TLS ClientHello fingerprint fields (tls_version, ja3, ja4, ...) on a
 	// tls-clienthello or tls-alert read, flattened into the frame.
 	*helpers.ClientHello
@@ -190,13 +191,16 @@ func (s *tcpServer) readPayload(ctx context.Context, h interfaces.Honeypot, logg
 // handshake goes one step further instead of getting random bytes. An RFB
 // ProtocolVersion gets the security handshake the rfb handler would send; a
 // NATS client's reply to INFO gets what nats-server answers; an OpenWire
-// client's reply to WireFormatInfo gets the broker's silent hang-up.
+// client's reply to WireFormatInfo gets the broker's silent hang-up; AMI
+// messages get an unauthenticated manager session's answers.
 func bannerFollowUp(banner banners.Response, data []byte) (banners.Response, bool) {
 	switch banner.Name {
 	case "nats-info":
 		return banners.NATSFollowUp(data)
 	case "openwire-wireformat":
 		return banners.OpenWireFollowUp(data)
+	case "asterisk-ami":
+		return banners.AMIFollowUp(data)
 	case "rfb":
 	default:
 		return banners.Response{}, false
@@ -410,8 +414,9 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			sigResp = banners.Response{Name: "tls-probe", NoReply: true}
 			matched = true
 			command = sigResp.Name
-		} else if greeted && round == 1 {
-			// only the message right after the greeting answers it
+		} else if greeted && (round == 1 || portResp.FollowUpEach) {
+			// only the message right after the greeting answers it, unless
+			// the service keeps answering messages (AMI)
 			if sigResp, matched = bannerFollowUp(portResp, data); matched {
 				command = portResp.Name
 			}
@@ -421,7 +426,8 @@ func handleTCP(ctx context.Context, conn net.Conn, md connection.Metadata, logge
 			hello, _ = helpers.ParseClientHello(data)
 		}
 		server.captureRead(data, payloadHash, command, hello)
-		if matched && sigResp.Password != "" {
+		if matched {
+			server.events[len(server.events)-1].Username = sigResp.Username
 			server.events[len(server.events)-1].Password = sigResp.Password
 		}
 
