@@ -295,6 +295,9 @@ rules:
   - match: udp dst port 5632
     type: conn_handler
     target: pcanywhere
+  - match: udp dst port 1434
+    type: conn_handler
+    target: mssql_browser
   - match: udp dst port 111
     type: conn_handler
     target: rpcbind

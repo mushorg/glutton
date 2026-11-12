@@ -148,6 +148,7 @@ Example shape:
 | `hiflying` | UDP | [protocols/hiflying.md](protocols/hiflying.md) |
 | `realtek` | UDP | [protocols/realtek.md](protocols/realtek.md) |
 | `pcanywhere` | UDP | [protocols/pcanywhere.md](protocols/pcanywhere.md) |
+| `mssql_browser` | UDP | [protocols/mssql-browser.md](protocols/mssql-browser.md) |
 | `sadp` | UDP | [protocols/sadp.md](protocols/sadp.md) |
 | `dtls` | UDP | [protocols/dtls.md](protocols/dtls.md) |
 | `mqtt` | TCP | [protocols/mqtt.md](protocols/mqtt.md) |
