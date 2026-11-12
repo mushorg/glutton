@@ -22,6 +22,7 @@ import (
 	"github.com/mushorg/glutton/protocols/helpers"
 	"github.com/mushorg/glutton/protocols/interfaces"
 	"github.com/mushorg/glutton/protocols/tcp/citrix"
+	"github.com/mushorg/glutton/protocols/tcp/cpanel"
 	"github.com/mushorg/glutton/protocols/tcp/dockerapi"
 	"github.com/mushorg/glutton/protocols/tcp/elasticsearch"
 	"github.com/mushorg/glutton/protocols/tcp/ja4h"
@@ -125,8 +126,8 @@ type parsedHTTP struct {
 	Query      string                 `json:"query,omitempty"`
 	Parameters url.Values             `json:"parameters,omitempty"` // parsed query key/values
 	Host       string                 `json:"host,omitempty"`
-	Username   string                 `json:"username,omitempty"` // HTTP Basic, Proxy-Authorization Basic or Proxmox VE login
-	Password   string                 `json:"password,omitempty"` // HTTP Basic, Proxy-Authorization Basic or Proxmox VE login
+	Username   string                 `json:"username,omitempty"` // HTTP Basic, Proxy-Authorization Basic, Proxmox VE or cPanel login/API token
+	Password   string                 `json:"password,omitempty"` // HTTP Basic, Proxy-Authorization Basic, Proxmox VE or cPanel login/API token
 	UserAgent  string                 `json:"user_agent,omitempty"`
 	JA4H       string                 `json:"ja4h,omitempty"` // FoxIO JA4H fingerprint of the request, set on reads
 	Status     string                 `json:"status,omitempty"`
@@ -364,6 +365,12 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 			frame.Username, frame.Password = user, pass
 		}
 	}
+	cpsrvd, isCpanel := cpanel.ForPort(md.TargetPort)
+	if isCpanel {
+		if user, pass, ok := cpanel.Credentials(req.Method, path, req.Header, body); ok {
+			frame.Username, frame.Password = user, pass
+		}
+	}
 	elastic := md.TargetPort == elasticsearch.Port
 	if elastic {
 		frame.Elastic = elasticsearch.Inspect(req.Method, path, req.URL.RawQuery, body)
@@ -434,6 +441,9 @@ func (s *httpServer) handleRequest(ctx context.Context, req *http.Request, raw [
 	}
 	if proxmox {
 		return s.write(pve.Respond(req.Method, path, httpNow()))
+	}
+	if isCpanel {
+		return s.write(cpanel.Respond(cpsrvd, req.Method, path, req.URL.RawQuery, httpNow()))
 	}
 	if elastic {
 		return s.write(elasticsearch.Respond(req.Method, path, req.URL.RawQuery, frame.Elastic))

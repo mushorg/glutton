@@ -113,6 +113,7 @@ For full Docker, privileges, and host-placement guidance, see [docs/setup.md](do
 | SSH                         | key exchange, HASSH and login attempts on tcp/22, 2222, any port |
 | Hadoop YARN                 | `POST */cluster/apps/new-application`    |
 | Docker Engine API           | `GET /v1.16/version`                     |
+| cPanel & WHM (cpsrvd)       | login pages, credential and API-token attempts on tcp/2082, 2083, 2086, 2087, 2095, 2096 |
 | HTTP                        | generic web requests                     |
 | generic TCP                 | unrecognized TCP payloads                |
 | generic UDP                 | unrecognized UDP payloads                |

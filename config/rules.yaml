@@ -180,6 +180,10 @@ rules:
     type: conn_handler
     target: http
     tls: auto
+  - match: tcp dst port 2082 or 2083 or 2086 or 2087 or 2095 or 2096
+    type: conn_handler
+    target: http
+    tls: auto
   - match: tcp dst port 2375 or 2376
     type: conn_handler
     target: http

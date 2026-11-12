@@ -93,6 +93,20 @@ Ticket reads set `username` from the form `username` field, with `@realm` append
 
 The default rule terminates TLS on tcp/8006 (`tls: auto`) with a node certificate signed by a per-sensor `PVE Cluster Manager CA`, so the event carries a `tls` object.
 
+#### cPanel & WHM (cpsrvd)
+
+Package: `protocols/tcp/cpanel`. Every path on the cpsrvd ports is answered as an unauthenticated cpsrvd (`Server: cpsrvd`): cPanel on 2082/2083, WHM on 2086/2087, Webmail on 2095/2096. The default rule uses `tls: auto` on all six, so the TLS ports keep the shared sensor certificate.
+
+| Request | Response |
+| --- | --- |
+| `GET /`, `GET /login/` | `200` login page (`<title>cPanel Login</title>`, `WHM Login` or `Webmail Login`; form `login_form` posting `user`/`pass` to `/login/`) |
+| `POST /login/?login_only=1` | `401 Access Denied`, JSON `{"status":0,...,"message":"invalid_login",...}` |
+| `POST /login/` | `401 Access Denied`, login page with "The login is invalid." |
+| `/json-api/`, `/execute/`, `/xml-api/`, `/scripts*`, `/frontend/`, `/cpsess*`, `/3rdparty/`, `/webmail/`, `/logout` | `401 Access Denied`, login page |
+| Anything else | `404 Not Found` |
+
+Reads set `username`/`password` from the login form (`user`, `pass`) or from an API token header (`Authorization: whm root:<token>` or `cpanel <user>:<token>`; the token goes in `password`), capped at 256 bytes. HTTP Basic is decoded as on every port. No login succeeds and no API call is served, so authentication-bypass probes (e.g. CVE-2026-41940) see a patched host.
+
 #### Rapid7 Nexpose / InsightVM console
 
 The default rule also terminates TLS on tcp/3780 (`tls: auto`, default self-signed certificate), the port of the Nexpose / InsightVM Security Console. There is no dedicated persona: requests get the generic responses. A client that sends only blank lines gets no reply, the way an HTTPS server waits for a request line.

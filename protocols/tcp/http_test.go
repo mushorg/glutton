@@ -337,6 +337,75 @@ func TestHandleHTTPProxmox(t *testing.T) {
 	require.Contains(t, string(events[2].Payload), "password=hunter2")
 }
 
+func TestHandleHTTPCpanel(t *testing.T) {
+	withHTTPSessionIdle(t, 50*time.Millisecond)
+	prevNow := httpNow
+	httpNow = func() time.Time { return time.Date(2026, 11, 12, 20, 29, 15, 0, time.UTC) }
+	t.Cleanup(func() { httpNow = prevNow })
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+
+	hp := newFakeHoneypot()
+	done := make(chan error, 1)
+	go func() {
+		done <- HandleHTTP(context.Background(), serverConn, connection.Metadata{TargetPort: 2083}, &recordingLogger{}, hp)
+	}()
+
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+	_, err := client.Write(httpTestRequest("GET", "/", "", nil))
+	require.NoError(t, err)
+	status, headers, body := readHTTPResponse(t, client)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "cpsrvd", headers.Get("Server"))
+	require.Contains(t, string(body), "<title>cPanel Login</title>")
+	sessionID := sessionCookieFromHeaders(t, headers)
+
+	_, err = client.Write(httpTestRequest("POST", "/login/?login_only=1", sessionID, []byte("user=root&pass=hunter2")))
+	require.NoError(t, err)
+	status, _, body = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusUnauthorized, status)
+	require.Contains(t, string(body), `"invalid_login"`)
+
+	apiReq := []byte("GET /json-api/listaccts?api.version=1 HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: whm root:TOKEN123\r\nCookie: " + httpSessionCookie + "=" + sessionID + "\r\n\r\n")
+	_, err = client.Write(apiReq)
+	require.NoError(t, err)
+	status, _, _ = readHTTPResponse(t, client)
+	require.Equal(t, http.StatusUnauthorized, status)
+
+	require.NoError(t, client.Close())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+
+	produced := waitProduced(t, hp)
+	require.Equal(t, "http", produced.protocol)
+	select {
+	case extra := <-hp.produced:
+		t.Fatalf("expected a single produced event, got another: %+v", extra)
+	default:
+	}
+	events, ok := produced.decoded.([]parsedHTTP)
+	require.True(t, ok)
+	require.Len(t, events, 6)
+	require.Equal(t, "GET", events[0].Command)
+	require.Equal(t, uint16(2083), events[0].DestPort)
+	require.Empty(t, events[0].Username)
+	require.Equal(t, "200", events[1].Status)
+	require.Equal(t, "POST", events[2].Command)
+	require.Equal(t, "/login/", events[2].Path)
+	require.Equal(t, "root", events[2].Username)
+	require.Equal(t, "hunter2", events[2].Password)
+	require.Equal(t, "401", events[3].Status)
+	require.Equal(t, "/json-api/listaccts", events[4].Path)
+	require.Equal(t, "root", events[4].Username)
+	require.Equal(t, "TOKEN123", events[4].Password)
+	require.Equal(t, "401", events[5].Status)
+}
+
 func TestHandleHTTPElasticsearch(t *testing.T) {
 	withHTTPSessionIdle(t, 50*time.Millisecond)
 
