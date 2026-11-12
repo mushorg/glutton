@@ -79,10 +79,30 @@ func ParseCommand(data []byte) (Command, error) {
 	s := strings.TrimRight(string(data), "\r\n")
 	tag, rest, _ := strings.Cut(s, " ")
 	verb, rest, _ := strings.Cut(rest, " ")
-	if tag == "" || verb == "" {
+	if !validTag(tag) || verb == "" {
 		return Command{}, ErrNoTag
 	}
 	return Command{Tag: tag, Verb: strings.ToUpper(verb), Args: parseArgs(rest)}, nil
+}
+
+// validTag reports whether tag is an RFC 3501 tag: one or more ASTRING-CHARs
+// other than "+". That excludes CTLs, 8-bit bytes, atom-specials ("(", ")",
+// "{", SP, "%", "*", '"', "\") and "+"; "]" is allowed. A line whose first
+// token is not a tag (e.g. a TLS ClientHello sent to plaintext tcp/143) gets
+// the untagged BadCommand instead of a reply echoing binary bytes as the tag.
+func validTag(tag string) bool {
+	if tag == "" {
+		return false
+	}
+	for i := 0; i < len(tag); i++ {
+		switch c := tag[i]; {
+		case c < 0x20, c >= 0x7f:
+			return false
+		case strings.IndexByte(`(){%*"\+`, c) >= 0:
+			return false
+		}
+	}
+	return true
 }
 
 // maxArgs bounds the arguments kept per command; the rest are dropped.

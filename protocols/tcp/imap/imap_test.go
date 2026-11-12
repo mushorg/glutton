@@ -36,6 +36,34 @@ func TestParseCommand(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoTag)
 }
 
+func TestParseCommandRejectsInvalidTag(t *testing.T) {
+	for _, line := range []string{
+		// TLS ClientHello record header as the first token (Censys, tcp/143).
+		"\x16\x03\x01\x00\x92\x01\x00\x00\x8e\x03\x01\x05\xa3 CAPABILITY\r\n",
+		"a\x80b CAPABILITY\r\n",
+		"* CAPABILITY\r\n",
+		"+ CAPABILITY\r\n",
+		"a+1 CAPABILITY\r\n",
+		"a(1 CAPABILITY\r\n",
+		"a{1 CAPABILITY\r\n",
+		"a\"1 CAPABILITY\r\n",
+		"a\\1 CAPABILITY\r\n",
+		"a%1 CAPABILITY\r\n",
+		"a\x7f CAPABILITY\r\n",
+	} {
+		_, err := ParseCommand([]byte(line))
+		require.ErrorIs(t, err, ErrNoTag, "%q", line)
+	}
+
+	cmd, err := ParseCommand([]byte("a001 CAPABILITY\r\n"))
+	require.NoError(t, err)
+	require.Equal(t, Command{Tag: "a001", Verb: "CAPABILITY"}, cmd)
+
+	cmd, err = ParseCommand([]byte("a]1 NOOP\r\n"))
+	require.NoError(t, err)
+	require.Equal(t, "a]1", cmd.Tag)
+}
+
 func TestLiteralSize(t *testing.T) {
 	n, sync, ok := LiteralSize([]byte("a LOGIN {12}\r\n"))
 	require.Equal(t, []any{12, true, true}, []any{n, sync, ok})

@@ -201,6 +201,26 @@ func TestHandleIMAPUntaggedAndUnknown(t *testing.T) {
 	require.Equal(t, "/", events[5].Command)
 }
 
+// Seen on tcp/143 (2026-11-12, Censys): a TLS ClientHello sent to the
+// plaintext port. The bytes before the first space are not an IMAP tag, so
+// the reply is untagged instead of echoing them back.
+func TestHandleIMAPBinaryTag(t *testing.T) {
+	m := startIMAP(t, connection.Metadata{})
+	m.expect(imap.Greeting(false))
+	line := "\x16\x03\x01\x00\x92\x01\x00\x00\x8e\x03\x01\x05\xa3 BAD\r\n"
+	m.send(line)
+	m.expect("* BAD Error in IMAP command received by server.\r\n")
+	require.NoError(t, m.client.Close())
+
+	produced := m.event()
+	require.Equal(t, []parsedIMAP{
+		imapWrite("OK", imap.Greeting(false)),
+		{Direction: "read", Payload: []byte(line)},
+		imapWrite("BAD", "* BAD Error in IMAP command received by server.\r\n"),
+	}, produced.decoded)
+	require.Equal(t, connection.EndClientClose, produced.endReason)
+}
+
 func TestHandleIMAPMaxCommands(t *testing.T) {
 	m := startIMAP(t, connection.Metadata{})
 	m.expect(imap.Greeting(false))
